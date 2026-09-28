@@ -1,0 +1,66 @@
+{
+    "tasks": [
+        {
+            "label": "CMake: Configure",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "-S",
+                "${workspaceFolder}/PixelEngine",
+                "-B",
+                "D:/PixelEngineBuild-Local",
+                "-G",
+                "MinGW Makefiles",
+                "-DPIXELENGINE_FREETYPE_SOURCE_DIR=D:/PixelEngineBuild-ttf/_deps/freetype-src",
+                "-DPIXELENGINE_SDL2_TTF_SOURCE_DIR=D:/PixelEngineBuild-ttf/_deps/sdl2_ttf-src"
+            ],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "CMake: Build",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "D:/PixelEngineBuild-Local",
+                "--config",
+                "Debug"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "dependsOn": [
+                "CMake: Configure"
+            ],
+            "problemMatcher": [
+                "$msCompile"
+            ]
+        },
+        {
+            "type": "cppbuild",
+            "label": "C/C++: gcc.exe 生成活动文件",
+            "command": "D:\\mingw\\x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0\\mingw64\\bin\\gcc.exe",
+            "args": [
+                "-fdiagnostics-color=always",
+                "-g",
+                "${file}",
+                "-o",
+                "${fileDirname}\\${fileBasenameNoExtension}.exe"
+            ],
+            "options": {
+                "cwd": "${fileDirname}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "detail": "调试器生成的任务。"
+        }
+    ],
+    "version": "2.0.0"
+}

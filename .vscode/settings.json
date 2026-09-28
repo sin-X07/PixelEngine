@@ -1,0 +1,5 @@
+{
+    "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+    "cmake.sourceDirectory": "D:/BJTU/Cpp/Outstanding Projects/PixelEngine/PixelEngine",
+    "cmake.buildDirectory": "D:/PixelEngineBuild-Local"
+}
