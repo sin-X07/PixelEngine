@@ -72,6 +72,96 @@ add_subdirectory(
     "${CMAKE_BINARY_DIR}/_deps/sdl2_ttf-build"
 )
 
+# ---- SDL2_mixer: download with bounded timeouts, then use a local source fallback ----
+set(PIXELENGINE_SDL2_MIXER_SOURCE_DIR "" CACHE PATH "Local SDL2_mixer source directory")
+set(PIXELENGINE_SDL2_MIXER_DOWNLOAD_TIMEOUT 300 CACHE STRING "SDL2_mixer download timeout in seconds")
+set(PIXELENGINE_SDL2_MIXER_INACTIVITY_TIMEOUT 60 CACHE STRING "SDL2_mixer download inactivity timeout in seconds")
+
+set(_pixelengine_sdl2_mixer_version "2.6.3")
+set(_pixelengine_sdl2_mixer_sha256 "91DD065E9E63F499E5317350B110184B0BA96BC5F63C39B3A9939A136C40C035")
+set(_pixelengine_sdl2_mixer_download_dir "${CMAKE_BINARY_DIR}/_deps")
+set(_pixelengine_sdl2_mixer_download_source "${_pixelengine_sdl2_mixer_download_dir}/SDL_mixer-release-${_pixelengine_sdl2_mixer_version}")
+set(_pixelengine_sdl2_mixer_local_fallback "${CMAKE_SOURCE_DIR}/../build/_deps/SDL2_mixer-src")
+set(_pixelengine_sdl2_mixer_source_dir "")
+
+if(PIXELENGINE_SDL2_MIXER_SOURCE_DIR AND
+   EXISTS "${PIXELENGINE_SDL2_MIXER_SOURCE_DIR}/CMakeLists.txt" AND
+   EXISTS "${PIXELENGINE_SDL2_MIXER_SOURCE_DIR}/include/SDL_mixer.h")
+    set(_pixelengine_sdl2_mixer_source_dir "${PIXELENGINE_SDL2_MIXER_SOURCE_DIR}")
+elseif(PIXELENGINE_SDL2_MIXER_SOURCE_DIR)
+    message(WARNING "PIXELENGINE_SDL2_MIXER_SOURCE_DIR is not a valid SDL2_mixer source directory; trying the online source.")
+endif()
+
+if(NOT _pixelengine_sdl2_mixer_source_dir AND
+   EXISTS "${_pixelengine_sdl2_mixer_download_source}/CMakeLists.txt" AND
+   EXISTS "${_pixelengine_sdl2_mixer_download_source}/include/SDL_mixer.h")
+    set(_pixelengine_sdl2_mixer_source_dir "${_pixelengine_sdl2_mixer_download_source}")
+    message(STATUS "Using cached SDL2_mixer ${_pixelengine_sdl2_mixer_version} source.")
+endif()
+
+if(NOT _pixelengine_sdl2_mixer_source_dir)
+    file(MAKE_DIRECTORY "${_pixelengine_sdl2_mixer_download_dir}")
+    set(_pixelengine_sdl2_mixer_archive "${_pixelengine_sdl2_mixer_download_dir}/SDL_mixer-${_pixelengine_sdl2_mixer_version}.tar.gz")
+    file(DOWNLOAD
+        "https://codeload.github.com/libsdl-org/SDL_mixer/tar.gz/refs/tags/release-${_pixelengine_sdl2_mixer_version}"
+        "${_pixelengine_sdl2_mixer_archive}"
+        EXPECTED_HASH "SHA256=${_pixelengine_sdl2_mixer_sha256}"
+        TLS_VERIFY ON
+        SHOW_PROGRESS
+        TIMEOUT "${PIXELENGINE_SDL2_MIXER_DOWNLOAD_TIMEOUT}"
+        INACTIVITY_TIMEOUT "${PIXELENGINE_SDL2_MIXER_INACTIVITY_TIMEOUT}"
+        STATUS _pixelengine_sdl2_mixer_download_status
+    )
+    list(GET _pixelengine_sdl2_mixer_download_status 0 _pixelengine_sdl2_mixer_download_code)
+
+    if(_pixelengine_sdl2_mixer_download_code EQUAL 0)
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}" -E tar xzf "${_pixelengine_sdl2_mixer_archive}"
+            WORKING_DIRECTORY "${_pixelengine_sdl2_mixer_download_dir}"
+            RESULT_VARIABLE _pixelengine_sdl2_mixer_extract_result
+        )
+        if("${_pixelengine_sdl2_mixer_extract_result}" STREQUAL "0" AND
+           EXISTS "${_pixelengine_sdl2_mixer_download_source}/CMakeLists.txt" AND
+           EXISTS "${_pixelengine_sdl2_mixer_download_source}/include/SDL_mixer.h")
+            set(_pixelengine_sdl2_mixer_source_dir "${_pixelengine_sdl2_mixer_download_source}")
+        else()
+            message(WARNING "SDL2_mixer ${_pixelengine_sdl2_mixer_version} could not be extracted; checking the local source fallback.")
+        endif()
+    else()
+        list(GET _pixelengine_sdl2_mixer_download_status 1 _pixelengine_sdl2_mixer_download_message)
+        message(WARNING "Online SDL2_mixer download failed (${_pixelengine_sdl2_mixer_download_message}); checking the local source fallback.")
+    endif()
+endif()
+
+if(NOT _pixelengine_sdl2_mixer_source_dir AND
+   EXISTS "${_pixelengine_sdl2_mixer_local_fallback}/CMakeLists.txt" AND
+   EXISTS "${_pixelengine_sdl2_mixer_local_fallback}/include/SDL_mixer.h")
+    set(_pixelengine_sdl2_mixer_source_dir "${_pixelengine_sdl2_mixer_local_fallback}")
+    message(STATUS "Using local SDL2_mixer source: ${_pixelengine_sdl2_mixer_source_dir}")
+endif()
+
+if(NOT _pixelengine_sdl2_mixer_source_dir)
+    message(FATAL_ERROR
+        "SDL2_mixer could not be downloaded or found locally. Download SDL_mixer release-${_pixelengine_sdl2_mixer_version}, extract it, then set PIXELENGINE_SDL2_MIXER_SOURCE_DIR to its source directory. The default fallback is ${_pixelengine_sdl2_mixer_local_fallback}."
+    )
+endif()
+
+set(SDL2MIXER_INSTALL OFF CACHE BOOL "" FORCE)
+set(SDL2MIXER_SAMPLES OFF CACHE BOOL "" FORCE)
+set(SDL2MIXER_CMD OFF CACHE BOOL "" FORCE)
+set(SDL2MIXER_FLAC OFF CACHE BOOL "" FORCE)
+set(SDL2MIXER_MOD OFF CACHE BOOL "" FORCE)
+set(SDL2MIXER_MP3 OFF CACHE BOOL "" FORCE)
+set(SDL2MIXER_MIDI OFF CACHE BOOL "" FORCE)
+set(SDL2MIXER_OPUS OFF CACHE BOOL "" FORCE)
+set(SDL2MIXER_VORBIS "STB" CACHE STRING "" FORCE)
+set(SDL2MIXER_WAVPACK OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF)
+add_subdirectory(
+    "${_pixelengine_sdl2_mixer_source_dir}"
+    "${CMAKE_BINARY_DIR}/_deps/sdl2_mixer-build"
+)
+
 # ---- Sources ----
 set(SOURCES 
     main.cpp
@@ -90,6 +180,7 @@ target_link_libraries(EngineApp PRIVATE
     SDL2::SDL2main
     SDL2::SDL2
     SDL2_ttf
+    SDL2_mixer::SDL2_mixer-static
 )
 
 add_custom_command(TARGET EngineApp POST_BUILD

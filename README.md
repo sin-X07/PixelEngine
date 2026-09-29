@@ -19,9 +19,17 @@
 
 ## 构建与运行
 
-项目使用 CMake、C++17、MinGW-w64、SDL2、SDL2_ttf 和 FreeType。中文界面使用 Windows 系统字体。
+项目使用 CMake、C++17、MinGW-w64、SDL2、SDL2_ttf、FreeType 和 SDL2_mixer。SDL2_mixer 固定为 2.6.3，并静态链接；当前构建保留 WAV 支持。引擎会尝试打开音频设备，设备不可用时仍可静音运行；背景音乐和音效的素材及播放逻辑尚未加入。
 
-当前 Windows 开发环境的源码路径和工具链路径配置在 `PixelEngine/CMakeLists.txt` 与 `.vscode/tasks.json` 中，并非跨机器通用配置。该配置预期 SDL2 源码位于仓库的 `build/_deps/sdl2-src`，FreeType 和 SDL2_ttf 源码位于 `D:/PixelEngineBuild-ttf/_deps/`。在这台机器上可运行 VS Code 的 **CMake: Configure** 和 **CMake: Build** 任务。
+当前 Windows 开发环境的源码路径和工具链路径配置在 `PixelEngine/CMakeLists.txt` 与 `.vscode/tasks.json` 中，并非跨机器通用配置。该配置预期 SDL2 源码位于仓库的 `build/_deps/sdl2-src`，FreeType 和 SDL2_ttf 源码位于 `D:/PixelEngineBuild-ttf/_deps/`。SDL2_mixer 首次配置时从 GitHub 获取固定版本，验证 SHA-256 后解压到构建目录的 `_deps`；默认总超时为 300 秒、无数据活动超时为 60 秒。后续配置会复用已下载源码。
+
+若在线下载失败，CMake 会尝试仓库中的 `build/_deps/SDL2_mixer-src` 本地源码缓存。也可以手动下载并解压 SDL_mixer 2.6.3，然后通过 `PIXELENGINE_SDL2_MIXER_SOURCE_DIR` 指定源码目录；设置有效目录后会直接使用本地源码。下载等待时间可通过 `PIXELENGINE_SDL2_MIXER_DOWNLOAD_TIMEOUT` 和 `PIXELENGINE_SDL2_MIXER_INACTIVITY_TIMEOUT` 调整。若线上与本地源码都不可用，配置会提示所需目录和参数。
+
+在这台机器上可运行 VS Code 的 **CMake: Configure** 和 **CMake: Build** 任务。若需指定本地 mixer 源码，在配置命令中增加：
+
+```powershell
+-DPIXELENGINE_SDL2_MIXER_SOURCE_DIR=D:/path/to/SDL_mixer-release-2.6.3
+```
 
 也可在仓库根目录执行当前环境对应的命令：
 

@@ -1,6 +1,7 @@
 #pragma once
 #include <SDL2/SDL.h>
 #include <SDL_ttf.h>
+#include <SDL_mixer.h>
 #include <iostream>
 #include <vector>
 #include <fstream>
@@ -27,10 +28,11 @@ private:
     SDL_Renderer* renderer;
     TTF_Font* uiFont = nullptr;
     bool ttfInitialized = false;
+    bool audioInitialized = false;
+    Mix_Chunk* pickupSound = nullptr;
+    Mix_Music* backgroundMusic = nullptr;
 
     uint32_t gameOverStartTime = 0;
-
-    //Mix_Music
 
     // 经典固定时间步长（Fixed Timestep）的时钟参数
     const float MS_PER_UPDATE = 16.6666f; // 固定逻辑更新间隔（约 60 FPS，单位毫秒）

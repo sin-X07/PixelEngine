@@ -195,6 +195,32 @@ bool Engine::Initialize(const char* title, int width, int height) {
         return false;
     }
 
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
+        std::cerr << "SDL 音频子系统初始化失败，游戏将静音运行: " << SDL_GetError() << std::endl;
+    } else if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
+        std::cerr << "SDL_mixer 音频设备打开失败，游戏将静音运行: " << Mix_GetError() << std::endl;
+        SDL_QuitSubSystem(SDL_INIT_AUDIO);
+    } else {
+        audioInitialized = true;
+    }
+
+    if (audioInitialized) {
+        const std::string menuPath = ResolveProjectFile("assets/audio/menu.ogg");
+        backgroundMusic = Mix_LoadMUS(menuPath.c_str());
+        if (backgroundMusic) {
+            Mix_VolumeMusic(32); // 设置背景音乐音量为 1/4
+            Mix_PlayMusic(backgroundMusic, -1);
+        } else {
+            std::cerr << "背景音乐加载失败: " << Mix_GetError() << std::endl;
+        }
+
+        const std::string pickupSoundPath = ResolveProjectFile("assets/audio/pickup.wav");
+        pickupSound = Mix_LoadWAV(pickupSoundPath.c_str());
+        if (!pickupSound) {
+            std::cerr << "金币音效加载失败: " << Mix_GetError() << std::endl;
+        }
+    }
+
     window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_SHOWN);
     if (!window) {
         std::cerr << "窗口创建失败: " << SDL_GetError() << std::endl;
@@ -357,7 +383,7 @@ void Engine::StartGame(GameMode mode) {
 
     if (mode == TIME_ATTACK) {
         gameTimer = 30.0f;
-        if (!LoadLevelFromFile("map1.txt")) return;
+        if (!LoadLevelFromFile("assets/maps/map1.txt")) return;
         walls.push_back({0, -5, 800, 5});
         walls.push_back({-5, 0, 5, 600});
         walls.push_back({800, -5, 5, 600});
@@ -655,6 +681,12 @@ void Engine::Update(float dt) {
         if (CheckCollision(playerX, playerY, playerSize, coinX, coinY, coinSize, coinSize)) {
             score++;
 
+            if (audioInitialized && pickupSound) {
+                if (Mix_PlayChannel(-1, pickupSound, 0) == -1) {
+                    std::cerr << "播放金币音效失败: " << Mix_GetError() << std::endl;
+                }
+            }
+
             EmitExplosion(coinX + coinSize / 2.0f, coinY + coinSize / 2.0f, 30);
 
             if (currentMode == TIME_ATTACK) {
@@ -805,6 +837,21 @@ void Engine::Clean() {
     if (historyLoaded) {
         SaveScoreHistoryToFile();
         SaveTimeHistoryToFile();
+    }
+
+    if (audioInitialized) {
+        Mix_HaltMusic();
+        Mix_HaltChannel(-1);
+        if (backgroundMusic) {
+            Mix_FreeMusic(backgroundMusic);
+            backgroundMusic = nullptr;
+        }
+        if (pickupSound) {
+            Mix_FreeChunk(pickupSound);
+            pickupSound = nullptr;
+        }
+        Mix_CloseAudio();
+        audioInitialized = false;
     }
 
     if (uiFont) {
