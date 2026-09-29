@@ -15,7 +15,7 @@ int main(int argc, char* argv[]) {
     Engine engine;
 
     // 尝试初始化一个 800x600 的复古像素视窗
-    if (engine.Initialize("My Pixel Engine v1.0", 800, 600)) {
+    if (engine.Initialize("Pixel Engine", 800, 600)) {
         engine.Run();
     }
 

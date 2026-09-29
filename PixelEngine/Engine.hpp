@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <random>
 #include <stack>
+#include <string>
 #include "MazeGenerator.hpp"
 
 // 粒子属性
@@ -23,6 +24,18 @@ struct Particle {
 
 class Engine {
 private:
+    enum GameState {
+        MAIN_MENU,
+        MODE_SELECT,
+        HISTORY,
+        CONTROLS,
+        SETTINGS,
+        PLAYING,
+        PAUSED,
+        EXIT_CONFIRM,
+        GAMEOVER
+    };
+
     bool isRunning;
     SDL_Window* window;
     SDL_Renderer* renderer;
@@ -30,7 +43,18 @@ private:
     bool ttfInitialized = false;
     bool audioInitialized = false;
     Mix_Chunk* pickupSound = nullptr;
+    Mix_Chunk* buttonHoverSound = nullptr;
+    Mix_Chunk* clickSound = nullptr;
     Mix_Music* backgroundMusic = nullptr;
+    std::string hoveredButtonLastFrame;
+    std::string hoveredButtonThisFrame;
+    int masterVolume = 100;
+    int musicVolume = 25;
+    int effectsVolume = 100;
+    bool masterMuted = false;
+    int draggingVolumeSlider = -1;
+    GameState settingsReturnState = MAIN_MENU;
+    bool exitToDesktop = false;
 
     uint32_t gameOverStartTime = 0;
 
@@ -40,15 +64,6 @@ private:
     // 关卡网格化常量
     const int TILE_SIZE = 40;
 
-    //游戏状态
-    enum GameState {
-        MAIN_MENU,
-        MODE_SELECT,
-        HISTORY,
-        CONTROLS,
-        PLAYING,
-        GAMEOVER
-    };
     GameState currentState = MAIN_MENU;
 
     enum GameMode {
@@ -105,12 +120,18 @@ private:
     void EmitExplosion(float spawnX, float spawnY, int count);
     void HandleInput();
     void HandleMenuClick(int mouseX, int mouseY);
+    void UpdateVolumeFromMouse(int mouseX);
+    void UpdateAudioVolumes();
+    void PlayClickSound();
     void StartGame(GameMode mode);
     void DrawText(const std::string& text, int x, int y, SDL_Color color, int pointSize = 24);
     void DrawButton(const SDL_Rect& rect, const std::string& label, bool hovered = false);
     void DrawMenuPage();
     void DrawHistoryPage();
     void DrawControlsPage();
+    void DrawSettingsPage();
+    void DrawPausePage();
+    void DrawExitConfirmPage();
     bool CheckCollision(float px, float py, float pSize, float wx, float wy, float wW, float wH);
     void resetCoinPosition();
     void Update(float dt);

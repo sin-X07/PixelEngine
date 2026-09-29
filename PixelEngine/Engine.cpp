@@ -205,20 +205,32 @@ bool Engine::Initialize(const char* title, int width, int height) {
     }
 
     if (audioInitialized) {
-        const std::string menuPath = ResolveProjectFile("assets/audio/menu.ogg");
+        const std::string menuPath = ResolveProjectFile("../assets/audio/menu.wav");
         backgroundMusic = Mix_LoadMUS(menuPath.c_str());
         if (backgroundMusic) {
-            Mix_VolumeMusic(32); // 设置背景音乐音量为 1/4
             Mix_PlayMusic(backgroundMusic, -1);
         } else {
             std::cerr << "背景音乐加载失败: " << Mix_GetError() << std::endl;
         }
 
-        const std::string pickupSoundPath = ResolveProjectFile("assets/audio/pickup.wav");
+        const std::string pickupSoundPath = ResolveProjectFile("../assets/audio/pickup.wav");
         pickupSound = Mix_LoadWAV(pickupSoundPath.c_str());
         if (!pickupSound) {
             std::cerr << "金币音效加载失败: " << Mix_GetError() << std::endl;
         }
+
+        const std::string buttonSoundPath = ResolveProjectFile("../assets/audio/button.ogg");
+        buttonHoverSound = Mix_LoadWAV(buttonSoundPath.c_str());
+        if (!buttonHoverSound) {
+            std::cerr << "按钮悬停音效加载失败: " << Mix_GetError() << std::endl;
+        }
+
+        const std::string clickSoundPath = ResolveProjectFile("../assets/audio/click.ogg");
+        clickSound = Mix_LoadWAV(clickSoundPath.c_str());
+        if (!clickSound) {
+            std::cerr << "按钮点击音效加载失败: " << Mix_GetError() << std::endl;
+        }
+        UpdateAudioVolumes();
     }
 
     window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_SHOWN);
@@ -261,7 +273,7 @@ bool Engine::Initialize(const char* title, int width, int height) {
     MazeGenerator::GenerateRandomMazeFile("map2.txt", gen);
 
     // 默认初始化模式一
-    bool loadSuccess = LoadLevelFromFile("map1.txt");
+    bool loadSuccess = LoadLevelFromFile("../assets/maps/map1.txt");
     if (!loadSuccess) {
         std::cerr << "警告：未找到地图 map1.txt" << std::endl;
         return false;
@@ -312,22 +324,60 @@ void Engine::HandleInput() {
         }
 
         if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
-            if (currentState == MAIN_MENU || currentState == MODE_SELECT ||
-                currentState == HISTORY || currentState == CONTROLS) {
-                HandleMenuClick(event.button.x, event.button.y);
+            const int mouseX = event.button.x;
+            const int mouseY = event.button.y;
+            if (currentState == SETTINGS) {
+                const int rowY[] = {230, 320, 410};
+                for (int i = 0; i < 3; ++i) {
+                    if (mouseX >= 335 && mouseX < 665 && mouseY >= rowY[i] - 18 && mouseY < rowY[i] + 32) {
+                        draggingVolumeSlider = i;
+                        UpdateVolumeFromMouse(mouseX);
+                        PlayClickSound();
+                        break;
+                    }
+                }
             }
+            if (draggingVolumeSlider < 0) HandleMenuClick(mouseX, mouseY);
+        }
+
+        if (event.type == SDL_MOUSEMOTION && draggingVolumeSlider >= 0) {
+            UpdateVolumeFromMouse(event.motion.x);
+        }
+
+        if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) {
+            draggingVolumeSlider = -1;
         }
 
         //键盘按下
         if (event.type == SDL_KEYDOWN) {
+            if (event.key.repeat != 0) continue;
             switch (event.key.keysym.sym) {
                 case SDLK_F11:
                     ToggleFullscreen();
                     break;
 
+                case SDLK_F1:
+                    masterMuted = !masterMuted;
+                    UpdateAudioVolumes();
+                    break;
+
                 case SDLK_ESCAPE:
-                    if (currentState == MODE_SELECT || currentState == HISTORY || currentState == CONTROLS) {
+                    if (currentState == PLAYING) {
+                        currentState = PAUSED;
+                        upPressed = downPressed = leftPressed = rightPressed = false;
+                        if (audioInitialized) Mix_PauseMusic();
+                    } else if (currentState == PAUSED) {
+                        currentState = PLAYING;
+                        if (audioInitialized) Mix_ResumeMusic();
+                    } else if (currentState == SETTINGS) {
+                        currentState = settingsReturnState;
+                    } else if (currentState == EXIT_CONFIRM) {
+                        currentState = PAUSED;
+                    } else if (currentState == MODE_SELECT || currentState == HISTORY || currentState == CONTROLS) {
                         currentState = MAIN_MENU;
+                    } else if (currentState == GAMEOVER) {
+                        gameOverStartTime = 0;
+                        currentState = MODE_SELECT;
                     } else {
                         isRunning = false;
                     }
@@ -380,10 +430,11 @@ void Engine::StartGame(GameMode mode) {
     vx = 0.0f;
     vy = 0.0f;
     upPressed = downPressed = leftPressed = rightPressed = false;
+    if (audioInitialized) Mix_ResumeMusic();
 
     if (mode == TIME_ATTACK) {
         gameTimer = 30.0f;
-        if (!LoadLevelFromFile("assets/maps/map1.txt")) return;
+        if (!LoadLevelFromFile("../assets/maps/map1.txt")) return;
         walls.push_back({0, -5, 800, 5});
         walls.push_back({-5, 0, 5, 600});
         walls.push_back({800, -5, 5, 600});
@@ -407,17 +458,81 @@ void Engine::HandleMenuClick(int mouseX, int mouseY) {
     };
 
     if (currentState == MAIN_MENU) {
-        if (hit({250, 190, 300, 54})) currentState = MODE_SELECT;
-        else if (hit({250, 258, 300, 54})) currentState = HISTORY;
-        else if (hit({250, 326, 300, 54})) currentState = CONTROLS;
-        else if (hit({250, 394, 300, 54})) isRunning = false;
+        if (hit({250, 170, 300, 46})) { PlayClickSound(); currentState = MODE_SELECT; }
+        else if (hit({250, 228, 300, 46})) { PlayClickSound(); currentState = HISTORY; }
+        else if (hit({250, 286, 300, 46})) { PlayClickSound(); currentState = CONTROLS; }
+        else if (hit({250, 344, 300, 46})) { PlayClickSound(); settingsReturnState = MAIN_MENU; currentState = SETTINGS; }
+        else if (hit({250, 402, 300, 46})) { PlayClickSound(); isRunning = false; }
     } else if (currentState == MODE_SELECT) {
-        if (hit({220, 240, 360, 64})) StartGame(TIME_ATTACK);
-        else if (hit({220, 324, 360, 64})) StartGame(MAZE_MODE);
-        else if (hit({24, 24, 120, 44})) currentState = MAIN_MENU;
+        if (hit({220, 240, 360, 64})) { PlayClickSound(); StartGame(TIME_ATTACK); }
+        else if (hit({220, 324, 360, 64})) { PlayClickSound(); StartGame(MAZE_MODE); }
+        else if (hit({24, 24, 120, 44})) { PlayClickSound(); currentState = MAIN_MENU; }
     } else if ((currentState == HISTORY || currentState == CONTROLS) && hit({24, 24, 120, 44})) {
+        PlayClickSound();
         currentState = MAIN_MENU;
+    } else if (currentState == SETTINGS && hit({24, 24, 120, 44})) {
+        PlayClickSound();
+        currentState = settingsReturnState;
+    } else if (currentState == PAUSED) {
+        if (hit({250, 155, 300, 48})) {
+            PlayClickSound();
+            currentState = PLAYING;
+            if (audioInitialized) Mix_ResumeMusic();
+        } else if (hit({250, 219, 300, 48})) {
+            PlayClickSound();
+            StartGame(currentMode);
+        } else if (hit({250, 283, 300, 48})) {
+            PlayClickSound();
+            settingsReturnState = PAUSED;
+            currentState = SETTINGS;
+        } else if (hit({250, 347, 300, 48})) {
+            PlayClickSound();
+            exitToDesktop = false;
+            currentState = EXIT_CONFIRM;
+        } else if (hit({250, 411, 300, 48})) {
+            PlayClickSound();
+            exitToDesktop = true;
+            currentState = EXIT_CONFIRM;
+        }
+    } else if (currentState == EXIT_CONFIRM) {
+        if (hit({145, 330, 245, 58})) {
+            PlayClickSound();
+            currentState = PAUSED;
+        } else if (hit({410, 330, 245, 58})) {
+            PlayClickSound();
+            upPressed = downPressed = leftPressed = rightPressed = false;
+            if (exitToDesktop) {
+                isRunning = false;
+            } else {
+                currentState = MAIN_MENU;
+                if (audioInitialized) Mix_ResumeMusic();
+            }
+        }
     }
+}
+
+void Engine::UpdateVolumeFromMouse(int mouseX) {
+    const int value = std::clamp((mouseX - 350) * 100 / 300, 0, 100);
+    if (draggingVolumeSlider == 0) {
+        masterVolume = value;
+        masterMuted = false;
+    }
+    else if (draggingVolumeSlider == 1) musicVolume = value;
+    else if (draggingVolumeSlider == 2) effectsVolume = value;
+    UpdateAudioVolumes();
+}
+
+void Engine::UpdateAudioVolumes() {
+    if (!audioInitialized) return;
+    const int effectiveMaster = masterMuted ? 0 : masterVolume;
+    const int musicLevel = effectiveMaster * musicVolume * MIX_MAX_VOLUME / 10000;
+    const int effectsLevel = effectiveMaster * effectsVolume * MIX_MAX_VOLUME / 10000;
+    Mix_VolumeMusic(musicLevel);
+    Mix_Volume(-1, effectsLevel);
+}
+
+void Engine::PlayClickSound() {
+    if (audioInitialized && clickSound) Mix_PlayChannel(-1, clickSound, 0);
 }
 
 void Engine::DrawText(const std::string& text, int x, int y, SDL_Color color, int pointSize) {
@@ -435,6 +550,14 @@ void Engine::DrawText(const std::string& text, int x, int y, SDL_Color color, in
 }
 
 void Engine::DrawButton(const SDL_Rect& rect, const std::string& label, bool hovered) {
+    if (hovered) {
+        hoveredButtonThisFrame = label + ":" + std::to_string(rect.x) + ":" +
+            std::to_string(rect.y) + ":" + std::to_string(rect.w) + ":" + std::to_string(rect.h);
+        if (hoveredButtonThisFrame != hoveredButtonLastFrame && audioInitialized && buttonHoverSound) {
+            Mix_PlayChannel(-1, buttonHoverSound, 0);
+        }
+    }
+
     SDL_SetRenderDrawColor(renderer, hovered ? 245 : 55, hovered ? 190 : 75, hovered ? 90 : 85, 255);
     SDL_RenderFillRect(renderer, &rect);
     SDL_Rect inset = {rect.x + 3, rect.y + 3, rect.w - 6, rect.h - 6};
@@ -454,7 +577,11 @@ void Engine::DrawMenuPage() {
     SDL_RenderFillRect(renderer, &background);
     SDL_SetRenderDrawColor(renderer, 231, 176, 70, 255);
     SDL_RenderDrawLine(renderer, 0, 104, 800, 104);
-    DrawText("PIXEL ENGINE", 250, 42, {247, 211, 130, 255}, 34);
+    TTF_SetFontSize(uiFont, 34);
+    int titleWidth = 0;
+    int titleHeight = 0;
+    TTF_SizeUTF8(uiFont, "PIXEL ENGINE", &titleWidth, &titleHeight);
+    DrawText("PIXEL ENGINE", (800 - titleWidth) / 2, 42, {247, 211, 130, 255}, 34);
 
     int mouseX = 0;
     int mouseY = 0;
@@ -465,9 +592,9 @@ void Engine::DrawMenuPage() {
     mouseX = static_cast<int>(logicalX);
     mouseY = static_cast<int>(logicalY);
     if (currentState == MAIN_MENU) {
-        const char* labels[] = {"选择模式", "历史记录", "按键介绍", "退出游戏"};
-        for (int i = 0; i < 4; ++i) {
-            SDL_Rect button = {250, 190 + i * 68, 300, 54};
+        const char* labels[] = {"选择模式", "历史记录", "按键介绍", "设置", "退出游戏"};
+        for (int i = 0; i < 5; ++i) {
+            SDL_Rect button = {250, 170 + i * 58, 300, 46};
             DrawButton(button, labels[i], mouseX >= button.x && mouseX < button.x + button.w &&
                        mouseY >= button.y && mouseY < button.y + button.h);
         }
@@ -575,13 +702,109 @@ void Engine::DrawControlsPage() {
     DrawText("游戏中", 100, 132, heading, 22);
     DrawText("W / A / S / D    或    方向键：移动", 100, 174, body, 19);
     DrawText("F11：切换全屏", 100, 210, body, 19);
-    DrawText("ESC：退出游戏", 100, 246, body, 19);
+    DrawText("ESC：暂停游戏", 100, 246, body, 19);
     DrawText("结算页面", 100, 308, heading, 22);
     DrawText("Enter / 空格：返回模式选择", 100, 350, body, 19);
     DrawText("菜单页面", 100, 412, heading, 22);
     DrawText("鼠标左键：选择按钮", 100, 454, body, 19);
     DrawText("1 / 2：在模式选择页快速开始对应模式", 100, 490, body, 19);
-    DrawText("ESC：返回主菜单（主菜单中退出）", 100, 526, body, 19);
+    DrawText("ESC：子页面返回；主菜单中退出", 100, 526, body, 19);
+    DrawText("F1：切换主音量静音", 100, 554, body, 19);
+}
+
+void Engine::DrawSettingsPage() {
+    SDL_Rect background = {0, 0, 800, 600};
+    SDL_SetRenderDrawColor(renderer, 18, 36, 43, 255);
+    SDL_RenderFillRect(renderer, &background);
+    SDL_SetRenderDrawColor(renderer, 231, 176, 70, 255);
+    SDL_RenderDrawLine(renderer, 0, 104, 800, 104);
+
+    int mouseX = 0;
+    int mouseY = 0;
+    SDL_GetMouseState(&mouseX, &mouseY);
+    float logicalX = 0.0f;
+    float logicalY = 0.0f;
+    SDL_RenderWindowToLogical(renderer, mouseX, mouseY, &logicalX, &logicalY);
+    mouseX = static_cast<int>(logicalX);
+    mouseY = static_cast<int>(logicalY);
+    DrawButton({24, 24, 120, 44}, "返回", mouseX < 144 && mouseY < 68);
+    DrawText("设置", 360, 38, {247, 211, 130, 255}, 30);
+
+    const char* labels[] = {"主音量", "音乐", "音效"};
+    const int values[] = {masterVolume, musicVolume, effectsVolume};
+    const int rowY[] = {230, 320, 410};
+    for (int i = 0; i < 3; ++i) {
+        DrawText(labels[i], 160, rowY[i] - 14, {230, 238, 235, 255}, 22);
+        SDL_Rect track = {350, rowY[i], 300, 8};
+        SDL_SetRenderDrawColor(renderer, 53, 70, 72, 255);
+        SDL_RenderFillRect(renderer, &track);
+        SDL_Rect fill = {track.x, track.y, track.w * values[i] / 100, track.h};
+        SDL_SetRenderDrawColor(renderer, i == 1 ? 244 : 119, i == 1 ? 187 : 225, i == 1 ? 76 : 157, 255);
+        SDL_RenderFillRect(renderer, &fill);
+        SDL_Rect knob = {track.x + track.w * values[i] / 100 - 7, rowY[i] - 8, 14, 24};
+        SDL_SetRenderDrawColor(renderer, 230, 238, 235, 255);
+        SDL_RenderFillRect(renderer, &knob);
+        DrawText(std::to_string(values[i]) + "%", 680, rowY[i] - 12, {230, 238, 235, 255}, 20);
+    }
+    DrawText(masterMuted ? "主音量已静音" : "F1：切换主音量静音", 350, 485, {134, 222, 190, 255}, 18);
+}
+
+void Engine::DrawPausePage() {
+    SDL_Rect dim = {0, 0, 800, 600};
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 190);
+    SDL_RenderFillRect(renderer, &dim);
+    SDL_Rect panel = {190, 70, 420, 470};
+    SDL_SetRenderDrawColor(renderer, 45, 62, 65, 255);
+    SDL_RenderFillRect(renderer, &panel);
+    SDL_Rect inset = {194, 74, 412, 462};
+    SDL_SetRenderDrawColor(renderer, 20, 39, 45, 255);
+    SDL_RenderFillRect(renderer, &inset);
+    DrawText("游戏暂停", 333, 94, {247, 211, 130, 255}, 30);
+
+    int mouseX = 0;
+    int mouseY = 0;
+    SDL_GetMouseState(&mouseX, &mouseY);
+    float logicalX = 0.0f;
+    float logicalY = 0.0f;
+    SDL_RenderWindowToLogical(renderer, mouseX, mouseY, &logicalX, &logicalY);
+    mouseX = static_cast<int>(logicalX);
+    mouseY = static_cast<int>(logicalY);
+    const char* labels[] = {"继续游戏", "重新开始", "设置", "退出游戏", "退出桌面"};
+    for (int i = 0; i < 5; ++i) {
+        SDL_Rect button = {250, 155 + i * 64, 300, 48};
+        DrawButton(button, labels[i], mouseX >= button.x && mouseX < button.x + button.w &&
+                   mouseY >= button.y && mouseY < button.y + button.h);
+    }
+}
+
+void Engine::DrawExitConfirmPage() {
+    DrawPausePage();
+    SDL_Rect dim = {0, 0, 800, 600};
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 150);
+    SDL_RenderFillRect(renderer, &dim);
+    SDL_Rect panel = {110, 190, 580, 230};
+    SDL_SetRenderDrawColor(renderer, 45, 62, 65, 255);
+    SDL_RenderFillRect(renderer, &panel);
+    SDL_Rect inset = {114, 194, 572, 222};
+    SDL_SetRenderDrawColor(renderer, 20, 39, 45, 255);
+    SDL_RenderFillRect(renderer, &inset);
+    DrawText("确认退出", 335, 218, {247, 211, 130, 255}, 28);
+    DrawText("本次游戏数据将不会被保存", 248, 270, {230, 238, 235, 255}, 20);
+
+    int mouseX = 0;
+    int mouseY = 0;
+    SDL_GetMouseState(&mouseX, &mouseY);
+    float logicalX = 0.0f;
+    float logicalY = 0.0f;
+    SDL_RenderWindowToLogical(renderer, mouseX, mouseY, &logicalX, &logicalY);
+    mouseX = static_cast<int>(logicalX);
+    mouseY = static_cast<int>(logicalY);
+    SDL_Rect cancel = {145, 330, 245, 58};
+    SDL_Rect abandon = {410, 330, 245, 58};
+    DrawButton(cancel, "算了，那我玩完吧", mouseX >= cancel.x && mouseX < cancel.x + cancel.w &&
+               mouseY >= cancel.y && mouseY < cancel.y + cancel.h);
+    DrawButton(abandon, "老子不玩了", mouseX >= abandon.x && mouseX < abandon.x + abandon.w &&
+               mouseY >= abandon.y && mouseY < abandon.y + abandon.h);
 }
 
 // 碰撞检测
@@ -727,6 +950,8 @@ void Engine::resetCoinPosition() {
 
 // 像素级画面渲染
 void Engine::Render() {
+    hoveredButtonThisFrame.clear();
+
     // 用一种复古的像素风暗青色清空屏幕
     SDL_SetRenderDrawColor(renderer, 20, 30, 40, 255);
     SDL_RenderClear(renderer);
@@ -776,6 +1001,9 @@ void Engine::Render() {
     if (currentState == MAIN_MENU || currentState == MODE_SELECT) DrawMenuPage();
     else if (currentState == HISTORY) DrawHistoryPage();
     else if (currentState == CONTROLS) DrawControlsPage();
+    else if (currentState == SETTINGS) DrawSettingsPage();
+    else if (currentState == PAUSED) DrawPausePage();
+    else if (currentState == EXIT_CONFIRM) DrawExitConfirmPage();
 
     // 游戏中顶部UI
     if (currentState == PLAYING) {
@@ -828,6 +1056,7 @@ void Engine::Render() {
         DrawText(result.str(), 285, 280, {230, 238, 235, 255}, 24);
         DrawText("Enter / 空格：返回模式选择", 248, 350, {134, 222, 190, 255}, 18);
     }
+    hoveredButtonLastFrame = hoveredButtonThisFrame;
     SDL_RenderPresent(renderer);
     SDL_Delay(16);    //控帧，放cpu满载
 }
@@ -849,6 +1078,14 @@ void Engine::Clean() {
         if (pickupSound) {
             Mix_FreeChunk(pickupSound);
             pickupSound = nullptr;
+        }
+        if (buttonHoverSound) {
+            Mix_FreeChunk(buttonHoverSound);
+            buttonHoverSound = nullptr;
+        }
+        if (clickSound) {
+            Mix_FreeChunk(clickSound);
+            clickSound = nullptr;
         }
         Mix_CloseAudio();
         audioInitialized = false;
