@@ -1,5 +1,6 @@
 #pragma once
 #include <SDL2/SDL.h>
+#include <SDL_image.h>
 #include <SDL_ttf.h>
 #include <SDL_mixer.h>
 #include <iostream>
@@ -39,8 +40,13 @@ private:
     bool isRunning;
     SDL_Window* window;
     SDL_Renderer* renderer;
+    SDL_Texture* dungeonFloorTexture = nullptr;
+    SDL_Texture* dungeonWallTexture = nullptr;
+    SDL_Texture* playerTexture = nullptr;
+    SDL_Texture* treasureTexture = nullptr;
     TTF_Font* uiFont = nullptr;
     bool ttfInitialized = false;
+    bool imageInitialized = false;
     bool audioInitialized = false;
     Mix_Chunk* pickupSound = nullptr;
     Mix_Chunk* buttonHoverSound = nullptr;
@@ -132,6 +138,7 @@ private:
     void DrawSettingsPage();
     void DrawPausePage();
     void DrawExitConfirmPage();
+    void DrawDungeonBackground(Uint8 overlayAlpha);
     bool CheckCollision(float px, float py, float pSize, float wx, float wy, float wW, float wH);
     void resetCoinPosition();
     void Update(float dt);

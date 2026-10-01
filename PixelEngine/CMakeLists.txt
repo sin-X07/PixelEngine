@@ -6,7 +6,7 @@ if(MINGW OR MSYS)
   set(CMAKE_RC_COMPILER_WORKS TRUE)
 endif()
 
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.16)
 project(PixelGameEngine LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -162,6 +162,102 @@ add_subdirectory(
     "${CMAKE_BINARY_DIR}/_deps/sdl2_mixer-build"
 )
 
+# ---- SDL2_image: PNG/JPG support with the bundled stb backend ----
+set(PIXELENGINE_SDL2_IMAGE_SOURCE_DIR "" CACHE PATH "Local SDL2_image source directory")
+set(_pixelengine_sdl2_image_version "2.8.2")
+set(_pixelengine_sdl2_image_sha256 "8FD59B2C17772D7AC1192B11C645BE8D7874F595C1714F4B200EE70B7CC38F3E")
+set(_pixelengine_sdl2_image_download_dir "${CMAKE_BINARY_DIR}/_deps")
+set(_pixelengine_sdl2_image_download_source "${_pixelengine_sdl2_image_download_dir}/SDL_image-release-${_pixelengine_sdl2_image_version}")
+set(_pixelengine_sdl2_image_local_fallback "${CMAKE_SOURCE_DIR}/../build/_deps/SDL_image-release-${_pixelengine_sdl2_image_version}")
+set(_pixelengine_sdl2_image_source_dir "")
+
+if(PIXELENGINE_SDL2_IMAGE_SOURCE_DIR AND
+   EXISTS "${PIXELENGINE_SDL2_IMAGE_SOURCE_DIR}/CMakeLists.txt" AND
+   EXISTS "${PIXELENGINE_SDL2_IMAGE_SOURCE_DIR}/include/SDL_image.h")
+    set(_pixelengine_sdl2_image_source_dir "${PIXELENGINE_SDL2_IMAGE_SOURCE_DIR}")
+elseif(PIXELENGINE_SDL2_IMAGE_SOURCE_DIR)
+    message(WARNING "PIXELENGINE_SDL2_IMAGE_SOURCE_DIR is not a valid SDL2_image source directory; trying the online source.")
+endif()
+
+if(NOT _pixelengine_sdl2_image_source_dir AND
+   EXISTS "${_pixelengine_sdl2_image_download_source}/CMakeLists.txt" AND
+   EXISTS "${_pixelengine_sdl2_image_download_source}/include/SDL_image.h")
+    set(_pixelengine_sdl2_image_source_dir "${_pixelengine_sdl2_image_download_source}")
+    message(STATUS "Using cached SDL2_image ${_pixelengine_sdl2_image_version} source.")
+endif()
+
+if(NOT _pixelengine_sdl2_image_source_dir AND
+   EXISTS "${_pixelengine_sdl2_image_local_fallback}/CMakeLists.txt" AND
+   EXISTS "${_pixelengine_sdl2_image_local_fallback}/include/SDL_image.h")
+    set(_pixelengine_sdl2_image_source_dir "${_pixelengine_sdl2_image_local_fallback}")
+    message(STATUS "Using local SDL2_image source: ${_pixelengine_sdl2_image_source_dir}")
+endif()
+
+if(NOT _pixelengine_sdl2_image_source_dir)
+    file(MAKE_DIRECTORY "${_pixelengine_sdl2_image_download_dir}")
+    set(_pixelengine_sdl2_image_archive "${_pixelengine_sdl2_image_download_dir}/SDL2_image-${_pixelengine_sdl2_image_version}.tar.gz")
+    file(DOWNLOAD
+        "https://codeload.github.com/libsdl-org/SDL_image/tar.gz/refs/tags/release-${_pixelengine_sdl2_image_version}"
+        "${_pixelengine_sdl2_image_archive}"
+        EXPECTED_HASH "SHA256=${_pixelengine_sdl2_image_sha256}"
+        TLS_VERIFY ON
+        SHOW_PROGRESS
+        TIMEOUT "${PIXELENGINE_SDL2_MIXER_DOWNLOAD_TIMEOUT}"
+        INACTIVITY_TIMEOUT "${PIXELENGINE_SDL2_MIXER_INACTIVITY_TIMEOUT}"
+        STATUS _pixelengine_sdl2_image_download_status
+    )
+    list(GET _pixelengine_sdl2_image_download_status 0 _pixelengine_sdl2_image_download_code)
+
+    if(_pixelengine_sdl2_image_download_code EQUAL 0)
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}" -E tar xzf "${_pixelengine_sdl2_image_archive}"
+            WORKING_DIRECTORY "${_pixelengine_sdl2_image_download_dir}"
+            RESULT_VARIABLE _pixelengine_sdl2_image_extract_result
+        )
+        if("${_pixelengine_sdl2_image_extract_result}" STREQUAL "0" AND
+           EXISTS "${_pixelengine_sdl2_image_download_source}/CMakeLists.txt" AND
+           EXISTS "${_pixelengine_sdl2_image_download_source}/include/SDL_image.h")
+            set(_pixelengine_sdl2_image_source_dir "${_pixelengine_sdl2_image_download_source}")
+        else()
+            message(WARNING "SDL2_image ${_pixelengine_sdl2_image_version} could not be extracted; checking the local source fallback.")
+        endif()
+    else()
+        list(GET _pixelengine_sdl2_image_download_status 1 _pixelengine_sdl2_image_download_message)
+        message(WARNING "Online SDL2_image download failed (${_pixelengine_sdl2_image_download_message}); checking the local source fallback.")
+    endif()
+endif()
+
+if(NOT _pixelengine_sdl2_image_source_dir AND
+   EXISTS "${_pixelengine_sdl2_image_local_fallback}/CMakeLists.txt" AND
+   EXISTS "${_pixelengine_sdl2_image_local_fallback}/include/SDL_image.h")
+    set(_pixelengine_sdl2_image_source_dir "${_pixelengine_sdl2_image_local_fallback}")
+endif()
+
+if(NOT _pixelengine_sdl2_image_source_dir)
+    message(FATAL_ERROR
+        "SDL2_image could not be downloaded or found locally. Download SDL_image release-${_pixelengine_sdl2_image_version}, extract it, then set PIXELENGINE_SDL2_IMAGE_SOURCE_DIR to its source directory. The default fallback is ${_pixelengine_sdl2_image_local_fallback}."
+    )
+endif()
+
+set(SDL2IMAGE_INSTALL OFF CACHE BOOL "" FORCE)
+set(SDL2IMAGE_SAMPLES OFF CACHE BOOL "" FORCE)
+set(SDL2IMAGE_TESTS OFF CACHE BOOL "" FORCE)
+set(SDL2IMAGE_VENDORED OFF CACHE BOOL "" FORCE)
+set(SDL2IMAGE_DEPS_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL2IMAGE_BACKEND_STB ON CACHE BOOL "" FORCE)
+set(SDL2IMAGE_BMP OFF CACHE BOOL "" FORCE)
+set(SDL2IMAGE_GIF OFF CACHE BOOL "" FORCE)
+set(SDL2IMAGE_JPG ON CACHE BOOL "" FORCE)
+set(SDL2IMAGE_PNG ON CACHE BOOL "" FORCE)
+set(SDL2IMAGE_SVG OFF CACHE BOOL "" FORCE)
+set(SDL2IMAGE_TIF OFF CACHE BOOL "" FORCE)
+set(SDL2IMAGE_WEBP OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF)
+add_subdirectory(
+    "${_pixelengine_sdl2_image_source_dir}"
+    "${CMAKE_BINARY_DIR}/_deps/sdl2_image-build"
+)
+
 # ---- Sources ----
 set(SOURCES 
     main.cpp
@@ -181,6 +277,7 @@ target_link_libraries(EngineApp PRIVATE
     SDL2::SDL2
     SDL2_ttf
     SDL2_mixer::SDL2_mixer-static
+    SDL2_image::SDL2_image-static
 )
 
 add_custom_command(TARGET EngineApp POST_BUILD

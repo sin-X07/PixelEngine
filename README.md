@@ -7,6 +7,7 @@
 - 主菜单、模式选择、历史记录、按键说明和音量设置页面。
 - 限时挑战：在 30 秒内收集金币并累计分数。
 - 迷宫探索：生成随机迷宫，记录通关时间。
+- 地牢主题 PNG 背景、墙面、玩家和宝箱精灵。
 - 游戏中按 `Esc` 暂停，可继续、重新开始、调整音量或确认放弃。
 - F11 全屏切换；历史记录保存在纯文本文件中。
 
@@ -22,7 +23,9 @@
 
 ## 构建与运行
 
-项目使用 CMake、C++17、MinGW-w64、SDL2、SDL2_ttf、FreeType 和 SDL2_mixer。SDL2_mixer 固定为 2.6.3，并静态链接；引擎会尝试打开音频设备，设备不可用时仍可静音运行。背景音乐、按钮悬停/点击音效和拾取音效素材位于 `assets/audio/`。
+项目使用 CMake 3.16+、C++17、MinGW-w64、SDL2、SDL2_ttf、SDL2_image、FreeType 和 SDL2_mixer。SDL2_mixer 固定为 2.6.3；SDL2_image 固定为 2.8.2，静态构建并使用内置 stb 后端解码 PNG/JPG。SDL2_image 源码会在首次配置时下载并校验 SHA-256，也可通过 `PIXELENGINE_SDL2_IMAGE_SOURCE_DIR` 指向本地源码目录。引擎会尝试打开音频设备，设备不可用时仍可静音运行。背景音乐、按钮悬停/点击音效和拾取音效素材位于 `assets/audio/`。
+
+地牢图片取自 Kenney 的 [Tiny Dungeon](https://kenney.nl/assets/tiny-dungeon) 资源包，页面标注 Creative Commons CC0；本项目使用其中的砂地、石砖墙、玩家和宝箱精灵，许可文本随素材保存在 `assets/images/dungeon/License.txt`。
 
 当前 Windows 开发环境的源码路径和工具链路径配置在 `PixelEngine/CMakeLists.txt` 与 `.vscode/tasks.json` 中，并非跨机器通用配置。该配置预期 SDL2 源码位于仓库的 `build/_deps/sdl2-src`，FreeType 和 SDL2_ttf 源码位于 `D:/PixelEngineBuild-ttf/_deps/`。SDL2_mixer 首次配置时从 GitHub 获取固定版本，验证 SHA-256 后解压到构建目录的 `_deps`；默认总超时为 300 秒、无数据活动超时为 60 秒。后续配置会复用已下载源码。
 

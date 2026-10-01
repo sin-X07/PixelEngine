@@ -240,6 +240,7 @@ bool Engine::Initialize(const char* title, int width, int height) {
     }
 
     // 创建硬件加速的渲染器
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     if (!renderer) {
         std::cerr << "渲染器创建失败: " << SDL_GetError() << std::endl;
@@ -248,6 +249,25 @@ bool Engine::Initialize(const char* title, int width, int height) {
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_RenderSetLogicalSize(renderer, width, height);
+
+    const int imageInitFlags = IMG_Init(IMG_INIT_PNG);
+    imageInitialized = (imageInitFlags & IMG_INIT_PNG) != 0;
+    if (!imageInitialized) {
+        std::cerr << "SDL2_image PNG 初始化失败: " << IMG_GetError() << std::endl;
+    } else {
+        auto loadTexture = [this](const std::string& filename) {
+            const std::string path = ResolveProjectFile("../assets/images/dungeon/" + filename);
+            SDL_Texture* texture = IMG_LoadTexture(renderer, path.c_str());
+            if (!texture) {
+                std::cerr << "图片加载失败 " << filename << ": " << IMG_GetError() << std::endl;
+            }
+            return texture;
+        };
+        dungeonFloorTexture = loadTexture("floor.png");
+        dungeonWallTexture = loadTexture("wall.png");
+        playerTexture = loadTexture("player.png");
+        treasureTexture = loadTexture("treasure.png");
+    }
 
     if (TTF_Init() < 0) {
         std::cerr << "SDL_ttf 初始化失败: " << TTF_GetError() << std::endl;
@@ -572,9 +592,7 @@ void Engine::DrawButton(const SDL_Rect& rect, const std::string& label, bool hov
 }
 
 void Engine::DrawMenuPage() {
-    SDL_Rect background = {0, 0, 800, 600};
-    SDL_SetRenderDrawColor(renderer, 18, 36, 43, 255);
-    SDL_RenderFillRect(renderer, &background);
+    DrawDungeonBackground(145);
     SDL_SetRenderDrawColor(renderer, 231, 176, 70, 255);
     SDL_RenderDrawLine(renderer, 0, 104, 800, 104);
     TTF_SetFontSize(uiFont, 34);
@@ -807,6 +825,31 @@ void Engine::DrawExitConfirmPage() {
                mouseY >= abandon.y && mouseY < abandon.y + abandon.h);
 }
 
+void Engine::DrawDungeonBackground(Uint8 overlayAlpha) {
+    SDL_Rect background = {0, 0, 800, 600};
+    SDL_SetRenderDrawColor(renderer, 18, 36, 43, 255);
+    SDL_RenderFillRect(renderer, &background);
+
+    if (dungeonFloorTexture) {
+        for (int tileY = 0; tileY < background.h; tileY += TILE_SIZE) {
+            for (int tileX = 0; tileX < background.w; tileX += TILE_SIZE) {
+                SDL_Rect tile = {
+                    tileX,
+                    tileY,
+                    std::min(TILE_SIZE, background.w - tileX),
+                    std::min(TILE_SIZE, background.h - tileY)
+                };
+                SDL_RenderCopy(renderer, dungeonFloorTexture, nullptr, &tile);
+            }
+        }
+    }
+
+    if (overlayAlpha > 0) {
+        SDL_SetRenderDrawColor(renderer, 12, 23, 31, overlayAlpha);
+        SDL_RenderFillRect(renderer, &background);
+    }
+}
+
 // 碰撞检测
 bool Engine::CheckCollision(float px, float py, float pSize, float wx, float wy, float wW, float wH) {
     if (px + pSize <= wx) return false; //墙左
@@ -956,29 +999,52 @@ void Engine::Render() {
     SDL_SetRenderDrawColor(renderer, 20, 30, 40, 255);
     SDL_RenderClear(renderer);
 
+    if (currentState == PLAYING || currentState == PAUSED ||
+        currentState == EXIT_CONFIRM || currentState == GAMEOVER) {
+        DrawDungeonBackground(0);
+    }
+
     // 红色小方块
     SDL_Rect pRect;
     pRect.x = static_cast<int>(playerX);
     pRect.y = static_cast<int>(playerY);
     pRect.w = static_cast<int>(playerSize);
     pRect.h = static_cast<int>(playerSize);
-    SDL_SetRenderDrawColor(renderer, 255, 60, 60, 255);
-    SDL_RenderFillRect(renderer, &pRect);
+    if (playerTexture) {
+        SDL_Rect playerSprite = {pRect.x + 2, pRect.y + 2, pRect.w - 4, pRect.h - 4};
+        SDL_RenderCopy(renderer, playerTexture, nullptr, &playerSprite);
+    } else {
+        SDL_SetRenderDrawColor(renderer, 255, 60, 60, 255);
+        SDL_RenderFillRect(renderer, &pRect);
+    }
 
     // 所有绿色墙壁
-    SDL_SetRenderDrawColor(renderer, 60, 255, 60, 255);
     for (const auto& wall : walls) {
-        SDL_RenderFillRect(renderer, &wall);
+        if (dungeonWallTexture) {
+            SDL_RenderCopy(renderer, dungeonWallTexture, nullptr, &wall);
+        } else {
+            SDL_SetRenderDrawColor(renderer, 60, 255, 60, 255);
+            SDL_RenderFillRect(renderer, &wall);
+        }
     }
 
     // 金币
     if (isCoinActive && currentState == PLAYING) {
-        SDL_SetRenderDrawColor(renderer, 255, 215, 0, 255);
-        int radius = static_cast<int>(coinSize / 2);
-        int cx = static_cast<int>(coinX) + radius;
-        int cy = static_cast<int>(coinY) + radius;
-
-        DrawFilledCircle(renderer, cx, cy, radius);
+        if (treasureTexture) {
+            SDL_Rect treasure = {
+                static_cast<int>(coinX) - 2,
+                static_cast<int>(coinY) - 2,
+                static_cast<int>(coinSize) + 4,
+                static_cast<int>(coinSize) + 4
+            };
+            SDL_RenderCopy(renderer, treasureTexture, nullptr, &treasure);
+        } else {
+            SDL_SetRenderDrawColor(renderer, 255, 215, 0, 255);
+            int radius = static_cast<int>(coinSize / 2);
+            int cx = static_cast<int>(coinX) + radius;
+            int cy = static_cast<int>(coinY) + radius;
+            DrawFilledCircle(renderer, cx, cy, radius);
+        }
     }
 
     // 粒子特效
@@ -1089,6 +1155,15 @@ void Engine::Clean() {
         }
         Mix_CloseAudio();
         audioInitialized = false;
+    }
+
+    if (dungeonFloorTexture) SDL_DestroyTexture(dungeonFloorTexture);
+    if (dungeonWallTexture) SDL_DestroyTexture(dungeonWallTexture);
+    if (playerTexture) SDL_DestroyTexture(playerTexture);
+    if (treasureTexture) SDL_DestroyTexture(treasureTexture);
+    if (imageInitialized) {
+        IMG_Quit();
+        imageInitialized = false;
     }
 
     if (uiFont) {
