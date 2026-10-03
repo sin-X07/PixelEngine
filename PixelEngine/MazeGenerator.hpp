@@ -13,8 +13,8 @@ private:
 
 public:
     static void GenerateRandomMazeFile(const std::string& filename, std::mt19937& gen) {
-        const int ROWS = 15;
-        const int COLS = 20;
+        const int ROWS = 29;
+        const int COLS = 39;
 
         std::vector<std::vector<char>> grid(ROWS, std::vector<char>(COLS, '#'));
         std::vector<std::vector<bool>> visited(ROWS, std::vector<bool>(COLS, false));

@@ -1,3 +1,5 @@
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include "Engine.hpp"
 #include "MazeGenerator.hpp"
 #include <cmath>
@@ -6,6 +8,10 @@
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
+#ifdef _WIN32
+#include <windows.h>
+#undef DrawText
+#endif
 
 namespace {
 std::string ResolveProjectFile(const std::string& filename) {
@@ -33,33 +39,53 @@ bool Engine::LoadLevelFromFile(const std::string& filename) {
         return false;
     }
 
-    walls.clear();
+    std::vector<std::string> mapRows;
     std::string line;
-    int row = 0;
     while (std::getline(mapFile, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
-        for (size_t col = 0; col < line.length(); col++) {
-            char tileType = line[col];
+        if (!mapRows.empty() && line.size() != mapRows.front().size()) {
+            std::cerr << "关卡地图各行宽度不一致: " << filename << std::endl;
+            return false;
+        }
+        mapRows.push_back(line);
+    }
 
-            int pixelX = static_cast<int>(col) * TILE_SIZE;
-            int pixelY = static_cast<int>(row) * TILE_SIZE;
+    if (mapRows.empty()) {
+        std::cerr << "关卡地图为空: " << filename << std::endl;
+        return false;
+    }
+
+    walls.clear();
+    coins.clear();
+    levelGrid = mapRows;
+    mapHeightTiles = static_cast<int>(mapRows.size());
+    mapWidthTiles = static_cast<int>(mapRows.front().size());
+
+    for (int row = 0; row < mapHeightTiles; ++row) {
+        for (int col = 0; col < mapWidthTiles; ++col) {
+            const char tileType = mapRows[row][col];
+            const int pixelX = col * TILE_SIZE;
+            const int pixelY = row * TILE_SIZE;
 
             if (tileType == '#') {
                 walls.push_back({pixelX, pixelY, TILE_SIZE, TILE_SIZE});
             } else if (tileType == 'P') {
-                playerX = static_cast<float>(pixelX);
-                playerY = static_cast<float>(pixelY);
+                playerX = static_cast<float>(pixelX) + (TILE_SIZE - playerSize) * 0.5f;
+                playerY = static_cast<float>(pixelY) + (TILE_SIZE - playerSize) * 0.5f;
             } else if (tileType == 'C') {
-                coinX = static_cast<float>(pixelX + 12);
-                coinY = static_cast<float>(pixelY + 12);
-                isCoinActive = true;
+                coins.push_back({
+                    static_cast<float>(pixelX) + (TILE_SIZE - coinSize) * 0.5f,
+                    static_cast<float>(pixelY) + (TILE_SIZE - coinSize) * 0.5f
+                });
             }
         }
-        row++;
     }
 
     mapFile.close();
-    std::cout << "成功解析外部关卡 [" << filename << "]! 共构建了" << walls.size() << " 面墙壁" << std::endl;
+    std::cout << "成功解析外部关卡 [" << filename << "]! " << mapWidthTiles << "x"
+              << mapHeightTiles << " 格，共构建了" << walls.size() << " 面墙壁和 "
+              << coins.size() << " 枚宝藏" << std::endl;
     return true;
 }
 
@@ -249,6 +275,21 @@ bool Engine::Initialize(const char* title, int width, int height) {
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_RenderSetLogicalSize(renderer, width, height);
+    visionTexture = SDL_CreateTexture(
+        renderer,
+        SDL_PIXELFORMAT_RGBA32,
+        SDL_TEXTUREACCESS_STREAMING,
+        width / VISION_MASK_SCALE,
+        height / VISION_MASK_SCALE
+    );
+    if (visionTexture) {
+        SDL_SetTextureBlendMode(visionTexture, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(visionTexture, SDL_ScaleModeLinear);
+        visionPixels.resize(static_cast<size_t>(width / VISION_MASK_SCALE) *
+                            (height / VISION_MASK_SCALE) * 4);
+    } else {
+        std::cerr << "视野遮罩纹理创建失败: " << SDL_GetError() << std::endl;
+    }
 
     const int imageInitFlags = IMG_Init(IMG_INIT_PNG);
     imageInitialized = (imageInitFlags & IMG_INIT_PNG) != 0;
@@ -424,20 +465,34 @@ void Engine::HandleInput() {
                     }
                     break;
 
-                case SDLK_w: case SDLK_UP:    if (currentState == PLAYING) upPressed = true; break;
-                case SDLK_s: case SDLK_DOWN:  if (currentState == PLAYING) downPressed = true; break;
-                case SDLK_a: case SDLK_LEFT:  if (currentState == PLAYING) leftPressed = true; break;
-                case SDLK_d: case SDLK_RIGHT: if (currentState == PLAYING) rightPressed = true; break;
+                case SDLK_UP:    if (currentState == PLAYING) upPressed = true; break;
+                case SDLK_DOWN:  if (currentState == PLAYING) downPressed = true; break;
+                case SDLK_LEFT:  if (currentState == PLAYING) leftPressed = true; break;
+                case SDLK_RIGHT: if (currentState == PLAYING) rightPressed = true; break;
+            }
+
+            switch (event.key.keysym.scancode) {
+                case SDL_SCANCODE_W: if (currentState == PLAYING) upPressed = true; break;
+                case SDL_SCANCODE_S: if (currentState == PLAYING) downPressed = true; break;
+                case SDL_SCANCODE_A: if (currentState == PLAYING) leftPressed = true; break;
+                case SDL_SCANCODE_D: if (currentState == PLAYING) rightPressed = true; break;
             }
         }
 
         //键盘松开
         if (event.type == SDL_KEYUP) {
             switch (event.key.keysym.sym) {
-                case SDLK_w: case SDLK_UP:    upPressed = false; break;
-                case SDLK_s: case SDLK_DOWN:  downPressed = false; break;
-                case SDLK_a: case SDLK_LEFT:  leftPressed = false; break;
-                case SDLK_d: case SDLK_RIGHT: rightPressed = false; break;
+                case SDLK_UP:    upPressed = false; break;
+                case SDLK_DOWN:  downPressed = false; break;
+                case SDLK_LEFT:  leftPressed = false; break;
+                case SDLK_RIGHT: rightPressed = false; break;
+            }
+
+            switch (event.key.keysym.scancode) {
+                case SDL_SCANCODE_W: upPressed = false; break;
+                case SDL_SCANCODE_S: downPressed = false; break;
+                case SDL_SCANCODE_A: leftPressed = false; break;
+                case SDL_SCANCODE_D: rightPressed = false; break;
             }
         }
     }
@@ -445,7 +500,6 @@ void Engine::HandleInput() {
 
 void Engine::StartGame(GameMode mode) {
     currentMode = mode;
-    isCoinActive = true;
     score = 0;
     vx = 0.0f;
     vy = 0.0f;
@@ -455,10 +509,12 @@ void Engine::StartGame(GameMode mode) {
     if (mode == TIME_ATTACK) {
         gameTimer = 30.0f;
         if (!LoadLevelFromFile("../assets/maps/map1.txt")) return;
-        walls.push_back({0, -5, 800, 5});
-        walls.push_back({-5, 0, 5, 600});
-        walls.push_back({800, -5, 5, 600});
-        walls.push_back({0, 600, 800, 5});
+        if (coins.size() > 3) coins.resize(3);
+        while (coins.size() < 3) {
+            const size_t previousCount = coins.size();
+            resetCoinPosition();
+            if (coins.size() == previousCount) break;
+        }
         std::cout << "模式 1: 限时挑战开始! 30秒倒计时启动! 去获得更多金币吧!" << std::endl;
     } else {
         gameTimer = 0.0f;
@@ -468,7 +524,46 @@ void Engine::StartGame(GameMode mode) {
         std::cout << "模式 2: 纯享迷宫模式开始! 探索吧!" << std::endl;
     }
 
+    SwitchToEnglishKeyboardLayout();
     currentState = PLAYING;
+}
+
+void Engine::SwitchToEnglishKeyboardLayout() {
+#ifdef _WIN32
+    if (englishKeyboardLayoutActivated) return;
+
+    if (!keyboardLayoutCaptured) {
+        const HKL currentLayout = GetKeyboardLayout(0);
+        if (!currentLayout) {
+            std::cerr << "无法读取当前键盘布局，继续使用现有输入布局。" << std::endl;
+            return;
+        }
+        originalKeyboardLayout = reinterpret_cast<std::uintptr_t>(currentLayout);
+        keyboardLayoutCaptured = true;
+    }
+
+    if (!LoadKeyboardLayoutW(L"00000409", KLF_ACTIVATE)) {
+        std::cerr << "无法激活英文（美国）键盘布局，继续使用现有输入布局。错误码: "
+                  << GetLastError() << std::endl;
+        return;
+    }
+
+    englishKeyboardLayoutActivated = true;
+#endif
+}
+
+void Engine::RestoreOriginalKeyboardLayout() {
+#ifdef _WIN32
+    if (!keyboardLayoutCaptured || !englishKeyboardLayoutActivated) return;
+
+    const HKL originalLayout = reinterpret_cast<HKL>(originalKeyboardLayout);
+    if (!ActivateKeyboardLayout(originalLayout, 0)) {
+        std::cerr << "无法恢复原键盘布局。错误码: " << GetLastError() << std::endl;
+        return;
+    }
+
+    englishKeyboardLayoutActivated = false;
+#endif
 }
 
 void Engine::HandleMenuClick(int mouseX, int mouseY) {
@@ -831,13 +926,16 @@ void Engine::DrawDungeonBackground(Uint8 overlayAlpha) {
     SDL_RenderFillRect(renderer, &background);
 
     if (dungeonFloorTexture) {
-        for (int tileY = 0; tileY < background.h; tileY += TILE_SIZE) {
-            for (int tileX = 0; tileX < background.w; tileX += TILE_SIZE) {
+        const float screenTileSize = TILE_SIZE * CAMERA_ZOOM;
+        const float startX = -std::fmod(cameraX, static_cast<float>(TILE_SIZE)) * CAMERA_ZOOM;
+        const float startY = -std::fmod(cameraY, static_cast<float>(TILE_SIZE)) * CAMERA_ZOOM;
+        for (float tileY = startY; tileY < background.h; tileY += screenTileSize) {
+            for (float tileX = startX; tileX < background.w; tileX += screenTileSize) {
                 SDL_Rect tile = {
-                    tileX,
-                    tileY,
-                    std::min(TILE_SIZE, background.w - tileX),
-                    std::min(TILE_SIZE, background.h - tileY)
+                    static_cast<int>(std::lround(tileX)),
+                    static_cast<int>(std::lround(tileY)),
+                    static_cast<int>(std::lround(screenTileSize)),
+                    static_cast<int>(std::lround(screenTileSize))
                 };
                 SDL_RenderCopy(renderer, dungeonFloorTexture, nullptr, &tile);
             }
@@ -942,9 +1040,10 @@ void Engine::Update(float dt) {
         }
     }
 
-    //吃金币
-    if (isCoinActive) {
-        if (CheckCollision(playerX, playerY, playerSize, coinX, coinY, coinSize, coinSize)) {
+    // 收集宝藏
+    for (size_t coinIndex = 0; coinIndex < coins.size(); ++coinIndex) {
+        const SDL_FPoint coin = coins[coinIndex];
+        if (CheckCollision(playerX, playerY, playerSize, coin.x, coin.y, coinSize, coinSize)) {
             score++;
 
             if (audioInitialized && pickupSound) {
@@ -953,13 +1052,14 @@ void Engine::Update(float dt) {
                 }
             }
 
-            EmitExplosion(coinX + coinSize / 2.0f, coinY + coinSize / 2.0f, 30);
+            EmitExplosion(coin.x + coinSize / 2.0f, coin.y + coinSize / 2.0f, 30);
 
             if (currentMode == TIME_ATTACK) {
                 std::cout << "💰 叮！吃到金币！当前得分: " << score << " 分！" << std::endl;
+                coins.erase(coins.begin() + static_cast<std::ptrdiff_t>(coinIndex));
                 resetCoinPosition();
             } else if (currentMode == MAZE_MODE) {
-                isCoinActive = false;
+                coins.clear();
                 currentState = GAMEOVER;
 
                 gameOverStartTime = SDL_GetTicks();
@@ -970,30 +1070,159 @@ void Engine::Update(float dt) {
                 std::cout << "成功通关! 耗时: " << gameTimer << " 秒!" << std::endl;
                 return;
             }
+            break;
         }
     }
 }
 
 // 随机生成金币
 void Engine::resetCoinPosition() {
-    bool isCollidingWithAnyWall = true;
-    while (isCollidingWithAnyWall) {
-        coinX = static_cast<float>(50 + rand() % 700);
-        coinY = static_cast<float>(50 + rand() % 500);
-        isCollidingWithAnyWall = false;
+    std::vector<SDL_FPoint> candidates;
+    for (int row = 1; row < mapHeightTiles - 1; ++row) {
+        for (int col = 1; col < mapWidthTiles - 1; ++col) {
+            if (levelGrid[row][col] == '#') continue;
 
-        for (const auto& wall : walls) {
-            if (CheckCollision(coinX, coinY, coinSize, wall.x, wall.y, wall.w, wall.h)) {
-                isCollidingWithAnyWall = true;
-                break;
+            const float x = col * TILE_SIZE + (TILE_SIZE - coinSize) * 0.5f;
+            const float y = row * TILE_SIZE + (TILE_SIZE - coinSize) * 0.5f;
+            const float playerCenterX = playerX + playerSize * 0.5f;
+            const float playerCenterY = playerY + playerSize * 0.5f;
+            const float coinCenterX = x + coinSize * 0.5f;
+            const float coinCenterY = y + coinSize * 0.5f;
+            const float dx = coinCenterX - playerCenterX;
+            const float dy = coinCenterY - playerCenterY;
+            if (dx * dx + dy * dy < 100.0f * 100.0f) continue;
+
+            bool overlapsCoin = false;
+            for (const SDL_FPoint& existing : coins) {
+                const float coinDx = coinCenterX - (existing.x + coinSize * 0.5f);
+                const float coinDy = coinCenterY - (existing.y + coinSize * 0.5f);
+                if (coinDx * coinDx + coinDy * coinDy < TILE_SIZE * TILE_SIZE) {
+                    overlapsCoin = true;
+                    break;
+                }
             }
+            if (!overlapsCoin) candidates.push_back({x, y});
         }
     }
+
+    if (candidates.empty()) return;
+    std::uniform_int_distribution<size_t> chooseCandidate(0, candidates.size() - 1);
+    coins.push_back(candidates[chooseCandidate(gen)]);
+}
+
+void Engine::UpdateCamera() {
+    const bool gameplayVisible = currentState == PLAYING || currentState == PAUSED ||
+        currentState == EXIT_CONFIRM || currentState == GAMEOVER;
+    if (!gameplayVisible) {
+        cameraX = 0;
+        cameraY = 0;
+        return;
+    }
+
+    const float viewportWorldWidth = 800.0f / CAMERA_ZOOM;
+    const float viewportWorldHeight = 600.0f / CAMERA_ZOOM;
+    const float maxCameraX = std::max(0.0f, mapWidthTiles * TILE_SIZE - viewportWorldWidth);
+    const float maxCameraY = std::max(0.0f, mapHeightTiles * TILE_SIZE - viewportWorldHeight);
+    cameraX = std::clamp(
+        playerX + playerSize * 0.5f - viewportWorldWidth * 0.5f,
+        0.0f,
+        maxCameraX
+    );
+    cameraY = std::clamp(
+        playerY + playerSize * 0.5f - viewportWorldHeight * 0.5f,
+        0.0f,
+        maxCameraY
+    );
+}
+
+bool Engine::HasLineOfSight(float worldX, float worldY) const {
+    if (levelGrid.empty()) return false;
+
+    int x = static_cast<int>((playerX + playerSize * 0.5f) / TILE_SIZE);
+    int y = static_cast<int>((playerY + playerSize * 0.5f) / TILE_SIZE);
+    const int targetX = static_cast<int>(worldX / TILE_SIZE);
+    const int targetY = static_cast<int>(worldY / TILE_SIZE);
+    if (targetX < 0 || targetY < 0 || targetX >= mapWidthTiles || targetY >= mapHeightTiles) {
+        return false;
+    }
+
+    const int deltaX = std::abs(targetX - x);
+    const int stepX = x < targetX ? 1 : -1;
+    const int deltaY = -std::abs(targetY - y);
+    const int stepY = y < targetY ? 1 : -1;
+    int error = deltaX + deltaY;
+    auto blocked = [this](int column, int row) {
+        return row < 0 || column < 0 || row >= mapHeightTiles || column >= mapWidthTiles ||
+               levelGrid[row][column] == '#';
+    };
+
+    while (x != targetX || y != targetY) {
+        const int doubledError = error * 2;
+        const bool stepAlongX = doubledError >= deltaY;
+        const bool stepAlongY = doubledError <= deltaX;
+        const int previousX = x;
+        const int previousY = y;
+        if (stepAlongX) {
+            error += deltaY;
+            x += stepX;
+        }
+        if (stepAlongY) {
+            error += deltaX;
+            y += stepY;
+        }
+
+        if (stepAlongX && stepAlongY &&
+            (blocked(x, previousY) || blocked(previousX, y))) return false;
+        if ((x != targetX || y != targetY) && blocked(x, y)) return false;
+    }
+    return true;
+}
+
+void Engine::DrawVisionFog() {
+    if (!visionTexture || visionPixels.empty()) return;
+
+    const int maskWidth = 800 / VISION_MASK_SCALE;
+    const int maskHeight = 600 / VISION_MASK_SCALE;
+    const float playerCenterX = playerX + playerSize * 0.5f;
+    const float playerCenterY = playerY + playerSize * 0.5f;
+    const float fullyLitRadius = VISION_RADIUS - VISION_SOFT_EDGE;
+
+    for (int y = 0; y < maskHeight; ++y) {
+        for (int x = 0; x < maskWidth; ++x) {
+            const float worldX = cameraX + (x + 0.5f) * VISION_MASK_SCALE / CAMERA_ZOOM;
+            const float worldY = cameraY + (y + 0.5f) * VISION_MASK_SCALE / CAMERA_ZOOM;
+            const float deltaX = worldX - playerCenterX;
+            const float deltaY = worldY - playerCenterY;
+            const float distance = std::sqrt(deltaX * deltaX + deltaY * deltaY);
+            Uint8 alpha = 255;
+
+            if (distance < VISION_RADIUS && HasLineOfSight(worldX, worldY)) {
+                if (distance <= fullyLitRadius) {
+                    alpha = 0;
+                } else {
+                    float blend = (distance - fullyLitRadius) / VISION_SOFT_EDGE;
+                    blend = blend * blend * (3.0f - 2.0f * blend);
+                    alpha = static_cast<Uint8>(blend * 255.0f);
+                }
+            }
+
+            const size_t pixelIndex = (static_cast<size_t>(y) * maskWidth + x) * 4;
+            visionPixels[pixelIndex] = 0;
+            visionPixels[pixelIndex + 1] = 0;
+            visionPixels[pixelIndex + 2] = 0;
+            visionPixels[pixelIndex + 3] = alpha;
+        }
+    }
+
+    SDL_UpdateTexture(visionTexture, nullptr, visionPixels.data(), maskWidth * 4);
+    SDL_Rect viewport = {0, 0, 800, 600};
+    SDL_RenderCopy(renderer, visionTexture, nullptr, &viewport);
 }
 
 // 像素级画面渲染
 void Engine::Render() {
     hoveredButtonThisFrame.clear();
+    UpdateCamera();
 
     // 用一种复古的像素风暗青色清空屏幕
     SDL_SetRenderDrawColor(renderer, 20, 30, 40, 255);
@@ -1006,12 +1235,18 @@ void Engine::Render() {
 
     // 红色小方块
     SDL_Rect pRect;
-    pRect.x = static_cast<int>(playerX);
-    pRect.y = static_cast<int>(playerY);
-    pRect.w = static_cast<int>(playerSize);
-    pRect.h = static_cast<int>(playerSize);
+    pRect.x = static_cast<int>(std::lround((playerX - cameraX) * CAMERA_ZOOM));
+    pRect.y = static_cast<int>(std::lround((playerY - cameraY) * CAMERA_ZOOM));
+    pRect.w = static_cast<int>(std::lround(playerSize * CAMERA_ZOOM));
+    pRect.h = static_cast<int>(std::lround(playerSize * CAMERA_ZOOM));
     if (playerTexture) {
-        SDL_Rect playerSprite = {pRect.x + 2, pRect.y + 2, pRect.w - 4, pRect.h - 4};
+        const int spriteInset = static_cast<int>(std::lround(2.0f * CAMERA_ZOOM));
+        SDL_Rect playerSprite = {
+            pRect.x + spriteInset,
+            pRect.y + spriteInset,
+            pRect.w - spriteInset * 2,
+            pRect.h - spriteInset * 2
+        };
         SDL_RenderCopy(renderer, playerTexture, nullptr, &playerSprite);
     } else {
         SDL_SetRenderDrawColor(renderer, 255, 60, 60, 255);
@@ -1020,30 +1255,40 @@ void Engine::Render() {
 
     // 所有绿色墙壁
     for (const auto& wall : walls) {
+        SDL_Rect screenWall = {
+            static_cast<int>(std::lround((wall.x - cameraX) * CAMERA_ZOOM)),
+            static_cast<int>(std::lround((wall.y - cameraY) * CAMERA_ZOOM)),
+            static_cast<int>(std::lround(wall.w * CAMERA_ZOOM)),
+            static_cast<int>(std::lround(wall.h * CAMERA_ZOOM))
+        };
         if (dungeonWallTexture) {
-            SDL_RenderCopy(renderer, dungeonWallTexture, nullptr, &wall);
+            SDL_RenderCopy(renderer, dungeonWallTexture, nullptr, &screenWall);
         } else {
             SDL_SetRenderDrawColor(renderer, 60, 255, 60, 255);
-            SDL_RenderFillRect(renderer, &wall);
+            SDL_RenderFillRect(renderer, &screenWall);
         }
     }
 
-    // 金币
-    if (isCoinActive && currentState == PLAYING) {
-        if (treasureTexture) {
-            SDL_Rect treasure = {
-                static_cast<int>(coinX) - 2,
-                static_cast<int>(coinY) - 2,
-                static_cast<int>(coinSize) + 4,
-                static_cast<int>(coinSize) + 4
-            };
-            SDL_RenderCopy(renderer, treasureTexture, nullptr, &treasure);
-        } else {
-            SDL_SetRenderDrawColor(renderer, 255, 215, 0, 255);
-            int radius = static_cast<int>(coinSize / 2);
-            int cx = static_cast<int>(coinX) + radius;
-            int cy = static_cast<int>(coinY) + radius;
-            DrawFilledCircle(renderer, cx, cy, radius);
+    // 宝藏
+    if (currentState == PLAYING) {
+        for (const SDL_FPoint& coin : coins) {
+            if (treasureTexture) {
+                SDL_Rect treasure = {
+                    static_cast<int>(std::lround((coin.x - 2.0f - cameraX) * CAMERA_ZOOM)),
+                    static_cast<int>(std::lround((coin.y - 2.0f - cameraY) * CAMERA_ZOOM)),
+                    static_cast<int>(std::lround((coinSize + 4.0f) * CAMERA_ZOOM)),
+                    static_cast<int>(std::lround((coinSize + 4.0f) * CAMERA_ZOOM))
+                };
+                SDL_RenderCopy(renderer, treasureTexture, nullptr, &treasure);
+            } else {
+                SDL_SetRenderDrawColor(renderer, 255, 215, 0, 255);
+                int radius = static_cast<int>(std::lround(coinSize * CAMERA_ZOOM * 0.5f));
+                int cx = static_cast<int>(std::lround(
+                    (coin.x + coinSize * 0.5f - cameraX) * CAMERA_ZOOM));
+                int cy = static_cast<int>(std::lround(
+                    (coin.y + coinSize * 0.5f - cameraY) * CAMERA_ZOOM));
+                DrawFilledCircle(renderer, cx, cy, radius);
+            }
         }
     }
 
@@ -1059,9 +1304,20 @@ void Engine::Render() {
             int blue = static_cast<int>(30 * lifeRatio);
 
             SDL_SetRenderDrawColor(renderer, red, green, blue, alpha);
-            SDL_Rect pRect = {static_cast<int>(p.x), static_cast<int>(p.y), 2, 2};
+            SDL_Rect pRect = {
+                static_cast<int>(std::lround((p.x - cameraX) * CAMERA_ZOOM)),
+                static_cast<int>(std::lround((p.y - cameraY) * CAMERA_ZOOM)),
+                static_cast<int>(std::lround(2.0f * CAMERA_ZOOM)),
+                static_cast<int>(std::lround(2.0f * CAMERA_ZOOM))
+            };
             SDL_RenderFillRect(renderer, &pRect);
         }
+    }
+
+    if (currentMode == TIME_ATTACK &&
+        (currentState == PLAYING || currentState == PAUSED ||
+         currentState == EXIT_CONFIRM || currentState == GAMEOVER)) {
+        DrawVisionFog();
     }
 
     if (currentState == MAIN_MENU || currentState == MODE_SELECT) DrawMenuPage();
@@ -1129,6 +1385,8 @@ void Engine::Render() {
 
 // 释放内存，安全退出
 void Engine::Clean() {
+    RestoreOriginalKeyboardLayout();
+
     if (historyLoaded) {
         SaveScoreHistoryToFile();
         SaveTimeHistoryToFile();
@@ -1173,6 +1431,10 @@ void Engine::Clean() {
     if (ttfInitialized) {
         TTF_Quit();
         ttfInitialized = false;
+    }
+    if (visionTexture) {
+        SDL_DestroyTexture(visionTexture);
+        visionTexture = nullptr;
     }
     if (renderer) SDL_DestroyRenderer(renderer);
     if (window) SDL_DestroyWindow(window);

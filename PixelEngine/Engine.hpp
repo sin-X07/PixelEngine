@@ -10,6 +10,7 @@
 #include <random>
 #include <stack>
 #include <string>
+#include <cstdint>
 #include "MazeGenerator.hpp"
 
 // 粒子属性
@@ -61,14 +62,27 @@ private:
     int draggingVolumeSlider = -1;
     GameState settingsReturnState = MAIN_MENU;
     bool exitToDesktop = false;
+    std::uintptr_t originalKeyboardLayout = 0;
+    bool keyboardLayoutCaptured = false;
+    bool englishKeyboardLayoutActivated = false;
 
     uint32_t gameOverStartTime = 0;
 
     // 经典固定时间步长（Fixed Timestep）的时钟参数
     const float MS_PER_UPDATE = 16.6666f; // 固定逻辑更新间隔（约 60 FPS，单位毫秒）
 
-    // 关卡网格化常量
-    const int TILE_SIZE = 40;
+    const int TILE_SIZE = 20;
+    static constexpr float CAMERA_ZOOM = 2.0f;
+    static constexpr int VISION_MASK_SCALE = 4;
+    static constexpr float VISION_RADIUS = 120.0f;
+    static constexpr float VISION_SOFT_EDGE = 20.0f;
+    int mapWidthTiles = 40;
+    int mapHeightTiles = 30;
+    std::vector<std::string> levelGrid;
+    float cameraX = 0.0f;
+    float cameraY = 0.0f;
+    SDL_Texture* visionTexture = nullptr;
+    std::vector<Uint8> visionPixels;
 
     GameState currentState = MAIN_MENU;
 
@@ -88,18 +102,16 @@ private:
     //玩家方块属性
     float playerX = 50.0f;
     float playerY = 50.0f;
-    float playerSize = 36.0f;
+    float playerSize = 12.0f;
     float vx = 0.0f;
     float vy = 0.0f;
-    const float ACCEL = 1500.0f;
-    const float FRICTION = 8.0f;
-    const float MAX_SPEED = 400.0f;
+    const float ACCEL = 500.0f;
+    const float FRICTION = 6.0f;
+    const float MAX_SPEED = 140.0f;
 
     //金币属性
-    float coinX = 600.0f;
-    float coinY = 150.0f;
-    float coinSize = 20.0f;
-    bool isCoinActive = true;
+    float coinSize = 8.0f;
+    std::vector<SDL_FPoint> coins;
 
     // 粒子静态对象池
     std::vector<Particle> particlePool;
@@ -129,6 +141,8 @@ private:
     void UpdateVolumeFromMouse(int mouseX);
     void UpdateAudioVolumes();
     void PlayClickSound();
+    void SwitchToEnglishKeyboardLayout();
+    void RestoreOriginalKeyboardLayout();
     void StartGame(GameMode mode);
     void DrawText(const std::string& text, int x, int y, SDL_Color color, int pointSize = 24);
     void DrawButton(const SDL_Rect& rect, const std::string& label, bool hovered = false);
@@ -139,6 +153,9 @@ private:
     void DrawPausePage();
     void DrawExitConfirmPage();
     void DrawDungeonBackground(Uint8 overlayAlpha);
+    void UpdateCamera();
+    void DrawVisionFog();
+    bool HasLineOfSight(float worldX, float worldY) const;
     bool CheckCollision(float px, float py, float pSize, float wx, float wy, float wW, float wH);
     void resetCoinPosition();
     void Update(float dt);
