@@ -14,7 +14,10 @@
 ## 操作
 
 - 菜单：鼠标左键；模式选择页也可按 `1` 或 `2` 开始对应模式。点击空白处不会播放点击音效。
-- 移动：`W` / `A` / `S` / `D` 或方向键。
+- 移动：`W` / `A` / `S` / `D` 或方向键；松键后会短暂惯性滑行，反向输入会先减速再转向。
+- 冲刺：按住 `Shift`，速度逐渐提升；松开后逐渐恢复。
+- 聚焦：按住 `Ctrl` 扩大视野并放慢移动；松开后恢复。
+- 跳跃：按 `Space` 越过矮墙和小障碍；普通墙无法跳过。迷宫模式会使用可跳过或可破坏障碍制造伪墙、捷径和假死路；矮墙和小障碍不遮挡视线。
 - 全屏：`F11`。
 - 暂停/继续：游戏中按 `Esc` 暂停，再按 `Esc` 或选择“继续游戏”恢复。
 - 静音：`F1` 切换主音量静音；主音量、音乐和音效可在“设置”中分别调节。
@@ -50,7 +53,7 @@ cmake --build D:/PixelEngineBuild-Local --target EngineApp -- -j4
 
 - `PixelEngine/main.cpp`：程序入口和引擎启动。
 - `PixelEngine/Engine.hpp`、`PixelEngine/Engine.cpp`：游戏状态、输入、更新、绘制、菜单和记录存取。
-- `PixelEngine/MazeGenerator.hpp`：随机迷宫生成。
+- `PixelEngine/MazeGenerator.hpp`：随机生成含环路、扩展死路和可通行主路线的编织迷宫。
 - `PixelEngine/map1.txt`：限时模式地图；`map2.txt`：迷宫模式地图文件，运行时会生成随机迷宫。
 - `PixelEngine/CMakeLists.txt`：应用与第三方依赖的构建配置。
 

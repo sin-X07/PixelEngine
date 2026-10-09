@@ -24,6 +24,19 @@ struct Particle {
     bool active = false;
 };
 
+// 障碍物碎片粒子
+struct DebrisParticle {
+    float x = 0.0f;
+    float y = 0.0f;
+    float vx = 0.0f;
+    float vy = 0.0f;
+    float size = 0.0f;
+    float lifetime = 0.0f;
+    float maxLifetime = 0.0f;
+    SDL_Color color = {200, 150, 100, 255};
+    bool active = false;
+};
+
 class Engine {
 private:
     enum GameState {
@@ -45,6 +58,7 @@ private:
     SDL_Texture* dungeonWallTexture = nullptr;
     SDL_Texture* playerTexture = nullptr;
     SDL_Texture* treasureTexture = nullptr;
+    SDL_Texture* slashTexture = nullptr;
     TTF_Font* uiFont = nullptr;
     bool ttfInitialized = false;
     bool imageInitialized = false;
@@ -52,6 +66,8 @@ private:
     Mix_Chunk* pickupSound = nullptr;
     Mix_Chunk* buttonHoverSound = nullptr;
     Mix_Chunk* clickSound = nullptr;
+    Mix_Chunk* attackSound = nullptr;
+    Mix_Chunk* breakSound = nullptr;
     Mix_Music* backgroundMusic = nullptr;
     std::string hoveredButtonLastFrame;
     std::string hoveredButtonThisFrame;
@@ -81,6 +97,8 @@ private:
     std::vector<std::string> levelGrid;
     float cameraX = 0.0f;
     float cameraY = 0.0f;
+    float sprintBlend = 0.0f;
+    float focusBlend = 0.0f;
     SDL_Texture* visionTexture = nullptr;
     std::vector<Uint8> visionPixels;
 
@@ -93,7 +111,7 @@ private:
     GameMode currentMode = TIME_ATTACK;
 
     //限时挑战属性
-    float gameTimer = 30.0f;
+    float gameTimer = 60.0f;
     int score = 0;
     std::vector<int> scoreHistory;
     std::vector<float> timeHistory;
@@ -106,7 +124,7 @@ private:
     float vx = 0.0f;
     float vy = 0.0f;
     const float ACCEL = 500.0f;
-    const float FRICTION = 6.0f;
+    const float FRICTION = 8.0f;
     const float MAX_SPEED = 140.0f;
 
     //金币属性
@@ -116,6 +134,11 @@ private:
     // 粒子静态对象池
     std::vector<Particle> particlePool;
     const size_t MAX_PARTICLES = 200;
+
+    // 障碍物碎屑粒子池
+    std::vector<DebrisParticle> debrisPool;
+    const size_t MAX_DEBRIS = 160;
+
     std::random_device rd;
     std::mt19937 gen{rd()};
 
@@ -126,8 +149,30 @@ private:
     bool rightPressed = false;
     bool isFullscreen = false;
 
-    //绿色墙壁障碍物
+    // 朝向与攻击系统
+    enum Direction {
+        DIR_UP,
+        DIR_DOWN,
+        DIR_LEFT,
+        DIR_RIGHT
+    };
+    Direction playerDir = DIR_DOWN;
+    bool isAttacking = false;
+    float attackTimer = 0.0f;
+    const float ATTACK_DURATION = 0.18f;
+    const float ATTACK_COOLDOWN = 0.28f;
+    float attackCooldownTimer = 0.0f;
+    Direction attackDir = DIR_DOWN;
+    bool attackHitRegistered = false;
+
+    // 屏幕打击微震
+    float screenShakeTimer = 0.0f;
+    float screenShakeIntensity = 0.0f;
+
+    //绿色墙壁与可破坏障碍物
     std::vector<SDL_Rect> walls;
+    std::vector<SDL_Rect> lowWalls;
+    std::vector<SDL_Rect> smallObstacles;
 
     bool LoadLevelFromFile(const std::string& filename);
     void SaveScoreHistoryToFile();
@@ -136,6 +181,10 @@ private:
     void LoadTimeHistoryFromFile();
     void DrawFilledCircle(SDL_Renderer* renderer, int centerX, int centerY, int radius);
     void EmitExplosion(float spawnX, float spawnY, int count);
+    void EmitDebrisBurst(float centerX, float centerY, int count, SDL_Color color);
+    void TriggerScreenShake(float duration, float intensity);
+    void PerformAttack();
+
     void HandleInput();
     void HandleMenuClick(int mouseX, int mouseY);
     void UpdateVolumeFromMouse(int mouseX);
@@ -154,9 +203,15 @@ private:
     void DrawExitConfirmPage();
     void DrawDungeonBackground(Uint8 overlayAlpha);
     void UpdateCamera();
+    float CurrentCameraZoom() const;
+    float CurrentVisionRadius() const;
+    float CurrentVisionSoftEdge() const;
     void DrawVisionFog();
     bool HasLineOfSight(float worldX, float worldY) const;
-    bool CheckCollision(float px, float py, float pSize, float wx, float wy, float wW, float wH);
+    bool CheckCollision(float px, float py, float pSize, float wx, float wy, float wW, float wH) const;
+    bool CheckRectCollision(float ax, float ay, float aw, float ah,
+                            float bx, float by, float bw, float bh) const;
+    bool CheckObstacleCollision(float px, float py) const;
     void resetCoinPosition();
     void Update(float dt);
     void Render();

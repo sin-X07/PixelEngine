@@ -57,6 +57,8 @@ bool Engine::LoadLevelFromFile(const std::string& filename) {
     }
 
     walls.clear();
+    lowWalls.clear();
+    smallObstacles.clear();
     coins.clear();
     levelGrid = mapRows;
     mapHeightTiles = static_cast<int>(mapRows.size());
@@ -70,6 +72,16 @@ bool Engine::LoadLevelFromFile(const std::string& filename) {
 
             if (tileType == '#') {
                 walls.push_back({pixelX, pixelY, TILE_SIZE, TILE_SIZE});
+            } else if (tileType == 'H') {
+                lowWalls.push_back({pixelX, pixelY, TILE_SIZE, TILE_SIZE});
+            } else if (tileType == 'o') {
+                const int obstacleSize = TILE_SIZE / 2;
+                smallObstacles.push_back({
+                    pixelX + (TILE_SIZE - obstacleSize) / 2,
+                    pixelY + (TILE_SIZE - obstacleSize) / 2,
+                    obstacleSize,
+                    obstacleSize
+                });
             } else if (tileType == 'P') {
                 playerX = static_cast<float>(pixelX) + (TILE_SIZE - playerSize) * 0.5f;
                 playerY = static_cast<float>(pixelY) + (TILE_SIZE - playerSize) * 0.5f;
@@ -214,6 +226,62 @@ void Engine::EmitExplosion(float spawnX, float spawnY, int count) {
     }
 }
 
+// 障碍物粉碎碎片粒子喷射
+void Engine::EmitDebrisBurst(float centerX, float centerY, int count, SDL_Color color) {
+    int activated = 0;
+    std::uniform_real_distribution<float> randAngle(0.0f, 2.0f * 3.14159f);
+    std::uniform_real_distribution<float> randSpeed(50.0f, 190.0f);
+    std::uniform_real_distribution<float> randLife(0.25f, 0.55f);
+    std::uniform_real_distribution<float> randSize(2.0f, 4.5f);
+
+    for (auto& p : debrisPool) {
+        if (!p.active) {
+            p.active = true;
+            p.x = centerX;
+            p.y = centerY;
+
+            float angle = randAngle(gen);
+            float speed = randSpeed(gen);
+            p.vx = std::cos(angle) * speed;
+            p.vy = std::sin(angle) * speed - 35.0f; // 略带向上喷溅的初速度
+            p.size = randSize(gen);
+            p.lifetime = randLife(gen);
+            p.maxLifetime = p.lifetime;
+
+            std::uniform_int_distribution<int> jitter(-20, 20);
+            p.color.r = static_cast<Uint8>(std::clamp(color.r + jitter(gen), 0, 255));
+            p.color.g = static_cast<Uint8>(std::clamp(color.g + jitter(gen), 0, 255));
+            p.color.b = static_cast<Uint8>(std::clamp(color.b + jitter(gen), 0, 255));
+            p.color.a = 255;
+
+            activated++;
+            if (activated >= count) break;
+        }
+    }
+}
+
+// 屏幕微震
+void Engine::TriggerScreenShake(float duration, float intensity) {
+    screenShakeTimer = duration;
+    screenShakeIntensity = intensity;
+}
+
+// 执行攻击动作
+void Engine::PerformAttack() {
+    if (currentState != PLAYING) return;
+    if (attackCooldownTimer > 0.0f) return; // 冷却中
+
+    isAttacking = true;
+    attackTimer = ATTACK_DURATION;
+    attackCooldownTimer = ATTACK_COOLDOWN;
+    attackDir = playerDir;
+    attackHitRegistered = false;
+
+    if (audioInitialized && attackSound) {
+        Mix_PlayChannel(-1, attackSound, 0);
+    }
+}
+
 // 初始化 SDL2 窗口和渲染器
 bool Engine::Initialize(const char* title, int width, int height) {
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -256,6 +324,19 @@ bool Engine::Initialize(const char* title, int width, int height) {
         if (!clickSound) {
             std::cerr << "按钮点击音效加载失败: " << Mix_GetError() << std::endl;
         }
+
+        const std::string attackSoundPath = ResolveProjectFile("../assets/audio/attack_swing.wav");
+        attackSound = Mix_LoadWAV(attackSoundPath.c_str());
+        if (!attackSound) {
+            std::cerr << "攻击挥剑音效加载失败: " << Mix_GetError() << std::endl;
+        }
+
+        const std::string breakSoundPath = ResolveProjectFile("../assets/audio/obstacle_break.wav");
+        breakSound = Mix_LoadWAV(breakSoundPath.c_str());
+        if (!breakSound) {
+            std::cerr << "障碍物破碎音效加载失败: " << Mix_GetError() << std::endl;
+        }
+
         UpdateAudioVolumes();
     }
 
@@ -308,6 +389,7 @@ bool Engine::Initialize(const char* title, int width, int height) {
         dungeonWallTexture = loadTexture("wall.png");
         playerTexture = loadTexture("player.png");
         treasureTexture = loadTexture("treasure.png");
+        slashTexture = loadTexture("slash_effect.png");
     }
 
     if (TTF_Init() < 0) {
@@ -345,6 +427,7 @@ bool Engine::Initialize(const char* title, int width, int height) {
     historyLoaded = true;
 
     particlePool.resize(MAX_PARTICLES);
+    debrisPool.resize(MAX_DEBRIS);
 
     isRunning = true;
     return true;
@@ -426,6 +509,8 @@ void Engine::HandleInput() {
                     if (currentState == PLAYING) {
                         currentState = PAUSED;
                         upPressed = downPressed = leftPressed = rightPressed = false;
+                        vx = 0.0f;
+                        vy = 0.0f;
                         if (audioInitialized) Mix_PauseMusic();
                     } else if (currentState == PAUSED) {
                         currentState = PLAYING;
@@ -465,17 +550,20 @@ void Engine::HandleInput() {
                     }
                     break;
 
-                case SDLK_UP:    if (currentState == PLAYING) upPressed = true; break;
-                case SDLK_DOWN:  if (currentState == PLAYING) downPressed = true; break;
-                case SDLK_LEFT:  if (currentState == PLAYING) leftPressed = true; break;
-                case SDLK_RIGHT: if (currentState == PLAYING) rightPressed = true; break;
+                case SDLK_UP:    if (currentState == PLAYING) { upPressed = true; playerDir = DIR_UP; } break;
+                case SDLK_DOWN:  if (currentState == PLAYING) { downPressed = true; playerDir = DIR_DOWN; } break;
+                case SDLK_LEFT:  if (currentState == PLAYING) { leftPressed = true; playerDir = DIR_LEFT; } break;
+                case SDLK_RIGHT: if (currentState == PLAYING) { rightPressed = true; playerDir = DIR_RIGHT; } break;
             }
 
             switch (event.key.keysym.scancode) {
-                case SDL_SCANCODE_W: if (currentState == PLAYING) upPressed = true; break;
-                case SDL_SCANCODE_S: if (currentState == PLAYING) downPressed = true; break;
-                case SDL_SCANCODE_A: if (currentState == PLAYING) leftPressed = true; break;
-                case SDL_SCANCODE_D: if (currentState == PLAYING) rightPressed = true; break;
+                case SDL_SCANCODE_W: if (currentState == PLAYING) { upPressed = true; playerDir = DIR_UP; } break;
+                case SDL_SCANCODE_S: if (currentState == PLAYING) { downPressed = true; playerDir = DIR_DOWN; } break;
+                case SDL_SCANCODE_A: if (currentState == PLAYING) { leftPressed = true; playerDir = DIR_LEFT; } break;
+                case SDL_SCANCODE_D: if (currentState == PLAYING) { rightPressed = true; playerDir = DIR_RIGHT; } break;
+            }
+            if (event.key.keysym.scancode == SDL_SCANCODE_SPACE && currentState == PLAYING) {
+                PerformAttack();
             }
         }
 
@@ -494,6 +582,13 @@ void Engine::HandleInput() {
                 case SDL_SCANCODE_A: leftPressed = false; break;
                 case SDL_SCANCODE_D: rightPressed = false; break;
             }
+
+            if (currentState == PLAYING) {
+                if (upPressed) playerDir = DIR_UP;
+                else if (downPressed) playerDir = DIR_DOWN;
+                else if (leftPressed) playerDir = DIR_LEFT;
+                else if (rightPressed) playerDir = DIR_RIGHT;
+            }
         }
     }
 }
@@ -504,6 +599,15 @@ void Engine::StartGame(GameMode mode) {
     vx = 0.0f;
     vy = 0.0f;
     upPressed = downPressed = leftPressed = rightPressed = false;
+    isAttacking = false;
+    attackTimer = 0.0f;
+    attackCooldownTimer = 0.0f;
+    attackHitRegistered = false;
+    playerDir = DIR_DOWN;
+    screenShakeTimer = 0.0f;
+    screenShakeIntensity = 0.0f;
+    sprintBlend = 0.0f;
+    focusBlend = 0.0f;
     if (audioInitialized) Mix_ResumeMusic();
 
     if (mode == TIME_ATTACK) {
@@ -515,7 +619,7 @@ void Engine::StartGame(GameMode mode) {
             resetCoinPosition();
             if (coins.size() == previousCount) break;
         }
-        std::cout << "模式 1: 限时挑战开始! 30秒倒计时启动! 去获得更多金币吧!" << std::endl;
+        std::cout << "模式 1: 限时挑战开始! 60秒倒计时启动! 去获得更多金币吧!" << std::endl;
     } else {
         gameTimer = 0.0f;
         gameOverStartTime = 0;
@@ -813,16 +917,17 @@ void Engine::DrawControlsPage() {
     const SDL_Color heading = {134, 222, 190, 255};
     const SDL_Color body = {230, 238, 235, 255};
     DrawText("游戏中", 100, 132, heading, 22);
-    DrawText("W / A / S / D    或    方向键：移动", 100, 174, body, 19);
-    DrawText("F11：切换全屏", 100, 210, body, 19);
-    DrawText("ESC：暂停游戏", 100, 246, body, 19);
-    DrawText("结算页面", 100, 308, heading, 22);
-    DrawText("Enter / 空格：返回模式选择", 100, 350, body, 19);
-    DrawText("菜单页面", 100, 412, heading, 22);
-    DrawText("鼠标左键：选择按钮", 100, 454, body, 19);
-    DrawText("1 / 2：在模式选择页快速开始对应模式", 100, 490, body, 19);
-    DrawText("ESC：子页面返回；主菜单中退出", 100, 526, body, 19);
-    DrawText("F1：切换主音量静音", 100, 554, body, 19);
+    DrawText("W / A / S / D    或    方向键：移动（松键后惯性滑行）", 100, 174, body, 19);
+    DrawText("Shift：蓄力冲刺；Ctrl：聚焦视野", 100, 210, body, 19);
+    DrawText("空格：挥剑攻击 / 破坏障碍；F11：切换全屏", 100, 246, body, 19);
+    DrawText("ESC：暂停游戏", 100, 282, body, 19);
+    DrawText("结算页面", 100, 326, heading, 22);
+    DrawText("Enter / 空格：返回模式选择", 100, 362, body, 19);
+    DrawText("菜单页面", 100, 408, heading, 22);
+    DrawText("鼠标左键：选择按钮", 100, 444, body, 19);
+    DrawText("1 / 2：在模式选择页快速开始对应模式", 100, 476, body, 19);
+    DrawText("ESC：子页面返回；主菜单中退出", 100, 508, body, 19);
+    DrawText("F1：切换主音量静音", 100, 540, body, 19);
 }
 
 void Engine::DrawSettingsPage() {
@@ -926,9 +1031,10 @@ void Engine::DrawDungeonBackground(Uint8 overlayAlpha) {
     SDL_RenderFillRect(renderer, &background);
 
     if (dungeonFloorTexture) {
-        const float screenTileSize = TILE_SIZE * CAMERA_ZOOM;
-        const float startX = -std::fmod(cameraX, static_cast<float>(TILE_SIZE)) * CAMERA_ZOOM;
-        const float startY = -std::fmod(cameraY, static_cast<float>(TILE_SIZE)) * CAMERA_ZOOM;
+        const float cameraZoom = CurrentCameraZoom();
+        const float screenTileSize = TILE_SIZE * cameraZoom;
+        const float startX = -std::fmod(cameraX, static_cast<float>(TILE_SIZE)) * cameraZoom;
+        const float startY = -std::fmod(cameraY, static_cast<float>(TILE_SIZE)) * cameraZoom;
         for (float tileY = startY; tileY < background.h; tileY += screenTileSize) {
             for (float tileX = startX; tileX < background.w; tileX += screenTileSize) {
                 SDL_Rect tile = {
@@ -949,7 +1055,7 @@ void Engine::DrawDungeonBackground(Uint8 overlayAlpha) {
 }
 
 // 碰撞检测
-bool Engine::CheckCollision(float px, float py, float pSize, float wx, float wy, float wW, float wH) {
+bool Engine::CheckCollision(float px, float py, float pSize, float wx, float wy, float wW, float wH) const {
     if (px + pSize <= wx) return false; //墙左
     if (px >= wx + wW)    return false; //墙右
     if (py + pSize <= wy) return false; //墙上
@@ -958,15 +1064,174 @@ bool Engine::CheckCollision(float px, float py, float pSize, float wx, float wy,
     return true;
 }
 
+bool Engine::CheckRectCollision(float ax, float ay, float aw, float ah,
+                                float bx, float by, float bw, float bh) const {
+    if (ax + aw <= bx) return false; // A在B左侧
+    if (ax >= bx + bw) return false; // A在B右侧
+    if (ay + ah <= by) return false; // A在B上方
+    if (ay >= by + bh) return false; // A在B下方
+
+    return true;
+}
+
+bool Engine::CheckObstacleCollision(float px, float py) const {
+    for (const SDL_Rect& obstacle : lowWalls) {
+        if (CheckCollision(px, py, playerSize, obstacle.x, obstacle.y, obstacle.w, obstacle.h)) {
+            return true;
+        }
+    }
+
+    for (const SDL_Rect& obstacle : smallObstacles) {
+        if (CheckCollision(px, py, playerSize, obstacle.x, obstacle.y, obstacle.w, obstacle.h)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // 物理/逻辑更新（帧率无关，速度恒定）
 void Engine::Update(float dt) {
-    if (currentState != PLAYING) return;
+    if (currentState != PLAYING) {
+        isAttacking = false;
+        return;
+    }
 
+    // 屏幕震动衰减
+    if (screenShakeTimer > 0.0f) {
+        screenShakeTimer -= dt;
+        if (screenShakeTimer <= 0.0f) {
+            screenShakeTimer = 0.0f;
+            screenShakeIntensity = 0.0f;
+        }
+    }
+
+    // 攻击冷却推进
+    if (attackCooldownTimer > 0.0f) {
+        attackCooldownTimer -= dt;
+        if (attackCooldownTimer < 0.0f) attackCooldownTimer = 0.0f;
+    }
+
+    // 挥刀攻击状态与击碎障碍判定
+    if (isAttacking) {
+        attackTimer -= dt;
+        if (attackTimer <= 0.0f) {
+            attackTimer = 0.0f;
+            isAttacking = false;
+        }
+
+        // 持续判定期间检测是否命中前方障碍物（若当前挥刀尚未命中过）
+        if (!attackHitRegistered) {
+            float hitX = playerX;
+            float hitY = playerY;
+            float hitW = playerSize;
+            float hitH = playerSize;
+            const float reach = 18.0f;
+
+            if (attackDir == DIR_UP) {
+                hitX = playerX - 3.0f;
+                hitY = playerY - reach;
+                hitW = playerSize + 6.0f;
+                hitH = reach;
+            } else if (attackDir == DIR_DOWN) {
+                hitX = playerX - 3.0f;
+                hitY = playerY + playerSize;
+                hitW = playerSize + 6.0f;
+                hitH = reach;
+            } else if (attackDir == DIR_LEFT) {
+                hitX = playerX - reach;
+                hitY = playerY - 3.0f;
+                hitW = reach;
+                hitH = playerSize + 6.0f;
+            } else if (attackDir == DIR_RIGHT) {
+                hitX = playerX + playerSize;
+                hitY = playerY - 3.0f;
+                hitW = reach;
+                hitH = playerSize + 6.0f;
+            }
+
+            bool hitOccurred = false;
+
+                // 1. 检查小障碍物 (木质箱子路障)
+            for (auto it = smallObstacles.begin(); it != smallObstacles.end(); ) {
+                if (CheckRectCollision(hitX, hitY, hitW, hitH, it->x, it->y, it->w, it->h)) {
+                    EmitDebrisBurst(it->x + it->w * 0.5f, it->y + it->h * 0.5f, 26, {194, 111, 58, 255}); // 棕色木屑
+
+                    int gridCol = it->x / TILE_SIZE;
+                    int gridRow = it->y / TILE_SIZE;
+                    if (gridRow >= 0 && gridRow < mapHeightTiles && gridCol >= 0 && gridCol < mapWidthTiles) {
+                        if (levelGrid[gridRow][gridCol] == 'o') {
+                            levelGrid[gridRow][gridCol] = '.';
+                        }
+                    }
+
+                    it = smallObstacles.erase(it);
+                    hitOccurred = true;
+                } else {
+                    ++it;
+                }
+            }
+
+            // 2. 检查矮墙 (砖石路障)
+            for (auto it = lowWalls.begin(); it != lowWalls.end(); ) {
+                if (CheckRectCollision(hitX, hitY, hitW, hitH, it->x, it->y, it->w, it->h)) {
+                    EmitDebrisBurst(it->x + it->w * 0.5f, it->y + it->h * 0.5f, 32, {140, 150, 155, 255}); // 砖石青灰石屑
+
+                    int gridCol = it->x / TILE_SIZE;
+                    int gridRow = it->y / TILE_SIZE;
+                    if (gridRow >= 0 && gridRow < mapHeightTiles && gridCol >= 0 && gridCol < mapWidthTiles) {
+                        if (levelGrid[gridRow][gridCol] == 'H') {
+                            levelGrid[gridRow][gridCol] = '.';
+                        }
+                    }
+
+                    it = lowWalls.erase(it);
+                    hitOccurred = true;
+                } else {
+                    ++it;
+                }
+            }
+
+            if (hitOccurred) {
+                attackHitRegistered = true;
+                if (audioInitialized && breakSound) {
+                    Mix_PlayChannel(-1, breakSound, 0);
+                }
+                TriggerScreenShake(0.12f, 3.0f);
+            }
+        }
+    }
+
+    const Uint8* keyboardState = SDL_GetKeyboardState(nullptr);
+    const bool sprintHeld = keyboardState[SDL_SCANCODE_LSHIFT] ||
+                            keyboardState[SDL_SCANCODE_RSHIFT];
+    const bool focusHeld = keyboardState[SDL_SCANCODE_LCTRL] ||
+                           keyboardState[SDL_SCANCODE_RCTRL];
+    sprintBlend = std::clamp(sprintBlend + (sprintHeld ? dt : -dt / 0.4f), 0.0f, 1.0f);
+    focusBlend = std::clamp(focusBlend + (focusHeld ? dt / 0.3f : -dt / 0.3f), 0.0f, 1.0f);
+
+    const float sprintMaxSpeed = MAX_SPEED * (1.0f + sprintBlend);
+    const float movementMaxSpeed = sprintMaxSpeed +
+        (MAX_SPEED / 3.0f - sprintMaxSpeed) * focusBlend;
+
+    // 更新常规金币火花粒子
     for (auto& p : particlePool) {
         if (p.active) {
             p.x += p.vx * dt;
             p.y += p.vy * dt;
             p.vy += 200.0f * dt;
+            p.lifetime -= dt;
+            if (p.lifetime <= 0.0f) {
+                p.active = false;
+            }
+        }
+    }
+
+    // 更新障碍物碎屑粒子
+    for (auto& p : debrisPool) {
+        if (p.active) {
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            p.vy += 320.0f * dt; // 重力下坠
             p.lifetime -= dt;
             if (p.lifetime <= 0.0f) {
                 p.active = false;
@@ -1000,15 +1265,16 @@ void Engine::Update(float dt) {
     float oldX = playerX;
     float oldY = playerY;
 
-    if (upPressed) vy -= ACCEL * dt;
-    else if (downPressed) vy += ACCEL * dt;
-    else {
+    const int verticalInput = static_cast<int>(downPressed) - static_cast<int>(upPressed);
+    if (verticalInput != 0) {
+        vy += verticalInput * ACCEL * dt;
+    } else {
         vy -= vy * FRICTION * dt;
         if (std::abs(vy) < 1.0f) vy = 0.0f;
     }
 
-    if (vy > MAX_SPEED)  vy = MAX_SPEED;
-    if (vy < -MAX_SPEED) vy = -MAX_SPEED;
+    if (vy > movementMaxSpeed)  vy = movementMaxSpeed;
+    if (vy < -movementMaxSpeed) vy = -movementMaxSpeed;
 
     playerY += vy * dt;
 
@@ -1019,16 +1285,21 @@ void Engine::Update(float dt) {
             break;
         }
     }
+    if (CheckObstacleCollision(playerX, playerY)) {
+        playerY = oldY;
+        vy = 0.0f;
+    }
 
-    if (leftPressed)  vx -= ACCEL * dt;
-    else if (rightPressed) vx += ACCEL * dt;
-    else {
+    const int horizontalInput = static_cast<int>(rightPressed) - static_cast<int>(leftPressed);
+    if (horizontalInput != 0) {
+        vx += horizontalInput * ACCEL * dt;
+    } else {
         vx -= vx * FRICTION * dt;
         if (std::abs(vx) < 1.0f) vx = 0.0f;
     }
 
-    if (vx > MAX_SPEED) vx = MAX_SPEED;
-    if (vx < -MAX_SPEED) vx = -MAX_SPEED;
+    if (vx > movementMaxSpeed) vx = movementMaxSpeed;
+    if (vx < -movementMaxSpeed) vx = -movementMaxSpeed;
 
     playerX += vx * dt;
 
@@ -1038,6 +1309,10 @@ void Engine::Update(float dt) {
             vx = 0.0f;
             break;
         }
+    }
+    if (CheckObstacleCollision(playerX, playerY)) {
+        playerX = oldX;
+        vx = 0.0f;
     }
 
     // 收集宝藏
@@ -1080,7 +1355,8 @@ void Engine::resetCoinPosition() {
     std::vector<SDL_FPoint> candidates;
     for (int row = 1; row < mapHeightTiles - 1; ++row) {
         for (int col = 1; col < mapWidthTiles - 1; ++col) {
-            if (levelGrid[row][col] == '#') continue;
+            if (levelGrid[row][col] == '#' || levelGrid[row][col] == 'H' ||
+                levelGrid[row][col] == 'o') continue;
 
             const float x = col * TILE_SIZE + (TILE_SIZE - coinSize) * 0.5f;
             const float y = row * TILE_SIZE + (TILE_SIZE - coinSize) * 0.5f;
@@ -1119,8 +1395,9 @@ void Engine::UpdateCamera() {
         return;
     }
 
-    const float viewportWorldWidth = 800.0f / CAMERA_ZOOM;
-    const float viewportWorldHeight = 600.0f / CAMERA_ZOOM;
+    const float cameraZoom = CurrentCameraZoom();
+    const float viewportWorldWidth = 800.0f / cameraZoom;
+    const float viewportWorldHeight = 600.0f / cameraZoom;
     const float maxCameraX = std::max(0.0f, mapWidthTiles * TILE_SIZE - viewportWorldWidth);
     const float maxCameraY = std::max(0.0f, mapHeightTiles * TILE_SIZE - viewportWorldHeight);
     cameraX = std::clamp(
@@ -1133,6 +1410,25 @@ void Engine::UpdateCamera() {
         0.0f,
         maxCameraY
     );
+
+    // 屏幕打击微震位移
+    if (screenShakeTimer > 0.0f) {
+        std::uniform_real_distribution<float> shakeDist(-screenShakeIntensity, screenShakeIntensity);
+        cameraX += shakeDist(gen) / cameraZoom;
+        cameraY += shakeDist(gen) / cameraZoom;
+    }
+}
+
+float Engine::CurrentCameraZoom() const {
+    return CAMERA_ZOOM - focusBlend * (CAMERA_ZOOM - 1.0f);
+}
+
+float Engine::CurrentVisionRadius() const {
+    return VISION_RADIUS * (1.0f + focusBlend);
+}
+
+float Engine::CurrentVisionSoftEdge() const {
+    return VISION_SOFT_EDGE * (1.0f + focusBlend);
 }
 
 bool Engine::HasLineOfSight(float worldX, float worldY) const {
@@ -1185,22 +1481,25 @@ void Engine::DrawVisionFog() {
     const int maskHeight = 600 / VISION_MASK_SCALE;
     const float playerCenterX = playerX + playerSize * 0.5f;
     const float playerCenterY = playerY + playerSize * 0.5f;
-    const float fullyLitRadius = VISION_RADIUS - VISION_SOFT_EDGE;
+    const float visionRadius = CurrentVisionRadius();
+    const float visionSoftEdge = CurrentVisionSoftEdge();
+    const float fullyLitRadius = visionRadius - visionSoftEdge;
+    const float cameraZoom = CurrentCameraZoom();
 
     for (int y = 0; y < maskHeight; ++y) {
         for (int x = 0; x < maskWidth; ++x) {
-            const float worldX = cameraX + (x + 0.5f) * VISION_MASK_SCALE / CAMERA_ZOOM;
-            const float worldY = cameraY + (y + 0.5f) * VISION_MASK_SCALE / CAMERA_ZOOM;
+            const float worldX = cameraX + (x + 0.5f) * VISION_MASK_SCALE / cameraZoom;
+            const float worldY = cameraY + (y + 0.5f) * VISION_MASK_SCALE / cameraZoom;
             const float deltaX = worldX - playerCenterX;
             const float deltaY = worldY - playerCenterY;
             const float distance = std::sqrt(deltaX * deltaX + deltaY * deltaY);
             Uint8 alpha = 255;
 
-            if (distance < VISION_RADIUS && HasLineOfSight(worldX, worldY)) {
+            if (distance < visionRadius && HasLineOfSight(worldX, worldY)) {
                 if (distance <= fullyLitRadius) {
                     alpha = 0;
                 } else {
-                    float blend = (distance - fullyLitRadius) / VISION_SOFT_EDGE;
+                    float blend = (distance - fullyLitRadius) / visionSoftEdge;
                     blend = blend * blend * (3.0f - 2.0f * blend);
                     alpha = static_cast<Uint8>(blend * 255.0f);
                 }
@@ -1223,6 +1522,7 @@ void Engine::DrawVisionFog() {
 void Engine::Render() {
     hoveredButtonThisFrame.clear();
     UpdateCamera();
+    const float cameraZoom = CurrentCameraZoom();
 
     // 用一种复古的像素风暗青色清空屏幕
     SDL_SetRenderDrawColor(renderer, 20, 30, 40, 255);
@@ -1233,14 +1533,49 @@ void Engine::Render() {
         DrawDungeonBackground(0);
     }
 
-    // 红色小方块
+    for (const SDL_Rect& lowWall : lowWalls) {
+        const float visibleHeight = std::min(14.0f, static_cast<float>(lowWall.h));
+        SDL_Rect screenWall = {
+            static_cast<int>(std::lround((lowWall.x - cameraX) * cameraZoom)),
+            static_cast<int>(std::lround(
+                (lowWall.y + lowWall.h - visibleHeight - cameraY) * cameraZoom)),
+            static_cast<int>(std::lround(lowWall.w * cameraZoom)),
+            static_cast<int>(std::lround(visibleHeight * cameraZoom))
+        };
+        if (dungeonWallTexture) {
+            SDL_RenderCopy(renderer, dungeonWallTexture, nullptr, &screenWall);
+        } else {
+            SDL_SetRenderDrawColor(renderer, 98, 129, 126, 255);
+            SDL_RenderFillRect(renderer, &screenWall);
+        }
+    }
+
+    for (const SDL_Rect& obstacle : smallObstacles) {
+        SDL_Rect screenObstacle = {
+            static_cast<int>(std::lround((obstacle.x - cameraX) * cameraZoom)),
+            static_cast<int>(std::lround((obstacle.y - cameraY) * cameraZoom)),
+            static_cast<int>(std::lround(obstacle.w * cameraZoom)),
+            static_cast<int>(std::lround(obstacle.h * cameraZoom))
+        };
+        // 外边框/深木色
+        SDL_SetRenderDrawColor(renderer, 130, 72, 38, 255);
+        SDL_RenderFillRect(renderer, &screenObstacle);
+        // 内芯/浅木色
+        if (screenObstacle.w > 4 && screenObstacle.h > 4) {
+            SDL_Rect inner = {screenObstacle.x + 2, screenObstacle.y + 2, screenObstacle.w - 4, screenObstacle.h - 4};
+            SDL_SetRenderDrawColor(renderer, 194, 111, 58, 255);
+            SDL_RenderFillRect(renderer, &inner);
+        }
+    }
+
+    // 玩家方块
     SDL_Rect pRect;
-    pRect.x = static_cast<int>(std::lround((playerX - cameraX) * CAMERA_ZOOM));
-    pRect.y = static_cast<int>(std::lround((playerY - cameraY) * CAMERA_ZOOM));
-    pRect.w = static_cast<int>(std::lround(playerSize * CAMERA_ZOOM));
-    pRect.h = static_cast<int>(std::lround(playerSize * CAMERA_ZOOM));
+    pRect.x = static_cast<int>(std::lround((playerX - cameraX) * cameraZoom));
+    pRect.y = static_cast<int>(std::lround((playerY - cameraY) * cameraZoom));
+    pRect.w = static_cast<int>(std::lround(playerSize * cameraZoom));
+    pRect.h = static_cast<int>(std::lround(playerSize * cameraZoom));
     if (playerTexture) {
-        const int spriteInset = static_cast<int>(std::lround(2.0f * CAMERA_ZOOM));
+        const int spriteInset = static_cast<int>(std::lround(2.0f * cameraZoom));
         SDL_Rect playerSprite = {
             pRect.x + spriteInset,
             pRect.y + spriteInset,
@@ -1253,13 +1588,51 @@ void Engine::Render() {
         SDL_RenderFillRect(renderer, &pRect);
     }
 
+    // 挥剑攻击刀光特效动画
+    if (isAttacking && slashTexture) {
+        float progress = 1.0f - (attackTimer / ATTACK_DURATION);
+        int frameIndex = std::clamp(static_cast<int>(progress * 3.0f), 0, 2);
+        SDL_Rect srcRect = { frameIndex * 64, 0, 64, 47 };
+
+        double angle = 0.0;
+        float slashWorldX = playerX + playerSize * 0.5f;
+        float slashWorldY = playerY + playerSize * 0.5f;
+
+        const float forwardDist = 12.0f;
+        if (attackDir == DIR_RIGHT) {
+            angle = 0.0;
+            slashWorldX += forwardDist;
+        } else if (attackDir == DIR_DOWN) {
+            angle = 90.0;
+            slashWorldY += forwardDist;
+        } else if (attackDir == DIR_LEFT) {
+            angle = 180.0;
+            slashWorldX -= forwardDist;
+        } else if (attackDir == DIR_UP) {
+            angle = 270.0;
+            slashWorldY -= forwardDist;
+        }
+
+        float displayW = 28.0f * cameraZoom;
+        float displayH = 22.0f * cameraZoom;
+
+        SDL_Rect destRect = {
+            static_cast<int>(std::lround((slashWorldX - cameraX) * cameraZoom - displayW * 0.5f)),
+            static_cast<int>(std::lround((slashWorldY - cameraY) * cameraZoom - displayH * 0.5f)),
+            static_cast<int>(std::lround(displayW)),
+            static_cast<int>(std::lround(displayH))
+        };
+
+        SDL_RenderCopyEx(renderer, slashTexture, &srcRect, &destRect, angle, nullptr, SDL_FLIP_NONE);
+    }
+
     // 所有绿色墙壁
     for (const auto& wall : walls) {
         SDL_Rect screenWall = {
-            static_cast<int>(std::lround((wall.x - cameraX) * CAMERA_ZOOM)),
-            static_cast<int>(std::lround((wall.y - cameraY) * CAMERA_ZOOM)),
-            static_cast<int>(std::lround(wall.w * CAMERA_ZOOM)),
-            static_cast<int>(std::lround(wall.h * CAMERA_ZOOM))
+            static_cast<int>(std::lround((wall.x - cameraX) * cameraZoom)),
+            static_cast<int>(std::lround((wall.y - cameraY) * cameraZoom)),
+            static_cast<int>(std::lround(wall.w * cameraZoom)),
+            static_cast<int>(std::lround(wall.h * cameraZoom))
         };
         if (dungeonWallTexture) {
             SDL_RenderCopy(renderer, dungeonWallTexture, nullptr, &screenWall);
@@ -1274,19 +1647,19 @@ void Engine::Render() {
         for (const SDL_FPoint& coin : coins) {
             if (treasureTexture) {
                 SDL_Rect treasure = {
-                    static_cast<int>(std::lround((coin.x - 2.0f - cameraX) * CAMERA_ZOOM)),
-                    static_cast<int>(std::lround((coin.y - 2.0f - cameraY) * CAMERA_ZOOM)),
-                    static_cast<int>(std::lround((coinSize + 4.0f) * CAMERA_ZOOM)),
-                    static_cast<int>(std::lround((coinSize + 4.0f) * CAMERA_ZOOM))
+                    static_cast<int>(std::lround((coin.x - 2.0f - cameraX) * cameraZoom)),
+                    static_cast<int>(std::lround((coin.y - 2.0f - cameraY) * cameraZoom)),
+                    static_cast<int>(std::lround((coinSize + 4.0f) * cameraZoom)),
+                    static_cast<int>(std::lround((coinSize + 4.0f) * cameraZoom))
                 };
                 SDL_RenderCopy(renderer, treasureTexture, nullptr, &treasure);
             } else {
                 SDL_SetRenderDrawColor(renderer, 255, 215, 0, 255);
-                int radius = static_cast<int>(std::lround(coinSize * CAMERA_ZOOM * 0.5f));
+                int radius = static_cast<int>(std::lround(coinSize * cameraZoom * 0.5f));
                 int cx = static_cast<int>(std::lround(
-                    (coin.x + coinSize * 0.5f - cameraX) * CAMERA_ZOOM));
+                    (coin.x + coinSize * 0.5f - cameraX) * cameraZoom));
                 int cy = static_cast<int>(std::lround(
-                    (coin.y + coinSize * 0.5f - cameraY) * CAMERA_ZOOM));
+                    (coin.y + coinSize * 0.5f - cameraY) * cameraZoom));
                 DrawFilledCircle(renderer, cx, cy, radius);
             }
         }
@@ -1305,14 +1678,35 @@ void Engine::Render() {
 
             SDL_SetRenderDrawColor(renderer, red, green, blue, alpha);
             SDL_Rect pRect = {
-                static_cast<int>(std::lround((p.x - cameraX) * CAMERA_ZOOM)),
-                static_cast<int>(std::lround((p.y - cameraY) * CAMERA_ZOOM)),
-                static_cast<int>(std::lround(2.0f * CAMERA_ZOOM)),
-                static_cast<int>(std::lround(2.0f * CAMERA_ZOOM))
+                static_cast<int>(std::lround((p.x - cameraX) * cameraZoom)),
+                static_cast<int>(std::lround((p.y - cameraY) * cameraZoom)),
+                static_cast<int>(std::lround(2.0f * cameraZoom)),
+                static_cast<int>(std::lround(2.0f * cameraZoom))
             };
             SDL_RenderFillRect(renderer, &pRect);
         }
     }
+
+    // 障碍物粉碎碎片粒子
+    for (const auto& p : debrisPool) {
+        if (p.active) {
+            float lifeRatio = p.lifetime / p.maxLifetime;
+            int alpha = static_cast<int>(std::clamp(lifeRatio * 255.0f, 0.0f, 255.0f));
+            SDL_SetRenderDrawColor(renderer, p.color.r, p.color.g, p.color.b, alpha);
+
+            int pSize = static_cast<int>(std::lround(p.size * cameraZoom * (0.6f + 0.4f * lifeRatio)));
+            if (pSize < 1) pSize = 1;
+
+            SDL_Rect pRect = {
+                static_cast<int>(std::lround((p.x - cameraX) * cameraZoom - pSize * 0.5f)),
+                static_cast<int>(std::lround((p.y - cameraY) * cameraZoom - pSize * 0.5f)),
+                pSize,
+                pSize
+            };
+            SDL_RenderFillRect(renderer, &pRect);
+        }
+    }
+
 
     if (currentMode == TIME_ATTACK &&
         (currentState == PLAYING || currentState == PAUSED ||
@@ -1411,6 +1805,14 @@ void Engine::Clean() {
             Mix_FreeChunk(clickSound);
             clickSound = nullptr;
         }
+        if (attackSound) {
+            Mix_FreeChunk(attackSound);
+            attackSound = nullptr;
+        }
+        if (breakSound) {
+            Mix_FreeChunk(breakSound);
+            breakSound = nullptr;
+        }
         Mix_CloseAudio();
         audioInitialized = false;
     }
@@ -1419,6 +1821,7 @@ void Engine::Clean() {
     if (dungeonWallTexture) SDL_DestroyTexture(dungeonWallTexture);
     if (playerTexture) SDL_DestroyTexture(playerTexture);
     if (treasureTexture) SDL_DestroyTexture(treasureTexture);
+    if (slashTexture) SDL_DestroyTexture(slashTexture);
     if (imageInitialized) {
         IMG_Quit();
         imageInitialized = false;
