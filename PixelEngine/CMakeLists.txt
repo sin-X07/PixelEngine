@@ -259,11 +259,21 @@ add_subdirectory(
 )
 
 # ---- Sources ----
-set(SOURCES 
+set(SOURCES
     main.cpp
     Engine.cpp
     Engine.hpp
     MazeGenerator.hpp
+    Core/Types.hpp
+    Core/PathUtils.hpp
+    Audio/AudioManager.cpp
+    Input/InputManager.cpp
+    World/WorldMap.cpp
+    World/PhysicsSystem.cpp
+    Graphics/ParticleSystem.cpp
+    Graphics/RenderSystem.cpp
+    Graphics/UIRenderer.cpp
+    Storage/SaveManager.cpp
 )
 
 add_executable(EngineApp ${SOURCES})

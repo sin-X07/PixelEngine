@@ -1,123 +1,51 @@
 #pragma once
-#include <SDL2/SDL.h>
-#include <SDL_image.h>
-#include <SDL_ttf.h>
-#include <SDL_mixer.h>
-#include <iostream>
-#include <vector>
-#include <fstream>
-#include <algorithm>
-#include <random>
-#include <stack>
-#include <string>
-#include <cstdint>
+#include "Core/Types.hpp"
+#include "Audio/AudioManager.hpp"
+#include "Input/InputManager.hpp"
+#include "World/WorldMap.hpp"
+#include "World/PhysicsSystem.hpp"
+#include "Graphics/ParticleSystem.hpp"
+#include "Graphics/RenderSystem.hpp"
+#include "Graphics/UIRenderer.hpp"
+#include "Storage/SaveManager.hpp"
 #include "MazeGenerator.hpp"
-
-// 粒子属性
-struct Particle {
-    float x = 0.0f;
-    float y = 0.0f;
-    float vx = 0.0f;
-    float vy = 0.0f;
-    float lifetime = 0.0f;
-    float maxLifetime = 0.0f;
-    bool active = false;
-};
-
-// 障碍物碎片粒子
-struct DebrisParticle {
-    float x = 0.0f;
-    float y = 0.0f;
-    float vx = 0.0f;
-    float vy = 0.0f;
-    float size = 0.0f;
-    float lifetime = 0.0f;
-    float maxLifetime = 0.0f;
-    SDL_Color color = {200, 150, 100, 255};
-    bool active = false;
-};
+#include <SDL2/SDL.h>
+#include <memory>
+#include <random>
 
 class Engine {
 private:
-    enum GameState {
-        MAIN_MENU,
-        MODE_SELECT,
-        HISTORY,
-        CONTROLS,
-        SETTINGS,
-        PLAYING,
-        PAUSED,
-        EXIT_CONFIRM,
-        GAMEOVER
-    };
+    bool isRunning = false;
+    bool cleaned = false;
+    SDL_Window* window = nullptr;
+    SDL_Renderer* renderer = nullptr;
+    bool isFullscreen = false;
 
-    bool isRunning;
-    SDL_Window* window;
-    SDL_Renderer* renderer;
-    SDL_Texture* dungeonFloorTexture = nullptr;
-    SDL_Texture* dungeonWallTexture = nullptr;
-    SDL_Texture* playerTexture = nullptr;
-    SDL_Texture* treasureTexture = nullptr;
-    SDL_Texture* slashTexture = nullptr;
-    TTF_Font* uiFont = nullptr;
-    bool ttfInitialized = false;
-    bool imageInitialized = false;
-    bool audioInitialized = false;
-    Mix_Chunk* pickupSound = nullptr;
-    Mix_Chunk* buttonHoverSound = nullptr;
-    Mix_Chunk* clickSound = nullptr;
-    Mix_Chunk* attackSound = nullptr;
-    Mix_Chunk* breakSound = nullptr;
-    Mix_Music* backgroundMusic = nullptr;
-    std::string hoveredButtonLastFrame;
-    std::string hoveredButtonThisFrame;
-    int masterVolume = 100;
-    int musicVolume = 25;
-    int effectsVolume = 100;
-    bool masterMuted = false;
-    int draggingVolumeSlider = -1;
+    // 子系统大类
+    std::unique_ptr<AudioManager> audioManager;
+    std::unique_ptr<InputManager> inputManager;
+    std::unique_ptr<WorldMap> worldMap;
+    std::unique_ptr<PhysicsSystem> physicsSystem;
+    std::unique_ptr<ParticleSystem> particleSystem;
+    std::unique_ptr<RenderSystem> renderSystem;
+    std::unique_ptr<UIRenderer> uiRenderer;
+    std::unique_ptr<SaveManager> saveManager;
+
+    // 核心时钟与状态机
+    const float MS_PER_UPDATE = 16.6666f; // 固定逻辑更新间隔（约 60 FPS，单位毫秒）
+    GameState currentState = MAIN_MENU;
     GameState settingsReturnState = MAIN_MENU;
+    GameMode currentMode = TIME_ATTACK;
     bool exitToDesktop = false;
-    std::uintptr_t originalKeyboardLayout = 0;
-    bool keyboardLayoutCaptured = false;
-    bool englishKeyboardLayoutActivated = false;
-
+    int draggingVolumeSlider = -1;
     uint32_t gameOverStartTime = 0;
 
-    // 经典固定时间步长（Fixed Timestep）的时钟参数
-    const float MS_PER_UPDATE = 16.6666f; // 固定逻辑更新间隔（约 60 FPS，单位毫秒）
-
-    const int TILE_SIZE = 20;
-    static constexpr float CAMERA_ZOOM = 2.0f;
-    static constexpr int VISION_MASK_SCALE = 4;
-    static constexpr float VISION_RADIUS = 120.0f;
-    static constexpr float VISION_SOFT_EDGE = 20.0f;
-    int mapWidthTiles = 40;
-    int mapHeightTiles = 30;
-    std::vector<std::string> levelGrid;
-    float cameraX = 0.0f;
-    float cameraY = 0.0f;
-    float sprintBlend = 0.0f;
-    float focusBlend = 0.0f;
-    SDL_Texture* visionTexture = nullptr;
-    std::vector<Uint8> visionPixels;
-
-    GameState currentState = MAIN_MENU;
-
-    enum GameMode {
-        TIME_ATTACK,
-        MAZE_MODE
-    };
-    GameMode currentMode = TIME_ATTACK;
-
-    //限时挑战属性
-    float gameTimer = 60.0f;
+    // 游戏性数据
+    float gameTimer = 30.0f;
     int score = 0;
-    std::vector<int> scoreHistory;
-    std::vector<float> timeHistory;
-    bool historyLoaded = false;
+    bool diedByTrap = false;
 
-    //玩家方块属性
+    // 玩家物理属性
     float playerX = 50.0f;
     float playerY = 50.0f;
     float playerSize = 12.0f;
@@ -127,36 +55,7 @@ private:
     const float FRICTION = 8.0f;
     const float MAX_SPEED = 140.0f;
 
-    //金币属性
-    float coinSize = 8.0f;
-    std::vector<SDL_FPoint> coins;
-
-    // 粒子静态对象池
-    std::vector<Particle> particlePool;
-    const size_t MAX_PARTICLES = 200;
-
-    // 障碍物碎屑粒子池
-    std::vector<DebrisParticle> debrisPool;
-    const size_t MAX_DEBRIS = 160;
-
-    std::random_device rd;
-    std::mt19937 gen{rd()};
-
-    //键盘按键状态
-    bool upPressed = false;
-    bool downPressed = false;
-    bool leftPressed = false;
-    bool rightPressed = false;
-    bool isFullscreen = false;
-
-    // 朝向与攻击系统
-    enum Direction {
-        DIR_UP,
-        DIR_DOWN,
-        DIR_LEFT,
-        DIR_RIGHT
-    };
-    Direction playerDir = DIR_DOWN;
+    // 战斗系统
     bool isAttacking = false;
     float attackTimer = 0.0f;
     const float ATTACK_DURATION = 0.18f;
@@ -165,59 +64,22 @@ private:
     Direction attackDir = DIR_DOWN;
     bool attackHitRegistered = false;
 
-    // 屏幕打击微震
-    float screenShakeTimer = 0.0f;
-    float screenShakeIntensity = 0.0f;
-
-    //绿色墙壁与可破坏障碍物
-    std::vector<SDL_Rect> walls;
-    std::vector<SDL_Rect> lowWalls;
-    std::vector<SDL_Rect> smallObstacles;
-
-    bool LoadLevelFromFile(const std::string& filename);
-    void SaveScoreHistoryToFile();
-    void SaveTimeHistoryToFile();
-    void LoadScoreHistoryFromFile();
-    void LoadTimeHistoryFromFile();
-    void DrawFilledCircle(SDL_Renderer* renderer, int centerX, int centerY, int radius);
-    void EmitExplosion(float spawnX, float spawnY, int count);
-    void EmitDebrisBurst(float centerX, float centerY, int count, SDL_Color color);
-    void TriggerScreenShake(float duration, float intensity);
-    void PerformAttack();
+    std::random_device rd;
+    std::mt19937 gen{rd()};
 
     void HandleInput();
     void HandleMenuClick(int mouseX, int mouseY);
     void UpdateVolumeFromMouse(int mouseX);
-    void UpdateAudioVolumes();
-    void PlayClickSound();
-    void SwitchToEnglishKeyboardLayout();
-    void RestoreOriginalKeyboardLayout();
+    void PerformAttack();
     void StartGame(GameMode mode);
-    void DrawText(const std::string& text, int x, int y, SDL_Color color, int pointSize = 24);
-    void DrawButton(const SDL_Rect& rect, const std::string& label, bool hovered = false);
-    void DrawMenuPage();
-    void DrawHistoryPage();
-    void DrawControlsPage();
-    void DrawSettingsPage();
-    void DrawPausePage();
-    void DrawExitConfirmPage();
-    void DrawDungeonBackground(Uint8 overlayAlpha);
-    void UpdateCamera();
-    float CurrentCameraZoom() const;
-    float CurrentVisionRadius() const;
-    float CurrentVisionSoftEdge() const;
-    void DrawVisionFog();
-    bool HasLineOfSight(float worldX, float worldY) const;
-    bool CheckCollision(float px, float py, float pSize, float wx, float wy, float wW, float wH) const;
-    bool CheckRectCollision(float ax, float ay, float aw, float ah,
-                            float bx, float by, float bw, float bh) const;
-    bool CheckObstacleCollision(float px, float py) const;
-    void resetCoinPosition();
+
     void Update(float dt);
     void Render();
 
 public:
-    Engine() : isRunning(false), window(nullptr), renderer(nullptr) {}
+    Engine();
+    ~Engine();
+
     bool Initialize(const char* title, int width, int height);
     void Run();
     void Clean();

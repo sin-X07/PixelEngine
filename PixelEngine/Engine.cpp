@@ -1,352 +1,41 @@
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
 #include "Engine.hpp"
-#include "MazeGenerator.hpp"
-#include <cmath>
 #include <iostream>
-#include <fstream>
-#include <filesystem>
-#include <iomanip>
-#include <sstream>
-#ifdef _WIN32
-#include <windows.h>
-#undef DrawText
-#endif
+#include <cmath>
+#include <algorithm>
 
-namespace {
-std::string ResolveProjectFile(const std::string& filename) {
-    const std::filesystem::path current = std::filesystem::current_path() / filename;
-    if (std::filesystem::exists(current)) {
-        return current.string();
-    }
-
-    const std::filesystem::path sourceRoot = std::filesystem::path(__FILE__).parent_path();
-    const std::filesystem::path projectPath = sourceRoot / filename;
-    if (std::filesystem::exists(projectPath)) {
-        return projectPath.string();
-    }
-
-    return filename;
-}
+Engine::Engine() : isRunning(false), window(nullptr), renderer(nullptr) {
+    audioManager = std::make_unique<AudioManager>();
+    inputManager = std::make_unique<InputManager>();
+    worldMap = std::make_unique<WorldMap>();
+    physicsSystem = std::make_unique<PhysicsSystem>();
+    particleSystem = std::make_unique<ParticleSystem>(gen);
+    renderSystem = std::make_unique<RenderSystem>();
+    uiRenderer = std::make_unique<UIRenderer>();
+    saveManager = std::make_unique<SaveManager>();
 }
 
-    // 解析外部文本地图文件
-bool Engine::LoadLevelFromFile(const std::string& filename) {
-    const std::string resolvedPath = ResolveProjectFile(filename);
-    std::ifstream mapFile(resolvedPath);
-    if (!mapFile) {
-        std::cerr << "无法打开关卡地图文件：" << filename << std::endl;
-        return false;
-    }
-
-    std::vector<std::string> mapRows;
-    std::string line;
-    while (std::getline(mapFile, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line.empty()) continue;
-        if (!mapRows.empty() && line.size() != mapRows.front().size()) {
-            std::cerr << "关卡地图各行宽度不一致: " << filename << std::endl;
-            return false;
-        }
-        mapRows.push_back(line);
-    }
-
-    if (mapRows.empty()) {
-        std::cerr << "关卡地图为空: " << filename << std::endl;
-        return false;
-    }
-
-    walls.clear();
-    lowWalls.clear();
-    smallObstacles.clear();
-    coins.clear();
-    levelGrid = mapRows;
-    mapHeightTiles = static_cast<int>(mapRows.size());
-    mapWidthTiles = static_cast<int>(mapRows.front().size());
-
-    for (int row = 0; row < mapHeightTiles; ++row) {
-        for (int col = 0; col < mapWidthTiles; ++col) {
-            const char tileType = mapRows[row][col];
-            const int pixelX = col * TILE_SIZE;
-            const int pixelY = row * TILE_SIZE;
-
-            if (tileType == '#') {
-                walls.push_back({pixelX, pixelY, TILE_SIZE, TILE_SIZE});
-            } else if (tileType == 'H') {
-                lowWalls.push_back({pixelX, pixelY, TILE_SIZE, TILE_SIZE});
-            } else if (tileType == 'o') {
-                const int obstacleSize = TILE_SIZE / 2;
-                smallObstacles.push_back({
-                    pixelX + (TILE_SIZE - obstacleSize) / 2,
-                    pixelY + (TILE_SIZE - obstacleSize) / 2,
-                    obstacleSize,
-                    obstacleSize
-                });
-            } else if (tileType == 'P') {
-                playerX = static_cast<float>(pixelX) + (TILE_SIZE - playerSize) * 0.5f;
-                playerY = static_cast<float>(pixelY) + (TILE_SIZE - playerSize) * 0.5f;
-            } else if (tileType == 'C') {
-                coins.push_back({
-                    static_cast<float>(pixelX) + (TILE_SIZE - coinSize) * 0.5f,
-                    static_cast<float>(pixelY) + (TILE_SIZE - coinSize) * 0.5f
-                });
-            }
-        }
-    }
-
-    mapFile.close();
-    std::cout << "成功解析外部关卡 [" << filename << "]! " << mapWidthTiles << "x"
-              << mapHeightTiles << " 格，共构建了" << walls.size() << " 面墙壁和 "
-              << coins.size() << " 枚宝藏" << std::endl;
-    return true;
+Engine::~Engine() {
+    Clean();
 }
 
-// 保存战绩
-void Engine::SaveScoreHistoryToFile() {
-    const std::string savePath = ResolveProjectFile("score_saves.txt");
-    std::ofstream outFile(savePath);
-
-    if (!outFile) {
-        std::cerr << "分数存档文件打开失败!" << std::endl;
-        return;
-    }
-
-    for (int hScore : scoreHistory) {
-        outFile << hScore << "\n";
-    }
-
-    outFile.close();
-    std::cout << "分数存档文件保存成功!" << std::endl;
-}
-
-void Engine::SaveTimeHistoryToFile() {
-    const std::string savePath = ResolveProjectFile("time_saves.txt");
-    std::ofstream outFile(savePath);
-
-    if (!outFile) {
-        std::cerr << "时间存档文件打开失败!" << std::endl;
-        return;
-    }
-
-    for (float hTime : timeHistory) {
-        outFile << hTime << "\n";
-    }
-
-    outFile.close();
-    std::cout << "时间存档文件保存成功!" << std::endl;
-}
-
-// 读取战绩
-void Engine::LoadScoreHistoryFromFile() {
-    const std::string savePath = ResolveProjectFile("score_saves.txt");
-    std::ifstream inFile(savePath);
-
-    if (!inFile) {
-        std::cout << "创建新分数档案。" << std::endl;
-    }
-
-    scoreHistory.clear();
-    int hScore = 0;
-
-    while (inFile >> hScore) {
-        scoreHistory.push_back(hScore);
-    }
-
-    inFile.close();
-
-    if (scoreHistory.size() > 10) {
-        scoreHistory.resize(10);
-    }
-
-    std::cout << "成功读取 " << scoreHistory.size() << " 局历史分数!" << std::endl;
-}
-
-void Engine::LoadTimeHistoryFromFile() {
-    const std::string savePath = ResolveProjectFile("time_saves.txt");
-    std::ifstream inFile(savePath);
-    
-    if (!inFile) {
-        std::cout << "创建新时间档案。" << std::endl;
-    }
-
-    timeHistory.clear();
-    float hTime = 0.0;
-
-    while (inFile >> hTime) {
-        timeHistory.push_back(hTime);
-    }
-
-    inFile.close();
-
-    if (timeHistory.size() > 10) {
-        timeHistory.resize(10);
-    }
-
-    std::cout << "成功读取 " << timeHistory.size() << " 局历史时间!" << std::endl;
-}
-
-//绘制金币
-void Engine::DrawFilledCircle(SDL_Renderer* renderer, int centerX, int centerY, int radius) {
-    for (int w = 0; w < radius * 2; w++) {
-        for (int h = 0; h < radius * 2; h++) {
-            int dx = radius - w;
-            int dy = radius - h;
-            if ((dx * dx + dy * dy) <= (radius * radius)) {
-                SDL_RenderDrawPoint(renderer, centerX + dx, centerY + dy);
-            }
-        }
-    }
-}
-
-// 粒子爆照效果
-void Engine::EmitExplosion(float spawnX, float spawnY, int count) {
-    int activated = 0;
-
-    std::uniform_real_distribution<float> randAngle(0.0f, 2.0f * 3.14159f);
-    std::uniform_real_distribution<float> randSpeed(50.0f, 150.0f);
-    std::uniform_real_distribution<float> randLife(0.3f, 0.7f);
-
-    for (auto& p : particlePool) {
-        if (!p.active) {
-            p.active = true;
-            p.x = spawnX;
-            p.y = spawnY;
-
-            float angle = randAngle(gen);
-            float speed = randSpeed(gen);
-
-            p.vx = std::cos(angle) * speed;
-            p.vy = std::sin(angle) * speed;
-            p.lifetime = randLife(gen);
-            p.maxLifetime = p.lifetime;
-
-            activated++;
-            if (activated >= count) break;
-        }
-    }
-}
-
-// 障碍物粉碎碎片粒子喷射
-void Engine::EmitDebrisBurst(float centerX, float centerY, int count, SDL_Color color) {
-    int activated = 0;
-    std::uniform_real_distribution<float> randAngle(0.0f, 2.0f * 3.14159f);
-    std::uniform_real_distribution<float> randSpeed(50.0f, 190.0f);
-    std::uniform_real_distribution<float> randLife(0.25f, 0.55f);
-    std::uniform_real_distribution<float> randSize(2.0f, 4.5f);
-
-    for (auto& p : debrisPool) {
-        if (!p.active) {
-            p.active = true;
-            p.x = centerX;
-            p.y = centerY;
-
-            float angle = randAngle(gen);
-            float speed = randSpeed(gen);
-            p.vx = std::cos(angle) * speed;
-            p.vy = std::sin(angle) * speed - 35.0f; // 略带向上喷溅的初速度
-            p.size = randSize(gen);
-            p.lifetime = randLife(gen);
-            p.maxLifetime = p.lifetime;
-
-            std::uniform_int_distribution<int> jitter(-20, 20);
-            p.color.r = static_cast<Uint8>(std::clamp(color.r + jitter(gen), 0, 255));
-            p.color.g = static_cast<Uint8>(std::clamp(color.g + jitter(gen), 0, 255));
-            p.color.b = static_cast<Uint8>(std::clamp(color.b + jitter(gen), 0, 255));
-            p.color.a = 255;
-
-            activated++;
-            if (activated >= count) break;
-        }
-    }
-}
-
-// 屏幕微震
-void Engine::TriggerScreenShake(float duration, float intensity) {
-    screenShakeTimer = duration;
-    screenShakeIntensity = intensity;
-}
-
-// 执行攻击动作
-void Engine::PerformAttack() {
-    if (currentState != PLAYING) return;
-    if (attackCooldownTimer > 0.0f) return; // 冷却中
-
-    isAttacking = true;
-    attackTimer = ATTACK_DURATION;
-    attackCooldownTimer = ATTACK_COOLDOWN;
-    attackDir = playerDir;
-    attackHitRegistered = false;
-
-    if (audioInitialized && attackSound) {
-        Mix_PlayChannel(-1, attackSound, 0);
-    }
-}
-
-// 初始化 SDL2 窗口和渲染器
 bool Engine::Initialize(const char* title, int width, int height) {
-    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+    cleaned = false;
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0) {
         std::cerr << "SDL 初始化失败: " << SDL_GetError() << std::endl;
         return false;
     }
 
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
-        std::cerr << "SDL 音频子系统初始化失败，游戏将静音运行: " << SDL_GetError() << std::endl;
-    } else if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
-        std::cerr << "SDL_mixer 音频设备打开失败，游戏将静音运行: " << Mix_GetError() << std::endl;
-        SDL_QuitSubSystem(SDL_INIT_AUDIO);
-    } else {
-        audioInitialized = true;
-    }
+    // 初始化音频子系统
+    audioManager->Initialize();
+    audioManager->PlayMusic("../assets/audio/menu.wav");
 
-    if (audioInitialized) {
-        const std::string menuPath = ResolveProjectFile("../assets/audio/menu.wav");
-        backgroundMusic = Mix_LoadMUS(menuPath.c_str());
-        if (backgroundMusic) {
-            Mix_PlayMusic(backgroundMusic, -1);
-        } else {
-            std::cerr << "背景音乐加载失败: " << Mix_GetError() << std::endl;
-        }
-
-        const std::string pickupSoundPath = ResolveProjectFile("../assets/audio/pickup.wav");
-        pickupSound = Mix_LoadWAV(pickupSoundPath.c_str());
-        if (!pickupSound) {
-            std::cerr << "金币音效加载失败: " << Mix_GetError() << std::endl;
-        }
-
-        const std::string buttonSoundPath = ResolveProjectFile("../assets/audio/button.ogg");
-        buttonHoverSound = Mix_LoadWAV(buttonSoundPath.c_str());
-        if (!buttonHoverSound) {
-            std::cerr << "按钮悬停音效加载失败: " << Mix_GetError() << std::endl;
-        }
-
-        const std::string clickSoundPath = ResolveProjectFile("../assets/audio/click.ogg");
-        clickSound = Mix_LoadWAV(clickSoundPath.c_str());
-        if (!clickSound) {
-            std::cerr << "按钮点击音效加载失败: " << Mix_GetError() << std::endl;
-        }
-
-        const std::string attackSoundPath = ResolveProjectFile("../assets/audio/attack_swing.wav");
-        attackSound = Mix_LoadWAV(attackSoundPath.c_str());
-        if (!attackSound) {
-            std::cerr << "攻击挥剑音效加载失败: " << Mix_GetError() << std::endl;
-        }
-
-        const std::string breakSoundPath = ResolveProjectFile("../assets/audio/obstacle_break.wav");
-        breakSound = Mix_LoadWAV(breakSoundPath.c_str());
-        if (!breakSound) {
-            std::cerr << "障碍物破碎音效加载失败: " << Mix_GetError() << std::endl;
-        }
-
-        UpdateAudioVolumes();
-    }
-
+    // 创建窗口与硬件渲染器
     window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_SHOWN);
     if (!window) {
         std::cerr << "窗口创建失败: " << SDL_GetError() << std::endl;
         return false;
     }
 
-    // 创建硬件加速的渲染器
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     if (!renderer) {
@@ -356,241 +45,90 @@ bool Engine::Initialize(const char* title, int width, int height) {
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_RenderSetLogicalSize(renderer, width, height);
-    visionTexture = SDL_CreateTexture(
-        renderer,
-        SDL_PIXELFORMAT_RGBA32,
-        SDL_TEXTUREACCESS_STREAMING,
-        width / VISION_MASK_SCALE,
-        height / VISION_MASK_SCALE
-    );
-    if (visionTexture) {
-        SDL_SetTextureBlendMode(visionTexture, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(visionTexture, SDL_ScaleModeLinear);
-        visionPixels.resize(static_cast<size_t>(width / VISION_MASK_SCALE) *
-                            (height / VISION_MASK_SCALE) * 4);
-    } else {
-        std::cerr << "视野遮罩纹理创建失败: " << SDL_GetError() << std::endl;
-    }
 
-    const int imageInitFlags = IMG_Init(IMG_INIT_PNG);
-    imageInitialized = (imageInitFlags & IMG_INIT_PNG) != 0;
-    if (!imageInitialized) {
-        std::cerr << "SDL2_image PNG 初始化失败: " << IMG_GetError() << std::endl;
-    } else {
-        auto loadTexture = [this](const std::string& filename) {
-            const std::string path = ResolveProjectFile("../assets/images/dungeon/" + filename);
-            SDL_Texture* texture = IMG_LoadTexture(renderer, path.c_str());
-            if (!texture) {
-                std::cerr << "图片加载失败 " << filename << ": " << IMG_GetError() << std::endl;
-            }
-            return texture;
-        };
-        dungeonFloorTexture = loadTexture("floor.png");
-        dungeonWallTexture = loadTexture("wall.png");
-        playerTexture = loadTexture("player.png");
-        treasureTexture = loadTexture("treasure.png");
-        slashTexture = loadTexture("slash_effect.png");
-    }
+    // 初始化渲染与UI子系统
+    if (!renderSystem->Initialize(renderer, width, height)) return false;
+    if (!uiRenderer->Initialize(renderer)) return false;
 
-    if (TTF_Init() < 0) {
-        std::cerr << "SDL_ttf 初始化失败: " << TTF_GetError() << std::endl;
-        return false;
-    }
-    ttfInitialized = true;
-
-    const char* fontPaths[] = {
-        "C:/Windows/Fonts/msyh.ttc",
-        "C:/Windows/Fonts/simhei.ttf",
-        "C:/Windows/Fonts/simsun.ttc"
-    };
-    for (const char* fontPath : fontPaths) {
-        uiFont = TTF_OpenFont(fontPath, 24);
-        if (uiFont) break;
-    }
-    if (!uiFont) {
-        std::cerr << "无法加载中文字体: " << TTF_GetError() << std::endl;
-        return false;
-    }
-
-    // 读取文件迷宫墙
+    // 默认加载随机迷宫地图与模式一地图
     MazeGenerator::GenerateRandomMazeFile("map2.txt", gen);
-
-    // 默认初始化模式一
-    bool loadSuccess = LoadLevelFromFile("../assets/maps/map1.txt");
-    if (!loadSuccess) {
+    if (!worldMap->LoadLevelFromFile("../assets/maps/map1.txt", playerX, playerY, playerSize)) {
         std::cerr << "警告：未找到地图 map1.txt" << std::endl;
         return false;
     }
 
-    LoadScoreHistoryFromFile();
-    LoadTimeHistoryFromFile();
-    historyLoaded = true;
-
-    particlePool.resize(MAX_PARTICLES);
-    debrisPool.resize(MAX_DEBRIS);
+    // 读取历史战绩
+    saveManager->LoadAll();
 
     isRunning = true;
     return true;
 }
 
-// 核心主循环（实现了解耦高刷屏的 Fixed Update）
 void Engine::Run() {
-    uint32_t previousTime = SDL_GetTicks();
+    uint32_t previousTime = SDL_GetTicks64();
     float lag = 0.0f;
 
     while (isRunning) {
-        uint32_t currentTime = SDL_GetTicks();
+        uint32_t currentTime = SDL_GetTicks64();
         float elapsedTime = static_cast<float>(currentTime - previousTime);
         previousTime = currentTime;
         lag += elapsedTime;
 
-        // ---- A. 处理输入 ----
         HandleInput();
 
-        // ---- B. 固定时间步长更新（逻辑/物理更新） ----
-        // 无论显示器是 60Hz 还是 360Hz，这里的 Update 触发频率永远是恒定的
         while (lag >= MS_PER_UPDATE) {
-            Update(MS_PER_UPDATE / 1000.0f); // 转换为秒传入
+            Update(MS_PER_UPDATE / 1000.0f);
             lag -= MS_PER_UPDATE;
         }
 
-        // ---- C. 渲染绘制（每帧能跑多快跑多快） ----
         Render();
     }
 }
 
-// 处理退出、键盘等事件
-void Engine::HandleInput() {
-    SDL_Event event;
-    while (SDL_PollEvent(&event)) {
-        if (event.type == SDL_QUIT) {
-            isRunning = false;
-        }
+void Engine::Clean() {
+    if (cleaned) return;
+    cleaned = true;
+    isRunning = false;
 
-        if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
-            const int mouseX = event.button.x;
-            const int mouseY = event.button.y;
-            if (currentState == SETTINGS) {
-                const int rowY[] = {230, 320, 410};
-                for (int i = 0; i < 3; ++i) {
-                    if (mouseX >= 335 && mouseX < 665 && mouseY >= rowY[i] - 18 && mouseY < rowY[i] + 32) {
-                        draggingVolumeSlider = i;
-                        UpdateVolumeFromMouse(mouseX);
-                        PlayClickSound();
-                        break;
-                    }
-                }
-            }
-            if (draggingVolumeSlider < 0) HandleMenuClick(mouseX, mouseY);
-        }
+    inputManager->RestoreOriginalKeyboardLayout();
 
-        if (event.type == SDL_MOUSEMOTION && draggingVolumeSlider >= 0) {
-            UpdateVolumeFromMouse(event.motion.x);
-        }
+    if (saveManager) {
+        saveManager->SaveAll();
+    }
 
-        if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) {
-            draggingVolumeSlider = -1;
-        }
+    if (audioManager) audioManager->Clean();
+    if (renderSystem) renderSystem->Clean();
+    if (uiRenderer) uiRenderer->Clean();
 
-        //键盘按下
-        if (event.type == SDL_KEYDOWN) {
-            if (event.key.repeat != 0) continue;
-            switch (event.key.keysym.sym) {
-                case SDLK_F11:
-                    ToggleFullscreen();
-                    break;
+    if (renderer) { SDL_DestroyRenderer(renderer); renderer = nullptr; }
+    if (window) { SDL_DestroyWindow(window); window = nullptr; }
+    SDL_Quit();
+    std::cout << "游戏引擎已安全关闭！" << std::endl;
+}
 
-                case SDLK_F1:
-                    masterMuted = !masterMuted;
-                    UpdateAudioVolumes();
-                    break;
-
-                case SDLK_ESCAPE:
-                    if (currentState == PLAYING) {
-                        currentState = PAUSED;
-                        upPressed = downPressed = leftPressed = rightPressed = false;
-                        vx = 0.0f;
-                        vy = 0.0f;
-                        if (audioInitialized) Mix_PauseMusic();
-                    } else if (currentState == PAUSED) {
-                        currentState = PLAYING;
-                        if (audioInitialized) Mix_ResumeMusic();
-                    } else if (currentState == SETTINGS) {
-                        currentState = settingsReturnState;
-                    } else if (currentState == EXIT_CONFIRM) {
-                        currentState = PAUSED;
-                    } else if (currentState == MODE_SELECT || currentState == HISTORY || currentState == CONTROLS) {
-                        currentState = MAIN_MENU;
-                    } else if (currentState == GAMEOVER) {
-                        gameOverStartTime = 0;
-                        currentState = MODE_SELECT;
-                    } else {
-                        isRunning = false;
-                    }
-                    break;
-
-                case SDLK_1: case SDLK_KP_1:
-                    if (currentState == MODE_SELECT) StartGame(TIME_ATTACK);
-                    break;
-
-                case SDLK_2: case SDLK_KP_2:
-                    if (currentState == MODE_SELECT) StartGame(MAZE_MODE);
-                    break;
-
-                case SDLK_RETURN: case SDLK_SPACE:
-                    if (currentState == GAMEOVER) {
-                        gameOverStartTime = 0;
-                        MazeGenerator::GenerateRandomMazeFile("map2.txt", gen);
-                        LoadLevelFromFile("map2.txt");
-                        vx = 0.0f;
-                        vy = 0.0f;
-                        currentState = MODE_SELECT;
-                        std::cout << "返回主菜单, 请重新选择游戏模式!" << std::endl;
-
-                    }
-                    break;
-
-                case SDLK_UP:    if (currentState == PLAYING) { upPressed = true; playerDir = DIR_UP; } break;
-                case SDLK_DOWN:  if (currentState == PLAYING) { downPressed = true; playerDir = DIR_DOWN; } break;
-                case SDLK_LEFT:  if (currentState == PLAYING) { leftPressed = true; playerDir = DIR_LEFT; } break;
-                case SDLK_RIGHT: if (currentState == PLAYING) { rightPressed = true; playerDir = DIR_RIGHT; } break;
-            }
-
-            switch (event.key.keysym.scancode) {
-                case SDL_SCANCODE_W: if (currentState == PLAYING) { upPressed = true; playerDir = DIR_UP; } break;
-                case SDL_SCANCODE_S: if (currentState == PLAYING) { downPressed = true; playerDir = DIR_DOWN; } break;
-                case SDL_SCANCODE_A: if (currentState == PLAYING) { leftPressed = true; playerDir = DIR_LEFT; } break;
-                case SDL_SCANCODE_D: if (currentState == PLAYING) { rightPressed = true; playerDir = DIR_RIGHT; } break;
-            }
-            if (event.key.keysym.scancode == SDL_SCANCODE_SPACE && currentState == PLAYING) {
-                PerformAttack();
-            }
-        }
-
-        //键盘松开
-        if (event.type == SDL_KEYUP) {
-            switch (event.key.keysym.sym) {
-                case SDLK_UP:    upPressed = false; break;
-                case SDLK_DOWN:  downPressed = false; break;
-                case SDLK_LEFT:  leftPressed = false; break;
-                case SDLK_RIGHT: rightPressed = false; break;
-            }
-
-            switch (event.key.keysym.scancode) {
-                case SDL_SCANCODE_W: upPressed = false; break;
-                case SDL_SCANCODE_S: downPressed = false; break;
-                case SDL_SCANCODE_A: leftPressed = false; break;
-                case SDL_SCANCODE_D: rightPressed = false; break;
-            }
-
-            if (currentState == PLAYING) {
-                if (upPressed) playerDir = DIR_UP;
-                else if (downPressed) playerDir = DIR_DOWN;
-                else if (leftPressed) playerDir = DIR_LEFT;
-                else if (rightPressed) playerDir = DIR_RIGHT;
-            }
+void Engine::ToggleFullscreen() {
+    if (window) {
+        Uint32 flags = SDL_GetWindowFlags(window);
+        if (flags & SDL_WINDOW_FULLSCREEN_DESKTOP) {
+            SDL_SetWindowFullscreen(window, 0);
+            isFullscreen = false;
+        } else {
+            SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+            isFullscreen = true;
         }
     }
+}
+
+void Engine::PerformAttack() {
+    if (isAttacking || attackCooldownTimer > 0.0f) return;
+
+    isAttacking = true;
+    attackTimer = ATTACK_DURATION;
+    attackCooldownTimer = ATTACK_COOLDOWN;
+    attackDir = inputManager->GetPlayerDir();
+    attackHitRegistered = false;
+
+    audioManager->PlaySound(SoundEffect::ATTACK_SWING);
 }
 
 void Engine::StartGame(GameMode mode) {
@@ -598,76 +136,44 @@ void Engine::StartGame(GameMode mode) {
     score = 0;
     vx = 0.0f;
     vy = 0.0f;
-    upPressed = downPressed = leftPressed = rightPressed = false;
+    inputManager->ResetMovementKeys();
     isAttacking = false;
     attackTimer = 0.0f;
     attackCooldownTimer = 0.0f;
     attackHitRegistered = false;
-    playerDir = DIR_DOWN;
-    screenShakeTimer = 0.0f;
-    screenShakeIntensity = 0.0f;
-    sprintBlend = 0.0f;
-    focusBlend = 0.0f;
-    if (audioInitialized) Mix_ResumeMusic();
+    particleSystem->Reset();
+    renderSystem->ResetMovementBlends();
+    diedByTrap = false;
+    audioManager->ResumeMusic();
 
     if (mode == TIME_ATTACK) {
         gameTimer = 30.0f;
-        if (!LoadLevelFromFile("../assets/maps/map1.txt")) return;
-        if (coins.size() > 3) coins.resize(3);
-        while (coins.size() < 3) {
-            const size_t previousCount = coins.size();
-            resetCoinPosition();
-            if (coins.size() == previousCount) break;
-        }
-        std::cout << "模式 1: 限时挑战开始! 60秒倒计时启动! 去获得更多金币吧!" << std::endl;
+        if (!worldMap->LoadLevelFromFile("../assets/maps/map1.txt", playerX, playerY, playerSize)) return;
+
+        // 初始宝箱随机刷新：清空地图预设固定宝箱，直接调用随机算法生成3个初始宝箱！
+        worldMap->GetCoins().clear();
+        worldMap->EnsureCoinCount(3, playerX, playerY, playerSize, gen);
+
+        // 生成不可破坏的地刺与老鼠夹陷阱（保证空间连通性）
+        worldMap->GenerateTrapsForTimeAttack(playerX, playerY, playerSize, gen);
+        std::cout << "模式 1: 限时挑战开始! 30秒倒计时启动! 小心地刺与老鼠夹，去获得更多金币吧!" << std::endl;
     } else {
         gameTimer = 0.0f;
         gameOverStartTime = 0;
         MazeGenerator::GenerateRandomMazeFile("map2.txt", gen);
-        if (!LoadLevelFromFile("map2.txt")) return;
+        if (!worldMap->LoadLevelFromFile("map2.txt", playerX, playerY, playerSize)) return;
         std::cout << "模式 2: 纯享迷宫模式开始! 探索吧!" << std::endl;
     }
 
-    SwitchToEnglishKeyboardLayout();
+    inputManager->SwitchToEnglishKeyboardLayout();
     currentState = PLAYING;
 }
 
-void Engine::SwitchToEnglishKeyboardLayout() {
-#ifdef _WIN32
-    if (englishKeyboardLayoutActivated) return;
-
-    if (!keyboardLayoutCaptured) {
-        const HKL currentLayout = GetKeyboardLayout(0);
-        if (!currentLayout) {
-            std::cerr << "无法读取当前键盘布局，继续使用现有输入布局。" << std::endl;
-            return;
-        }
-        originalKeyboardLayout = reinterpret_cast<std::uintptr_t>(currentLayout);
-        keyboardLayoutCaptured = true;
-    }
-
-    if (!LoadKeyboardLayoutW(L"00000409", KLF_ACTIVATE)) {
-        std::cerr << "无法激活英文（美国）键盘布局，继续使用现有输入布局。错误码: "
-                  << GetLastError() << std::endl;
-        return;
-    }
-
-    englishKeyboardLayoutActivated = true;
-#endif
-}
-
-void Engine::RestoreOriginalKeyboardLayout() {
-#ifdef _WIN32
-    if (!keyboardLayoutCaptured || !englishKeyboardLayoutActivated) return;
-
-    const HKL originalLayout = reinterpret_cast<HKL>(originalKeyboardLayout);
-    if (!ActivateKeyboardLayout(originalLayout, 0)) {
-        std::cerr << "无法恢复原键盘布局。错误码: " << GetLastError() << std::endl;
-        return;
-    }
-
-    englishKeyboardLayoutActivated = false;
-#endif
+void Engine::UpdateVolumeFromMouse(int mouseX) {
+    const int value = std::clamp((mouseX - 350) * 100 / 300, 0, 100);
+    if (draggingVolumeSlider == 0) audioManager->SetMasterVolume(value);
+    else if (draggingVolumeSlider == 1) audioManager->SetMusicVolume(value);
+    else if (draggingVolumeSlider == 2) audioManager->SetEffectsVolume(value);
 }
 
 void Engine::HandleMenuClick(int mouseX, int mouseY) {
@@ -677,441 +183,146 @@ void Engine::HandleMenuClick(int mouseX, int mouseY) {
     };
 
     if (currentState == MAIN_MENU) {
-        if (hit({250, 170, 300, 46})) { PlayClickSound(); currentState = MODE_SELECT; }
-        else if (hit({250, 228, 300, 46})) { PlayClickSound(); currentState = HISTORY; }
-        else if (hit({250, 286, 300, 46})) { PlayClickSound(); currentState = CONTROLS; }
-        else if (hit({250, 344, 300, 46})) { PlayClickSound(); settingsReturnState = MAIN_MENU; currentState = SETTINGS; }
-        else if (hit({250, 402, 300, 46})) { PlayClickSound(); isRunning = false; }
+        if (hit({250, 170, 300, 46})) { audioManager->PlaySound(SoundEffect::CLICK); currentState = MODE_SELECT; }
+        else if (hit({250, 228, 300, 46})) { audioManager->PlaySound(SoundEffect::CLICK); currentState = HISTORY; }
+        else if (hit({250, 286, 300, 46})) { audioManager->PlaySound(SoundEffect::CLICK); currentState = CONTROLS; }
+        else if (hit({250, 344, 300, 46})) { audioManager->PlaySound(SoundEffect::CLICK); settingsReturnState = MAIN_MENU; currentState = SETTINGS; }
+        else if (hit({250, 402, 300, 46})) { audioManager->PlaySound(SoundEffect::CLICK); isRunning = false; }
     } else if (currentState == MODE_SELECT) {
-        if (hit({220, 240, 360, 64})) { PlayClickSound(); StartGame(TIME_ATTACK); }
-        else if (hit({220, 324, 360, 64})) { PlayClickSound(); StartGame(MAZE_MODE); }
-        else if (hit({24, 24, 120, 44})) { PlayClickSound(); currentState = MAIN_MENU; }
+        if (hit({220, 240, 360, 64})) { audioManager->PlaySound(SoundEffect::CLICK); StartGame(TIME_ATTACK); }
+        else if (hit({220, 324, 360, 64})) { audioManager->PlaySound(SoundEffect::CLICK); StartGame(MAZE_MODE); }
+        else if (hit({24, 24, 120, 44})) { audioManager->PlaySound(SoundEffect::CLICK); currentState = MAIN_MENU; }
     } else if ((currentState == HISTORY || currentState == CONTROLS) && hit({24, 24, 120, 44})) {
-        PlayClickSound();
+        audioManager->PlaySound(SoundEffect::CLICK);
         currentState = MAIN_MENU;
     } else if (currentState == SETTINGS && hit({24, 24, 120, 44})) {
-        PlayClickSound();
+        audioManager->PlaySound(SoundEffect::CLICK);
         currentState = settingsReturnState;
     } else if (currentState == PAUSED) {
         if (hit({250, 155, 300, 48})) {
-            PlayClickSound();
+            audioManager->PlaySound(SoundEffect::CLICK);
             currentState = PLAYING;
-            if (audioInitialized) Mix_ResumeMusic();
+            audioManager->ResumeMusic();
         } else if (hit({250, 219, 300, 48})) {
-            PlayClickSound();
+            audioManager->PlaySound(SoundEffect::CLICK);
             StartGame(currentMode);
         } else if (hit({250, 283, 300, 48})) {
-            PlayClickSound();
+            audioManager->PlaySound(SoundEffect::CLICK);
             settingsReturnState = PAUSED;
             currentState = SETTINGS;
         } else if (hit({250, 347, 300, 48})) {
-            PlayClickSound();
+            audioManager->PlaySound(SoundEffect::CLICK);
             exitToDesktop = false;
             currentState = EXIT_CONFIRM;
         } else if (hit({250, 411, 300, 48})) {
-            PlayClickSound();
+            audioManager->PlaySound(SoundEffect::CLICK);
             exitToDesktop = true;
             currentState = EXIT_CONFIRM;
         }
     } else if (currentState == EXIT_CONFIRM) {
         if (hit({145, 330, 245, 58})) {
-            PlayClickSound();
+            audioManager->PlaySound(SoundEffect::CLICK);
             currentState = PAUSED;
         } else if (hit({410, 330, 245, 58})) {
-            PlayClickSound();
-            upPressed = downPressed = leftPressed = rightPressed = false;
+            audioManager->PlaySound(SoundEffect::CLICK);
+            inputManager->ResetMovementKeys();
             if (exitToDesktop) {
                 isRunning = false;
             } else {
                 currentState = MAIN_MENU;
-                if (audioInitialized) Mix_ResumeMusic();
+                audioManager->ResumeMusic();
             }
         }
     }
 }
 
-void Engine::UpdateVolumeFromMouse(int mouseX) {
-    const int value = std::clamp((mouseX - 350) * 100 / 300, 0, 100);
-    if (draggingVolumeSlider == 0) {
-        masterVolume = value;
-        masterMuted = false;
-    }
-    else if (draggingVolumeSlider == 1) musicVolume = value;
-    else if (draggingVolumeSlider == 2) effectsVolume = value;
-    UpdateAudioVolumes();
-}
+void Engine::HandleInput() {
+    inputManager->ProcessEvents(renderer, currentState);
 
-void Engine::UpdateAudioVolumes() {
-    if (!audioInitialized) return;
-    const int effectiveMaster = masterMuted ? 0 : masterVolume;
-    const int musicLevel = effectiveMaster * musicVolume * MIX_MAX_VOLUME / 10000;
-    const int effectsLevel = effectiveMaster * effectsVolume * MIX_MAX_VOLUME / 10000;
-    Mix_VolumeMusic(musicLevel);
-    Mix_Volume(-1, effectsLevel);
-}
+    if (inputManager->IsQuitRequested()) isRunning = false;
+    if (inputManager->IsFullscreenToggleRequested()) ToggleFullscreen();
+    if (inputManager->IsMuteToggleRequested()) audioManager->ToggleMute();
 
-void Engine::PlayClickSound() {
-    if (audioInitialized && clickSound) Mix_PlayChannel(-1, clickSound, 0);
-}
-
-void Engine::DrawText(const std::string& text, int x, int y, SDL_Color color, int pointSize) {
-    if (!uiFont || text.empty()) return;
-    TTF_SetFontSize(uiFont, pointSize);
-    SDL_Surface* surface = TTF_RenderUTF8_Blended(uiFont, text.c_str(), color);
-    if (!surface) return;
-    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
-    if (texture) {
-        SDL_Rect destination = {x, y, surface->w, surface->h};
-        SDL_RenderCopy(renderer, texture, nullptr, &destination);
-        SDL_DestroyTexture(texture);
-    }
-    SDL_FreeSurface(surface);
-}
-
-void Engine::DrawButton(const SDL_Rect& rect, const std::string& label, bool hovered) {
-    if (hovered) {
-        hoveredButtonThisFrame = label + ":" + std::to_string(rect.x) + ":" +
-            std::to_string(rect.y) + ":" + std::to_string(rect.w) + ":" + std::to_string(rect.h);
-        if (hoveredButtonThisFrame != hoveredButtonLastFrame && audioInitialized && buttonHoverSound) {
-            Mix_PlayChannel(-1, buttonHoverSound, 0);
+    if (inputManager->IsPauseToggleRequested()) {
+        if (currentState == PLAYING) {
+            currentState = PAUSED;
+            inputManager->ResetMovementKeys();
+            vx = vy = 0.0f;
+            audioManager->PauseMusic();
+        } else if (currentState == PAUSED) {
+            currentState = PLAYING;
+            audioManager->ResumeMusic();
+        } else if (currentState == SETTINGS) {
+            currentState = settingsReturnState;
+        } else if (currentState == EXIT_CONFIRM) {
+            currentState = PAUSED;
+        } else if (currentState == MODE_SELECT || currentState == HISTORY || currentState == CONTROLS) {
+            currentState = MAIN_MENU;
+        } else if (currentState == GAMEOVER) {
+            gameOverStartTime = 0;
+            currentState = MODE_SELECT;
+        } else {
+            isRunning = false;
         }
     }
 
-    SDL_SetRenderDrawColor(renderer, hovered ? 245 : 55, hovered ? 190 : 75, hovered ? 90 : 85, 255);
-    SDL_RenderFillRect(renderer, &rect);
-    SDL_Rect inset = {rect.x + 3, rect.y + 3, rect.w - 6, rect.h - 6};
-    SDL_SetRenderDrawColor(renderer, 24, 35, 43, 255);
-    SDL_RenderFillRect(renderer, &inset);
-    SDL_Color color = hovered ? SDL_Color{255, 222, 125, 255} : SDL_Color{230, 238, 235, 255};
-    TTF_SetFontSize(uiFont, 24);
-    int textWidth = 0;
-    int textHeight = 0;
-    TTF_SizeUTF8(uiFont, label.c_str(), &textWidth, &textHeight);
-    DrawText(label, rect.x + (rect.w - textWidth) / 2, rect.y + (rect.h - textHeight) / 2, color);
-}
-
-void Engine::DrawMenuPage() {
-    DrawDungeonBackground(145);
-    SDL_SetRenderDrawColor(renderer, 231, 176, 70, 255);
-    SDL_RenderDrawLine(renderer, 0, 104, 800, 104);
-    TTF_SetFontSize(uiFont, 34);
-    int titleWidth = 0;
-    int titleHeight = 0;
-    TTF_SizeUTF8(uiFont, "PIXEL ENGINE", &titleWidth, &titleHeight);
-    DrawText("PIXEL ENGINE", (800 - titleWidth) / 2, 42, {247, 211, 130, 255}, 34);
-
-    int mouseX = 0;
-    int mouseY = 0;
-    SDL_GetMouseState(&mouseX, &mouseY);
-    float logicalX = 0.0f;
-    float logicalY = 0.0f;
-    SDL_RenderWindowToLogical(renderer, mouseX, mouseY, &logicalX, &logicalY);
-    mouseX = static_cast<int>(logicalX);
-    mouseY = static_cast<int>(logicalY);
-    if (currentState == MAIN_MENU) {
-        const char* labels[] = {"选择模式", "历史记录", "按键介绍", "设置", "退出游戏"};
-        for (int i = 0; i < 5; ++i) {
-            SDL_Rect button = {250, 170 + i * 58, 300, 46};
-            DrawButton(button, labels[i], mouseX >= button.x && mouseX < button.x + button.w &&
-                       mouseY >= button.y && mouseY < button.y + button.h);
-        }
-    } else {
-        DrawButton({24, 24, 120, 44}, "返回", mouseX < 144 && mouseY < 68);
-        DrawText("选择游戏模式", 290, 160, {235, 241, 232, 255}, 30);
-        SDL_Rect modeOne = {220, 240, 360, 64};
-        SDL_Rect modeTwo = {220, 324, 360, 64};
-        DrawButton(modeOne, "模式一  限时挑战", mouseX >= modeOne.x && mouseX < modeOne.x + modeOne.w &&
-                   mouseY >= modeOne.y && mouseY < modeOne.y + modeOne.h);
-        DrawButton(modeTwo, "模式二  迷宫探索", mouseX >= modeTwo.x && mouseX < modeTwo.x + modeTwo.w &&
-                   mouseY >= modeTwo.y && mouseY < modeTwo.y + modeTwo.h);
-        DrawText("点击按钮开始", 330, 430, {164, 190, 182, 255}, 18);
-    }
-}
-
-void Engine::DrawHistoryPage() {
-    SDL_SetRenderDrawColor(renderer, 20, 39, 45, 255);
-    SDL_Rect background = {0, 0, 800, 600};
-    SDL_RenderFillRect(renderer, &background);
-    int mouseX = 0;
-    int mouseY = 0;
-    SDL_GetMouseState(&mouseX, &mouseY);
-    float logicalX = 0.0f;
-    float logicalY = 0.0f;
-    SDL_RenderWindowToLogical(renderer, mouseX, mouseY, &logicalX, &logicalY);
-    mouseX = static_cast<int>(logicalX);
-    mouseY = static_cast<int>(logicalY);
-    DrawButton({24, 24, 120, 44}, "返回", mouseX < 144 && mouseY < 68);
-    DrawText("历史记录", 330, 35, {247, 211, 130, 255}, 30);
-    SDL_SetRenderDrawColor(renderer, 231, 176, 70, 255);
-    SDL_RenderDrawLine(renderer, 400, 105, 400, 560);
-
-    DrawText("模式一  限时挑战", 72, 112, {245, 208, 118, 255}, 22);
-    DrawText("模式二  迷宫探索", 482, 112, {134, 222, 190, 255}, 22);
-
-    const int barWidth = 180;
-    const float coefficient = 2.0f;
-    int maxScore = 0;
-    for (int record : scoreHistory) maxScore = std::max(maxScore, record);
-    float bestTime = 0.0f;
-    for (float record : timeHistory) {
-        if (record > 0.0f && (bestTime == 0.0f || record < bestTime)) bestTime = record;
+    if (currentState == MODE_SELECT) {
+        if (inputManager->IsDigit1Requested()) StartGame(TIME_ATTACK);
+        else if (inputManager->IsDigit2Requested()) StartGame(MAZE_MODE);
     }
 
-    for (size_t i = 0; i < std::min<size_t>(10, scoreHistory.size()); ++i) {
-        int y = 160 + static_cast<int>(i) * 38;
-        int record = std::max(0, scoreHistory[i]);
-        std::ostringstream label;
-        label << std::setw(2) << std::setfill('0') << (i + 1) << "  " << record << " 分";
-        DrawText(label.str(), 36, y - 2, {230, 238, 235, 255}, 16);
-        SDL_Rect track = {194, y + 3, barWidth, 14};
-        SDL_SetRenderDrawColor(renderer, 53, 70, 72, 255);
-        SDL_RenderFillRect(renderer, &track);
-        float ratio = maxScore > 0
-            ? std::log1p(coefficient * record) / std::log1p(coefficient * maxScore)
-            : 0.0f;
-        SDL_Rect fill = {track.x, track.y, static_cast<int>(barWidth * ratio), track.h};
-        SDL_SetRenderDrawColor(renderer, i == 0 ? 244 : 225, i == 0 ? 187 : 157, 76, 255);
-        SDL_RenderFillRect(renderer, &fill);
+    if (currentState == GAMEOVER && inputManager->IsEnterOrSpaceRequested()) {
+        gameOverStartTime = 0;
+        MazeGenerator::GenerateRandomMazeFile("map2.txt", gen);
+        worldMap->LoadLevelFromFile("map2.txt", playerX, playerY, playerSize);
+        vx = vy = 0.0f;
+        currentState = MODE_SELECT;
     }
 
-    for (size_t i = 0; i < std::min<size_t>(10, timeHistory.size()); ++i) {
-        int y = 160 + static_cast<int>(i) * 38;
-        float record = timeHistory[i];
-        std::ostringstream label;
-        label << std::setw(2) << std::setfill('0') << (i + 1) << "  "
-              << std::fixed << std::setprecision(2) << record << " 秒";
-        DrawText(label.str(), 426, y - 2, {230, 238, 235, 255}, 16);
-        SDL_Rect track = {584, y + 3, barWidth, 14};
-        SDL_SetRenderDrawColor(renderer, 53, 70, 72, 255);
-        SDL_RenderFillRect(renderer, &track);
-        float ratio = bestTime > 0.0f && record > 0.0f
-            ? std::log1p(coefficient * bestTime / record) / std::log1p(coefficient)
-            : 0.0f;
-        ratio = std::clamp(ratio, 0.0f, 1.0f);
-        SDL_Rect fill = {track.x, track.y, static_cast<int>(barWidth * ratio), track.h};
-        SDL_SetRenderDrawColor(renderer, i == 0 ? 119 : 78, i == 0 ? 225 : 183, 157, 255);
-        SDL_RenderFillRect(renderer, &fill);
+    if (currentState == PLAYING && inputManager->IsAttackRequested()) {
+        PerformAttack();
     }
 
-    if (scoreHistory.empty()) DrawText("暂无记录", 110, 180, {155, 177, 171, 255}, 18);
-    if (timeHistory.empty()) DrawText("暂无记录", 510, 180, {155, 177, 171, 255}, 18);
-}
+    // 鼠标点击事件
+    if (inputManager->IsMouseLeftClicked()) {
+        const int mouseX = inputManager->GetMouseX();
+        const int mouseY = inputManager->GetMouseY();
 
-void Engine::DrawControlsPage() {
-    SDL_SetRenderDrawColor(renderer, 20, 39, 45, 255);
-    SDL_Rect background = {0, 0, 800, 600};
-    SDL_RenderFillRect(renderer, &background);
-    int mouseX = 0;
-    int mouseY = 0;
-    SDL_GetMouseState(&mouseX, &mouseY);
-    float logicalX = 0.0f;
-    float logicalY = 0.0f;
-    SDL_RenderWindowToLogical(renderer, mouseX, mouseY, &logicalX, &logicalY);
-    mouseX = static_cast<int>(logicalX);
-    mouseY = static_cast<int>(logicalY);
-    DrawButton({24, 24, 120, 44}, "返回", mouseX < 144 && mouseY < 68);
-    DrawText("操作说明", 330, 35, {247, 211, 130, 255}, 30);
-    SDL_SetRenderDrawColor(renderer, 231, 176, 70, 255);
-    SDL_RenderDrawLine(renderer, 80, 104, 720, 104);
-
-    const SDL_Color heading = {134, 222, 190, 255};
-    const SDL_Color body = {230, 238, 235, 255};
-    DrawText("游戏中", 100, 132, heading, 22);
-    DrawText("W / A / S / D    或    方向键：移动（松键后惯性滑行）", 100, 174, body, 19);
-    DrawText("Shift：蓄力冲刺；Ctrl：聚焦视野", 100, 210, body, 19);
-    DrawText("空格：挥剑攻击 / 破坏障碍；F11：切换全屏", 100, 246, body, 19);
-    DrawText("ESC：暂停游戏", 100, 282, body, 19);
-    DrawText("结算页面", 100, 326, heading, 22);
-    DrawText("Enter / 空格：返回模式选择", 100, 362, body, 19);
-    DrawText("菜单页面", 100, 408, heading, 22);
-    DrawText("鼠标左键：选择按钮", 100, 444, body, 19);
-    DrawText("1 / 2：在模式选择页快速开始对应模式", 100, 476, body, 19);
-    DrawText("ESC：子页面返回；主菜单中退出", 100, 508, body, 19);
-    DrawText("F1：切换主音量静音", 100, 540, body, 19);
-}
-
-void Engine::DrawSettingsPage() {
-    SDL_Rect background = {0, 0, 800, 600};
-    SDL_SetRenderDrawColor(renderer, 18, 36, 43, 255);
-    SDL_RenderFillRect(renderer, &background);
-    SDL_SetRenderDrawColor(renderer, 231, 176, 70, 255);
-    SDL_RenderDrawLine(renderer, 0, 104, 800, 104);
-
-    int mouseX = 0;
-    int mouseY = 0;
-    SDL_GetMouseState(&mouseX, &mouseY);
-    float logicalX = 0.0f;
-    float logicalY = 0.0f;
-    SDL_RenderWindowToLogical(renderer, mouseX, mouseY, &logicalX, &logicalY);
-    mouseX = static_cast<int>(logicalX);
-    mouseY = static_cast<int>(logicalY);
-    DrawButton({24, 24, 120, 44}, "返回", mouseX < 144 && mouseY < 68);
-    DrawText("设置", 360, 38, {247, 211, 130, 255}, 30);
-
-    const char* labels[] = {"主音量", "音乐", "音效"};
-    const int values[] = {masterVolume, musicVolume, effectsVolume};
-    const int rowY[] = {230, 320, 410};
-    for (int i = 0; i < 3; ++i) {
-        DrawText(labels[i], 160, rowY[i] - 14, {230, 238, 235, 255}, 22);
-        SDL_Rect track = {350, rowY[i], 300, 8};
-        SDL_SetRenderDrawColor(renderer, 53, 70, 72, 255);
-        SDL_RenderFillRect(renderer, &track);
-        SDL_Rect fill = {track.x, track.y, track.w * values[i] / 100, track.h};
-        SDL_SetRenderDrawColor(renderer, i == 1 ? 244 : 119, i == 1 ? 187 : 225, i == 1 ? 76 : 157, 255);
-        SDL_RenderFillRect(renderer, &fill);
-        SDL_Rect knob = {track.x + track.w * values[i] / 100 - 7, rowY[i] - 8, 14, 24};
-        SDL_SetRenderDrawColor(renderer, 230, 238, 235, 255);
-        SDL_RenderFillRect(renderer, &knob);
-        DrawText(std::to_string(values[i]) + "%", 680, rowY[i] - 12, {230, 238, 235, 255}, 20);
-    }
-    DrawText(masterMuted ? "主音量已静音" : "F1：切换主音量静音", 350, 485, {134, 222, 190, 255}, 18);
-}
-
-void Engine::DrawPausePage() {
-    SDL_Rect dim = {0, 0, 800, 600};
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 190);
-    SDL_RenderFillRect(renderer, &dim);
-    SDL_Rect panel = {190, 70, 420, 470};
-    SDL_SetRenderDrawColor(renderer, 45, 62, 65, 255);
-    SDL_RenderFillRect(renderer, &panel);
-    SDL_Rect inset = {194, 74, 412, 462};
-    SDL_SetRenderDrawColor(renderer, 20, 39, 45, 255);
-    SDL_RenderFillRect(renderer, &inset);
-    DrawText("游戏暂停", 333, 94, {247, 211, 130, 255}, 30);
-
-    int mouseX = 0;
-    int mouseY = 0;
-    SDL_GetMouseState(&mouseX, &mouseY);
-    float logicalX = 0.0f;
-    float logicalY = 0.0f;
-    SDL_RenderWindowToLogical(renderer, mouseX, mouseY, &logicalX, &logicalY);
-    mouseX = static_cast<int>(logicalX);
-    mouseY = static_cast<int>(logicalY);
-    const char* labels[] = {"继续游戏", "重新开始", "设置", "退出游戏", "退出桌面"};
-    for (int i = 0; i < 5; ++i) {
-        SDL_Rect button = {250, 155 + i * 64, 300, 48};
-        DrawButton(button, labels[i], mouseX >= button.x && mouseX < button.x + button.w &&
-                   mouseY >= button.y && mouseY < button.y + button.h);
-    }
-}
-
-void Engine::DrawExitConfirmPage() {
-    DrawPausePage();
-    SDL_Rect dim = {0, 0, 800, 600};
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 150);
-    SDL_RenderFillRect(renderer, &dim);
-    SDL_Rect panel = {110, 190, 580, 230};
-    SDL_SetRenderDrawColor(renderer, 45, 62, 65, 255);
-    SDL_RenderFillRect(renderer, &panel);
-    SDL_Rect inset = {114, 194, 572, 222};
-    SDL_SetRenderDrawColor(renderer, 20, 39, 45, 255);
-    SDL_RenderFillRect(renderer, &inset);
-    DrawText("确认退出", 335, 218, {247, 211, 130, 255}, 28);
-    DrawText("本次游戏数据将不会被保存", 248, 270, {230, 238, 235, 255}, 20);
-
-    int mouseX = 0;
-    int mouseY = 0;
-    SDL_GetMouseState(&mouseX, &mouseY);
-    float logicalX = 0.0f;
-    float logicalY = 0.0f;
-    SDL_RenderWindowToLogical(renderer, mouseX, mouseY, &logicalX, &logicalY);
-    mouseX = static_cast<int>(logicalX);
-    mouseY = static_cast<int>(logicalY);
-    SDL_Rect cancel = {145, 330, 245, 58};
-    SDL_Rect abandon = {410, 330, 245, 58};
-    DrawButton(cancel, "算了，那我玩完吧", mouseX >= cancel.x && mouseX < cancel.x + cancel.w &&
-               mouseY >= cancel.y && mouseY < cancel.y + cancel.h);
-    DrawButton(abandon, "老子不玩了", mouseX >= abandon.x && mouseX < abandon.x + abandon.w &&
-               mouseY >= abandon.y && mouseY < abandon.y + abandon.h);
-}
-
-void Engine::DrawDungeonBackground(Uint8 overlayAlpha) {
-    SDL_Rect background = {0, 0, 800, 600};
-    SDL_SetRenderDrawColor(renderer, 18, 36, 43, 255);
-    SDL_RenderFillRect(renderer, &background);
-
-    if (dungeonFloorTexture) {
-        const float cameraZoom = CurrentCameraZoom();
-        const float screenTileSize = TILE_SIZE * cameraZoom;
-        const float startX = -std::fmod(cameraX, static_cast<float>(TILE_SIZE)) * cameraZoom;
-        const float startY = -std::fmod(cameraY, static_cast<float>(TILE_SIZE)) * cameraZoom;
-        for (float tileY = startY; tileY < background.h; tileY += screenTileSize) {
-            for (float tileX = startX; tileX < background.w; tileX += screenTileSize) {
-                SDL_Rect tile = {
-                    static_cast<int>(std::lround(tileX)),
-                    static_cast<int>(std::lround(tileY)),
-                    static_cast<int>(std::lround(screenTileSize)),
-                    static_cast<int>(std::lround(screenTileSize))
-                };
-                SDL_RenderCopy(renderer, dungeonFloorTexture, nullptr, &tile);
+        if (currentState == SETTINGS) {
+            const int rowY[] = {230, 320, 410};
+            for (int i = 0; i < 3; ++i) {
+                if (mouseX >= 335 && mouseX < 665 && mouseY >= rowY[i] - 18 && mouseY < rowY[i] + 32) {
+                    draggingVolumeSlider = i;
+                    UpdateVolumeFromMouse(mouseX);
+                    audioManager->PlaySound(SoundEffect::CLICK);
+                    break;
+                }
             }
         }
+        HandleMenuClick(mouseX, mouseY);
     }
 
-    if (overlayAlpha > 0) {
-        SDL_SetRenderDrawColor(renderer, 12, 23, 31, overlayAlpha);
-        SDL_RenderFillRect(renderer, &background);
+    if (inputManager->IsMouseLeftDown() && draggingVolumeSlider != -1 && currentState == SETTINGS) {
+        UpdateVolumeFromMouse(inputManager->GetMouseX());
+    }
+
+    if (inputManager->IsMouseLeftReleased()) {
+        draggingVolumeSlider = -1;
     }
 }
 
-// 碰撞检测
-bool Engine::CheckCollision(float px, float py, float pSize, float wx, float wy, float wW, float wH) const {
-    if (px + pSize <= wx) return false; //墙左
-    if (px >= wx + wW)    return false; //墙右
-    if (py + pSize <= wy) return false; //墙上
-    if (py >= wy + wH)    return false; //墙下
-
-    return true;
-}
-
-bool Engine::CheckRectCollision(float ax, float ay, float aw, float ah,
-                                float bx, float by, float bw, float bh) const {
-    if (ax + aw <= bx) return false; // A在B左侧
-    if (ax >= bx + bw) return false; // A在B右侧
-    if (ay + ah <= by) return false; // A在B上方
-    if (ay >= by + bh) return false; // A在B下方
-
-    return true;
-}
-
-bool Engine::CheckObstacleCollision(float px, float py) const {
-    for (const SDL_Rect& obstacle : lowWalls) {
-        if (CheckCollision(px, py, playerSize, obstacle.x, obstacle.y, obstacle.w, obstacle.h)) {
-            return true;
-        }
-    }
-
-    for (const SDL_Rect& obstacle : smallObstacles) {
-        if (CheckCollision(px, py, playerSize, obstacle.x, obstacle.y, obstacle.w, obstacle.h)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-// 物理/逻辑更新（帧率无关，速度恒定）
 void Engine::Update(float dt) {
-    if (currentState != PLAYING) {
-        isAttacking = false;
-        return;
-    }
+    // 特效需要在结算页继续推进，否则死亡时的血沫与震屏会永久停在首帧。
+    particleSystem->Update(dt);
 
-    // 屏幕震动衰减
-    if (screenShakeTimer > 0.0f) {
-        screenShakeTimer -= dt;
-        if (screenShakeTimer <= 0.0f) {
-            screenShakeTimer = 0.0f;
-            screenShakeIntensity = 0.0f;
-        }
-    }
+    if (currentState != PLAYING) return;
 
     // 攻击冷却推进
     if (attackCooldownTimer > 0.0f) {
-        attackCooldownTimer -= dt;
-        if (attackCooldownTimer < 0.0f) attackCooldownTimer = 0.0f;
+        attackCooldownTimer = std::max(0.0f, attackCooldownTimer - dt);
     }
 
-    // 挥刀攻击状态与击碎障碍判定
+    // 挥剑攻击状态与破坏障碍判定
     if (isAttacking) {
         attackTimer -= dt;
         if (attackTimer <= 0.0f) {
@@ -1119,741 +330,190 @@ void Engine::Update(float dt) {
             isAttacking = false;
         }
 
-        // 持续判定期间检测是否命中前方障碍物（若当前挥刀尚未命中过）
         if (!attackHitRegistered) {
-            float hitX = playerX;
-            float hitY = playerY;
-            float hitW = playerSize;
-            float hitH = playerSize;
-            const float reach = 18.0f;
-
-            if (attackDir == DIR_UP) {
-                hitX = playerX - 3.0f;
-                hitY = playerY - reach;
-                hitW = playerSize + 6.0f;
-                hitH = reach;
-            } else if (attackDir == DIR_DOWN) {
-                hitX = playerX - 3.0f;
-                hitY = playerY + playerSize;
-                hitW = playerSize + 6.0f;
-                hitH = reach;
-            } else if (attackDir == DIR_LEFT) {
-                hitX = playerX - reach;
-                hitY = playerY - 3.0f;
-                hitW = reach;
-                hitH = playerSize + 6.0f;
-            } else if (attackDir == DIR_RIGHT) {
-                hitX = playerX + playerSize;
-                hitY = playerY - 3.0f;
-                hitW = reach;
-                hitH = playerSize + 6.0f;
-            }
-
-            bool hitOccurred = false;
-
-                // 1. 检查小障碍物 (木质箱子路障)
-            for (auto it = smallObstacles.begin(); it != smallObstacles.end(); ) {
-                if (CheckRectCollision(hitX, hitY, hitW, hitH, it->x, it->y, it->w, it->h)) {
-                    EmitDebrisBurst(it->x + it->w * 0.5f, it->y + it->h * 0.5f, 26, {194, 111, 58, 255}); // 棕色木屑
-
-                    int gridCol = it->x / TILE_SIZE;
-                    int gridRow = it->y / TILE_SIZE;
-                    if (gridRow >= 0 && gridRow < mapHeightTiles && gridCol >= 0 && gridCol < mapWidthTiles) {
-                        if (levelGrid[gridRow][gridCol] == 'o') {
-                            levelGrid[gridRow][gridCol] = '.';
-                        }
-                    }
-
-                    it = smallObstacles.erase(it);
-                    hitOccurred = true;
-                } else {
-                    ++it;
-                }
-            }
-
-            // 2. 检查矮墙 (砖石路障)
-            for (auto it = lowWalls.begin(); it != lowWalls.end(); ) {
-                if (CheckRectCollision(hitX, hitY, hitW, hitH, it->x, it->y, it->w, it->h)) {
-                    EmitDebrisBurst(it->x + it->w * 0.5f, it->y + it->h * 0.5f, 32, {140, 150, 155, 255}); // 砖石青灰石屑
-
-                    int gridCol = it->x / TILE_SIZE;
-                    int gridRow = it->y / TILE_SIZE;
-                    if (gridRow >= 0 && gridRow < mapHeightTiles && gridCol >= 0 && gridCol < mapWidthTiles) {
-                        if (levelGrid[gridRow][gridCol] == 'H') {
-                            levelGrid[gridRow][gridCol] = '.';
-                        }
-                    }
-
-                    it = lowWalls.erase(it);
-                    hitOccurred = true;
-                } else {
-                    ++it;
-                }
-            }
-
-            if (hitOccurred) {
+            if (physicsSystem->PerformAttackHitCheck(playerX, playerY, playerSize,
+                                                     attackDir, *worldMap, *particleSystem)) {
                 attackHitRegistered = true;
-                if (audioInitialized && breakSound) {
-                    Mix_PlayChannel(-1, breakSound, 0);
-                }
-                TriggerScreenShake(0.12f, 3.0f);
+                audioManager->PlaySound(SoundEffect::OBSTACLE_BREAK);
+                particleSystem->TriggerScreenShake(0.12f, 3.0f);
             }
         }
     }
 
+    // 移动速度更新（Shift 冲刺 / Ctrl 聚焦）
     const Uint8* keyboardState = SDL_GetKeyboardState(nullptr);
-    const bool sprintHeld = keyboardState[SDL_SCANCODE_LSHIFT] ||
-                            keyboardState[SDL_SCANCODE_RSHIFT];
-    const bool focusHeld = keyboardState[SDL_SCANCODE_LCTRL] ||
-                           keyboardState[SDL_SCANCODE_RCTRL];
-    sprintBlend = std::clamp(sprintBlend + (sprintHeld ? dt : -dt / 0.4f), 0.0f, 1.0f);
-    focusBlend = std::clamp(focusBlend + (focusHeld ? dt / 0.3f : -dt / 0.3f), 0.0f, 1.0f);
+    const bool sprintHeld = keyboardState[SDL_SCANCODE_LSHIFT] || keyboardState[SDL_SCANCODE_RSHIFT];
+    const bool focusHeld = keyboardState[SDL_SCANCODE_LCTRL] || keyboardState[SDL_SCANCODE_RCTRL];
+    renderSystem->UpdateMovementBlends(dt, sprintHeld, focusHeld);
 
-    const float sprintMaxSpeed = MAX_SPEED * (1.0f + sprintBlend);
+    const float sprintMaxSpeed = MAX_SPEED * (1.0f + renderSystem->GetSprintBlend());
     const float movementMaxSpeed = sprintMaxSpeed +
-        (MAX_SPEED / 3.0f - sprintMaxSpeed) * focusBlend;
+        (MAX_SPEED / 3.0f - sprintMaxSpeed) * renderSystem->GetFocusBlend();
 
-    // 更新常规金币火花粒子
-    for (auto& p : particlePool) {
-        if (p.active) {
-            p.x += p.vx * dt;
-            p.y += p.vy * dt;
-            p.vy += 200.0f * dt;
-            p.lifetime -= dt;
-            if (p.lifetime <= 0.0f) {
-                p.active = false;
-            }
-        }
-    }
-
-    // 更新障碍物碎屑粒子
-    for (auto& p : debrisPool) {
-        if (p.active) {
-            p.x += p.vx * dt;
-            p.y += p.vy * dt;
-            p.vy += 320.0f * dt; // 重力下坠
-            p.lifetime -= dt;
-            if (p.lifetime <= 0.0f) {
-                p.active = false;
-            }
-        }
-    }
-
+    // 游戏倒计时更新
     if (currentMode == TIME_ATTACK) {
         gameTimer -= dt;
-
         if (gameTimer <= 0.0f) {
             gameTimer = 0.0f;
+            diedByTrap = false;
             currentState = GAMEOVER;
+            gameOverStartTime = SDL_GetTicks();
 
-            scoreHistory.insert(scoreHistory.begin(), score);
-            if (scoreHistory.size() > 10) {
-                scoreHistory.pop_back();
-            }
-
-            std::cout << "\n======================================" << std::endl;
-            std::cout << "🏁 TIME UP! 时间到！挑战结束！" << std::endl;
-            std::cout << "🏆 您的最终得分是: " << score << " 分！" << std::endl;
-            std::cout << "========================================\n" << std::endl;
+            saveManager->AddScoreRecord(score, true);
+            std::cout << "\n🏁 时间到！挑战完成！最终得分: " << score << " 分！\n" << std::endl;
             return;
         }
     } else if (currentMode == MAZE_MODE) {
         gameTimer += dt;
     }
 
-    //存入安全坐标
+    // 玩家位移与碰撞推挤
     float oldX = playerX;
     float oldY = playerY;
 
-    const int verticalInput = static_cast<int>(downPressed) - static_cast<int>(upPressed);
+    const int verticalInput = static_cast<int>(inputManager->IsDownPressed()) - static_cast<int>(inputManager->IsUpPressed());
     if (verticalInput != 0) {
         vy += verticalInput * ACCEL * dt;
     } else {
         vy -= vy * FRICTION * dt;
         if (std::abs(vy) < 1.0f) vy = 0.0f;
     }
-
-    if (vy > movementMaxSpeed)  vy = movementMaxSpeed;
-    if (vy < -movementMaxSpeed) vy = -movementMaxSpeed;
-
+    vy = std::clamp(vy, -movementMaxSpeed, movementMaxSpeed);
     playerY += vy * dt;
 
-    for (const auto& wall : walls) {
-        if (CheckCollision(playerX, playerY, playerSize, wall.x, wall.y, wall.w, wall.h)) {
+    for (const auto& wall : worldMap->GetWalls()) {
+        if (PhysicsSystem::CheckCollision(playerX, playerY, playerSize, wall.x, wall.y, wall.w, wall.h)) {
             playerY = oldY;
             vy = 0.0f;
             break;
         }
     }
-    if (CheckObstacleCollision(playerX, playerY)) {
+    if (physicsSystem->CheckObstacleCollision(playerX, playerY, playerSize, *worldMap)) {
         playerY = oldY;
         vy = 0.0f;
     }
 
-    const int horizontalInput = static_cast<int>(rightPressed) - static_cast<int>(leftPressed);
+    const int horizontalInput = static_cast<int>(inputManager->IsRightPressed()) - static_cast<int>(inputManager->IsLeftPressed());
     if (horizontalInput != 0) {
         vx += horizontalInput * ACCEL * dt;
     } else {
         vx -= vx * FRICTION * dt;
         if (std::abs(vx) < 1.0f) vx = 0.0f;
     }
-
-    if (vx > movementMaxSpeed) vx = movementMaxSpeed;
-    if (vx < -movementMaxSpeed) vx = -movementMaxSpeed;
-
+    vx = std::clamp(vx, -movementMaxSpeed, movementMaxSpeed);
     playerX += vx * dt;
 
-    for (const auto& wall : walls) {
-        if (CheckCollision(playerX, playerY, playerSize, wall.x, wall.y, wall.w, wall.h)) {
+    for (const auto& wall : worldMap->GetWalls()) {
+        if (PhysicsSystem::CheckCollision(playerX, playerY, playerSize, wall.x, wall.y, wall.w, wall.h)) {
             playerX = oldX;
             vx = 0.0f;
             break;
         }
     }
-    if (CheckObstacleCollision(playerX, playerY)) {
+    if (physicsSystem->CheckObstacleCollision(playerX, playerY, playerSize, *worldMap)) {
         playerX = oldX;
         vx = 0.0f;
     }
 
-    // 收集宝藏
-    for (size_t coinIndex = 0; coinIndex < coins.size(); ++coinIndex) {
-        const SDL_FPoint coin = coins[coinIndex];
-        if (CheckCollision(playerX, playerY, playerSize, coin.x, coin.y, coinSize, coinSize)) {
-            score++;
+    // 陷阱触碰致死判定（模式一：得分以当前得分为准，标记失败）
+    if (currentMode == TIME_ATTACK) {
+        int trapHitIdx = physicsSystem->CheckTrapCollision(playerX, playerY, playerSize, *worldMap);
+        if (trapHitIdx != -1) {
+            const auto& trap = worldMap->GetTraps()[trapHitIdx];
+            diedByTrap = true;
+            currentState = GAMEOVER;
+            gameOverStartTime = SDL_GetTicks();
 
-            if (audioInitialized && pickupSound) {
-                if (Mix_PlayChannel(-1, pickupSound, 0) == -1) {
-                    std::cerr << "播放金币音效失败: " << Mix_GetError() << std::endl;
-                }
-            }
+            audioManager->PlaySound(SoundEffect::PLAYER_DEATH);
+            particleSystem->TriggerScreenShake(0.35f, 6.0f);
+            particleSystem->EmitDebrisBurst(playerX + playerSize * 0.5f, playerY + playerSize * 0.5f, 45, {220, 35, 35, 255});
+            particleSystem->EmitExplosion(trap.x + trap.size * 0.5f, trap.y + trap.size * 0.5f, 25);
 
-            EmitExplosion(coin.x + coinSize / 2.0f, coin.y + coinSize / 2.0f, 30);
+            saveManager->AddScoreRecord(score, false);
+            std::cout << "\n💀 惨死！触发致命陷阱！挑战失败！最终得分: " << score << " 分！\n" << std::endl;
+            return;
+        }
+    }
 
-            if (currentMode == TIME_ATTACK) {
-                std::cout << "💰 叮！吃到金币！当前得分: " << score << " 分！" << std::endl;
-                coins.erase(coins.begin() + static_cast<std::ptrdiff_t>(coinIndex));
-                resetCoinPosition();
-            } else if (currentMode == MAZE_MODE) {
-                coins.clear();
-                currentState = GAMEOVER;
+    // 收集宝藏金币
+    int coinIdx = physicsSystem->CheckCoinPickup(playerX, playerY, playerSize, *worldMap);
+    if (coinIdx != -1) {
+        score++;
+        audioManager->PlaySound(SoundEffect::PICKUP);
 
-                gameOverStartTime = SDL_GetTicks();
+        const auto coin = worldMap->GetCoins()[coinIdx];
+        const float coinSize = worldMap->GetCoinSize();
+        particleSystem->EmitExplosion(coin.x + coinSize * 0.5f, coin.y + coinSize * 0.5f, 30);
 
-                timeHistory.insert(timeHistory.begin(), gameTimer);
-                if (timeHistory.size() > 10) timeHistory.pop_back();
+        if (currentMode == TIME_ATTACK) {
+            std::cout << "💰 叮！吃到金币！当前得分: " << score << " 分！" << std::endl;
+            worldMap->GetCoins().erase(worldMap->GetCoins().begin() + coinIdx);
+            worldMap->ResetCoinPosition(playerX, playerY, playerSize, gen);
+        } else if (currentMode == MAZE_MODE) {
+            worldMap->GetCoins().clear();
+            currentState = GAMEOVER;
+            gameOverStartTime = SDL_GetTicks();
 
-                std::cout << "成功通关! 耗时: " << gameTimer << " 秒!" << std::endl;
-                return;
-            }
-            break;
+            saveManager->AddTimeRecord(gameTimer);
+            std::cout << "成功通关! 耗时: " << gameTimer << " 秒!" << std::endl;
+            return;
         }
     }
 }
 
-// 随机生成金币
-void Engine::resetCoinPosition() {
-    std::vector<SDL_FPoint> candidates;
-    for (int row = 1; row < mapHeightTiles - 1; ++row) {
-        for (int col = 1; col < mapWidthTiles - 1; ++col) {
-            if (levelGrid[row][col] == '#' || levelGrid[row][col] == 'H' ||
-                levelGrid[row][col] == 'o') continue;
-
-            const float x = col * TILE_SIZE + (TILE_SIZE - coinSize) * 0.5f;
-            const float y = row * TILE_SIZE + (TILE_SIZE - coinSize) * 0.5f;
-            const float playerCenterX = playerX + playerSize * 0.5f;
-            const float playerCenterY = playerY + playerSize * 0.5f;
-            const float coinCenterX = x + coinSize * 0.5f;
-            const float coinCenterY = y + coinSize * 0.5f;
-            const float dx = coinCenterX - playerCenterX;
-            const float dy = coinCenterY - playerCenterY;
-            if (dx * dx + dy * dy < 100.0f * 100.0f) continue;
-
-            bool overlapsCoin = false;
-            for (const SDL_FPoint& existing : coins) {
-                const float coinDx = coinCenterX - (existing.x + coinSize * 0.5f);
-                const float coinDy = coinCenterY - (existing.y + coinSize * 0.5f);
-                if (coinDx * coinDx + coinDy * coinDy < TILE_SIZE * TILE_SIZE) {
-                    overlapsCoin = true;
-                    break;
-                }
-            }
-            if (!overlapsCoin) candidates.push_back({x, y});
-        }
-    }
-
-    if (candidates.empty()) return;
-    std::uniform_int_distribution<size_t> chooseCandidate(0, candidates.size() - 1);
-    coins.push_back(candidates[chooseCandidate(gen)]);
-}
-
-void Engine::UpdateCamera() {
-    const bool gameplayVisible = currentState == PLAYING || currentState == PAUSED ||
-        currentState == EXIT_CONFIRM || currentState == GAMEOVER;
-    if (!gameplayVisible) {
-        cameraX = 0;
-        cameraY = 0;
-        return;
-    }
-
-    const float cameraZoom = CurrentCameraZoom();
-    const float viewportWorldWidth = 800.0f / cameraZoom;
-    const float viewportWorldHeight = 600.0f / cameraZoom;
-    const float maxCameraX = std::max(0.0f, mapWidthTiles * TILE_SIZE - viewportWorldWidth);
-    const float maxCameraY = std::max(0.0f, mapHeightTiles * TILE_SIZE - viewportWorldHeight);
-    cameraX = std::clamp(
-        playerX + playerSize * 0.5f - viewportWorldWidth * 0.5f,
-        0.0f,
-        maxCameraX
-    );
-    cameraY = std::clamp(
-        playerY + playerSize * 0.5f - viewportWorldHeight * 0.5f,
-        0.0f,
-        maxCameraY
-    );
-
-    // 屏幕打击微震位移
-    if (screenShakeTimer > 0.0f) {
-        std::uniform_real_distribution<float> shakeDist(-screenShakeIntensity, screenShakeIntensity);
-        cameraX += shakeDist(gen) / cameraZoom;
-        cameraY += shakeDist(gen) / cameraZoom;
-    }
-}
-
-float Engine::CurrentCameraZoom() const {
-    return CAMERA_ZOOM - focusBlend * (CAMERA_ZOOM - 1.0f);
-}
-
-float Engine::CurrentVisionRadius() const {
-    return VISION_RADIUS * (1.0f + focusBlend);
-}
-
-float Engine::CurrentVisionSoftEdge() const {
-    return VISION_SOFT_EDGE * (1.0f + focusBlend);
-}
-
-bool Engine::HasLineOfSight(float worldX, float worldY) const {
-    if (levelGrid.empty()) return false;
-
-    int x = static_cast<int>((playerX + playerSize * 0.5f) / TILE_SIZE);
-    int y = static_cast<int>((playerY + playerSize * 0.5f) / TILE_SIZE);
-    const int targetX = static_cast<int>(worldX / TILE_SIZE);
-    const int targetY = static_cast<int>(worldY / TILE_SIZE);
-    if (targetX < 0 || targetY < 0 || targetX >= mapWidthTiles || targetY >= mapHeightTiles) {
-        return false;
-    }
-
-    const int deltaX = std::abs(targetX - x);
-    const int stepX = x < targetX ? 1 : -1;
-    const int deltaY = -std::abs(targetY - y);
-    const int stepY = y < targetY ? 1 : -1;
-    int error = deltaX + deltaY;
-    auto blocked = [this](int column, int row) {
-        return row < 0 || column < 0 || row >= mapHeightTiles || column >= mapWidthTiles ||
-               levelGrid[row][column] == '#';
-    };
-
-    while (x != targetX || y != targetY) {
-        const int doubledError = error * 2;
-        const bool stepAlongX = doubledError >= deltaY;
-        const bool stepAlongY = doubledError <= deltaX;
-        const int previousX = x;
-        const int previousY = y;
-        if (stepAlongX) {
-            error += deltaY;
-            x += stepX;
-        }
-        if (stepAlongY) {
-            error += deltaX;
-            y += stepY;
-        }
-
-        if (stepAlongX && stepAlongY &&
-            (blocked(x, previousY) || blocked(previousX, y))) return false;
-        if ((x != targetX || y != targetY) && blocked(x, y)) return false;
-    }
-    return true;
-}
-
-void Engine::DrawVisionFog() {
-    if (!visionTexture || visionPixels.empty()) return;
-
-    const int maskWidth = 800 / VISION_MASK_SCALE;
-    const int maskHeight = 600 / VISION_MASK_SCALE;
-    const float playerCenterX = playerX + playerSize * 0.5f;
-    const float playerCenterY = playerY + playerSize * 0.5f;
-    const float visionRadius = CurrentVisionRadius();
-    const float visionSoftEdge = CurrentVisionSoftEdge();
-    const float fullyLitRadius = visionRadius - visionSoftEdge;
-    const float cameraZoom = CurrentCameraZoom();
-
-    for (int y = 0; y < maskHeight; ++y) {
-        for (int x = 0; x < maskWidth; ++x) {
-            const float worldX = cameraX + (x + 0.5f) * VISION_MASK_SCALE / cameraZoom;
-            const float worldY = cameraY + (y + 0.5f) * VISION_MASK_SCALE / cameraZoom;
-            const float deltaX = worldX - playerCenterX;
-            const float deltaY = worldY - playerCenterY;
-            const float distance = std::sqrt(deltaX * deltaX + deltaY * deltaY);
-            Uint8 alpha = 255;
-
-            if (distance < visionRadius && HasLineOfSight(worldX, worldY)) {
-                if (distance <= fullyLitRadius) {
-                    alpha = 0;
-                } else {
-                    float blend = (distance - fullyLitRadius) / visionSoftEdge;
-                    blend = blend * blend * (3.0f - 2.0f * blend);
-                    alpha = static_cast<Uint8>(blend * 255.0f);
-                }
-            }
-
-            const size_t pixelIndex = (static_cast<size_t>(y) * maskWidth + x) * 4;
-            visionPixels[pixelIndex] = 0;
-            visionPixels[pixelIndex + 1] = 0;
-            visionPixels[pixelIndex + 2] = 0;
-            visionPixels[pixelIndex + 3] = alpha;
-        }
-    }
-
-    SDL_UpdateTexture(visionTexture, nullptr, visionPixels.data(), maskWidth * 4);
-    SDL_Rect viewport = {0, 0, 800, 600};
-    SDL_RenderCopy(renderer, visionTexture, nullptr, &viewport);
-}
-
-// 像素级画面渲染
 void Engine::Render() {
-    hoveredButtonThisFrame.clear();
-    UpdateCamera();
-    const float cameraZoom = CurrentCameraZoom();
+    uiRenderer->BeginFrame();
 
-    // 用一种复古的像素风暗青色清空屏幕
+    const bool gameplayVisible = (currentState == PLAYING || currentState == PAUSED ||
+                                  currentState == EXIT_CONFIRM || currentState == GAMEOVER);
+    SDL_FPoint shakeOffset = particleSystem->GetShakeOffset();
+    renderSystem->UpdateCamera(playerX, playerY, playerSize, *worldMap, gameplayVisible, shakeOffset.x, shakeOffset.y);
+
     SDL_SetRenderDrawColor(renderer, 20, 30, 40, 255);
     SDL_RenderClear(renderer);
 
-    if (currentState == PLAYING || currentState == PAUSED ||
-        currentState == EXIT_CONFIRM || currentState == GAMEOVER) {
-        DrawDungeonBackground(0);
-    }
+    if (gameplayVisible) {
+        renderSystem->DrawDungeonBackground(*worldMap, 0);
+        renderSystem->DrawWorld(*worldMap, playerX, playerY, playerSize,
+                                isAttacking, attackDir, attackTimer, ATTACK_DURATION,
+                                currentState == PLAYING);
+        particleSystem->Render(renderer, renderSystem->GetCameraX(), renderSystem->GetCameraY(), renderSystem->CurrentCameraZoom());
 
-    for (const SDL_Rect& lowWall : lowWalls) {
-        const float visibleHeight = std::min(14.0f, static_cast<float>(lowWall.h));
-        SDL_Rect screenWall = {
-            static_cast<int>(std::lround((lowWall.x - cameraX) * cameraZoom)),
-            static_cast<int>(std::lround(
-                (lowWall.y + lowWall.h - visibleHeight - cameraY) * cameraZoom)),
-            static_cast<int>(std::lround(lowWall.w * cameraZoom)),
-            static_cast<int>(std::lround(visibleHeight * cameraZoom))
-        };
-        if (dungeonWallTexture) {
-            SDL_RenderCopy(renderer, dungeonWallTexture, nullptr, &screenWall);
-        } else {
-            SDL_SetRenderDrawColor(renderer, 98, 129, 126, 255);
-            SDL_RenderFillRect(renderer, &screenWall);
-        }
-    }
-
-    for (const SDL_Rect& obstacle : smallObstacles) {
-        SDL_Rect screenObstacle = {
-            static_cast<int>(std::lround((obstacle.x - cameraX) * cameraZoom)),
-            static_cast<int>(std::lround((obstacle.y - cameraY) * cameraZoom)),
-            static_cast<int>(std::lround(obstacle.w * cameraZoom)),
-            static_cast<int>(std::lround(obstacle.h * cameraZoom))
-        };
-        // 外边框/深木色
-        SDL_SetRenderDrawColor(renderer, 130, 72, 38, 255);
-        SDL_RenderFillRect(renderer, &screenObstacle);
-        // 内芯/浅木色
-        if (screenObstacle.w > 4 && screenObstacle.h > 4) {
-            SDL_Rect inner = {screenObstacle.x + 2, screenObstacle.y + 2, screenObstacle.w - 4, screenObstacle.h - 4};
-            SDL_SetRenderDrawColor(renderer, 194, 111, 58, 255);
-            SDL_RenderFillRect(renderer, &inner);
-        }
-    }
-
-    // 玩家方块
-    SDL_Rect pRect;
-    pRect.x = static_cast<int>(std::lround((playerX - cameraX) * cameraZoom));
-    pRect.y = static_cast<int>(std::lround((playerY - cameraY) * cameraZoom));
-    pRect.w = static_cast<int>(std::lround(playerSize * cameraZoom));
-    pRect.h = static_cast<int>(std::lround(playerSize * cameraZoom));
-    if (playerTexture) {
-        const int spriteInset = static_cast<int>(std::lround(2.0f * cameraZoom));
-        SDL_Rect playerSprite = {
-            pRect.x + spriteInset,
-            pRect.y + spriteInset,
-            pRect.w - spriteInset * 2,
-            pRect.h - spriteInset * 2
-        };
-        SDL_RenderCopy(renderer, playerTexture, nullptr, &playerSprite);
-    } else {
-        SDL_SetRenderDrawColor(renderer, 255, 60, 60, 255);
-        SDL_RenderFillRect(renderer, &pRect);
-    }
-
-    // 挥剑攻击刀光特效动画
-    if (isAttacking && slashTexture) {
-        float progress = 1.0f - (attackTimer / ATTACK_DURATION);
-        int frameIndex = std::clamp(static_cast<int>(progress * 3.0f), 0, 2);
-        SDL_Rect srcRect = { frameIndex * 64, 0, 64, 47 };
-
-        double angle = 0.0;
-        float slashWorldX = playerX + playerSize * 0.5f;
-        float slashWorldY = playerY + playerSize * 0.5f;
-
-        const float forwardDist = 12.0f;
-        if (attackDir == DIR_RIGHT) {
-            angle = 0.0;
-            slashWorldX += forwardDist;
-        } else if (attackDir == DIR_DOWN) {
-            angle = 90.0;
-            slashWorldY += forwardDist;
-        } else if (attackDir == DIR_LEFT) {
-            angle = 180.0;
-            slashWorldX -= forwardDist;
-        } else if (attackDir == DIR_UP) {
-            angle = 270.0;
-            slashWorldY -= forwardDist;
-        }
-
-        float displayW = 28.0f * cameraZoom;
-        float displayH = 22.0f * cameraZoom;
-
-        SDL_Rect destRect = {
-            static_cast<int>(std::lround((slashWorldX - cameraX) * cameraZoom - displayW * 0.5f)),
-            static_cast<int>(std::lround((slashWorldY - cameraY) * cameraZoom - displayH * 0.5f)),
-            static_cast<int>(std::lround(displayW)),
-            static_cast<int>(std::lround(displayH))
-        };
-
-        SDL_RenderCopyEx(renderer, slashTexture, &srcRect, &destRect, angle, nullptr, SDL_FLIP_NONE);
-    }
-
-    // 所有绿色墙壁
-    for (const auto& wall : walls) {
-        SDL_Rect screenWall = {
-            static_cast<int>(std::lround((wall.x - cameraX) * cameraZoom)),
-            static_cast<int>(std::lround((wall.y - cameraY) * cameraZoom)),
-            static_cast<int>(std::lround(wall.w * cameraZoom)),
-            static_cast<int>(std::lround(wall.h * cameraZoom))
-        };
-        if (dungeonWallTexture) {
-            SDL_RenderCopy(renderer, dungeonWallTexture, nullptr, &screenWall);
-        } else {
-            SDL_SetRenderDrawColor(renderer, 60, 255, 60, 255);
-            SDL_RenderFillRect(renderer, &screenWall);
-        }
-    }
-
-    // 宝藏
-    if (currentState == PLAYING) {
-        for (const SDL_FPoint& coin : coins) {
-            if (treasureTexture) {
-                SDL_Rect treasure = {
-                    static_cast<int>(std::lround((coin.x - 2.0f - cameraX) * cameraZoom)),
-                    static_cast<int>(std::lround((coin.y - 2.0f - cameraY) * cameraZoom)),
-                    static_cast<int>(std::lround((coinSize + 4.0f) * cameraZoom)),
-                    static_cast<int>(std::lround((coinSize + 4.0f) * cameraZoom))
-                };
-                SDL_RenderCopy(renderer, treasureTexture, nullptr, &treasure);
-            } else {
-                SDL_SetRenderDrawColor(renderer, 255, 215, 0, 255);
-                int radius = static_cast<int>(std::lround(coinSize * cameraZoom * 0.5f));
-                int cx = static_cast<int>(std::lround(
-                    (coin.x + coinSize * 0.5f - cameraX) * cameraZoom));
-                int cy = static_cast<int>(std::lround(
-                    (coin.y + coinSize * 0.5f - cameraY) * cameraZoom));
-                DrawFilledCircle(renderer, cx, cy, radius);
-            }
-        }
-    }
-
-    // 粒子特效
-    for (const auto& p : particlePool) {
-        if (p.active) {
-            float lifeRatio = p.lifetime / p.maxLifetime;
-            int alpha = static_cast<int>(lifeRatio * 255.0f);
-            if (alpha < 0) alpha = 0;
-
-            int red = 255;
-            int green = static_cast<int>(140 + 115 * lifeRatio);
-            int blue = static_cast<int>(30 * lifeRatio);
-
-            SDL_SetRenderDrawColor(renderer, red, green, blue, alpha);
-            SDL_Rect pRect = {
-                static_cast<int>(std::lround((p.x - cameraX) * cameraZoom)),
-                static_cast<int>(std::lround((p.y - cameraY) * cameraZoom)),
-                static_cast<int>(std::lround(2.0f * cameraZoom)),
-                static_cast<int>(std::lround(2.0f * cameraZoom))
-            };
-            SDL_RenderFillRect(renderer, &pRect);
-        }
-    }
-
-    // 障碍物粉碎碎片粒子
-    for (const auto& p : debrisPool) {
-        if (p.active) {
-            float lifeRatio = p.lifetime / p.maxLifetime;
-            int alpha = static_cast<int>(std::clamp(lifeRatio * 255.0f, 0.0f, 255.0f));
-            SDL_SetRenderDrawColor(renderer, p.color.r, p.color.g, p.color.b, alpha);
-
-            int pSize = static_cast<int>(std::lround(p.size * cameraZoom * (0.6f + 0.4f * lifeRatio)));
-            if (pSize < 1) pSize = 1;
-
-            SDL_Rect pRect = {
-                static_cast<int>(std::lround((p.x - cameraX) * cameraZoom - pSize * 0.5f)),
-                static_cast<int>(std::lround((p.y - cameraY) * cameraZoom - pSize * 0.5f)),
-                pSize,
-                pSize
-            };
-            SDL_RenderFillRect(renderer, &pRect);
-        }
-    }
-
-
-    if (currentMode == TIME_ATTACK &&
-        (currentState == PLAYING || currentState == PAUSED ||
-         currentState == EXIT_CONFIRM || currentState == GAMEOVER)) {
-        DrawVisionFog();
-    }
-
-    if (currentState == MAIN_MENU || currentState == MODE_SELECT) DrawMenuPage();
-    else if (currentState == HISTORY) DrawHistoryPage();
-    else if (currentState == CONTROLS) DrawControlsPage();
-    else if (currentState == SETTINGS) DrawSettingsPage();
-    else if (currentState == PAUSED) DrawPausePage();
-    else if (currentState == EXIT_CONFIRM) DrawExitConfirmPage();
-
-    // 游戏中顶部UI
-    if (currentState == PLAYING) {
-        //进度条
         if (currentMode == TIME_ATTACK) {
-            SDL_Rect timeBG = {20, 10, 200, 15};
-            SDL_SetRenderDrawColor(renderer, 50, 50, 50, 255);
-            SDL_RenderFillRect(renderer, &timeBG);
-
-            int barWidth = static_cast<int>((gameTimer / 30.0f) * 200.0f);
-            SDL_Rect timeBar = {20, 10, barWidth, 15};
-
-            if (gameTimer > 10.0f) {
-                SDL_SetRenderDrawColor(renderer, 60, 255, 60, 255);
-            } else {
-                SDL_SetRenderDrawColor(renderer, 255, 60, 60, 255);
-            }
-            SDL_RenderFillRect(renderer, &timeBar);
-        }
-
-        //计分
-        SDL_SetRenderDrawColor(renderer, 255, 215, 0, 255);
-        int dotRadius = 4;
-        for (int i = 0; i < score; i++) {
-            int cx = 760 - (i * 12) + dotRadius;
-            int cy = 13 + dotRadius;
-            DrawFilledCircle(renderer, cx, cy, dotRadius);
+            renderSystem->DrawVisionFog(playerX, playerY, playerSize, *worldMap);
         }
     }
-    
 
-    if (currentState == GAMEOVER) {
-        SDL_Rect dimRect = {0, 0, 800, 600};
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 190);
-        SDL_RenderFillRect(renderer, &dimRect);
-        SDL_Rect panel = {180, 180, 440, 240};
-        SDL_SetRenderDrawColor(renderer, 45, 62, 65, 255);
-        SDL_RenderFillRect(renderer, &panel);
-        SDL_Rect inset = {184, 184, 432, 232};
-        SDL_SetRenderDrawColor(renderer, 20, 39, 45, 255);
-        SDL_RenderFillRect(renderer, &inset);
+    const int mouseX = inputManager->GetMouseX();
+    const int mouseY = inputManager->GetMouseY();
 
-        DrawText("本局结束", 334, 216, {247, 211, 130, 255}, 30);
-        std::ostringstream result;
-        if (currentMode == TIME_ATTACK) {
-            result << "本局得分：" << score;
-        } else {
-            result << "通关用时：" << std::fixed << std::setprecision(2) << gameTimer << " 秒";
-        }
-        DrawText(result.str(), 285, 280, {230, 238, 235, 255}, 24);
-        DrawText("Enter / 空格：返回模式选择", 248, 350, {134, 222, 190, 255}, 18);
+    if (currentState == MAIN_MENU || currentState == MODE_SELECT) {
+        renderSystem->DrawDungeonBackground(*worldMap, 145);
+        uiRenderer->DrawMenuPage(currentState, mouseX, mouseY);
+    } else if (currentState == HISTORY) {
+        uiRenderer->DrawHistoryPage(*saveManager, mouseX, mouseY);
+    } else if (currentState == CONTROLS) {
+        uiRenderer->DrawControlsPage(mouseX, mouseY);
+    } else if (currentState == SETTINGS) {
+        uiRenderer->DrawSettingsPage(audioManager->GetMasterVolume(),
+                                     audioManager->GetMusicVolume(),
+                                     audioManager->GetEffectsVolume(),
+                                     audioManager->IsMuted(),
+                                     mouseX, mouseY);
+    } else if (currentState == PAUSED) {
+        uiRenderer->DrawPausePage(mouseX, mouseY);
+    } else if (currentState == EXIT_CONFIRM) {
+        uiRenderer->DrawExitConfirmPage(mouseX, mouseY);
+    } else if (currentState == PLAYING) {
+        uiRenderer->DrawHUD(currentMode, gameTimer, score);
+    } else if (currentState == GAMEOVER) {
+        uiRenderer->DrawGameOver(currentMode, diedByTrap, score, gameTimer);
     }
-    hoveredButtonLastFrame = hoveredButtonThisFrame;
+
+    if (uiRenderer->DidHoverChange()) {
+        audioManager->PlaySound(SoundEffect::BUTTON_HOVER);
+    }
+
     SDL_RenderPresent(renderer);
-    SDL_Delay(16);    //控帧，放cpu满载
-}
-
-// 释放内存，安全退出
-void Engine::Clean() {
-    RestoreOriginalKeyboardLayout();
-
-    if (historyLoaded) {
-        SaveScoreHistoryToFile();
-        SaveTimeHistoryToFile();
-    }
-
-    if (audioInitialized) {
-        Mix_HaltMusic();
-        Mix_HaltChannel(-1);
-        if (backgroundMusic) {
-            Mix_FreeMusic(backgroundMusic);
-            backgroundMusic = nullptr;
-        }
-        if (pickupSound) {
-            Mix_FreeChunk(pickupSound);
-            pickupSound = nullptr;
-        }
-        if (buttonHoverSound) {
-            Mix_FreeChunk(buttonHoverSound);
-            buttonHoverSound = nullptr;
-        }
-        if (clickSound) {
-            Mix_FreeChunk(clickSound);
-            clickSound = nullptr;
-        }
-        if (attackSound) {
-            Mix_FreeChunk(attackSound);
-            attackSound = nullptr;
-        }
-        if (breakSound) {
-            Mix_FreeChunk(breakSound);
-            breakSound = nullptr;
-        }
-        Mix_CloseAudio();
-        audioInitialized = false;
-    }
-
-    if (dungeonFloorTexture) SDL_DestroyTexture(dungeonFloorTexture);
-    if (dungeonWallTexture) SDL_DestroyTexture(dungeonWallTexture);
-    if (playerTexture) SDL_DestroyTexture(playerTexture);
-    if (treasureTexture) SDL_DestroyTexture(treasureTexture);
-    if (slashTexture) SDL_DestroyTexture(slashTexture);
-    if (imageInitialized) {
-        IMG_Quit();
-        imageInitialized = false;
-    }
-
-    if (uiFont) {
-        TTF_CloseFont(uiFont);
-        uiFont = nullptr;
-    }
-    if (ttfInitialized) {
-        TTF_Quit();
-        ttfInitialized = false;
-    }
-    if (visionTexture) {
-        SDL_DestroyTexture(visionTexture);
-        visionTexture = nullptr;
-    }
-    if (renderer) SDL_DestroyRenderer(renderer);
-    if (window) SDL_DestroyWindow(window);
-    SDL_Quit();
-    std::cout << "游戏引擎已安全关闭！" << std::endl;
-}
-
-void Engine::ToggleFullscreen() {
-    if (window) {
-        Uint32 flags = SDL_GetWindowFlags(window);
-        if (flags & SDL_WINDOW_FULLSCREEN_DESKTOP) {
-            SDL_SetWindowFullscreen(window, 0); // 退出全屏
-            isFullscreen = false;
-        } else {
-            SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP); // 进入全屏
-            isFullscreen = true;
-        }
-    }
+    SDL_Delay(16);
 }
