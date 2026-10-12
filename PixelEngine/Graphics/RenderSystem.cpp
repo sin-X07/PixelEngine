@@ -25,6 +25,26 @@ bool RenderSystem::Initialize(SDL_Renderer* ren, int screenWidth, int screenHeig
         playerTexture = loadTexture("player.png");
         treasureTexture = loadTexture("treasure.png");
         slashTexture = loadTexture("slash_effect.png");
+
+        auto loadAsset = [this](const std::string& relPath) {
+            const std::string path = PathUtils::ResolveProjectFile(relPath);
+            SDL_Texture* texture = IMG_LoadTexture(renderer, path.c_str());
+            if (!texture) {
+                std::cerr << "图片加载失败 " << relPath << ": " << IMG_GetError() << std::endl;
+            }
+            return texture;
+        };
+        gruntTexture = loadAsset("../assets/images/monsters/grunt.png");
+        bruteTexture = loadAsset("../assets/images/monsters/brute.png");
+        shooterTexture = loadAsset("../assets/images/monsters/shooter.png");
+        daggerTexture = loadAsset("../assets/images/Knife.png");
+        katanaTexture = loadAsset("../assets/images/weapons/bushido.png");
+        pistolTexture = loadAsset("../assets/images/weapons/Deagle.png");
+        rifleTexture = loadAsset("../assets/images/weapons/AK47.png");
+        spikesTexture = loadAsset("../assets/images/traps/spikes.png");
+        bearTrapTexture = loadAsset("../assets/images/traps/barricade.png");
+        bulletTexture = loadAsset("../assets/images/effects/bullet.png");
+        bloodTexture = loadAsset("../assets/images/effects/blood.png");
     }
 
     visionTexture = SDL_CreateTexture(
@@ -52,6 +72,18 @@ void RenderSystem::Clean() {
     if (playerTexture) { SDL_DestroyTexture(playerTexture); playerTexture = nullptr; }
     if (treasureTexture) { SDL_DestroyTexture(treasureTexture); treasureTexture = nullptr; }
     if (slashTexture) { SDL_DestroyTexture(slashTexture); slashTexture = nullptr; }
+
+    if (gruntTexture) { SDL_DestroyTexture(gruntTexture); gruntTexture = nullptr; }
+    if (bruteTexture) { SDL_DestroyTexture(bruteTexture); bruteTexture = nullptr; }
+    if (shooterTexture) { SDL_DestroyTexture(shooterTexture); shooterTexture = nullptr; }
+    if (daggerTexture) { SDL_DestroyTexture(daggerTexture); daggerTexture = nullptr; }
+    if (katanaTexture) { SDL_DestroyTexture(katanaTexture); katanaTexture = nullptr; }
+    if (pistolTexture) { SDL_DestroyTexture(pistolTexture); pistolTexture = nullptr; }
+    if (rifleTexture) { SDL_DestroyTexture(rifleTexture); rifleTexture = nullptr; }
+    if (spikesTexture) { SDL_DestroyTexture(spikesTexture); spikesTexture = nullptr; }
+    if (bearTrapTexture) { SDL_DestroyTexture(bearTrapTexture); bearTrapTexture = nullptr; }
+    if (bulletTexture) { SDL_DestroyTexture(bulletTexture); bulletTexture = nullptr; }
+    if (bloodTexture) { SDL_DestroyTexture(bloodTexture); bloodTexture = nullptr; }
 
     if (imageInitialized) {
         IMG_Quit();
@@ -149,80 +181,14 @@ void RenderSystem::DrawTrap(const Trap& trap) {
         static_cast<int>(std::lround(trap.size * cameraZoom))
     };
 
-    if (trap.type == TRAP_SPIKES) {
-        SDL_SetRenderDrawColor(renderer, 55, 60, 65, 255);
-        SDL_RenderFillRect(renderer, &screenRect);
-        
-        SDL_SetRenderDrawColor(renderer, 95, 105, 110, 255);
-        SDL_RenderDrawRect(renderer, &screenRect);
-
-        const int w = screenRect.w;
-        const int h = screenRect.h;
-        const int spikeOffsets[4][2] = {
-            { w / 4, h / 4 },
-            { w * 3 / 4, h / 4 },
-            { w / 4, h * 3 / 4 },
-            { w * 3 / 4, h * 3 / 4 }
-        };
-
-        for (int i = 0; i < 4; ++i) {
-            int cx = screenRect.x + spikeOffsets[i][0];
-            int cy = screenRect.y + spikeOffsets[i][1];
-            int spikeR = std::max(2, static_cast<int>(3.0f * cameraZoom));
-
-            SDL_SetRenderDrawColor(renderer, 30, 30, 35, 255);
-            SDL_Rect baseShadow = { cx - spikeR, cy - spikeR, spikeR * 2, spikeR * 2 };
-            SDL_RenderFillRect(renderer, &baseShadow);
-
-            SDL_SetRenderDrawColor(renderer, 220, 230, 240, 255);
-            SDL_Rect spikeCore = { cx - 1, cy - spikeR, 2, spikeR * 2 };
-            SDL_RenderFillRect(renderer, &spikeCore);
-            SDL_Rect spikeH = { cx - spikeR, cy - 1, spikeR * 2, 2 };
-            SDL_RenderFillRect(renderer, &spikeH);
-
-            SDL_SetRenderDrawColor(renderer, 195, 30, 30, 255);
-            SDL_Rect bloodDot = { cx, cy - spikeR + 1, 2, 2 };
-            SDL_RenderFillRect(renderer, &bloodDot);
-        }
-    } else {
-        SDL_SetRenderDrawColor(renderer, 65, 62, 60, 255);
-        SDL_RenderFillRect(renderer, &screenRect);
-
-        if (screenRect.w > 4 && screenRect.h > 4) {
-            SDL_Rect slot = { screenRect.x + 2, screenRect.y + 2, screenRect.w - 4, screenRect.h - 4 };
-            SDL_SetRenderDrawColor(renderer, 28, 26, 25, 255);
-            SDL_RenderFillRect(renderer, &slot);
-        }
-
-        SDL_SetRenderDrawColor(renderer, 215, 215, 220, 255);
-        int halfH = screenRect.h;
-        int step = std::max(3, static_cast<int>(4.0f * cameraZoom));
-        for (int yOff = 2; yOff < halfH - 2; yOff += step) {
-            SDL_Rect leftTooth = { screenRect.x + 2, screenRect.y + yOff, std::max(2, static_cast<int>(3.0f * cameraZoom)), 2 };
-            SDL_RenderFillRect(renderer, &leftTooth);
-            SDL_Rect rightTooth = { screenRect.x + screenRect.w - 2 - std::max(2, static_cast<int>(3.0f * cameraZoom)), screenRect.y + yOff + step / 2, std::max(2, static_cast<int>(3.0f * cameraZoom)), 2 };
-            SDL_RenderFillRect(renderer, &rightTooth);
-        }
-
-        int plateW = std::max(4, screenRect.w / 3);
-        int plateH = std::max(4, screenRect.h / 3);
-        SDL_Rect pressurePlate = {
-            screenRect.x + (screenRect.w - plateW) / 2,
-            screenRect.y + (screenRect.h - plateH) / 2,
-            plateW,
-            plateH
-        };
-        SDL_SetRenderDrawColor(renderer, 205, 150, 45, 255);
-        SDL_RenderFillRect(renderer, &pressurePlate);
-
-        SDL_SetRenderDrawColor(renderer, 220, 40, 40, 255);
-        SDL_Rect warningDot = { pressurePlate.x + plateW / 2 - 1, pressurePlate.y + plateH / 2 - 1, 2, 2 };
-        SDL_RenderFillRect(renderer, &warningDot);
+    SDL_Texture* trapTexture = (trap.type == TRAP_SPIKES) ? spikesTexture : bearTrapTexture;
+    if (trapTexture) {
+        SDL_RenderCopy(renderer, trapTexture, nullptr, &screenRect);
     }
 }
 
 void RenderSystem::DrawWorld(const WorldMap& worldMap, float playerX, float playerY, float playerSize,
-                             bool isAttacking, Direction attackDir, float attackTimer, float attackDuration,
+                             bool isAttacking, float attackAngle, float attackTimer, float attackDuration,
                              bool drawCoins) {
     const float cameraZoom = CurrentCameraZoom();
 
@@ -265,51 +231,34 @@ void RenderSystem::DrawWorld(const WorldMap& worldMap, float playerX, float play
         DrawTrap(trap);
     }
 
-    // 4. 玩家
+    // 4. 玩家（视觉适当放大，命中盒仍为 playerSize）
+    const float playerDrawSize = playerSize * 1.5f;
+    const int playerCenterX = static_cast<int>(std::lround((playerX + playerSize * 0.5f - cameraX) * cameraZoom));
+    const int playerCenterY = static_cast<int>(std::lround((playerY + playerSize * 0.5f - cameraY) * cameraZoom));
+    const int playerDrawPx = static_cast<int>(std::lround(playerDrawSize * cameraZoom));
     SDL_Rect pRect = {
-        static_cast<int>(std::lround((playerX - cameraX) * cameraZoom)),
-        static_cast<int>(std::lround((playerY - cameraY) * cameraZoom)),
-        static_cast<int>(std::lround(playerSize * cameraZoom)),
-        static_cast<int>(std::lround(playerSize * cameraZoom))
+        playerCenterX - playerDrawPx / 2,
+        playerCenterY - playerDrawPx / 2,
+        playerDrawPx,
+        playerDrawPx
     };
     if (playerTexture) {
-        const int spriteInset = static_cast<int>(std::lround(2.0f * cameraZoom));
-        SDL_Rect playerSprite = {
-            pRect.x + spriteInset,
-            pRect.y + spriteInset,
-            pRect.w - spriteInset * 2,
-            pRect.h - spriteInset * 2
-        };
-        SDL_RenderCopy(renderer, playerTexture, nullptr, &playerSprite);
+        SDL_RenderCopy(renderer, playerTexture, nullptr, &pRect);
     } else {
         SDL_SetRenderDrawColor(renderer, 255, 60, 60, 255);
         SDL_RenderFillRect(renderer, &pRect);
     }
 
-    // 5. 挥剑攻击刀光
+    // 5. 挥剑攻击刀光（沿瞄准方向旋转）
     if (isAttacking && slashTexture) {
         float progress = 1.0f - (attackTimer / attackDuration);
         int frameIndex = std::clamp(static_cast<int>(progress * 3.0f), 0, 2);
         SDL_Rect srcRect = { frameIndex * 64, 0, 64, 47 };
 
-        double angle = 0.0;
-        float slashWorldX = playerX + playerSize * 0.5f;
-        float slashWorldY = playerY + playerSize * 0.5f;
-
         const float forwardDist = 12.0f;
-        if (attackDir == DIR_RIGHT) {
-            angle = 0.0;
-            slashWorldX += forwardDist;
-        } else if (attackDir == DIR_DOWN) {
-            angle = 90.0;
-            slashWorldY += forwardDist;
-        } else if (attackDir == DIR_LEFT) {
-            angle = 180.0;
-            slashWorldX -= forwardDist;
-        } else if (attackDir == DIR_UP) {
-            angle = 270.0;
-            slashWorldY -= forwardDist;
-        }
+        const float slashWorldX = playerX + playerSize * 0.5f + std::cos(attackAngle) * forwardDist;
+        const float slashWorldY = playerY + playerSize * 0.5f + std::sin(attackAngle) * forwardDist;
+        const double angle = attackAngle * 180.0 / 3.14159265358979323846;
 
         float displayW = 28.0f * cameraZoom;
         float displayH = 22.0f * cameraZoom;
@@ -445,4 +394,120 @@ void RenderSystem::DrawVisionFog(float playerX, float playerY, float playerSize,
     SDL_UpdateTexture(visionTexture, nullptr, visionPixels.data(), maskWidth * 4);
     SDL_Rect viewport = {0, 0, 800, 600};
     SDL_RenderCopy(renderer, visionTexture, nullptr, &viewport);
+}
+
+void RenderSystem::DrawMonsters(const std::vector<Monster>& monsters) {
+    const float z = CurrentCameraZoom();
+    for (const auto& m : monsters) {
+        if (!m.alive) continue;
+
+        SDL_Rect rect = {
+            static_cast<int>(std::lround((m.x - cameraX) * z)),
+            static_cast<int>(std::lround((m.y - cameraY) * z)),
+            static_cast<int>(std::lround(m.size * z)),
+            static_cast<int>(std::lround(m.size * z))
+        };
+
+        SDL_Texture* tex = nullptr;
+        if (m.type == MonsterType::GRUNT) tex = gruntTexture;
+        else if (m.type == MonsterType::BRUTE) tex = bruteTexture;
+        else tex = shooterTexture;
+
+        if (tex) {
+            int tw = 0;
+            int th = 0;
+            SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+
+            const int centerX = static_cast<int>(std::lround((m.x + m.size * 0.5f - cameraX) * z));
+            const int centerY = static_cast<int>(std::lround((m.y + m.size * 0.5f - cameraY) * z));
+            const int dw = std::max(8, static_cast<int>(std::lround(m.size * 1.6f * z)));
+            int dh = dw;
+            if (tw > 0 && th > 0) {
+                dh = static_cast<int>(std::lround(static_cast<float>(dw) * th / tw));
+            }
+            SDL_Rect dst = {centerX - dw / 2, centerY - dh / 2, dw, dh};
+            SDL_RenderCopy(renderer, tex, nullptr, &dst);
+            continue;
+        }
+
+        if (m.type == MonsterType::GRUNT) {
+            SDL_SetRenderDrawColor(renderer, 200, 60, 60, 255);
+        } else if (m.type == MonsterType::BRUTE) {
+            SDL_SetRenderDrawColor(renderer, 140, 60, 160, 255);
+        } else {
+            SDL_SetRenderDrawColor(renderer, 50, 160, 170, 255);
+        }
+        SDL_RenderFillRect(renderer, &rect);
+
+        // 眼睛：朝向玩家方向的小白点
+        const int eyeSize = std::max(2, static_cast<int>(2.0f * z));
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        SDL_Rect eye = {rect.x + rect.w / 2 - eyeSize / 2, rect.y + rect.h / 2 - eyeSize / 2, eyeSize, eyeSize};
+        SDL_RenderFillRect(renderer, &eye);
+    }
+}
+
+void RenderSystem::DrawBullets(const std::vector<Bullet>& bullets) {
+    const float z = CurrentCameraZoom();
+    for (const auto& b : bullets) {
+        if (!b.active) continue;
+        const int cx = static_cast<int>(std::lround((b.x - cameraX) * z));
+        const int cy = static_cast<int>(std::lround((b.y - cameraY) * z));
+
+        if (bulletTexture) {
+            const int s = std::max(6, static_cast<int>(std::lround(10.0f * z)));
+            SDL_Rect dst = {cx - s / 2, cy - s / 2, s, s};
+            // 子弹贴图为竖直朝向（朝上），+90° 使其沿速度方向对齐
+            const double angle = std::atan2(b.vy, b.vx) * 180.0 / 3.14159265358979323846 + 90.0;
+            SDL_RenderCopyEx(renderer, bulletTexture, nullptr, &dst, angle, nullptr, SDL_FLIP_NONE);
+            continue;
+        }
+
+        const int s = std::max(2, static_cast<int>(std::lround(2.0f * z)));
+        SDL_Rect rect = {cx - s / 2, cy - s / 2, s, s};
+        if (b.hostile) {
+            SDL_SetRenderDrawColor(renderer, 255, 90, 90, 255);
+        } else {
+            SDL_SetRenderDrawColor(renderer, 255, 225, 70, 255);
+        }
+        SDL_RenderFillRect(renderer, &rect);
+    }
+}
+
+void RenderSystem::DrawWeaponDrops(const std::vector<WeaponDrop>& drops) {
+    const float z = CurrentCameraZoom();
+    for (const auto& d : drops) {
+        SDL_Texture* tex = GetWeaponIconTexture(d.type);
+        if (!tex) continue;
+
+        const int cx = static_cast<int>(std::lround((d.x - cameraX) * z));
+        const int cy = static_cast<int>(std::lround((d.y - cameraY) * z));
+        const int box = std::max(10, static_cast<int>(std::lround(16.0f * z)));
+
+        int tw = 0;
+        int th = 0;
+        SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+        if (tw <= 0 || th <= 0) continue;
+
+        // 按比例适配，横枪宽、竖刀高都保持原比例
+        int dw = box;
+        int dh = box;
+        if (tw >= th) {
+            dh = static_cast<int>(std::lround(static_cast<float>(box) * th / tw));
+        } else {
+            dw = static_cast<int>(std::lround(static_cast<float>(box) * tw / th));
+        }
+        SDL_Rect rect = {cx - dw / 2, cy - dh / 2, dw, dh};
+        SDL_RenderCopy(renderer, tex, nullptr, &rect);
+    }
+}
+
+SDL_Texture* RenderSystem::GetWeaponIconTexture(WeaponType type) const {
+    switch (type) {
+        case WeaponType::DAGGER: return daggerTexture;
+        case WeaponType::KATANA: return katanaTexture;
+        case WeaponType::PISTOL: return pistolTexture;
+        case WeaponType::RIFLE:  return rifleTexture;
+    }
+    return nullptr;
 }

@@ -5,11 +5,13 @@
 ParticleSystem::ParticleSystem(std::mt19937& rng) : gen(rng) {
     particlePool.resize(MAX_PARTICLES);
     debrisPool.resize(MAX_DEBRIS);
+    bloodPool.resize(MAX_BLOOD);
 }
 
 void ParticleSystem::Reset() {
     for (auto& p : particlePool) p.active = false;
     for (auto& p : debrisPool) p.active = false;
+    for (auto& p : bloodPool) p.active = false;
     screenShakeTimer = 0.0f;
     screenShakeIntensity = 0.0f;
 }
@@ -42,6 +44,19 @@ void ParticleSystem::Update(float dt) {
             p.x += p.vx * dt;
             p.y += p.vy * dt;
             p.vy += 320.0f * dt; // 重力下坠
+            p.lifetime -= dt;
+            if (p.lifetime <= 0.0f) {
+                p.active = false;
+            }
+        }
+    }
+
+    // 更新血液粒子
+    for (auto& p : bloodPool) {
+        if (p.active) {
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            p.vy += 260.0f * dt; // 血液下落
             p.lifetime -= dt;
             if (p.lifetime <= 0.0f) {
                 p.active = false;
@@ -90,6 +105,36 @@ void ParticleSystem::Render(SDL_Renderer* renderer, float cameraX, float cameraY
                 pSize
             };
             SDL_RenderFillRect(renderer, &pRect);
+        }
+    }
+
+    // 渲染血液粒子
+    for (const auto& p : bloodPool) {
+        if (p.active) {
+            const float lifeRatio = p.lifetime / p.maxLifetime;
+            const int alpha = static_cast<int>(std::clamp(lifeRatio * 255.0f, 0.0f, 255.0f));
+            const int pSize = std::max(2, static_cast<int>(std::lround(4.0f * cameraZoom * (0.6f + 0.4f * lifeRatio))));
+
+            if (bloodTexture) {
+                SDL_SetTextureColorMod(bloodTexture, 220, 30, 30);
+                SDL_SetTextureAlphaMod(bloodTexture, alpha);
+                SDL_Rect dst = {
+                    static_cast<int>(std::lround((p.x - cameraX) * cameraZoom - pSize * 0.5f)),
+                    static_cast<int>(std::lround((p.y - cameraY) * cameraZoom - pSize * 0.5f)),
+                    pSize,
+                    pSize
+                };
+                SDL_RenderCopy(renderer, bloodTexture, nullptr, &dst);
+            } else {
+                SDL_SetRenderDrawColor(renderer, 190, 25, 25, alpha);
+                SDL_Rect dst = {
+                    static_cast<int>(std::lround((p.x - cameraX) * cameraZoom - pSize * 0.5f)),
+                    static_cast<int>(std::lround((p.y - cameraY) * cameraZoom - pSize * 0.5f)),
+                    pSize,
+                    pSize
+                };
+                SDL_RenderFillRect(renderer, &dst);
+            }
         }
     }
 }
@@ -144,6 +189,41 @@ void ParticleSystem::EmitDebrisBurst(float centerX, float centerY, int count, SD
             activated++;
             if (activated >= count) break;
         }
+    }
+}
+
+void ParticleSystem::EmitBloodBurst(float centerX, float centerY, int count) {
+    int activated = 0;
+    std::uniform_real_distribution<float> randAngle(0.0f, 2.0f * 3.14159f);
+    std::uniform_real_distribution<float> randSpeed(40.0f, 150.0f);
+    std::uniform_real_distribution<float> randLife(0.2f, 0.5f);
+
+    for (auto& p : bloodPool) {
+        if (!p.active) {
+            p.active = true;
+            p.x = centerX;
+            p.y = centerY;
+
+            const float angle = randAngle(gen);
+            const float speed = randSpeed(gen);
+            p.vx = std::cos(angle) * speed;
+            p.vy = std::sin(angle) * speed - 40.0f;
+            p.lifetime = randLife(gen);
+            p.maxLifetime = p.lifetime;
+
+            activated++;
+            if (activated >= count) break;
+        }
+    }
+}
+
+void ParticleSystem::EmitObstacleDebris(const SDL_Rect& rect, bool isLowWall) {
+    const float centerX = rect.x + rect.w * 0.5f;
+    const float centerY = rect.y + rect.h * 0.5f;
+    if (isLowWall) {
+        EmitDebrisBurst(centerX, centerY, 32, {140, 150, 155, 255}); // 砖石青灰石屑
+    } else {
+        EmitDebrisBurst(centerX, centerY, 26, {194, 111, 58, 255}); // 棕色木屑
     }
 }
 

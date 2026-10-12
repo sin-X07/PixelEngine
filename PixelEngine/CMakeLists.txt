@@ -264,12 +264,18 @@ set(SOURCES
     Engine.cpp
     Engine.hpp
     MazeGenerator.hpp
+    MazeGenerator.cpp
     Core/Types.hpp
     Core/PathUtils.hpp
     Audio/AudioManager.cpp
     Input/InputManager.cpp
     World/WorldMap.cpp
     World/PhysicsSystem.cpp
+    World/Monster.cpp
+    World/Weapon.cpp
+    World/Player.cpp
+    World/CombatSystem.cpp
+    World/EnemyManager.cpp
     Graphics/ParticleSystem.cpp
     Graphics/RenderSystem.cpp
     Graphics/UIRenderer.cpp

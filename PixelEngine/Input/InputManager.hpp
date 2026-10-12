@@ -20,6 +20,8 @@ private:
     bool enterOrSpaceRequested = false;
     bool digit1Requested = false;
     bool digit2Requested = false;
+    bool digit3Requested = false;
+    bool fRequested = false;
 
     // 鼠标状态（逻辑视口坐标）
     int mouseLogicalX = 0;
@@ -58,6 +60,8 @@ public:
     bool IsEnterOrSpaceRequested() const { return enterOrSpaceRequested; }
     bool IsDigit1Requested() const { return digit1Requested; }
     bool IsDigit2Requested() const { return digit2Requested; }
+    bool IsDigit3Requested() const { return digit3Requested; }
+    bool IsFRequested() const { return fRequested; }
 
     int GetMouseX() const { return mouseLogicalX; }
     int GetMouseY() const { return mouseLogicalY; }

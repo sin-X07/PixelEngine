@@ -12,6 +12,18 @@ Engine::Engine() : isRunning(false), window(nullptr), renderer(nullptr) {
     renderSystem = std::make_unique<RenderSystem>();
     uiRenderer = std::make_unique<UIRenderer>();
     saveManager = std::make_unique<SaveManager>();
+
+    enemyManager = std::make_unique<EnemyManager>(
+        player, *worldMap, *physicsSystem, *particleSystem,
+        audioManager.get(), renderSystem.get(), gen,
+        [this](int amount) { DamagePlayer(amount); });
+
+    combatSystem = std::make_unique<CombatSystem>(
+        player, enemyManager->monsters, enemyManager->bullets, enemyManager->weaponDrops,
+        *worldMap, *physicsSystem, *particleSystem,
+        audioManager.get(), gen, inputManager.get(), renderSystem.get());
+
+    enemyManager->SetCombatSystem(combatSystem.get());
 }
 
 Engine::~Engine() {
@@ -50,9 +62,12 @@ bool Engine::Initialize(const char* title, int width, int height) {
     if (!renderSystem->Initialize(renderer, width, height)) return false;
     if (!uiRenderer->Initialize(renderer)) return false;
 
+    // 血液粒子使用 RenderSystem 加载的血迹贴图
+    particleSystem->SetBloodTexture(renderSystem->GetBloodTexture());
+
     // 默认加载随机迷宫地图与模式一地图
     MazeGenerator::GenerateRandomMazeFile("map2.txt", gen);
-    if (!worldMap->LoadLevelFromFile("../assets/maps/map1.txt", playerX, playerY, playerSize)) {
+    if (!worldMap->LoadLevelFromFile("../assets/maps/map1.txt", player.x, player.y, player.size)) {
         std::cerr << "警告：未找到地图 map1.txt" << std::endl;
         return false;
     }
@@ -119,49 +134,61 @@ void Engine::ToggleFullscreen() {
     }
 }
 
-void Engine::PerformAttack() {
-    if (isAttacking || attackCooldownTimer > 0.0f) return;
+void Engine::DamagePlayer(int amount) {
+    if (currentState != PLAYING) return;
+    const int result = player.TakeDamage(amount);
+    if (result == 0) return; // 无敌帧，未受伤
 
-    isAttacking = true;
-    attackTimer = ATTACK_DURATION;
-    attackCooldownTimer = ATTACK_COOLDOWN;
-    attackDir = inputManager->GetPlayerDir();
-    attackHitRegistered = false;
+    particleSystem->TriggerScreenShake(0.2f, 4.0f);
+    audioManager->PlaySound(SoundEffect::PLAYER_HURT);
+    particleSystem->EmitBloodBurst(player.x + player.size * 0.5f, player.y + player.size * 0.5f, 10);
 
-    audioManager->PlaySound(SoundEffect::ATTACK_SWING);
+    if (result == 2) {
+        currentState = GAMEOVER;
+        gameOverStartTime = SDL_GetTicks();
+
+        audioManager->PlaySound(SoundEffect::PLAYER_DEATH);
+        particleSystem->TriggerScreenShake(0.35f, 6.0f);
+        particleSystem->EmitDebrisBurst(player.x + player.size * 0.5f, player.y + player.size * 0.5f, 45, {220, 35, 35, 255});
+
+        saveManager->AddScoreRecord(score, false);
+        std::cout << "\n💀 被怪物击杀！挑战失败！最终得分: " << score << " 分！\n" << std::endl;
+    }
 }
 
 void Engine::StartGame(GameMode mode) {
     currentMode = mode;
     score = 0;
-    vx = 0.0f;
-    vy = 0.0f;
+    player.Reset();
     inputManager->ResetMovementKeys();
-    isAttacking = false;
-    attackTimer = 0.0f;
-    attackCooldownTimer = 0.0f;
-    attackHitRegistered = false;
     particleSystem->Reset();
     renderSystem->ResetMovementBlends();
-    diedByTrap = false;
     audioManager->ResumeMusic();
 
+    combatSystem->Reset();
+
+    // 重置怪物与武器系统
+    enemyManager->Reset();
+
     if (mode == TIME_ATTACK) {
-        gameTimer = 30.0f;
-        if (!worldMap->LoadLevelFromFile("../assets/maps/map1.txt", playerX, playerY, playerSize)) return;
+        gameTimer = 120.0f;
+        if (!worldMap->LoadLevelFromFile("../assets/maps/map1.txt", player.x, player.y, player.size)) return;
 
         // 初始宝箱随机刷新：清空地图预设固定宝箱，直接调用随机算法生成3个初始宝箱！
         worldMap->GetCoins().clear();
-        worldMap->EnsureCoinCount(3, playerX, playerY, playerSize, gen);
+        worldMap->EnsureCoinCount(3, player.x, player.y, player.size, gen);
 
         // 生成不可破坏的地刺与老鼠夹陷阱（保证空间连通性）
-        worldMap->GenerateTrapsForTimeAttack(playerX, playerY, playerSize, gen);
-        std::cout << "模式 1: 限时挑战开始! 30秒倒计时启动! 小心地刺与老鼠夹，去获得更多金币吧!" << std::endl;
+        worldMap->GenerateTrapsForTimeAttack(player.x, player.y, player.size, gen);
+
+        // 新增可破坏障碍，丰富地形
+        worldMap->GenerateExtraObstaclesForTimeAttack(player.x, player.y, player.size, gen);
+        std::cout << "模式 1: 限时挑战开始! 两分钟倒计时启动! 小心地刺、老鼠夹与怪物，去获得更多金币吧!" << std::endl;
     } else {
         gameTimer = 0.0f;
         gameOverStartTime = 0;
         MazeGenerator::GenerateRandomMazeFile("map2.txt", gen);
-        if (!worldMap->LoadLevelFromFile("map2.txt", playerX, playerY, playerSize)) return;
+        if (!worldMap->LoadLevelFromFile("map2.txt", player.x, player.y, player.size)) return;
         std::cout << "模式 2: 纯享迷宫模式开始! 探索吧!" << std::endl;
     }
 
@@ -247,7 +274,7 @@ void Engine::HandleInput() {
         if (currentState == PLAYING) {
             currentState = PAUSED;
             inputManager->ResetMovementKeys();
-            vx = vy = 0.0f;
+            player.vx = player.vy = 0.0f;
             audioManager->PauseMusic();
         } else if (currentState == PAUSED) {
             currentState = PLAYING;
@@ -274,13 +301,29 @@ void Engine::HandleInput() {
     if (currentState == GAMEOVER && inputManager->IsEnterOrSpaceRequested()) {
         gameOverStartTime = 0;
         MazeGenerator::GenerateRandomMazeFile("map2.txt", gen);
-        worldMap->LoadLevelFromFile("map2.txt", playerX, playerY, playerSize);
-        vx = vy = 0.0f;
+        worldMap->LoadLevelFromFile("map2.txt", player.x, player.y, player.size);
+        player.vx = player.vy = 0.0f;
         currentState = MODE_SELECT;
     }
 
-    if (currentState == PLAYING && inputManager->IsAttackRequested()) {
-        PerformAttack();
+    if (currentState == PLAYING) {
+        combatSystem->UpdateAimAngle();
+
+        // 武器切换：1 步枪 / 2 手枪 / 3 近战
+        if (inputManager->IsDigit1Requested()) combatSystem->TrySwitchWeapon(CombatSystem::SLOT_RIFLE);
+        if (inputManager->IsDigit2Requested()) combatSystem->TrySwitchWeapon(CombatSystem::SLOT_PISTOL);
+        if (inputManager->IsDigit3Requested()) combatSystem->TrySwitchWeapon(CombatSystem::SLOT_MELEE);
+        if (inputManager->IsFRequested()) combatSystem->HandlePickupOrDrop();
+
+        // 攻击：步枪连发按住不放，其余单击 / 空格
+        const Weapon* activeWeapon = combatSystem->GetActiveWeapon();
+        bool wantAttack = false;
+        if (activeWeapon->ranged && activeWeapon->automatic) {
+            wantAttack = inputManager->IsMouseLeftDown();
+        } else {
+            wantAttack = inputManager->IsMouseLeftClicked() || inputManager->IsAttackRequested();
+        }
+        if (wantAttack) combatSystem->TryAttack();
     }
 
     // 鼠标点击事件
@@ -317,45 +360,35 @@ void Engine::Update(float dt) {
 
     if (currentState != PLAYING) return;
 
-    // 攻击冷却推进
-    if (attackCooldownTimer > 0.0f) {
-        attackCooldownTimer = std::max(0.0f, attackCooldownTimer - dt);
-    }
+    // 战斗冷却 / 攻击动画 / 未装配提示计时
+    combatSystem->Update(dt);
 
-    // 挥剑攻击状态与破坏障碍判定
-    if (isAttacking) {
-        attackTimer -= dt;
-        if (attackTimer <= 0.0f) {
-            attackTimer = 0.0f;
-            isAttacking = false;
-        }
+    // 玩家无敌 / 回血计时
+    player.UpdateTimers(dt);
 
-        if (!attackHitRegistered) {
-            if (physicsSystem->PerformAttackHitCheck(playerX, playerY, playerSize,
-                                                     attackDir, *worldMap, *particleSystem)) {
-                attackHitRegistered = true;
-                audioManager->PlaySound(SoundEffect::OBSTACLE_BREAK);
-                particleSystem->TriggerScreenShake(0.12f, 3.0f);
-            }
-        }
-    }
+    // 怪物/子弹/刷怪/压力/掉落/自动拾取
+    enemyManager->Update(dt, currentMode == TIME_ATTACK);
 
-    // 移动速度更新（Shift 冲刺 / Ctrl 聚焦）
+    // 若本帧玩家被怪物击杀，提前结束本帧
+    if (currentState != PLAYING) return;
+
+    // 移动速度更新（Shift 冲刺 / Ctrl 聚焦），并应用武器移速惩罚
     const Uint8* keyboardState = SDL_GetKeyboardState(nullptr);
     const bool sprintHeld = keyboardState[SDL_SCANCODE_LSHIFT] || keyboardState[SDL_SCANCODE_RSHIFT];
     const bool focusHeld = keyboardState[SDL_SCANCODE_LCTRL] || keyboardState[SDL_SCANCODE_RCTRL];
     renderSystem->UpdateMovementBlends(dt, sprintHeld, focusHeld);
 
-    const float sprintMaxSpeed = MAX_SPEED * (1.0f + renderSystem->GetSprintBlend());
+    const float walkMax = Player::MAX_SPEED - combatSystem->ComputeTotalWalkPenalty();
+    const float sprintMaxSpeed = walkMax + (Player::MAX_SPEED - combatSystem->ComputeTotalSprintPenalty()) * renderSystem->GetSprintBlend();
     const float movementMaxSpeed = sprintMaxSpeed +
-        (MAX_SPEED / 3.0f - sprintMaxSpeed) * renderSystem->GetFocusBlend();
+        (walkMax / 3.0f - sprintMaxSpeed) * renderSystem->GetFocusBlend();
 
     // 游戏倒计时更新
     if (currentMode == TIME_ATTACK) {
         gameTimer -= dt;
         if (gameTimer <= 0.0f) {
             gameTimer = 0.0f;
-            diedByTrap = false;
+            player.diedByTrap = false;
             currentState = GAMEOVER;
             gameOverStartTime = SDL_GetTicks();
 
@@ -368,65 +401,65 @@ void Engine::Update(float dt) {
     }
 
     // 玩家位移与碰撞推挤
-    float oldX = playerX;
-    float oldY = playerY;
+    float oldX = player.x;
+    float oldY = player.y;
 
     const int verticalInput = static_cast<int>(inputManager->IsDownPressed()) - static_cast<int>(inputManager->IsUpPressed());
     if (verticalInput != 0) {
-        vy += verticalInput * ACCEL * dt;
+        player.vy += verticalInput * Player::ACCEL * dt;
     } else {
-        vy -= vy * FRICTION * dt;
-        if (std::abs(vy) < 1.0f) vy = 0.0f;
+        player.vy -= player.vy * Player::FRICTION * dt;
+        if (std::abs(player.vy) < 1.0f) player.vy = 0.0f;
     }
-    vy = std::clamp(vy, -movementMaxSpeed, movementMaxSpeed);
-    playerY += vy * dt;
+    player.vy = std::clamp(player.vy, -movementMaxSpeed, movementMaxSpeed);
+    player.y += player.vy * dt;
 
     for (const auto& wall : worldMap->GetWalls()) {
-        if (PhysicsSystem::CheckCollision(playerX, playerY, playerSize, wall.x, wall.y, wall.w, wall.h)) {
-            playerY = oldY;
-            vy = 0.0f;
+        if (PhysicsSystem::CheckCollision(player.x, player.y, player.size, wall.x, wall.y, wall.w, wall.h)) {
+            player.y = oldY;
+            player.vy = 0.0f;
             break;
         }
     }
-    if (physicsSystem->CheckObstacleCollision(playerX, playerY, playerSize, *worldMap)) {
-        playerY = oldY;
-        vy = 0.0f;
+    if (physicsSystem->CheckObstacleCollision(player.x, player.y, player.size, *worldMap)) {
+        player.y = oldY;
+        player.vy = 0.0f;
     }
 
     const int horizontalInput = static_cast<int>(inputManager->IsRightPressed()) - static_cast<int>(inputManager->IsLeftPressed());
     if (horizontalInput != 0) {
-        vx += horizontalInput * ACCEL * dt;
+        player.vx += horizontalInput * Player::ACCEL * dt;
     } else {
-        vx -= vx * FRICTION * dt;
-        if (std::abs(vx) < 1.0f) vx = 0.0f;
+        player.vx -= player.vx * Player::FRICTION * dt;
+        if (std::abs(player.vx) < 1.0f) player.vx = 0.0f;
     }
-    vx = std::clamp(vx, -movementMaxSpeed, movementMaxSpeed);
-    playerX += vx * dt;
+    player.vx = std::clamp(player.vx, -movementMaxSpeed, movementMaxSpeed);
+    player.x += player.vx * dt;
 
     for (const auto& wall : worldMap->GetWalls()) {
-        if (PhysicsSystem::CheckCollision(playerX, playerY, playerSize, wall.x, wall.y, wall.w, wall.h)) {
-            playerX = oldX;
-            vx = 0.0f;
+        if (PhysicsSystem::CheckCollision(player.x, player.y, player.size, wall.x, wall.y, wall.w, wall.h)) {
+            player.x = oldX;
+            player.vx = 0.0f;
             break;
         }
     }
-    if (physicsSystem->CheckObstacleCollision(playerX, playerY, playerSize, *worldMap)) {
-        playerX = oldX;
-        vx = 0.0f;
+    if (physicsSystem->CheckObstacleCollision(player.x, player.y, player.size, *worldMap)) {
+        player.x = oldX;
+        player.vx = 0.0f;
     }
 
     // 陷阱触碰致死判定（模式一：得分以当前得分为准，标记失败）
     if (currentMode == TIME_ATTACK) {
-        int trapHitIdx = physicsSystem->CheckTrapCollision(playerX, playerY, playerSize, *worldMap);
+        int trapHitIdx = physicsSystem->CheckTrapCollision(player.x, player.y, player.size, *worldMap);
         if (trapHitIdx != -1) {
             const auto& trap = worldMap->GetTraps()[trapHitIdx];
-            diedByTrap = true;
+            player.diedByTrap = true;
             currentState = GAMEOVER;
             gameOverStartTime = SDL_GetTicks();
 
             audioManager->PlaySound(SoundEffect::PLAYER_DEATH);
             particleSystem->TriggerScreenShake(0.35f, 6.0f);
-            particleSystem->EmitDebrisBurst(playerX + playerSize * 0.5f, playerY + playerSize * 0.5f, 45, {220, 35, 35, 255});
+            particleSystem->EmitDebrisBurst(player.x + player.size * 0.5f, player.y + player.size * 0.5f, 45, {220, 35, 35, 255});
             particleSystem->EmitExplosion(trap.x + trap.size * 0.5f, trap.y + trap.size * 0.5f, 25);
 
             saveManager->AddScoreRecord(score, false);
@@ -436,7 +469,7 @@ void Engine::Update(float dt) {
     }
 
     // 收集宝藏金币
-    int coinIdx = physicsSystem->CheckCoinPickup(playerX, playerY, playerSize, *worldMap);
+    int coinIdx = physicsSystem->CheckCoinPickup(player.x, player.y, player.size, *worldMap);
     if (coinIdx != -1) {
         score++;
         audioManager->PlaySound(SoundEffect::PICKUP);
@@ -448,7 +481,7 @@ void Engine::Update(float dt) {
         if (currentMode == TIME_ATTACK) {
             std::cout << "💰 叮！吃到金币！当前得分: " << score << " 分！" << std::endl;
             worldMap->GetCoins().erase(worldMap->GetCoins().begin() + coinIdx);
-            worldMap->ResetCoinPosition(playerX, playerY, playerSize, gen);
+            worldMap->ResetCoinPosition(player.x, player.y, player.size, gen);
         } else if (currentMode == MAZE_MODE) {
             worldMap->GetCoins().clear();
             currentState = GAMEOVER;
@@ -467,20 +500,24 @@ void Engine::Render() {
     const bool gameplayVisible = (currentState == PLAYING || currentState == PAUSED ||
                                   currentState == EXIT_CONFIRM || currentState == GAMEOVER);
     SDL_FPoint shakeOffset = particleSystem->GetShakeOffset();
-    renderSystem->UpdateCamera(playerX, playerY, playerSize, *worldMap, gameplayVisible, shakeOffset.x, shakeOffset.y);
+    renderSystem->UpdateCamera(player.x, player.y, player.size, *worldMap, gameplayVisible, shakeOffset.x, shakeOffset.y);
 
     SDL_SetRenderDrawColor(renderer, 20, 30, 40, 255);
     SDL_RenderClear(renderer);
 
     if (gameplayVisible) {
         renderSystem->DrawDungeonBackground(*worldMap, 0);
-        renderSystem->DrawWorld(*worldMap, playerX, playerY, playerSize,
-                                isAttacking, attackDir, attackTimer, ATTACK_DURATION,
+        renderSystem->DrawWorld(*worldMap, player.x, player.y, player.size,
+                                combatSystem->attackAnimActive, combatSystem->aimAngle,
+                                combatSystem->attackAnimTimer, CombatSystem::ATTACK_DURATION,
                                 currentState == PLAYING);
+        renderSystem->DrawWeaponDrops(enemyManager->weaponDrops);
+        renderSystem->DrawMonsters(enemyManager->monsters);
+        renderSystem->DrawBullets(enemyManager->bullets);
         particleSystem->Render(renderer, renderSystem->GetCameraX(), renderSystem->GetCameraY(), renderSystem->CurrentCameraZoom());
 
         if (currentMode == TIME_ATTACK) {
-            renderSystem->DrawVisionFog(playerX, playerY, playerSize, *worldMap);
+            renderSystem->DrawVisionFog(player.x, player.y, player.size, *worldMap);
         }
     }
 
@@ -505,9 +542,20 @@ void Engine::Render() {
     } else if (currentState == EXIT_CONFIRM) {
         uiRenderer->DrawExitConfirmPage(mouseX, mouseY);
     } else if (currentState == PLAYING) {
-        uiRenderer->DrawHUD(currentMode, gameTimer, score);
+        uiRenderer->DrawHUD(currentMode, gameTimer, score, player.health);
+
+        const Weapon* currentWeapon = combatSystem->GetActiveWeapon();
+        SDL_Texture* weaponIcon = renderSystem->GetWeaponIconTexture(currentWeapon->type);
+        if (currentWeapon->ranged) {
+            uiRenderer->DrawWeaponStatus(weaponIcon, currentWeapon->Name(), currentWeapon->ammo, currentWeapon->magazineSize);
+        } else {
+            uiRenderer->DrawWeaponStatus(weaponIcon, currentWeapon->Name(), -1, 0);
+        }
+        if (combatSystem->HasActiveNoWeaponHint()) {
+            uiRenderer->DrawNoWeaponHint(combatSystem->GetNoWeaponHintText());
+        }
     } else if (currentState == GAMEOVER) {
-        uiRenderer->DrawGameOver(currentMode, diedByTrap, score, gameTimer);
+        uiRenderer->DrawGameOver(currentMode, player.diedByTrap, player.diedByMonster, score, gameTimer);
     }
 
     if (uiRenderer->DidHoverChange()) {

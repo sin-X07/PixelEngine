@@ -301,7 +301,7 @@ void UIRenderer::DrawExitConfirmPage(int mouseX, int mouseY) {
                mouseY >= abandon.y && mouseY < abandon.y + abandon.h);
 }
 
-void UIRenderer::DrawGameOver(GameMode currentMode, bool diedByTrap, int score, float gameTimer) {
+void UIRenderer::DrawGameOver(GameMode currentMode, bool diedByTrap, bool diedByMonster, int score, float gameTimer) {
     SDL_Rect dimRect = {0, 0, 800, 600};
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 190);
     SDL_RenderFillRect(renderer, &dimRect);
@@ -312,7 +312,10 @@ void UIRenderer::DrawGameOver(GameMode currentMode, bool diedByTrap, int score, 
     SDL_SetRenderDrawColor(renderer, 20, 39, 45, 255);
     SDL_RenderFillRect(renderer, &inset);
 
-    if (currentMode == TIME_ATTACK && diedByTrap) {
+    if (currentMode == TIME_ATTACK && diedByMonster) {
+        DrawText("失  败", 355, 216, {245, 80, 80, 255}, 30);
+        DrawText("被怪物击杀，惨遭致死！", 305, 256, {240, 140, 140, 255}, 18);
+    } else if (currentMode == TIME_ATTACK && diedByTrap) {
         DrawText("失  败", 355, 216, {245, 80, 80, 255}, 30);
         DrawText("触发致命陷阱，惨遭致死！", 305, 256, {240, 140, 140, 255}, 18);
     } else {
@@ -329,7 +332,16 @@ void UIRenderer::DrawGameOver(GameMode currentMode, bool diedByTrap, int score, 
     DrawText("Enter / 空格：返回模式选择", 248, 350, {134, 222, 190, 255}, 18);
 }
 
-void UIRenderer::DrawHUD(GameMode currentMode, float gameTimer, int score) {
+void UIRenderer::DrawHUD(GameMode currentMode, float gameTimer, int score, int health) {
+    // 生命值（左上角红心方块）
+    for (int i = 0; i < health; ++i) {
+        SDL_Rect heart = {20 + i * 14, 34, 10, 10};
+        SDL_SetRenderDrawColor(renderer, 220, 60, 60, 255);
+        SDL_RenderFillRect(renderer, &heart);
+        SDL_SetRenderDrawColor(renderer, 120, 30, 30, 255);
+        SDL_RenderDrawRect(renderer, &heart);
+    }
+
     if (currentMode == TIME_ATTACK) {
         SDL_Rect timeBG = {20, 10, 200, 15};
         SDL_SetRenderDrawColor(renderer, 50, 50, 50, 255);
@@ -361,4 +373,47 @@ void UIRenderer::DrawHUD(GameMode currentMode, float gameTimer, int score) {
             }
         }
     }
+}
+
+void UIRenderer::DrawWeaponStatus(SDL_Texture* icon, const std::string& name, int ammo, int magazineSize) {
+    SDL_Rect panel = {640, 536, 150, 54};
+    SDL_SetRenderDrawColor(renderer, 24, 35, 43, 235);
+    SDL_RenderFillRect(renderer, &panel);
+    SDL_SetRenderDrawColor(renderer, 231, 176, 70, 255);
+    SDL_RenderDrawRect(renderer, &panel);
+
+    // 武器图标（按原比例适配到固定框内）
+    if (icon) {
+        int tw = 0;
+        int th = 0;
+        SDL_QueryTexture(icon, nullptr, nullptr, &tw, &th);
+        const int box = 38;
+        int dw = box;
+        int dh = box;
+        if (tw > 0 && th > 0) {
+            if (tw >= th) {
+                dh = std::max(1, static_cast<int>(std::lround(static_cast<float>(box) * th / tw)));
+            } else {
+                dw = std::max(1, static_cast<int>(std::lround(static_cast<float>(box) * tw / th)));
+            }
+        }
+        const int iconCX = panel.x + 6 + box / 2;
+        const int iconCY = panel.y + panel.h / 2;
+        SDL_Rect iconRect = {iconCX - dw / 2, iconCY - dh / 2, dw, dh};
+        SDL_RenderCopy(renderer, icon, nullptr, &iconRect);
+    }
+
+    std::string line = name;
+    if (magazineSize > 0) {
+        line += " " + std::to_string(ammo) + "/" + std::to_string(magazineSize);
+    }
+    DrawText(line, panel.x + (icon ? 50 : 12), panel.y + 13, {230, 238, 235, 255}, 18);
+}
+
+void UIRenderer::DrawNoWeaponHint(const std::string& msg) {
+    int textW = 0;
+    int textH = 0;
+    TTF_SetFontSize(uiFont, 22);
+    TTF_SizeUTF8(uiFont, msg.c_str(), &textW, &textH);
+    DrawText(msg, (800 - textW) / 2, 512, {245, 200, 90, 255}, 22);
 }

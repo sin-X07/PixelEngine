@@ -32,6 +32,14 @@ public:
     bool IsChokepointTile(int row, int col, float playerX, float playerY, float playerSize) const;
     bool CheckMapConnectivity(const std::vector<Trap>& testTraps, float playerX, float playerY) const;
 
+    // 运行时添加可破坏障碍（H 矮墙 / o 木箱），用于丰富地形
+    void AddObstacle(int row, int col, char type);
+    void GenerateExtraObstaclesForTimeAttack(float playerX, float playerY, float playerSize, std::mt19937& rng);
+
+    // 寻找一个安全的出生点（可步行、远离玩家、不在陷阱/宝箱上），返回瓦片中心
+    bool FindRandomSpawnPoint(float playerCenterX, float playerCenterY, float minDist,
+                              std::mt19937& rng, float& outCenterX, float& outCenterY) const;
+
     // 访问器
     int GetTileSize() const { return TILE_SIZE; }
     int GetMapWidthTiles() const { return mapWidthTiles; }

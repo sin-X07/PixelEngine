@@ -14,6 +14,8 @@ void InputManager::ResetPerFrameActions() {
     enterOrSpaceRequested = false;
     digit1Requested = false;
     digit2Requested = false;
+    digit3Requested = false;
+    fRequested = false;
     mouseLeftClicked = false;
     mouseLeftReleased = false;
 }
@@ -58,6 +60,8 @@ void InputManager::ProcessEvents(SDL_Renderer* renderer, GameState currentState)
                 case SDLK_ESCAPE: pauseToggleRequested = true; break;
                 case SDLK_1: case SDLK_KP_1: digit1Requested = true; break;
                 case SDLK_2: case SDLK_KP_2: digit2Requested = true; break;
+                case SDLK_3: case SDLK_KP_3: digit3Requested = true; break;
+                case SDLK_f: fRequested = true; break;
                 case SDLK_RETURN: case SDLK_SPACE: enterOrSpaceRequested = true; break;
 
                 case SDLK_UP:    if (currentState == PLAYING) { upPressed = true; playerDir = DIR_UP; } break;

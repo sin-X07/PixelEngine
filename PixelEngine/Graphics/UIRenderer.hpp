@@ -33,6 +33,11 @@ public:
     void DrawSettingsPage(int masterVolume, int musicVolume, int effectsVolume, bool masterMuted, int mouseX, int mouseY);
     void DrawPausePage(int mouseX, int mouseY);
     void DrawExitConfirmPage(int mouseX, int mouseY);
-    void DrawGameOver(GameMode currentMode, bool diedByTrap, int score, float gameTimer);
-    void DrawHUD(GameMode currentMode, float gameTimer, int score);
+    void DrawGameOver(GameMode currentMode, bool diedByTrap, bool diedByMonster, int score, float gameTimer);
+    void DrawHUD(GameMode currentMode, float gameTimer, int score, int health);
+
+    // 右下角武器状态栏：只显示当前武器；枪械显示当前弹夹内子弹数（magazineSize > 0 时）
+    void DrawWeaponStatus(SDL_Texture* icon, const std::string& name, int ammo, int magazineSize);
+    // 页面下方正中间的未装配提示词
+    void DrawNoWeaponHint(const std::string& msg);
 };

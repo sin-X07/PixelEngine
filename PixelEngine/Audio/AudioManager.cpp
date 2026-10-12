@@ -32,6 +32,10 @@ bool AudioManager::Initialize() {
     attackSound = loadChunk("../assets/audio/attack_swing.wav", "挥剑攻击");
     breakSound = loadChunk("../assets/audio/obstacle_break.wav", "障碍物击碎");
     deathSound = loadChunk("../assets/audio/player_death.wav", "惨死");
+    shootSound = loadChunk("../assets/audio/shoot.ogg", "射击");
+    hitSound = loadChunk("../assets/audio/hit.ogg", "命中");
+    killSound = loadChunk("../assets/audio/kill.ogg", "击杀");
+    playerHurtSound = loadChunk("../assets/audio/player_hurt.ogg", "玩家受击");
 
     UpdateVolumes();
     return true;
@@ -50,6 +54,10 @@ void AudioManager::Clean() {
     if (attackSound) { Mix_FreeChunk(attackSound); attackSound = nullptr; }
     if (breakSound) { Mix_FreeChunk(breakSound); breakSound = nullptr; }
     if (deathSound) { Mix_FreeChunk(deathSound); deathSound = nullptr; }
+    if (shootSound) { Mix_FreeChunk(shootSound); shootSound = nullptr; }
+    if (hitSound) { Mix_FreeChunk(hitSound); hitSound = nullptr; }
+    if (killSound) { Mix_FreeChunk(killSound); killSound = nullptr; }
+    if (playerHurtSound) { Mix_FreeChunk(playerHurtSound); playerHurtSound = nullptr; }
 
     Mix_CloseAudio();
     SDL_QuitSubSystem(SDL_INIT_AUDIO);
@@ -98,6 +106,10 @@ void AudioManager::PlaySound(SoundEffect effect) {
         case SoundEffect::ATTACK_SWING: targetChunk = attackSound; break;
         case SoundEffect::OBSTACLE_BREAK: targetChunk = breakSound; break;
         case SoundEffect::PLAYER_DEATH: targetChunk = deathSound; break;
+        case SoundEffect::SHOOT: targetChunk = shootSound; break;
+        case SoundEffect::HIT: targetChunk = hitSound; break;
+        case SoundEffect::KILL: targetChunk = killSound; break;
+        case SoundEffect::PLAYER_HURT: targetChunk = playerHurtSound; break;
     }
 
     if (targetChunk) {

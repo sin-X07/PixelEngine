@@ -4,6 +4,11 @@
 #include "Input/InputManager.hpp"
 #include "World/WorldMap.hpp"
 #include "World/PhysicsSystem.hpp"
+#include "World/Monster.hpp"
+#include "World/Weapon.hpp"
+#include "World/Player.hpp"
+#include "World/CombatSystem.hpp"
+#include "World/EnemyManager.hpp"
 #include "Graphics/ParticleSystem.hpp"
 #include "Graphics/RenderSystem.hpp"
 #include "Graphics/UIRenderer.hpp"
@@ -12,6 +17,8 @@
 #include <SDL2/SDL.h>
 #include <memory>
 #include <random>
+#include <vector>
+#include <string>
 
 class Engine {
 private:
@@ -30,6 +37,8 @@ private:
     std::unique_ptr<RenderSystem> renderSystem;
     std::unique_ptr<UIRenderer> uiRenderer;
     std::unique_ptr<SaveManager> saveManager;
+    std::unique_ptr<CombatSystem> combatSystem;
+    std::unique_ptr<EnemyManager> enemyManager;
 
     // 核心时钟与状态机
     const float MS_PER_UPDATE = 16.6666f; // 固定逻辑更新间隔（约 60 FPS，单位毫秒）
@@ -41,28 +50,11 @@ private:
     uint32_t gameOverStartTime = 0;
 
     // 游戏性数据
-    float gameTimer = 30.0f;
+    float gameTimer = 120.0f;
     int score = 0;
-    bool diedByTrap = false;
 
-    // 玩家物理属性
-    float playerX = 50.0f;
-    float playerY = 50.0f;
-    float playerSize = 12.0f;
-    float vx = 0.0f;
-    float vy = 0.0f;
-    const float ACCEL = 500.0f;
-    const float FRICTION = 8.0f;
-    const float MAX_SPEED = 140.0f;
-
-    // 战斗系统
-    bool isAttacking = false;
-    float attackTimer = 0.0f;
-    const float ATTACK_DURATION = 0.18f;
-    const float ATTACK_COOLDOWN = 0.28f;
-    float attackCooldownTimer = 0.0f;
-    Direction attackDir = DIR_DOWN;
-    bool attackHitRegistered = false;
+    // 玩家实体（位置/速度/生命/受伤/无敌/回血）
+    Player player;
 
     std::random_device rd;
     std::mt19937 gen{rd()};
@@ -70,8 +62,10 @@ private:
     void HandleInput();
     void HandleMenuClick(int mouseX, int mouseY);
     void UpdateVolumeFromMouse(int mouseX);
-    void PerformAttack();
     void StartGame(GameMode mode);
+
+    // 战斗与武器（已迁入 CombatSystem；DamagePlayer 保留为受击/死亡效果编排）
+    void DamagePlayer(int amount);
 
     void Update(float dt);
     void Render();

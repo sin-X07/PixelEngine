@@ -286,3 +286,121 @@ void WorldMap::GenerateTrapsForTimeAttack(float playerX, float playerY, float pl
     traps = acceptedTraps;
     std::cout << "模式一陷阱生成完毕！共放置 " << traps.size() << " 个致命陷阱（地刺/老鼠夹），空间可通过性保证 100% 畅通！" << std::endl;
 }
+
+void WorldMap::AddObstacle(int row, int col, char type) {
+    if (row < 0 || row >= mapHeightTiles || col < 0 || col >= mapWidthTiles) return;
+    if (levelGrid[row][col] != '.') return;
+
+    const int pixelX = col * TILE_SIZE;
+    const int pixelY = row * TILE_SIZE;
+    if (type == 'H') {
+        levelGrid[row][col] = 'H';
+        lowWalls.push_back({pixelX, pixelY, TILE_SIZE, TILE_SIZE});
+    } else {
+        levelGrid[row][col] = 'o';
+        const int obstacleSize = TILE_SIZE / 2;
+        smallObstacles.push_back({
+            pixelX + (TILE_SIZE - obstacleSize) / 2,
+            pixelY + (TILE_SIZE - obstacleSize) / 2,
+            obstacleSize,
+            obstacleSize
+        });
+    }
+}
+
+void WorldMap::GenerateExtraObstaclesForTimeAttack(float playerX, float playerY, float playerSize, std::mt19937& rng) {
+    const int dr[4] = {-1, 1, 0, 0};
+    const int dc[4] = {0, 0, -1, 1};
+
+    std::vector<std::pair<int, int>> candidates;
+    for (int r = 2; r < mapHeightTiles - 2; ++r) {
+        for (int c = 2; c < mapWidthTiles - 2; ++c) {
+            if (levelGrid[r][c] != '.') continue;
+
+            // 四邻均为开放瓦片：保证不会堵死走廊
+            bool openAll = true;
+            for (int i = 0; i < 4; ++i) {
+                if (levelGrid[r + dr[i]][c + dc[i]] != '.') { openAll = false; break; }
+            }
+            if (!openAll) continue;
+
+            const float tileCenterX = c * TILE_SIZE + TILE_SIZE * 0.5f;
+            const float tileCenterY = r * TILE_SIZE + TILE_SIZE * 0.5f;
+            const float pCenterX = playerX + playerSize * 0.5f;
+            const float pCenterY = playerY + playerSize * 0.5f;
+            const float dx = tileCenterX - pCenterX;
+            const float dy = tileCenterY - pCenterY;
+            if (dx * dx + dy * dy < 120.0f * 120.0f) continue;
+
+            // 避让宝箱与陷阱（含 1 瓦片余量）
+            bool skip = false;
+            for (const auto& coin : coins) {
+                const int cr = static_cast<int>((coin.y + coinSize * 0.5f) / TILE_SIZE);
+                const int cc = static_cast<int>((coin.x + coinSize * 0.5f) / TILE_SIZE);
+                if (std::abs(cr - r) <= 1 && std::abs(cc - c) <= 1) { skip = true; break; }
+            }
+            if (skip) continue;
+            for (const auto& t : traps) {
+                const int tr = static_cast<int>(t.y / TILE_SIZE);
+                const int tc = static_cast<int>(t.x / TILE_SIZE);
+                if (std::abs(tr - r) <= 1 && std::abs(tc - c) <= 1) { skip = true; break; }
+            }
+            if (skip) continue;
+
+            candidates.push_back({r, c});
+        }
+    }
+
+    std::shuffle(candidates.begin(), candidates.end(), rng);
+    const size_t target = 14;
+    size_t placed = 0;
+    for (const auto& pos : candidates) {
+        if (placed >= target) break;
+        const char type = (placed % 3 == 0) ? 'H' : 'o';
+        AddObstacle(pos.first, pos.second, type);
+        ++placed;
+    }
+    std::cout << "模式一额外障碍生成完毕！共放置 " << placed << " 个可破坏障碍（矮墙/木箱）。" << std::endl;
+}
+
+bool WorldMap::FindRandomSpawnPoint(float playerCenterX, float playerCenterY, float minDist,
+                                    std::mt19937& rng, float& outCenterX, float& outCenterY) const {
+    std::vector<std::pair<int, int>> candidates;
+    for (int r = 1; r < mapHeightTiles - 1; ++r) {
+        for (int c = 1; c < mapWidthTiles - 1; ++c) {
+            if (levelGrid[r][c] != '.') continue;
+
+            const float tileCenterX = c * TILE_SIZE + TILE_SIZE * 0.5f;
+            const float tileCenterY = r * TILE_SIZE + TILE_SIZE * 0.5f;
+            const float dx = tileCenterX - playerCenterX;
+            const float dy = tileCenterY - playerCenterY;
+            if (dx * dx + dy * dy < minDist * minDist) continue;
+
+            bool onTrap = false;
+            for (const auto& t : traps) {
+                if (static_cast<int>(t.y / TILE_SIZE) == r && static_cast<int>(t.x / TILE_SIZE) == c) {
+                    onTrap = true;
+                    break;
+                }
+            }
+            if (onTrap) continue;
+
+            bool onCoin = false;
+            for (const auto& coin : coins) {
+                const int cr = static_cast<int>((coin.y + coinSize * 0.5f) / TILE_SIZE);
+                const int cc = static_cast<int>((coin.x + coinSize * 0.5f) / TILE_SIZE);
+                if (cr == r && cc == c) { onCoin = true; break; }
+            }
+            if (onCoin) continue;
+
+            candidates.push_back({r, c});
+        }
+    }
+
+    if (candidates.empty()) return false;
+    std::uniform_int_distribution<size_t> choose(0, candidates.size() - 1);
+    const auto pos = candidates[choose(rng)];
+    outCenterX = pos.second * TILE_SIZE + TILE_SIZE * 0.5f;
+    outCenterY = pos.first * TILE_SIZE + TILE_SIZE * 0.5f;
+    return true;
+}

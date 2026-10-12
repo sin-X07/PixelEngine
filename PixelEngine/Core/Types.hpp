@@ -54,6 +54,20 @@ struct DebrisParticle {
     bool active = false;
 };
 
+// 子弹（玩家枪械 / 远程怪物共用）
+struct Bullet {
+    float x = 0.0f;
+    float y = 0.0f;
+    float vx = 0.0f;
+    float vy = 0.0f;
+    float traveled = 0.0f;
+    float maxDist = 500.0f;
+    int damage = 1;
+    bool instaKill = false; // 沙漠之鹰：无视血量一击必杀
+    bool hostile = false;   // true 表示怪物子弹，命中玩家
+    bool active = false;
+};
+
 // 陷阱类型与属性
 enum TrapType {
     TRAP_SPIKES,    // 地刺

@@ -10,10 +10,7 @@ bool PhysicsSystem::CheckCollision(float px, float py, float pSize,
 
 bool PhysicsSystem::CheckRectCollision(float ax, float ay, float aw, float ah,
                                         float bx, float by, float bw, float bh) {
-    return ax < (bx + bw) &&
-           (ax + aw) > bx &&
-           ay < (by + bh) &&
-           (ay + ah) > by;
+    return ax < (bx + bw) && (ax + aw) > bx && ay < (by + bh) && (ay + ah) > by;
 }
 
 bool PhysicsSystem::CheckObstacleCollision(float px, float py, float pSize, const WorldMap& worldMap) const {
@@ -30,9 +27,8 @@ bool PhysicsSystem::CheckObstacleCollision(float px, float py, float pSize, cons
     return false;
 }
 
-bool PhysicsSystem::PerformAttackHitCheck(float playerX, float playerY, float playerSize,
-                                          Direction attackDir, WorldMap& worldMap,
-                                          ParticleSystem& particleSystem) {
+std::vector<BrokenObstacle> PhysicsSystem::PerformAttackHitCheck(float playerX, float playerY, float playerSize,
+                                                                 Direction attackDir, WorldMap& worldMap) {
     float hitX = playerX;
     float hitY = playerY;
     float hitW = playerSize;
@@ -61,17 +57,22 @@ bool PhysicsSystem::PerformAttackHitCheck(float playerX, float playerY, float pl
         hitH = playerSize + 6.0f;
     }
 
-    bool hitOccurred = false;
+    return BreakObstaclesInRect(hitX, hitY, hitW, hitH, worldMap);
+}
+
+std::vector<BrokenObstacle> PhysicsSystem::BreakObstaclesInRect(float x, float y, float w, float h,
+                                                                WorldMap& worldMap) {
+    std::vector<BrokenObstacle> broken;
     const int tileSize = worldMap.GetTileSize();
     auto& levelGrid = worldMap.GetLevelGrid();
     const int mapHeight = worldMap.GetMapHeightTiles();
     const int mapWidth = worldMap.GetMapWidthTiles();
 
-    // 1. 检查小障碍物 (木质箱子路障)
+    // 1. 小障碍物 (木质箱子路障)
     auto& smallObstacles = worldMap.GetSmallObstacles();
     for (auto it = smallObstacles.begin(); it != smallObstacles.end(); ) {
-        if (CheckRectCollision(hitX, hitY, hitW, hitH, it->x, it->y, it->w, it->h)) {
-            particleSystem.EmitDebrisBurst(it->x + it->w * 0.5f, it->y + it->h * 0.5f, 26, {194, 111, 58, 255}); // 棕色木屑
+        if (CheckRectCollision(x, y, w, h, it->x, it->y, it->w, it->h)) {
+            broken.push_back({*it, false});
 
             int gridCol = it->x / tileSize;
             int gridRow = it->y / tileSize;
@@ -82,17 +83,16 @@ bool PhysicsSystem::PerformAttackHitCheck(float playerX, float playerY, float pl
             }
 
             it = smallObstacles.erase(it);
-            hitOccurred = true;
         } else {
             ++it;
         }
     }
 
-    // 2. 检查矮墙 (砖石路障)
+    // 2. 矮墙 (砖石路障)
     auto& lowWalls = worldMap.GetLowWalls();
     for (auto it = lowWalls.begin(); it != lowWalls.end(); ) {
-        if (CheckRectCollision(hitX, hitY, hitW, hitH, it->x, it->y, it->w, it->h)) {
-            particleSystem.EmitDebrisBurst(it->x + it->w * 0.5f, it->y + it->h * 0.5f, 32, {140, 150, 155, 255}); // 砖石青灰石屑
+        if (CheckRectCollision(x, y, w, h, it->x, it->y, it->w, it->h)) {
+            broken.push_back({*it, true});
 
             int gridCol = it->x / tileSize;
             int gridRow = it->y / tileSize;
@@ -103,13 +103,32 @@ bool PhysicsSystem::PerformAttackHitCheck(float playerX, float playerY, float pl
             }
 
             it = lowWalls.erase(it);
-            hitOccurred = true;
         } else {
             ++it;
         }
     }
 
-    return hitOccurred;
+    return broken;
+}
+
+bool PhysicsSystem::BulletPassesAndBreaks(float x, float y, WorldMap& worldMap,
+                                          std::vector<BrokenObstacle>& outBroken) {
+    const int tileSize = worldMap.GetTileSize();
+    const auto& levelGrid = worldMap.GetLevelGrid();
+    const int mapHeight = worldMap.GetMapHeightTiles();
+    const int mapWidth = worldMap.GetMapWidthTiles();
+
+    const int c = static_cast<int>(x / tileSize);
+    const int r = static_cast<int>(y / tileSize);
+    if (r >= 0 && r < mapHeight && c >= 0 && c < mapWidth) {
+        if (levelGrid[r][c] == '#') {
+            return true; // 命中地形墙，子弹停止
+        }
+    }
+
+    // 破坏命中的可破坏障碍并继续飞行
+    outBroken = BreakObstaclesInRect(x - 1.5f, y - 1.5f, 3.0f, 3.0f, worldMap);
+    return false;
 }
 
 int PhysicsSystem::CheckTrapCollision(float playerX, float playerY, float playerSize, const WorldMap& worldMap) const {
