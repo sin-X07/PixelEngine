@@ -332,7 +332,7 @@ void UIRenderer::DrawGameOver(GameMode currentMode, bool diedByTrap, bool diedBy
     DrawText("Enter / 空格：返回模式选择", 248, 350, {134, 222, 190, 255}, 18);
 }
 
-void UIRenderer::DrawHUD(GameMode currentMode, float gameTimer, int score, int health) {
+void UIRenderer::DrawHUD(GameMode currentMode, float gameTimer, int score, int health, float maxTime) {
     // 生命值（左上角红心方块）
     for (int i = 0; i < health; ++i) {
         SDL_Rect heart = {20 + i * 14, 34, 10, 10};
@@ -347,7 +347,9 @@ void UIRenderer::DrawHUD(GameMode currentMode, float gameTimer, int score, int h
         SDL_SetRenderDrawColor(renderer, 50, 50, 50, 255);
         SDL_RenderFillRect(renderer, &timeBG);
 
-        int barWidth = static_cast<int>((gameTimer / 30.0f) * 200.0f);
+        const float safeMax = (maxTime > 0.0f) ? maxTime : 1.0f;
+        const float ratio = std::clamp(gameTimer / safeMax, 0.0f, 1.0f);
+        int barWidth = static_cast<int>(ratio * 200.0f);
         SDL_Rect timeBar = {20, 10, barWidth, 15};
 
         if (gameTimer > 10.0f) {

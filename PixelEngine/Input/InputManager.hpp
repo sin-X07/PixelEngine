@@ -2,6 +2,7 @@
 #include "../Core/Types.hpp"
 #include <SDL2/SDL.h>
 #include <cstdint>
+#include <functional>
 
 class InputManager {
 private:
@@ -30,6 +31,9 @@ private:
     bool mouseLeftClicked = false;
     bool mouseLeftReleased = false;
 
+    // 每帧原始事件回调（供 ImGui 等 UI 后端消费，避免 InputManager 直接耦合 ImGui）
+    std::function<void(const SDL_Event&)> eventCallback;
+
     // Windows 键盘布局接管
     std::uintptr_t originalKeyboardLayout = 0;
     bool keyboardLayoutCaptured = false;
@@ -41,6 +45,9 @@ public:
 
     void ProcessEvents(SDL_Renderer* renderer, GameState currentState);
     void ResetPerFrameActions();
+
+    // 设置原始事件回调（每 poll 到一个 event 时调用一次）
+    void SetEventCallback(std::function<void(const SDL_Event&)> cb) { eventCallback = std::move(cb); }
 
     void SwitchToEnglishKeyboardLayout();
     void RestoreOriginalKeyboardLayout();

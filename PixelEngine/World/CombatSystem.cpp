@@ -121,7 +121,12 @@ void CombatSystem::TryAttack() {
         attackAnimTimer = ATTACK_DURATION;
         meleeHitRegistered = false;
 
-        audio_->PlaySound(SoundEffect::ATTACK_SWING);
+        // 近战音效：武士刀用专属挥砍音，匕首用通用挥剑音
+        if (weapon->type == WeaponType::KATANA) {
+            audio_->PlaySound(SoundEffect::KATANA_SWING);
+        } else {
+            audio_->PlaySound(SoundEffect::ATTACK_SWING);
+        }
 
         // 破坏前方障碍
         const Direction dir = DirFromAngle(aimAngle);
@@ -153,7 +158,14 @@ void CombatSystem::FireWeapon(const Weapon& weapon) {
     bullet.active = true;
     bullets_.push_back(bullet);
 
-    audio_->PlaySound(SoundEffect::SHOOT);
+    // 射击音效：AK47 用专属连发枪声，沙漠之鹰用单发枪声，其余回退通用射击音
+    if (weapon.type == WeaponType::RIFLE) {
+        audio_->PlaySound(SoundEffect::AK47_FIRE);
+    } else if (weapon.type == WeaponType::PISTOL) {
+        audio_->PlaySound(SoundEffect::DEAGLE_FIRE);
+    } else {
+        audio_->PlaySound(SoundEffect::SHOOT);
+    }
 }
 
 void CombatSystem::ApplyMeleeHit(const Weapon& weapon) {

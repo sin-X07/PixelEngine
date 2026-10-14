@@ -172,6 +172,59 @@ void RenderSystem::DrawDungeonBackground(const WorldMap& worldMap, Uint8 overlay
     }
 }
 
+void RenderSystem::DrawAnimatedMenuBackground(const WorldMap& worldMap, float timeSeconds) {
+    SDL_Rect background = {0, 0, 800, 600};
+    SDL_SetRenderDrawColor(renderer, 14, 28, 35, 255);
+    SDL_RenderFillRect(renderer, &background);
+
+    const int tileSize = worldMap.GetTileSize();
+
+    auto drawScrollingLayer = [&](SDL_Texture* tex, float tilePx, float speed,
+                                  Uint8 alpha) {
+        if (!tex) return;
+        const float off = std::fmod(timeSeconds * speed, tilePx);
+        SDL_SetTextureAlphaMod(tex, alpha);
+        for (float x = -off; x < background.w + tilePx; x += tilePx) {
+            for (float y = 0.0f; y < background.h + tilePx; y += tilePx) {
+                SDL_Rect tile = {static_cast<int>(std::lround(x)),
+                                 static_cast<int>(std::lround(y)),
+                                 static_cast<int>(std::lround(tilePx)),
+                                 static_cast<int>(std::lround(tilePx))};
+                SDL_RenderCopy(renderer, tex, nullptr, &tile);
+            }
+        }
+        SDL_SetTextureAlphaMod(tex, 255);
+    };
+
+    // 层 1 —— 远景石墙：最慢、最暗
+    drawScrollingLayer(dungeonWallTexture, tileSize * 3.0f, 12.0f, 90);
+
+    // 层 2 —— 中景地板：中速、中亮
+    drawScrollingLayer(dungeonFloorTexture, tileSize * 2.0f, 30.0f, 210);
+
+    // 层 3 —— 近景金币：最快、最亮，稀疏两行（位于菜单按钮区下方，不遮挡按钮）
+    if (treasureTexture) {
+        const float coinPx = 28.0f;
+        const float gap = 120.0f;
+        const float off = std::fmod(timeSeconds * 65.0f, gap);
+        SDL_SetTextureAlphaMod(treasureTexture, 255);
+        for (const float rowY : {490.0f, 540.0f}) {
+            for (float x = -off; x < background.w + gap; x += gap) {
+                SDL_Rect coin = {static_cast<int>(std::lround(x)),
+                                 static_cast<int>(std::lround(rowY)),
+                                 static_cast<int>(std::lround(coinPx)),
+                                 static_cast<int>(std::lround(coinPx))};
+                SDL_RenderCopy(renderer, treasureTexture, nullptr, &coin);
+            }
+        }
+        SDL_SetTextureAlphaMod(treasureTexture, 255);
+    }
+
+    // 半透明暗层（调淡，保证文字可读且不压死层次）
+    SDL_SetRenderDrawColor(renderer, 12, 23, 31, 100);
+    SDL_RenderFillRect(renderer, &background);
+}
+
 void RenderSystem::DrawTrap(const Trap& trap) {
     const float cameraZoom = CurrentCameraZoom();
     SDL_Rect screenRect = {
@@ -344,7 +397,8 @@ bool RenderSystem::HasLineOfSight(float targetWorldX, float targetWorldY,
 
         if (tileX >= 0 && tileX < mapWidth && tileY >= 0 && tileY < mapHeight) {
             const char tile = levelGrid[tileY][tileX];
-            if (tile == '#' || tile == 'H' || tile == 'o') {
+            // 只有地形墙(#)遮挡视野；矮墙(H)与木箱(o)不遮挡
+            if (tile == '#') {
                 return false;
             }
         }

@@ -151,7 +151,8 @@ set(SDL2MIXER_SAMPLES OFF CACHE BOOL "" FORCE)
 set(SDL2MIXER_CMD OFF CACHE BOOL "" FORCE)
 set(SDL2MIXER_FLAC OFF CACHE BOOL "" FORCE)
 set(SDL2MIXER_MOD OFF CACHE BOOL "" FORCE)
-set(SDL2MIXER_MP3 OFF CACHE BOOL "" FORCE)
+set(SDL2MIXER_MP3 ON CACHE BOOL "" FORCE)
+set(SDL2MIXER_MP3_DRMP3 ON CACHE BOOL "" FORCE)
 set(SDL2MIXER_MIDI OFF CACHE BOOL "" FORCE)
 set(SDL2MIXER_OPUS OFF CACHE BOOL "" FORCE)
 set(SDL2MIXER_VORBIS "STB" CACHE STRING "" FORCE)
@@ -279,13 +280,22 @@ set(SOURCES
     Graphics/ParticleSystem.cpp
     Graphics/RenderSystem.cpp
     Graphics/UIRenderer.cpp
+    Graphics/ImGuiUI.cpp
     Storage/SaveManager.cpp
+    ThirdParty/imgui/imgui.cpp
+    ThirdParty/imgui/imgui_draw.cpp
+    ThirdParty/imgui/imgui_tables.cpp
+    ThirdParty/imgui/imgui_widgets.cpp
+    ThirdParty/imgui/backends/imgui_impl_sdl2.cpp
+    ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.cpp
 )
 
 add_executable(EngineApp ${SOURCES})
 
 target_include_directories(EngineApp PRIVATE
     ${SDL2_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/ThirdParty/imgui
+    ${CMAKE_SOURCE_DIR}/ThirdParty/imgui/backends
 )
 
 target_link_libraries(EngineApp PRIVATE

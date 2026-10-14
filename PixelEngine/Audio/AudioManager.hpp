@@ -10,10 +10,13 @@ enum class SoundEffect {
     ATTACK_SWING,
     OBSTACLE_BREAK,
     PLAYER_DEATH,
-    SHOOT,       // 射击
-    HIT,         // 命中
-    KILL,        // 击杀
-    PLAYER_HURT  // 玩家受击
+    SHOOT,        // 射击（通用）
+    HIT,          // 命中
+    KILL,         // 击杀
+    PLAYER_HURT,  // 玩家受击
+    AK47_FIRE,    // AK47 连发枪声
+    DEAGLE_FIRE,  // 沙漠之鹰单发枪声
+    KATANA_SWING  // 武士刀挥砍
 };
 
 class AudioManager {
@@ -30,6 +33,9 @@ private:
     Mix_Chunk* hitSound = nullptr;
     Mix_Chunk* killSound = nullptr;
     Mix_Chunk* playerHurtSound = nullptr;
+    Mix_Chunk* ak47Sound = nullptr;
+    Mix_Chunk* deagleSound = nullptr;
+    Mix_Chunk* katanaSound = nullptr;
 
     int masterVolume = 100;
     int musicVolume = 25;

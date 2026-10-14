@@ -36,6 +36,9 @@ bool AudioManager::Initialize() {
     hitSound = loadChunk("../assets/audio/hit.ogg", "命中");
     killSound = loadChunk("../assets/audio/kill.ogg", "击杀");
     playerHurtSound = loadChunk("../assets/audio/player_hurt.ogg", "玩家受击");
+    ak47Sound = loadChunk("../assets/audio/ak47.mp3", "AK47 射击");
+    deagleSound = loadChunk("../assets/audio/deagle.mp3", "沙漠之鹰射击");
+    katanaSound = loadChunk("../assets/audio/katana.mp3", "武士刀挥砍");
 
     UpdateVolumes();
     return true;
@@ -58,6 +61,9 @@ void AudioManager::Clean() {
     if (hitSound) { Mix_FreeChunk(hitSound); hitSound = nullptr; }
     if (killSound) { Mix_FreeChunk(killSound); killSound = nullptr; }
     if (playerHurtSound) { Mix_FreeChunk(playerHurtSound); playerHurtSound = nullptr; }
+    if (ak47Sound) { Mix_FreeChunk(ak47Sound); ak47Sound = nullptr; }
+    if (deagleSound) { Mix_FreeChunk(deagleSound); deagleSound = nullptr; }
+    if (katanaSound) { Mix_FreeChunk(katanaSound); katanaSound = nullptr; }
 
     Mix_CloseAudio();
     SDL_QuitSubSystem(SDL_INIT_AUDIO);
@@ -110,6 +116,9 @@ void AudioManager::PlaySound(SoundEffect effect) {
         case SoundEffect::HIT: targetChunk = hitSound; break;
         case SoundEffect::KILL: targetChunk = killSound; break;
         case SoundEffect::PLAYER_HURT: targetChunk = playerHurtSound; break;
+        case SoundEffect::AK47_FIRE: targetChunk = ak47Sound; break;
+        case SoundEffect::DEAGLE_FIRE: targetChunk = deagleSound; break;
+        case SoundEffect::KATANA_SWING: targetChunk = katanaSound; break;
     }
 
     if (targetChunk) {

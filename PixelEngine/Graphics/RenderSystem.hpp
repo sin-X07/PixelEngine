@@ -67,6 +67,8 @@ public:
     float GetFocusBlend() const { return focusBlend; }
 
     void DrawDungeonBackground(const WorldMap& worldMap, Uint8 overlayAlpha = 0);
+    // 主菜单/模式选择的视差循环动画背景（替代 DrawDungeonBackground）
+    void DrawAnimatedMenuBackground(const WorldMap& worldMap, float timeSeconds);
     void DrawWorld(const WorldMap& worldMap, float playerX, float playerY, float playerSize,
                    bool isAttacking, float attackAngle, float attackTimer, float attackDuration,
                    bool drawCoins);

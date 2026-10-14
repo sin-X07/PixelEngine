@@ -40,6 +40,8 @@ void InputManager::ProcessEvents(SDL_Renderer* renderer, GameState currentState)
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
+        if (eventCallback) eventCallback(event);
+
         if (event.type == SDL_QUIT) {
             quitRequested = true;
         }

@@ -22,6 +22,9 @@ enum GameMode {
     MAZE_MODE    // 模式二：迷宫探索
 };
 
+// 限时挑战总时长（秒），倒计时与 HUD 进度条共用，保证填充条与底框长度一致
+inline constexpr float TIME_ATTACK_DURATION = 60.0f;
+
 // 角色朝向枚举
 enum Direction {
     DIR_UP,

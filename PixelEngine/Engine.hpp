@@ -12,6 +12,7 @@
 #include "Graphics/ParticleSystem.hpp"
 #include "Graphics/RenderSystem.hpp"
 #include "Graphics/UIRenderer.hpp"
+#include "Graphics/ImGuiUI.hpp"
 #include "Storage/SaveManager.hpp"
 #include "MazeGenerator.hpp"
 #include <SDL2/SDL.h>
@@ -36,6 +37,7 @@ private:
     std::unique_ptr<ParticleSystem> particleSystem;
     std::unique_ptr<RenderSystem> renderSystem;
     std::unique_ptr<UIRenderer> uiRenderer;
+    std::unique_ptr<ImGuiUI> imGuiUI;
     std::unique_ptr<SaveManager> saveManager;
     std::unique_ptr<CombatSystem> combatSystem;
     std::unique_ptr<EnemyManager> enemyManager;
@@ -46,11 +48,10 @@ private:
     GameState settingsReturnState = MAIN_MENU;
     GameMode currentMode = TIME_ATTACK;
     bool exitToDesktop = false;
-    int draggingVolumeSlider = -1;
     uint32_t gameOverStartTime = 0;
 
     // 游戏性数据
-    float gameTimer = 120.0f;
+    float gameTimer = TIME_ATTACK_DURATION;
     int score = 0;
 
     // 玩家实体（位置/速度/生命/受伤/无敌/回血）
@@ -60,9 +61,8 @@ private:
     std::mt19937 gen{rd()};
 
     void HandleInput();
-    void HandleMenuClick(int mouseX, int mouseY);
-    void UpdateVolumeFromMouse(int mouseX);
     void StartGame(GameMode mode);
+    void RenderImGuiMenus();
 
     // 战斗与武器（已迁入 CombatSystem；DamagePlayer 保留为受击/死亡效果编排）
     void DamagePlayer(int amount);
