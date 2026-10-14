@@ -158,11 +158,9 @@ void CombatSystem::FireWeapon(const Weapon& weapon) {
     bullet.active = true;
     bullets_.push_back(bullet);
 
-    // 射击音效：AK47 用专属连发枪声，沙漠之鹰用单发枪声，其余回退通用射击音
+    // 射击音效：AK47 用专属连发枪声，沙漠之鹰用回原来的 shoot.ogg，其余回退通用射击音
     if (weapon.type == WeaponType::RIFLE) {
         audio_->PlaySound(SoundEffect::AK47_FIRE);
-    } else if (weapon.type == WeaponType::PISTOL) {
-        audio_->PlaySound(SoundEffect::DEAGLE_FIRE);
     } else {
         audio_->PlaySound(SoundEffect::SHOOT);
     }

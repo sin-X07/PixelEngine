@@ -92,14 +92,13 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         ImGui::SetCursorPosY(160.0f);
         if (bigButton("模式一  限时挑战")) doClick([&]{ actions.startGame(TIME_ATTACK); });
         if (bigButton("模式二  迷宫探索")) doClick([&]{ actions.startGame(MAZE_MODE); });
-        ImGui::SetCursorPosY(430.0f);
+        ImGui::SetCursorPosY(400.0f);
         if (bigButton("返回")) doClick([&]{ actions.goState(MAIN_MENU); });
     } else if (ctx.state == HISTORY) {
         drawStatic("menu_history_title", "历史记录", TextStyle{0.0f, 120.0f, 20, 255, 255, 255, 255, 0, false});
         ImGui::Separator();
         drawStatic("menu_history_mode1", "模式一  限时挑战", TextStyle{60.0f, 0.0f, 20, 255, 255, 255, 255, 0, false});
         drawStatic("menu_history_mode2", "模式二  迷宫探索", TextStyle{460.0f, 0.0f, 20, 255, 255, 255, 255, 0, false});
-        ImGui::Separator();
 
         const std::vector<ScoreRecord>* scoreHistory = nullptr;
         const std::vector<float>* timeHistory = nullptr;
@@ -131,10 +130,11 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 
         for (size_t i = 0; i < 10; ++i) {
             const float y = 140.0f + i * 34.0f;
-            const float barY = y + (34.0f - barH) * 0.5f;
             ImDrawList* dl = ImGui::GetWindowDrawList();
 
             ImGui::SetCursorPos(ImVec2(36.0f, y));
+            // 柱条 y 基准用屏幕坐标（GetCursorScreenPos 已含滚动偏移），保证与文字一起随滚轮滚动。
+            const float barY = ImGui::GetCursorScreenPos().y + (34.0f - barH) * 0.1f;
             if (scoreHistory && i < scoreHistory->size()) {
                 const ScoreRecord& rec = (*scoreHistory)[i];
                 char buf[64];
@@ -160,7 +160,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
             }
         }
 
-        ImGui::SetCursorPosY(548.0f);
+        ImGui::SetCursorPosY(500.0f);
         if (bigButton("返回")) doClick([&]{ actions.goState(MAIN_MENU); });
     } else if (ctx.state == CONTROLS) {
         drawStatic("menu_controls_title", "操作说明", TextStyle{0.0f, 120.0f, 20, 255, 255, 255, 255, 0, false});
@@ -183,7 +183,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         drawLine("Shift：蓄力冲刺；Ctrl：聚焦视野");
         drawLine("鼠标左键/空格：攻击；1/2/3：切换武器；F：拾取/丢弃");
         drawLine("ESC：暂停游戏；F11：全屏；F1：静音");
-        ImGui::SetCursorPosY(548.0f);
+        ImGui::SetCursorPosY(500.0f);
         if (bigButton("返回")) doClick([&]{ actions.goState(MAIN_MENU); });
     } else if (ctx.state == SETTINGS) {
         drawStatic("menu_settings_title", "设置", TextStyle{0.0f, 120.0f, 20, 255, 255, 255, 255, 0, false});
@@ -215,7 +215,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         if (ImGui::Button(ctx.muted ? "已静音（点击取消）" : "切换静音", ImVec2(muteW, 0.0f))) {
             actions.toggleMute();
         }
-        ImGui::SetCursorPosY(548.0f);
+        ImGui::SetCursorPosY(500.0f);
         if (bigButton("返回")) doClick([&]{ actions.goState(ctx.settingsReturnState); });
     } else if (ctx.state == PAUSED) {
         ImGui::SetCursorPosY(150.0f);

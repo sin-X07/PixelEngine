@@ -10,12 +10,12 @@ enum class SoundEffect {
     ATTACK_SWING,
     OBSTACLE_BREAK,
     PLAYER_DEATH,
-    SHOOT,        // 射击（通用）
+    SHOOT,        // 射击（通用，沙漠之鹰用）
     HIT,          // 命中
     KILL,         // 击杀
     PLAYER_HURT,  // 玩家受击
     AK47_FIRE,    // AK47 连发枪声
-    DEAGLE_FIRE,  // 沙漠之鹰单发枪声
+    DEAGLE_FIRE,  // 沙漠之鹰单发枪声（备用）
     KATANA_SWING  // 武士刀挥砍
 };
 
