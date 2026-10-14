@@ -17,6 +17,8 @@ bool RenderSystem::Initialize(SDL_Renderer* ren, int screenWidth, int screenHeig
             SDL_Texture* texture = IMG_LoadTexture(renderer, path.c_str());
             if (!texture) {
                 std::cerr << "图片加载失败 " << filename << ": " << IMG_GetError() << std::endl;
+            } else {
+                SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
             }
             return texture;
         };
@@ -179,8 +181,7 @@ void RenderSystem::DrawAnimatedMenuBackground(const WorldMap& worldMap, float ti
 
     const int tileSize = worldMap.GetTileSize();
 
-    auto drawScrollingLayer = [&](SDL_Texture* tex, float tilePx, float speed,
-                                  Uint8 alpha) {
+    auto drawScrollingLayer = [&](SDL_Texture* tex, float tilePx, float speed, Uint8 alpha) {
         if (!tex) return;
         const float off = std::fmod(timeSeconds * speed, tilePx);
         SDL_SetTextureAlphaMod(tex, alpha);

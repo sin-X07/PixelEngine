@@ -23,14 +23,19 @@
 - 静音：`F1` 切换主音量静音；主音量、音乐和音效可在“设置”中分别调节。
 - 返回：子页面按 `Esc` 返回；主菜单按 `Esc` 退出；结算页面按 `Esc` 返回模式选择。
 - 结算页面：按 `Enter` 或空格返回模式选择。
+- 文字调参：按 `F2` 打开/关闭实时文字调参面板（可调位置/字号档位/颜色，所见即所得）；点“保存全部”写入 `assets/config/text.ini`，下次启动自动加载。
+
+## 文字调参
+
+所有 ImGui 文字（游戏内 7 处 + 菜单静态文字 9 处）的位置、字号档位、颜色可在 `F2` 面板实时调整并保存到 `assets/config/text.ini`（首次运行自动生成模板）。字号取档位 `{16,18,20,22,24,30,34}` 就近值；`[global] font=` 指定字体文件，**修改后需重启**生效。新增文字 key：在 `GameUI` 调用点查表 + `TextConfig` 默认表加一行即可，面板会自动出现。
 
 ## 构建与运行
 
-项目使用 CMake 3.16+、C++17、MinGW-w64、SDL2、SDL2_ttf、SDL2_image、FreeType 和 SDL2_mixer。SDL2_mixer 固定为 2.6.3；SDL2_image 固定为 2.8.2，静态构建并使用内置 stb 后端解码 PNG/JPG。SDL2_image 源码会在首次配置时下载并校验 SHA-256，也可通过 `PIXELENGINE_SDL2_IMAGE_SOURCE_DIR` 指向本地源码目录。引擎会尝试打开音频设备，设备不可用时仍可静音运行。背景音乐、按钮悬停/点击音效和拾取音效素材位于 `assets/audio/`。
+项目使用 CMake 3.16+、C++17、MinGW-w64、SDL2、SDL2_image 和 SDL2_mixer，另 vendor 了 Dear ImGui（MIT）用于文字与菜单渲染。SDL2_mixer 固定为 2.6.3；SDL2_image 固定为 2.8.2，静态构建并使用内置 stb 后端解码 PNG/JPG。SDL2_image 源码会在首次配置时下载并校验 SHA-256，也可通过 `PIXELENGINE_SDL2_IMAGE_SOURCE_DIR` 指向本地源码目录。引擎会尝试打开音频设备，设备不可用时仍可静音运行。背景音乐、按钮悬停/点击音效和拾取音效素材位于 `assets/audio/`。
 
 地牢图片取自 Kenney 的 [Tiny Dungeon](https://kenney.nl/assets/tiny-dungeon) 资源包，页面标注 Creative Commons CC0；本项目使用其中的砂地、石砖墙、玩家和宝箱精灵，许可文本随素材保存在 `assets/images/dungeon/License.txt`。
 
-当前 Windows 开发环境的源码路径和工具链路径配置在 `PixelEngine/CMakeLists.txt` 与 `.vscode/tasks.json` 中，并非跨机器通用配置。该配置预期 SDL2 源码位于仓库的 `build/_deps/sdl2-src`，FreeType 和 SDL2_ttf 源码位于 `D:/PixelEngineBuild-ttf/_deps/`。SDL2_mixer 首次配置时从 GitHub 获取固定版本，验证 SHA-256 后解压到构建目录的 `_deps`；默认总超时为 300 秒、无数据活动超时为 60 秒。后续配置会复用已下载源码。
+当前 Windows 开发环境的源码路径和工具链路径配置在 `PixelEngine/CMakeLists.txt` 与 `.vscode/tasks.json` 中，并非跨机器通用配置。该配置预期 SDL2 源码位于仓库的 `build/_deps/sdl2-src`。SDL2_mixer 首次配置时从 GitHub 获取固定版本，验证 SHA-256 后解压到构建目录的 `_deps`；默认总超时为 300 秒、无数据活动超时为 60 秒。后续配置会复用已下载源码。
 
 若在线下载失败，CMake 会尝试仓库中的 `build/_deps/SDL2_mixer-src` 本地源码缓存。也可以手动下载并解压 SDL_mixer 2.6.3，然后通过 `PIXELENGINE_SDL2_MIXER_SOURCE_DIR` 指定源码目录；设置有效目录后会直接使用本地源码。下载等待时间可通过 `PIXELENGINE_SDL2_MIXER_DOWNLOAD_TIMEOUT` 和 `PIXELENGINE_SDL2_MIXER_INACTIVITY_TIMEOUT` 调整。若线上与本地源码都不可用，配置会提示所需目录和参数。
 
@@ -43,7 +48,7 @@
 也可在仓库根目录执行当前环境对应的命令：
 
 ```powershell
-cmake -S PixelEngine -B D:/PixelEngineBuild-Local -G "MinGW Makefiles" -DPIXELENGINE_FREETYPE_SOURCE_DIR=D:/PixelEngineBuild-ttf/_deps/freetype-src -DPIXELENGINE_SDL2_TTF_SOURCE_DIR=D:/PixelEngineBuild-ttf/_deps/sdl2_ttf-src
+cmake -S PixelEngine -B D:/PixelEngineBuild-Local -G "MinGW Makefiles"
 cmake --build D:/PixelEngineBuild-Local --target EngineApp -- -j4
 ```
 
@@ -52,8 +57,13 @@ cmake --build D:/PixelEngineBuild-Local --target EngineApp -- -j4
 ## 项目文件
 
 - `PixelEngine/main.cpp`：程序入口和引擎启动。
-- `PixelEngine/Engine.hpp`、`PixelEngine/Engine.cpp`：游戏状态、输入、更新、绘制、菜单和记录存取。
-- `PixelEngine/MazeGenerator.hpp`：随机生成含环路、扩展死路和可通行主路线的编织迷宫。
+- `PixelEngine/Engine.hpp`、`PixelEngine/Engine.cpp`：游戏状态、输入、更新、绘制、菜单协调与记录存取。
+- `PixelEngine/Graphics/GameUI.hpp/.cpp`：菜单界面 + 游戏内文字（ImGui 渲染，动作通过回调委托）。
+- `PixelEngine/Graphics/ImGuiUI.hpp/.cpp`：Dear ImGui 基础设施（多字号中文字体、帧边界）。
+- `PixelEngine/Graphics/TextConfig.hpp/.cpp`：文字样式配置（ini 读写，16 个 key）。
+- `PixelEngine/Graphics/TextTweakerUI.hpp/.cpp`：F2 实时调参面板。
+- `PixelEngine/Graphics/UIRenderer.hpp/.cpp`：游戏内图形（HUD 红心/时间条/金币点、武器面板、结算面板背景）。
+- `PixelEngine/MazeGenerator.hpp/.cpp`：随机生成含环路、扩展死路和可通行主路线的编织迷宫。
 - `PixelEngine/map1.txt`：限时模式地图；`map2.txt`：迷宫模式地图文件，运行时会生成随机迷宫。
 - `PixelEngine/CMakeLists.txt`：应用与第三方依赖的构建配置。
 

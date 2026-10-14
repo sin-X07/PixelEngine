@@ -1,4 +1,5 @@
 #include "Engine.hpp"
+#include "Core/PathUtils.hpp"
 #include "ThirdParty/imgui/imgui.h"
 #include "ThirdParty/imgui/backends/imgui_impl_sdl2.h"
 #include <iostream>
@@ -14,7 +15,13 @@ Engine::Engine() : isRunning(false), window(nullptr), renderer(nullptr) {
     renderSystem = std::make_unique<RenderSystem>();
     uiRenderer = std::make_unique<UIRenderer>();
     imGuiUI = std::make_unique<ImGuiUI>();
+    gameUI = std::make_unique<GameUI>();
+    textConfig = std::make_unique<TextConfig>();
+    textTweaker = std::make_unique<TextTweakerUI>();
     saveManager = std::make_unique<SaveManager>();
+
+    gameUI->SetTextConfig(textConfig.get());
+    gameUI->SetImGuiUI(imGuiUI.get());
 
     enemyManager = std::make_unique<EnemyManager>(
         player, *worldMap, *physicsSystem, *particleSystem,
@@ -27,6 +34,30 @@ Engine::Engine() : isRunning(false), window(nullptr), renderer(nullptr) {
         audioManager.get(), gen, inputManager.get(), renderSystem.get());
 
     enemyManager->SetCombatSystem(combatSystem.get());
+}
+
+GameUI::Actions Engine::BuildActions() {
+    GameUI::Actions a;
+    a.playClick = [this]{ audioManager->PlaySound(SoundEffect::CLICK); };
+    a.goState = [this](GameState s){ currentState = s; };
+    a.openSettings = [this](GameState ret){ settingsReturnState = ret; currentState = SETTINGS; };
+    a.startGame = [this](GameMode m){ StartGame(m); };
+    a.resumeGame = [this]{ currentState = PLAYING; audioManager->ResumeMusic(); };
+    a.confirmExit = [this](bool toDesktop){ exitToDesktop = toDesktop; currentState = EXIT_CONFIRM; };
+    a.quitApp = [this]{
+        inputManager->ResetMovementKeys();
+        if (exitToDesktop) { isRunning = false; }
+        else { currentState = MAIN_MENU; audioManager->ResumeMusic(); }
+    };
+    a.quitToDesktop = [this]{
+        inputManager->ResetMovementKeys();
+        isRunning = false;
+    };
+    a.toggleMute = [this]{ audioManager->ToggleMute(); };
+    a.setMasterVolume = [this](int v){ audioManager->SetMasterVolume(v); };
+    a.setMusicVolume = [this](int v){ audioManager->SetMusicVolume(v); };
+    a.setEffectsVolume = [this](int v){ audioManager->SetEffectsVolume(v); };
+    return a;
 }
 
 Engine::~Engine() {
@@ -61,14 +92,37 @@ bool Engine::Initialize(const char* title, int width, int height) {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_RenderSetLogicalSize(renderer, width, height);
 
+    // 加载文字样式配置（无文件 → 默认值，不崩溃）
+    const std::string textConfigPath = PathUtils::ResolveProjectFile("../assets/config/text.ini");
+    textConfig->Load(textConfigPath);
+    // [global] font= 传给 ImGuiUI（仅启动生效）
+    if (!textConfig->GlobalFontPath().empty()) {
+        imGuiUI->SetFontPath(textConfig->GlobalFontPath());
+    }
+
     // 初始化渲染与UI子系统
     if (!renderSystem->Initialize(renderer, width, height)) return false;
     if (!uiRenderer->Initialize(renderer)) return false;
     if (!imGuiUI->Initialize(window, renderer)) return false;
 
+    // 首次运行：立即生成模板 ini
+    textConfig->Save(textConfigPath);
+
     // ImGui 后端消费原始 SDL 事件
     inputManager->SetEventCallback([this](const SDL_Event& e) {
-        ImGui_ImplSDL2_ProcessEvent(&e);
+        // 窗口物理尺寸与渲染逻辑尺寸（800x600）不一致时（全屏/缩放），把鼠标移动
+        // 事件的坐标从窗口像素换算成逻辑坐标再交给 ImGui，保证悬停/点击命中与画面一致。
+        if (e.type == SDL_MOUSEMOTION) {
+            SDL_Event converted = e;
+            float logicalX = 0.0f;
+            float logicalY = 0.0f;
+            SDL_RenderWindowToLogical(renderer, e.motion.x, e.motion.y, &logicalX, &logicalY);
+            converted.motion.x = static_cast<Sint32>(logicalX);
+            converted.motion.y = static_cast<Sint32>(logicalY);
+            ImGui_ImplSDL2_ProcessEvent(&converted);
+        } else {
+            ImGui_ImplSDL2_ProcessEvent(&e);
+        }
     });
 
     // 血液粒子使用 RenderSystem 加载的血迹贴图
@@ -118,6 +172,9 @@ void Engine::Clean() {
 
     if (saveManager) {
         saveManager->SaveAll();
+    }
+    if (textConfig) {
+        textConfig->Save(PathUtils::ResolveProjectFile("../assets/config/text.ini"));
     }
 
     if (audioManager) audioManager->Clean();
@@ -212,6 +269,7 @@ void Engine::HandleInput() {
     if (inputManager->IsQuitRequested()) isRunning = false;
     if (inputManager->IsFullscreenToggleRequested()) ToggleFullscreen();
     if (inputManager->IsMuteToggleRequested()) audioManager->ToggleMute();
+    if (inputManager->IsTweakerToggleRequested()) tweakerOpen = !tweakerOpen;
 
     if (inputManager->IsPauseToggleRequested()) {
         if (currentState == PLAYING) {
@@ -411,8 +469,6 @@ void Engine::Update(float dt) {
 }
 
 void Engine::Render() {
-    uiRenderer->BeginFrame();
-
     const bool gameplayVisible = (currentState == PLAYING || currentState == PAUSED ||
                                   currentState == EXIT_CONFIRM || currentState == GAMEOVER);
     SDL_FPoint shakeOffset = particleSystem->GetShakeOffset();
@@ -448,172 +504,60 @@ void Engine::Render() {
         SDL_RenderFillRect(renderer, &bg);
     }
 
+    if (currentState == PLAYING) {
+        uiRenderer->DrawHUD(currentMode, gameTimer, score, player.health, TIME_ATTACK_DURATION);
+
+        const Weapon* currentWeapon = combatSystem->GetActiveWeapon();
+        SDL_Texture* weaponIcon = renderSystem->GetWeaponIconTexture(currentWeapon->type);
+        uiRenderer->DrawWeaponStatus(weaponIcon);
+    } else if (currentState == GAMEOVER) {
+        uiRenderer->DrawGameOver(currentMode, player.diedByTrap, player.diedByMonster, score, gameTimer);
+    }
+    
     // ImGui 菜单（按钮/滑条由 ImGui 绘制并响应）
     const bool isImGuiState = (currentState == MAIN_MENU || currentState == MODE_SELECT ||
                                currentState == HISTORY || currentState == CONTROLS ||
                                currentState == SETTINGS || currentState == PAUSED ||
                                currentState == EXIT_CONFIRM);
 
+    // ImGui 帧：每帧恰好开启一次（菜单态画菜单，游戏/结算态 DrawInGame 负责文字）
+    imGuiUI->BeginFrame();
     if (isImGuiState) {
-        imGuiUI->BeginFrame();
-        RenderImGuiMenus();
-        imGuiUI->EndFrame();
-    } else if (currentState == PLAYING) {
-        uiRenderer->DrawHUD(currentMode, gameTimer, score, player.health, TIME_ATTACK_DURATION);
-
+        GameUI::MenuCtx ctx;
+        ctx.state = currentState;
+        ctx.settingsReturnState = settingsReturnState;
+        ctx.currentMode = currentMode;
+        ctx.exitToDesktop = exitToDesktop;
+        ctx.masterVolume = audioManager->GetMasterVolume();
+        ctx.musicVolume = audioManager->GetMusicVolume();
+        ctx.effectsVolume = audioManager->GetEffectsVolume();
+        ctx.muted = audioManager->IsMuted();
+        ctx.saves = saveManager.get();
+        gameUI->DrawMenu(ctx, BuildActions());
+    } else {
+        GameUI::InGameCtx ictx;
+        ictx.state = currentState;
+        ictx.mode = currentMode;
+        ictx.gameTimer = gameTimer;
+        ictx.score = score;
+        ictx.diedByTrap = player.diedByTrap;
+        ictx.diedByMonster = player.diedByMonster;
         const Weapon* currentWeapon = combatSystem->GetActiveWeapon();
-        SDL_Texture* weaponIcon = renderSystem->GetWeaponIconTexture(currentWeapon->type);
-        if (currentWeapon->ranged) {
-            uiRenderer->DrawWeaponStatus(weaponIcon, currentWeapon->Name(), currentWeapon->ammo, currentWeapon->magazineSize);
-        } else {
-            uiRenderer->DrawWeaponStatus(weaponIcon, currentWeapon->Name(), -1, 0);
-        }
-        if (combatSystem->HasActiveNoWeaponHint()) {
-            uiRenderer->DrawNoWeaponHint(combatSystem->GetNoWeaponHintText());
-        }
-    } else if (currentState == GAMEOVER) {
-        uiRenderer->DrawGameOver(currentMode, player.diedByTrap, player.diedByMonster, score, gameTimer);
+        ictx.weaponName = currentWeapon->Name();
+        ictx.ammo = currentWeapon->ammo;
+        ictx.magazineSize = currentWeapon->magazineSize;
+        ictx.hasWeaponIcon = renderSystem->GetWeaponIconTexture(currentWeapon->type) != nullptr;
+        ictx.hasNoWeaponHint = combatSystem->HasActiveNoWeaponHint();
+        ictx.hintText = combatSystem->GetNoWeaponHintText();
+        gameUI->DrawInGame(ictx, imGuiUI.get());
     }
 
-    if (uiRenderer->DidHoverChange()) {
-        audioManager->PlaySound(SoundEffect::BUTTON_HOVER);
+    // 文字调参面板（F2 开关，须在 EndFrame 前绘制）
+    if (tweakerOpen && textTweaker) {
+        textTweaker->Draw(*textConfig);
     }
+    imGuiUI->EndFrame();
 
     SDL_RenderPresent(renderer);
     SDL_Delay(16);
-}
-
-void Engine::RenderImGuiMenus() {
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-    ImGui::Begin("RootWindow", nullptr,
-                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
-                 ImGuiWindowFlags_NoBringToFrontOnFocus);
-
-    const float centerX = 400.0f;
-    const float buttonW = 300.0f;
-    const float buttonH = 46.0f;
-    auto bigButton = [&](const char* label) {
-        ImGui::SetCursorPosX(centerX - buttonW * 0.5f);
-        return ImGui::Button(label, ImVec2(buttonW, buttonH));
-    };
-
-    if (currentState == MAIN_MENU) {
-        ImGui::SetCursorPosY(96.0f);
-        ImGui::SetCursorPosX(350.0f);
-        ImGui::TextUnformatted("PIXEL ENGINE");
-        ImGui::SetCursorPosY(170.0f);
-        if (bigButton("选择模式")) { audioManager->PlaySound(SoundEffect::CLICK); currentState = MODE_SELECT; }
-        if (bigButton("历史记录")) { audioManager->PlaySound(SoundEffect::CLICK); currentState = HISTORY; }
-        if (bigButton("按键介绍")) { audioManager->PlaySound(SoundEffect::CLICK); currentState = CONTROLS; }
-        if (bigButton("设置")) { audioManager->PlaySound(SoundEffect::CLICK); settingsReturnState = MAIN_MENU; currentState = SETTINGS; }
-        if (bigButton("退出游戏")) { audioManager->PlaySound(SoundEffect::CLICK); isRunning = false; }
-    } else if (currentState == MODE_SELECT) {
-        ImGui::SetCursorPosY(160.0f);
-        if (bigButton("模式一  限时挑战")) { audioManager->PlaySound(SoundEffect::CLICK); StartGame(TIME_ATTACK); }
-        if (bigButton("模式二  迷宫探索")) { audioManager->PlaySound(SoundEffect::CLICK); StartGame(MAZE_MODE); }
-        ImGui::SetCursorPosY(430.0f);
-        if (bigButton("返回")) { audioManager->PlaySound(SoundEffect::CLICK); currentState = MAIN_MENU; }
-    } else if (currentState == HISTORY) {
-        ImGui::SetCursorPosY(120.0f);
-        ImGui::SetCursorPosX(0);
-        ImGui::TextUnformatted("历史记录");
-        ImGui::Separator();
-        ImGui::SetCursorPosX(60.0f);
-        ImGui::TextUnformatted("模式一  限时挑战");
-        ImGui::SetCursorPosX(460.0f);
-        ImGui::TextUnformatted("模式二  迷宫探索");
-        ImGui::Separator();
-        const auto& scoreHistory = saveManager->GetScoreHistory();
-        const auto& timeHistory = saveManager->GetTimeHistory();
-        for (size_t i = 0; i < 10; ++i) {
-            const float y = 200.0f + i * 34.0f;
-            ImGui::SetCursorPos(ImVec2(36.0f, y));
-            if (i < scoreHistory.size()) {
-                char buf[64];
-                snprintf(buf, sizeof(buf), "%02d  %d 分  %s", static_cast<int>(i + 1), scoreHistory[i].score,
-                         scoreHistory[i].success ? "成功" : "失败");
-                ImGui::TextUnformatted(buf);
-            }
-            ImGui::SetCursorPos(ImVec2(426.0f, y));
-            if (i < timeHistory.size()) {
-                char buf[64];
-                snprintf(buf, sizeof(buf), "%02d  %.2f 秒", static_cast<int>(i + 1), timeHistory[i]);
-                ImGui::TextUnformatted(buf);
-            }
-        }
-        ImGui::SetCursorPosY(548.0f);
-        if (bigButton("返回")) { audioManager->PlaySound(SoundEffect::CLICK); currentState = MAIN_MENU; }
-    } else if (currentState == CONTROLS) {
-        ImGui::SetCursorPosY(120.0f);
-        ImGui::SetCursorPosX(0);
-        ImGui::TextUnformatted("操作说明");
-        ImGui::Separator();
-        ImGui::SetCursorPosX(80.0f);
-        ImGui::TextUnformatted("游戏中");
-        ImGui::SetCursorPosX(80.0f);
-        ImGui::TextUnformatted("W / A / S / D  或  方向键：移动");
-        ImGui::SetCursorPosX(80.0f);
-        ImGui::TextUnformatted("Shift：蓄力冲刺；Ctrl：聚焦视野");
-        ImGui::SetCursorPosX(80.0f);
-        ImGui::TextUnformatted("鼠标左键/空格：攻击；1/2/3：切换武器；F：拾取/丢弃");
-        ImGui::SetCursorPosX(80.0f);
-        ImGui::TextUnformatted("ESC：暂停游戏；F11：全屏；F1：静音");
-        ImGui::SetCursorPosY(548.0f);
-        if (bigButton("返回")) { audioManager->PlaySound(SoundEffect::CLICK); currentState = MAIN_MENU; }
-    } else if (currentState == SETTINGS) {
-        ImGui::SetCursorPosY(120.0f);
-        ImGui::SetCursorPosX(0);
-        ImGui::TextUnformatted("设置");
-        ImGui::Separator();
-
-        int master = audioManager->GetMasterVolume();
-        int music = audioManager->GetMusicVolume();
-        int effects = audioManager->GetEffectsVolume();
-        ImGui::SetCursorPosX(200.0f);
-        ImGui::PushItemWidth(400.0f);
-        if (ImGui::SliderInt("主音量", &master, 0, 100)) audioManager->SetMasterVolume(master);
-        if (ImGui::SliderInt("音乐", &music, 0, 100)) audioManager->SetMusicVolume(music);
-        if (ImGui::SliderInt("音效", &effects, 0, 100)) audioManager->SetEffectsVolume(effects);
-        ImGui::PopItemWidth();
-        ImGui::SetCursorPosX(200.0f);
-        if (ImGui::Button(audioManager->IsMuted() ? "已静音（点击取消）" : "切换静音")) {
-            audioManager->ToggleMute();
-        }
-        ImGui::SetCursorPosY(548.0f);
-        if (bigButton("返回")) { audioManager->PlaySound(SoundEffect::CLICK); currentState = settingsReturnState; }
-    } else if (currentState == PAUSED) {
-        ImGui::SetCursorPosY(150.0f);
-        if (bigButton("继续游戏")) { audioManager->PlaySound(SoundEffect::CLICK); currentState = PLAYING; audioManager->ResumeMusic(); }
-        if (bigButton("重新开始")) { audioManager->PlaySound(SoundEffect::CLICK); StartGame(currentMode); }
-        if (bigButton("设置")) { audioManager->PlaySound(SoundEffect::CLICK); settingsReturnState = PAUSED; currentState = SETTINGS; }
-        if (bigButton("退出游戏")) { audioManager->PlaySound(SoundEffect::CLICK); exitToDesktop = false; currentState = EXIT_CONFIRM; }
-        if (bigButton("退出桌面")) { audioManager->PlaySound(SoundEffect::CLICK); exitToDesktop = true; currentState = EXIT_CONFIRM; }
-    } else if (currentState == EXIT_CONFIRM) {
-        ImGui::SetCursorPosY(200.0f);
-        ImGui::SetCursorPosX(0);
-        ImGui::TextUnformatted("确认退出");
-        ImGui::SetCursorPosY(270.0f);
-        ImGui::SetCursorPosX(0);
-        ImGui::TextUnformatted("本次游戏数据将不会被保存");
-        ImGui::SetCursorPosY(330.0f);
-        ImGui::SetCursorPosX(145.0f);
-        if (ImGui::Button("算了，那我玩完吧", ImVec2(245, 58))) { audioManager->PlaySound(SoundEffect::CLICK); currentState = PAUSED; }
-        ImGui::SetCursorPosX(410.0f);
-        if (ImGui::Button("老子不玩了", ImVec2(245, 58))) {
-            audioManager->PlaySound(SoundEffect::CLICK);
-            inputManager->ResetMovementKeys();
-            if (exitToDesktop) { isRunning = false; }
-            else { currentState = MAIN_MENU; audioManager->ResumeMusic(); }
-        }
-    }
-
-    ImGui::End();
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar(2);
 }

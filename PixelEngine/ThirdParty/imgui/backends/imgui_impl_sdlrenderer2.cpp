@@ -99,7 +99,7 @@ static void ImGui_ImplSDLRenderer2_SetupRenderState(SDL_Renderer* renderer)
 {
 	// Clear out any viewports and cliprect set by the user
     // FIXME: Technically speaking there are lots of other things we could backup/setup/restore during our render process.
-	SDL_RenderSetViewport(renderer, nullptr);
+	//SDL_RenderSetViewport(renderer, nullptr);
 	SDL_RenderSetClipRect(renderer, nullptr);
 }
 

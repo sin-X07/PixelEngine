@@ -23,55 +23,6 @@ set(SDL2_SOURCE_DIR "${CMAKE_SOURCE_DIR}/../build/_deps/sdl2-src")
 set(SDL2_BINARY_DIR "${CMAKE_BINARY_DIR}/_deps/sdl2-build")
 add_subdirectory(${SDL2_SOURCE_DIR} ${SDL2_BINARY_DIR})
 
-if(NOT PIXELENGINE_FREETYPE_SOURCE_DIR)
-    set(PIXELENGINE_FREETYPE_SOURCE_DIR
-        "D:/PixelEngineBuild-ttf/_deps/freetype-src"
-        CACHE PATH "Local FreeType source directory" FORCE
-    )
-endif()
-if(NOT PIXELENGINE_SDL2_TTF_SOURCE_DIR)
-    set(PIXELENGINE_SDL2_TTF_SOURCE_DIR
-        "D:/PixelEngineBuild-ttf/_deps/sdl2_ttf-src"
-        CACHE PATH "Local SDL_ttf source directory" FORCE
-    )
-endif()
-
-foreach(source_dir IN ITEMS
-    "${PIXELENGINE_FREETYPE_SOURCE_DIR}"
-    "${PIXELENGINE_SDL2_TTF_SOURCE_DIR}"
-)
-    if(NOT EXISTS "${source_dir}/CMakeLists.txt")
-        message(FATAL_ERROR
-            "Required local dependency source is missing: ${source_dir}. "
-            "Set PIXELENGINE_FREETYPE_SOURCE_DIR and PIXELENGINE_SDL2_TTF_SOURCE_DIR."
-        )
-    endif()
-endforeach()
-
-set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
-set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
-set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
-set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
-add_subdirectory(
-    "${PIXELENGINE_FREETYPE_SOURCE_DIR}"
-    "${CMAKE_BINARY_DIR}/_deps/freetype-build"
-)
-if(TARGET freetype AND NOT TARGET Freetype::Freetype)
-    add_library(Freetype::Freetype ALIAS freetype)
-endif()
-
-set(SDL2TTF_SAMPLES OFF CACHE BOOL "" FORCE)
-set(SDL2TTF_INSTALL OFF CACHE BOOL "" FORCE)
-set(SDL2TTF_VENDORED OFF CACHE BOOL "" FORCE)
-set(FREETYPE_INCLUDE_DIR_ft2build "${CMAKE_BINARY_DIR}/_deps/freetype-build/include" CACHE PATH "" FORCE)
-set(FREETYPE_INCLUDE_DIR_freetype2 "${PIXELENGINE_FREETYPE_SOURCE_DIR}/include" CACHE PATH "" FORCE)
-set(FREETYPE_LIBRARY freetype CACHE STRING "" FORCE)
-set(BUILD_SHARED_LIBS OFF)
-add_subdirectory(
-    "${PIXELENGINE_SDL2_TTF_SOURCE_DIR}"
-    "${CMAKE_BINARY_DIR}/_deps/sdl2_ttf-build"
-)
-
 # ---- SDL2_mixer: download with bounded timeouts, then use a local source fallback ----
 set(PIXELENGINE_SDL2_MIXER_SOURCE_DIR "" CACHE PATH "Local SDL2_mixer source directory")
 set(PIXELENGINE_SDL2_MIXER_DOWNLOAD_TIMEOUT 300 CACHE STRING "SDL2_mixer download timeout in seconds")
@@ -281,6 +232,9 @@ set(SOURCES
     Graphics/RenderSystem.cpp
     Graphics/UIRenderer.cpp
     Graphics/ImGuiUI.cpp
+    Graphics/GameUI.cpp
+    Graphics/TextConfig.cpp
+    Graphics/TextTweakerUI.cpp
     Storage/SaveManager.cpp
     ThirdParty/imgui/imgui.cpp
     ThirdParty/imgui/imgui_draw.cpp
@@ -301,7 +255,6 @@ target_include_directories(EngineApp PRIVATE
 target_link_libraries(EngineApp PRIVATE
     SDL2::SDL2main
     SDL2::SDL2
-    SDL2_ttf
     SDL2_mixer::SDL2_mixer-static
     SDL2_image::SDL2_image-static
 )

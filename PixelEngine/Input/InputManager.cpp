@@ -16,6 +16,7 @@ void InputManager::ResetPerFrameActions() {
     digit2Requested = false;
     digit3Requested = false;
     fRequested = false;
+    tweakerToggleRequested = false;
     mouseLeftClicked = false;
     mouseLeftReleased = false;
 }
@@ -23,7 +24,7 @@ void InputManager::ResetPerFrameActions() {
 void InputManager::ProcessEvents(SDL_Renderer* renderer, GameState currentState) {
     ResetPerFrameActions();
 
-    // 更新鼠标逻辑坐标
+    // 更新鼠标逻辑坐标（物理→逻辑，供 UpdateAimAngle 等使用）
     int rawMouseX = 0;
     int rawMouseY = 0;
     SDL_GetMouseState(&rawMouseX, &rawMouseY);
@@ -59,6 +60,7 @@ void InputManager::ProcessEvents(SDL_Renderer* renderer, GameState currentState)
             switch (event.key.keysym.sym) {
                 case SDLK_F11: fullscreenToggleRequested = true; break;
                 case SDLK_F1: muteToggleRequested = true; break;
+                case SDLK_F2: tweakerToggleRequested = true; break;
                 case SDLK_ESCAPE: pauseToggleRequested = true; break;
                 case SDLK_1: case SDLK_KP_1: digit1Requested = true; break;
                 case SDLK_2: case SDLK_KP_2: digit2Requested = true; break;
