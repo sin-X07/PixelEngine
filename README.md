@@ -4,7 +4,8 @@
 
 ## 当前功能
 
-- 主菜单、模式选择、历史记录、按键说明和音量设置页面。
+- 主菜单、模式选择、角色选择、历史记录、按键说明和音量设置页面。
+- 角色系统：主菜单「选择角色」从 4 个角色（豆丁、莉娅、阿凯、老约翰）中任选其一，游戏中玩家显示为所选角色；选择持久化保存，重启后保持，也可在角色选择页按数字键 `1-4` 快捷选中。
 - 限时挑战：在 30 秒内收集金币并累计分数。
 - 迷宫探索：生成随机迷宫，记录通关时间。
 - 地牢主题 PNG 背景、墙面、玩家和宝箱精灵。
@@ -13,7 +14,7 @@
 
 ## 操作
 
-- 菜单：鼠标左键；模式选择页也可按 `1` 或 `2` 开始对应模式。点击空白处不会播放点击音效。
+- 菜单：鼠标左键；模式选择页也可按 `1` 或 `2` 开始对应模式；角色选择页可按 `1`-`4` 快捷选中对应角色。点击空白处不会播放点击音效。
 - 移动：`W` / `A` / `S` / `D` 或方向键；松键后会短暂惯性滑行，反向输入会先减速再转向。
 - 冲刺：按住 `Shift`，速度逐渐提升；松开后逐渐恢复。
 - 聚焦：按住 `Ctrl` 扩大视野并放慢移动；松开后恢复。
@@ -58,6 +59,7 @@ cmake --build D:/PixelEngineBuild-Local --target EngineApp -- -j4
 
 - `PixelEngine/main.cpp`：程序入口和引擎启动。
 - `PixelEngine/Engine.hpp`、`PixelEngine/Engine.cpp`：游戏状态、输入、更新、绘制、菜单协调与记录存取。
+- `PixelEngine/Core/Roles.hpp`：角色表（名字/贴图路径/简介）与角色选择页卡片布局。
 - `PixelEngine/Graphics/GameUI.hpp/.cpp`：菜单界面 + 游戏内文字（ImGui 渲染，动作通过回调委托）。
 - `PixelEngine/Graphics/ImGuiUI.hpp/.cpp`：Dear ImGui 基础设施（多字号中文字体、帧边界）。
 - `PixelEngine/Graphics/TextConfig.hpp/.cpp`：文字样式配置（ini 读写，16 个 key）。
@@ -65,6 +67,7 @@ cmake --build D:/PixelEngineBuild-Local --target EngineApp -- -j4
 - `PixelEngine/Graphics/UIRenderer.hpp/.cpp`：游戏内图形（HUD 红心/时间条/金币点、武器面板、结算面板背景）。
 - `PixelEngine/MazeGenerator.hpp/.cpp`：随机生成含环路、扩展死路和可通行主路线的编织迷宫。
 - `PixelEngine/map1.txt`：限时模式地图；`map2.txt`：迷宫模式地图文件，运行时会生成随机迷宫。
+- `role_saves.txt`（运行时生成于工作目录）：当前选中角色索引存档。
 - `PixelEngine/CMakeLists.txt`：应用与第三方依赖的构建配置。
 
 ## 后续修改提示

@@ -1,12 +1,15 @@
 #include "SaveManager.hpp"
 #include "../Core/PathUtils.hpp"
+#include "../Core/Roles.hpp"
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <algorithm>
 
 void SaveManager::LoadAll() {
     LoadScoreHistory();
     LoadTimeHistory();
+    LoadRoleIndex();
     historyLoaded = true;
 }
 
@@ -14,6 +17,7 @@ void SaveManager::SaveAll() {
     if (historyLoaded) {
         SaveScoreHistory();
         SaveTimeHistory();
+        SaveRoleIndex();
     }
 }
 
@@ -121,4 +125,43 @@ void SaveManager::AddTimeRecord(float time) {
     if (timeHistory.size() > MAX_HISTORY_COUNT) {
         timeHistory.pop_back();
     }
+}
+
+void SaveManager::LoadRoleIndex() {
+    const std::string savePath = PathUtils::ResolveProjectFile("role_saves.txt");
+    std::ifstream inFile(savePath);
+
+    selectedRole = 0; // 默认角色：豆丁
+    if (inFile) {
+        int roleIndex = 0;
+        if (inFile >> roleIndex) {
+            if (roleIndex >= 0 && roleIndex < ROLE_COUNT) {
+                selectedRole = roleIndex;
+            } else {
+                std::cout << "角色存档索引越界: " << roleIndex << "，回退默认角色。" << std::endl;
+            }
+        }
+        inFile.close();
+        std::cout << "成功读取角色存档: " << GetRoles()[selectedRole].name << std::endl;
+    } else {
+        std::cout << "未找到角色存档，使用默认角色。" << std::endl;
+    }
+}
+
+void SaveManager::SaveRoleIndex() {
+    const std::string savePath = PathUtils::ResolveProjectFile("role_saves.txt");
+    std::ofstream outFile(savePath);
+
+    if (!outFile) {
+        std::cerr << "角色存档文件打开失败!" << std::endl;
+        return;
+    }
+
+    outFile << selectedRole << "\n";
+    outFile.close();
+    std::cout << "角色存档文件保存成功!" << std::endl;
+}
+
+void SaveManager::SetSelectedRole(int index) {
+    selectedRole = std::clamp(index, 0, ROLE_COUNT - 1);
 }

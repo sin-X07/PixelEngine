@@ -60,6 +60,7 @@ private:
     // 游戏性数据
     float gameTimer = TIME_ATTACK_DURATION;
     int score = 0;
+    int selectedRole = 0; // 当前选中角色（索引对应 Core/Roles.hpp 的 GetRoles()）
 
     // 玩家实体（位置/速度/生命/受伤/无敌/回血）
     Player player;
@@ -69,6 +70,7 @@ private:
 
     void HandleInput();
     void StartGame(GameMode mode);
+    void SelectRole(int index); // 更新选中角色并同步渲染/存档
     GameUI::Actions BuildActions();
 
     // 战斗与武器（已迁入 CombatSystem；DamagePlayer 保留为受击/死亡效果编排）

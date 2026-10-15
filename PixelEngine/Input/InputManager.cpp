@@ -15,6 +15,7 @@ void InputManager::ResetPerFrameActions() {
     digit1Requested = false;
     digit2Requested = false;
     digit3Requested = false;
+    digit4Requested = false;
     fRequested = false;
     tweakerToggleRequested = false;
     mouseLeftClicked = false;
@@ -65,6 +66,7 @@ void InputManager::ProcessEvents(SDL_Renderer* renderer, GameState currentState)
                 case SDLK_1: case SDLK_KP_1: digit1Requested = true; break;
                 case SDLK_2: case SDLK_KP_2: digit2Requested = true; break;
                 case SDLK_3: case SDLK_KP_3: digit3Requested = true; break;
+                case SDLK_4: case SDLK_KP_4: digit4Requested = true; break;
                 case SDLK_f: fRequested = true; break;
                 case SDLK_RETURN: case SDLK_SPACE: enterOrSpaceRequested = true; break;
 

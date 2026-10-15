@@ -7,6 +7,7 @@
 enum GameState {
     MAIN_MENU,
     MODE_SELECT,
+    ROLE_SELECT,
     HISTORY,
     CONTROLS,
     SETTINGS,

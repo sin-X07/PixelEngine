@@ -47,6 +47,11 @@ bool RenderSystem::Initialize(SDL_Renderer* ren, int screenWidth, int screenHeig
         bearTrapTexture = loadAsset("../assets/images/traps/barricade.png");
         bulletTexture = loadAsset("../assets/images/effects/bullet.png");
         bloodTexture = loadAsset("../assets/images/effects/blood.png");
+
+        // 可选角色贴图（顺序与 Core/Roles.hpp 的 GetRoles() 一致；失败保持 nullptr，绘制回退纯色）
+        for (int i = 0; i < ROLE_COUNT; ++i) {
+            roleTextures[i] = loadAsset(GetRoles()[i].texturePath);
+        }
     }
 
     visionTexture = SDL_CreateTexture(
@@ -86,6 +91,10 @@ void RenderSystem::Clean() {
     if (bearTrapTexture) { SDL_DestroyTexture(bearTrapTexture); bearTrapTexture = nullptr; }
     if (bulletTexture) { SDL_DestroyTexture(bulletTexture); bulletTexture = nullptr; }
     if (bloodTexture) { SDL_DestroyTexture(bloodTexture); bloodTexture = nullptr; }
+
+    for (SDL_Texture*& tex : roleTextures) {
+        if (tex) { SDL_DestroyTexture(tex); tex = nullptr; }
+    }
 
     if (imageInitialized) {
         IMG_Quit();
@@ -285,20 +294,30 @@ void RenderSystem::DrawWorld(const WorldMap& worldMap, float playerX, float play
         DrawTrap(trap);
     }
 
-    // 4. 玩家（视觉适当放大，命中盒仍为 playerSize）
+    // 4. 玩家（视觉适当放大，命中盒仍为 playerSize；贴图为当前所选角色，按纹理比例绘制）
     const float playerDrawSize = playerSize * 1.5f;
     const int playerCenterX = static_cast<int>(std::lround((playerX + playerSize * 0.5f - cameraX) * cameraZoom));
     const int playerCenterY = static_cast<int>(std::lround((playerY + playerSize * 0.5f - cameraY) * cameraZoom));
     const int playerDrawPx = static_cast<int>(std::lround(playerDrawSize * cameraZoom));
-    SDL_Rect pRect = {
-        playerCenterX - playerDrawPx / 2,
-        playerCenterY - playerDrawPx / 2,
-        playerDrawPx,
-        playerDrawPx
-    };
-    if (playerTexture) {
-        SDL_RenderCopy(renderer, playerTexture, nullptr, &pRect);
+    SDL_Texture* currentRoleTexture = GetRoleTexture(activeRole);
+    if (currentRoleTexture) {
+        int tw = 0;
+        int th = 0;
+        SDL_QueryTexture(currentRoleTexture, nullptr, nullptr, &tw, &th);
+        int dw = playerDrawPx;
+        int dh = playerDrawPx;
+        if (tw > 0 && th > 0) {
+            dh = std::max(1, static_cast<int>(std::lround(static_cast<float>(dw) * th / tw)));
+        }
+        SDL_Rect pRect = {playerCenterX - dw / 2, playerCenterY - dh / 2, dw, dh};
+        SDL_RenderCopy(renderer, currentRoleTexture, nullptr, &pRect);
     } else {
+        SDL_Rect pRect = {
+            playerCenterX - playerDrawPx / 2,
+            playerCenterY - playerDrawPx / 2,
+            playerDrawPx,
+            playerDrawPx
+        };
         SDL_SetRenderDrawColor(renderer, 255, 60, 60, 255);
         SDL_RenderFillRect(renderer, &pRect);
     }
@@ -565,4 +584,49 @@ SDL_Texture* RenderSystem::GetWeaponIconTexture(WeaponType type) const {
         case WeaponType::RIFLE:  return rifleTexture;
     }
     return nullptr;
+}
+
+SDL_Texture* RenderSystem::GetRoleTexture(int index) const {
+    if (index < 0 || index >= ROLE_COUNT) return nullptr;
+    return roleTextures[index];
+}
+
+void RenderSystem::DrawRolePreview(int index, const SDL_FRect& area) {
+    SDL_Texture* tex = GetRoleTexture(index);
+    if (tex) {
+        int tw = 0;
+        int th = 0;
+        SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+        if (tw <= 0 || th <= 0) tex = nullptr;
+        else {
+            // 按纹理比例适配预览区（留 8% 边距），底部对齐：让正方形小图与竖长立绘脚底同基线
+            const float margin = 0.08f;
+            const float availW = area.w * (1.0f - margin * 2.0f);
+            const float availH = area.h * (1.0f - margin * 2.0f);
+            float dw = availW;
+            float dh = availW * static_cast<float>(th) / static_cast<float>(tw);
+            if (dh > availH) {
+                dh = availH;
+                dw = availH * static_cast<float>(tw) / static_cast<float>(th);
+            }
+            SDL_Rect dst = {
+                static_cast<int>(std::lround(area.x + (area.w - dw) * 0.5f)),
+                static_cast<int>(std::lround(area.y + area.h - dh - area.h * margin)),
+                static_cast<int>(std::lround(dw)),
+                static_cast<int>(std::lround(dh))
+            };
+            SDL_RenderCopy(renderer, tex, nullptr, &dst);
+        }
+    }
+    if (!tex) {
+        // 贴图缺失：占位色块（与游戏内玩家回退色一致）
+        SDL_Rect dst = {
+            static_cast<int>(std::lround(area.x)),
+            static_cast<int>(std::lround(area.y)),
+            static_cast<int>(std::lround(area.w)),
+            static_cast<int>(std::lround(area.h))
+        };
+        SDL_SetRenderDrawColor(renderer, 255, 60, 60, 255);
+        SDL_RenderFillRect(renderer, &dst);
+    }
 }

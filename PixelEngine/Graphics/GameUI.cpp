@@ -1,5 +1,6 @@
 #include "GameUI.hpp"
 #include "../ThirdParty/imgui/imgui.h"
+#include "../Core/Roles.hpp"
 #include "ImGuiUI.hpp"
 #include "TextConfig.hpp"
 #include "../Storage/SaveManager.hpp"
@@ -82,7 +83,8 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 
     if (ctx.state == MAIN_MENU) {
         drawStatic("menu_main_title", "PIXEL ENGINE", TextStyle{350.0f, 96.0f, 20, 255, 255, 255, 255, 0, false});
-        ImGui::SetCursorPosY(170.0f);
+        ImGui::SetCursorPosY(150.0f);
+        if (bigButton("选择角色")) doClick([&]{ actions.goState(ROLE_SELECT); });
         if (bigButton("选择模式")) doClick([&]{ actions.goState(MODE_SELECT); });
         if (bigButton("历史记录")) doClick([&]{ actions.goState(HISTORY); });
         if (bigButton("按键介绍")) doClick([&]{ actions.goState(CONTROLS); });
@@ -93,6 +95,43 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         if (bigButton("模式一  限时挑战")) doClick([&]{ actions.startGame(TIME_ATTACK); });
         if (bigButton("模式二  迷宫探索")) doClick([&]{ actions.startGame(MAZE_MODE); });
         ImGui::SetCursorPosY(400.0f);
+        if (bigButton("返回")) doClick([&]{ actions.goState(MAIN_MENU); });
+    } else if (ctx.state == ROLE_SELECT) {
+        drawStatic("menu_role_title", "选择角色", TextStyle{0.0f, 60.0f, 26, 255, 255, 255, 255, 0, false});
+        ImGui::Separator();
+
+        // 卡片矩形由 Core/Roles.hpp::GetRoleCardRect 提供，与 Engine 的立绘预览严格对齐；
+        // 预览区占卡片上部（Engine 已画好），按钮画在卡片下部。
+        for (int i = 0; i < ROLE_COUNT; ++i) {
+            const SDL_FRect card = GetRoleCardRect(i);
+            const float buttonH = 84.0f;
+            ImGui::SetCursorPos(ImVec2(card.x + 6.0f, card.y + card.h - buttonH - 6.0f));
+            ImGui::PushID(i);
+
+            const bool isActive = (ctx.selectedRole == i);
+            if (isActive) {
+                // 选中项：绿色描边高亮 + "使用中"标记
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.45f, 0.28f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.55f, 0.34f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.38f, 0.24f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.35f, 0.95f, 0.55f, 1.0f));
+            }
+            const float buttonW = card.w - 12.0f;
+            char label[128];
+            snprintf(label, sizeof(label), "%s%s\n%s", GetRoles()[i].name,
+                     isActive ? "  ✔ 使用中" : "", GetRoles()[i].tagline);
+            if (ImGui::Button(label, ImVec2(buttonW, buttonH))) {
+                doClick([&]{ actions.selectRole(i); });
+            }
+            if (isActive) {
+                ImGui::PopStyleColor(4);
+            }
+            ImGui::PopID();
+        }
+
+        ImGui::SetCursorPosY(480.0f);
+        if (bigButton("开始冒险")) doClick([&]{ actions.goState(MODE_SELECT); });
+        ImGui::SetCursorPosY(540.0f);
         if (bigButton("返回")) doClick([&]{ actions.goState(MAIN_MENU); });
     } else if (ctx.state == HISTORY) {
         drawStatic("menu_history_title", "历史记录", TextStyle{0.0f, 120.0f, 20, 255, 255, 255, 255, 0, false});
@@ -183,6 +222,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         drawLine("Shift：蓄力冲刺；Ctrl：聚焦视野");
         drawLine("鼠标左键/空格：攻击；1/2/3：切换武器；F：拾取/丢弃");
         drawLine("ESC：暂停游戏；F11：全屏；F1：静音");
+        drawLine("选择角色页：数字键 1-4 快捷选中对应角色");
         ImGui::SetCursorPosY(500.0f);
         if (bigButton("返回")) doClick([&]{ actions.goState(MAIN_MENU); });
     } else if (ctx.state == SETTINGS) {

@@ -22,6 +22,7 @@ private:
     bool digit1Requested = false;
     bool digit2Requested = false;
     bool digit3Requested = false;
+    bool digit4Requested = false;
     bool fRequested = false;
     bool tweakerToggleRequested = false;
 
@@ -69,6 +70,7 @@ public:
     bool IsDigit1Requested() const { return digit1Requested; }
     bool IsDigit2Requested() const { return digit2Requested; }
     bool IsDigit3Requested() const { return digit3Requested; }
+    bool IsDigit4Requested() const { return digit4Requested; }
     bool IsFRequested() const { return fRequested; }
     bool IsTweakerToggleRequested() const { return tweakerToggleRequested; }
 

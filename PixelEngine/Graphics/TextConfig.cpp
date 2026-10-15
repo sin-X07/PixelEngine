@@ -26,8 +26,9 @@ TextConfig::TextConfig() {
     styles["gameover_result"] = TextStyle{285.0f, 280.0f, 24, 230, 238, 235, 255, 0, false};
     styles["gameover_hint"] = TextStyle{248.0f, 350.0f, 18, 134, 222, 190, 255, 0, false};
 
-    // —— 菜单静态文字 9 key（1.3.2 基线表逐字）——
+    // —— 菜单静态文字（1.3.2 基线表逐字 + 角色选择页）——
     styles["menu_main_title"] = TextStyle{350.0f, 96.0f, 20, 255, 255, 255, 255, 0, false};
+    styles["menu_role_title"] = TextStyle{0.0f, 60.0f, 26, 255, 255, 255, 255, 0, false};
     styles["menu_history_title"] = TextStyle{0.0f, 120.0f, 20, 255, 255, 255, 255, 0, false};
     styles["menu_history_mode1"] = TextStyle{60.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
     styles["menu_history_mode2"] = TextStyle{460.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
@@ -56,7 +57,8 @@ std::vector<std::string> TextConfig::Keys() const {
         "weapon_status", "no_weapon_hint",
         "gameover_fail_title", "gameover_fail_subtitle", "gameover_end_title",
         "gameover_result", "gameover_hint",
-        "menu_main_title", "menu_history_title", "menu_history_mode1", "menu_history_mode2",
+        "menu_main_title", "menu_role_title",
+        "menu_history_title", "menu_history_mode1", "menu_history_mode2",
         "menu_controls_title", "menu_controls_lines", "menu_settings_title",
         "menu_exit_title", "menu_exit_note"
     };

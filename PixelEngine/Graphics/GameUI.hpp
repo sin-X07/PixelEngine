@@ -25,6 +25,7 @@ public:
         std::function<void(int)>           setMasterVolume;
         std::function<void(int)>           setMusicVolume;
         std::function<void(int)>           setEffectsVolume;
+        std::function<void(int)>           selectRole;        // 选中角色（索引对应 Core/Roles.hpp）
     };
 
     struct MenuCtx {
@@ -37,6 +38,7 @@ public:
         int       effectsVolume = 0;
         bool      muted = false;
         const SaveManager* saves = nullptr;
+        int       selectedRole = 0;            // 当前选中角色（高亮"使用中"）
     };
 
     struct InGameCtx {

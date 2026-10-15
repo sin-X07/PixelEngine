@@ -1,10 +1,13 @@
 #pragma once
 #include "../Core/Types.hpp"
+#include "../Core/Roles.hpp"
 #include "../World/WorldMap.hpp"
 #include "../World/Monster.hpp"
 #include "../World/Weapon.hpp"
 #include <SDL2/SDL.h>
 #include <SDL_image.h>
+#include <algorithm>
+#include <array>
 #include <vector>
 #include <string>
 
@@ -29,6 +32,10 @@ private:
     SDL_Texture* bearTrapTexture = nullptr;
     SDL_Texture* bulletTexture = nullptr;
     SDL_Texture* bloodTexture = nullptr;
+
+    // 可选角色贴图（与 Core/Roles.hpp 的 GetRoles() 顺序一一对应；缺失为 nullptr，绘制回退纯色）
+    std::array<SDL_Texture*, ROLE_COUNT> roleTextures{};
+    int activeRole = 0;
 
     bool imageInitialized = false;
 
@@ -86,6 +93,13 @@ public:
 
     SDL_Texture* GetWeaponIconTexture(WeaponType type) const;
     SDL_Texture* GetBloodTexture() const { return bloodTexture; }
+
+    // 角色系统：切换当前角色（越界钳制）与取贴图
+    void SetActiveRole(int index) { activeRole = std::clamp(index, 0, ROLE_COUNT - 1); }
+    int GetActiveRole() const { return activeRole; }
+    SDL_Texture* GetRoleTexture(int index) const;
+    // 角色选择页：把指定角色立绘按比例居中画进给定屏幕区域（贴图缺失时画占位色块）
+    void DrawRolePreview(int index, const SDL_FRect& area);
 
     float GetCameraX() const { return cameraX; }
     float GetCameraY() const { return cameraY; }

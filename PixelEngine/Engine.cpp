@@ -1,5 +1,6 @@
 #include "Engine.hpp"
 #include "Core/PathUtils.hpp"
+#include "Core/Roles.hpp"
 #include "ThirdParty/imgui/imgui.h"
 #include "ThirdParty/imgui/backends/imgui_impl_sdl2.h"
 #include <iostream>
@@ -57,6 +58,7 @@ GameUI::Actions Engine::BuildActions() {
     a.setMasterVolume = [this](int v){ audioManager->SetMasterVolume(v); };
     a.setMusicVolume = [this](int v){ audioManager->SetMusicVolume(v); };
     a.setEffectsVolume = [this](int v){ audioManager->SetEffectsVolume(v); };
+    a.selectRole = [this](int idx){ SelectRole(idx); };
     return a;
 }
 
@@ -135,8 +137,10 @@ bool Engine::Initialize(const char* title, int width, int height) {
         return false;
     }
 
-    // 读取历史战绩
+    // 读取历史战绩与角色选择
     saveManager->LoadAll();
+    selectedRole = saveManager->GetSelectedRole();
+    renderSystem->SetActiveRole(selectedRole);
 
     isRunning = true;
     return true;
@@ -223,6 +227,15 @@ void Engine::DamagePlayer(int amount) {
     }
 }
 
+// 切换当前选中角色：同步渲染系统与存档（越界索引由两侧钳制兜底）
+void Engine::SelectRole(int index) {
+    selectedRole = index;
+    renderSystem->SetActiveRole(selectedRole);
+    saveManager->SetSelectedRole(selectedRole);
+    std::cout << "已选择角色: " << GetRoles()[selectedRole].name
+              << " —— " << GetRoles()[selectedRole].tagline << std::endl;
+}
+
 void Engine::StartGame(GameMode mode) {
     currentMode = mode;
     score = 0;
@@ -284,7 +297,8 @@ void Engine::HandleInput() {
             currentState = settingsReturnState;
         } else if (currentState == EXIT_CONFIRM) {
             currentState = PAUSED;
-        } else if (currentState == MODE_SELECT || currentState == HISTORY || currentState == CONTROLS) {
+        } else if (currentState == MODE_SELECT || currentState == ROLE_SELECT ||
+                   currentState == HISTORY || currentState == CONTROLS) {
             currentState = MAIN_MENU;
         } else if (currentState == GAMEOVER) {
             gameOverStartTime = 0;
@@ -297,6 +311,14 @@ void Engine::HandleInput() {
     if (currentState == MODE_SELECT) {
         if (inputManager->IsDigit1Requested()) StartGame(TIME_ATTACK);
         else if (inputManager->IsDigit2Requested()) StartGame(MAZE_MODE);
+    }
+
+    // 角色选择页：数字键 1-4 快捷选中对应角色
+    if (currentState == ROLE_SELECT) {
+        if (inputManager->IsDigit1Requested()) SelectRole(0);
+        else if (inputManager->IsDigit2Requested()) SelectRole(1);
+        else if (inputManager->IsDigit3Requested()) SelectRole(2);
+        else if (inputManager->IsDigit4Requested()) SelectRole(3);
     }
 
     if (currentState == GAMEOVER && inputManager->IsEnterOrSpaceRequested()) {
@@ -495,13 +517,23 @@ void Engine::Render() {
 
     const float menuTime = static_cast<float>(SDL_GetTicks64()) / 1000.0f;
 
-    // 菜单类状态：主菜单/模式选择用视差动画背景，其余用纯色底
-    if (currentState == MAIN_MENU || currentState == MODE_SELECT) {
+    // 菜单类状态：主菜单/模式选择/角色选择用视差动画背景，其余用纯色底
+    if (currentState == MAIN_MENU || currentState == MODE_SELECT || currentState == ROLE_SELECT) {
         renderSystem->DrawAnimatedMenuBackground(*worldMap, menuTime);
     } else if (currentState == HISTORY || currentState == CONTROLS || currentState == SETTINGS) {
         SDL_Rect bg = {0, 0, 800, 600};
         SDL_SetRenderDrawColor(renderer, 20, 39, 45, 255);
         SDL_RenderFillRect(renderer, &bg);
+    }
+
+    // 角色选择页：先在 ImGui 之下画 4 张角色立绘预览（与 GameUI 的卡片矩形严格对齐）
+    if (currentState == ROLE_SELECT) {
+        for (int i = 0; i < ROLE_COUNT; ++i) {
+            const SDL_FRect card = GetRoleCardRect(i);
+            // 预览区取卡片上部（下部留给按钮，见 GameUI 的 ROLE_SELECT 分支）
+            const SDL_FRect previewArea = {card.x + 6.0f, card.y + 6.0f, card.w - 12.0f, card.h - 96.0f};
+            renderSystem->DrawRolePreview(i, previewArea);
+        }
     }
 
     if (currentState == PLAYING) {
@@ -516,6 +548,7 @@ void Engine::Render() {
     
     // ImGui 菜单（按钮/滑条由 ImGui 绘制并响应）
     const bool isImGuiState = (currentState == MAIN_MENU || currentState == MODE_SELECT ||
+                               currentState == ROLE_SELECT ||
                                currentState == HISTORY || currentState == CONTROLS ||
                                currentState == SETTINGS || currentState == PAUSED ||
                                currentState == EXIT_CONFIRM);
@@ -533,6 +566,7 @@ void Engine::Render() {
         ctx.effectsVolume = audioManager->GetEffectsVolume();
         ctx.muted = audioManager->IsMuted();
         ctx.saves = saveManager.get();
+        ctx.selectedRole = selectedRole;
         gameUI->DrawMenu(ctx, BuildActions());
     } else {
         GameUI::InGameCtx ictx;
