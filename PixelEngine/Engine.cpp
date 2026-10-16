@@ -21,6 +21,9 @@ Engine::Engine() : isRunning(false), window(nullptr), renderer(nullptr) {
     textTweaker = std::make_unique<TextTweakerUI>();
     saveManager = std::make_unique<SaveManager>();
 
+    cs2dRenderer = std::make_unique<CS2DRenderer>();
+    cs2dGame     = std::make_unique<CS2DGame>();
+
     gameUI->SetTextConfig(textConfig.get());
     gameUI->SetImGuiUI(imGuiUI.get());
 
@@ -75,7 +78,7 @@ bool Engine::Initialize(const char* title, int width, int height) {
 
     // 初始化音频子系统
     audioManager->Initialize();
-    audioManager->PlayMusic("../assets/audio/menu.wav");
+    audioManager->PlayMusic("assets/audio/menu.wav");
 
     // 创建窗口与硬件渲染器
     window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_SHOWN);
@@ -95,7 +98,7 @@ bool Engine::Initialize(const char* title, int width, int height) {
     SDL_RenderSetLogicalSize(renderer, width, height);
 
     // 加载文字样式配置（无文件 → 默认值，不崩溃）
-    const std::string textConfigPath = PathUtils::ResolveProjectFile("../assets/config/text.ini");
+    const std::string textConfigPath = PathUtils::ResolveProjectFile("assets/config/text.ini");
     textConfig->Load(textConfigPath);
     // [global] font= 传给 ImGuiUI（仅启动生效）
     if (!textConfig->GlobalFontPath().empty()) {
@@ -106,6 +109,9 @@ bool Engine::Initialize(const char* title, int width, int height) {
     if (!renderSystem->Initialize(renderer, width, height)) return false;
     if (!uiRenderer->Initialize(renderer)) return false;
     if (!imGuiUI->Initialize(window, renderer)) return false;
+
+    // CS2D 渲染器初始化（地图目录为 assets/cs2d/maps/）
+    cs2dRenderer->Initialize(renderer, "assets/cs2d/maps");
 
     // 首次运行：立即生成模板 ini
     textConfig->Save(textConfigPath);
@@ -132,7 +138,7 @@ bool Engine::Initialize(const char* title, int width, int height) {
 
     // 默认加载随机迷宫地图与模式一地图
     MazeGenerator::GenerateRandomMazeFile("map2.txt", gen);
-    if (!worldMap->LoadLevelFromFile("../assets/maps/map1.txt", player.x, player.y, player.size)) {
+    if (!worldMap->LoadLevelFromFile("assets/maps/map1.txt", player.x, player.y, player.size)) {
         std::cerr << "警告：未找到地图 map1.txt" << std::endl;
         return false;
     }
@@ -178,7 +184,7 @@ void Engine::Clean() {
         saveManager->SaveAll();
     }
     if (textConfig) {
-        textConfig->Save(PathUtils::ResolveProjectFile("../assets/config/text.ini"));
+        textConfig->Save(PathUtils::ResolveProjectFile("assets/config/text.ini"));
     }
 
     if (audioManager) audioManager->Clean();
@@ -252,7 +258,7 @@ void Engine::StartGame(GameMode mode) {
 
     if (mode == TIME_ATTACK) {
         gameTimer = TIME_ATTACK_DURATION;
-        if (!worldMap->LoadLevelFromFile("../assets/maps/map1.txt", player.x, player.y, player.size)) return;
+        if (!worldMap->LoadLevelFromFile("assets/maps/map1.txt", player.x, player.y, player.size)) return;
 
         // 初始宝箱随机刷新：清空地图预设固定宝箱，直接调用随机算法生成3个初始宝箱！
         worldMap->GetCoins().clear();
@@ -264,6 +270,21 @@ void Engine::StartGame(GameMode mode) {
         // 新增可破坏障碍，丰富地形
         worldMap->GenerateExtraObstaclesForTimeAttack(player.x, player.y, player.size, gen);
         std::cout << "模式 1: 限时挑战开始! 两分钟倒计时启动! 小心地刺、老鼠夹与怪物，去获得更多金币吧!" << std::endl;
+    } else if (mode == CS2D_MODE) {
+        gameTimer = 0.0f;
+        gameOverStartTime = 0;
+
+        // 加载 CS2D 地图（TMJ JSON 格式）
+        const std::string cs2dMapPath = PathUtils::ResolveAppPath("assets/cs2d/maps/cs_office.tmj");
+        if (!cs2dGame->LoadMap(cs2dMapPath, cs2dRenderer.get())) {
+            std::cerr << "CS2D 地图加载失败: " << cs2dMapPath << std::endl;
+            return;
+        }
+
+        inputManager->SwitchToEnglishKeyboardLayout();
+        currentState = PLAYING;
+        std::cout << "模式 3: CS2D 俯视角射击对抗开始!" << std::endl;
+        return; // CS2D 有自己的主循环逻辑，跳过其余初始化
     } else {
         gameTimer = 0.0f;
         gameOverStartTime = 0;
@@ -311,6 +332,7 @@ void Engine::HandleInput() {
     if (currentState == MODE_SELECT) {
         if (inputManager->IsDigit1Requested()) StartGame(TIME_ATTACK);
         else if (inputManager->IsDigit2Requested()) StartGame(MAZE_MODE);
+        else if (inputManager->IsDigit3Requested()) StartGame(CS2D_MODE);
     }
 
     // 角色选择页：数字键 1-4 快捷选中对应角色
@@ -330,6 +352,31 @@ void Engine::HandleInput() {
     }
 
     if (currentState == PLAYING) {
+        // CS2D 模式：采集输入状态，由 Update() 消费
+        if (currentMode == CS2D_MODE) {
+            int mouseX, mouseY;
+            SDL_GetMouseState(&mouseX, &mouseY);
+            float logicalMouseX = 0.0f, logicalMouseY = 0.0f;
+            SDL_RenderWindowToLogical(renderer,
+                static_cast<float>(mouseX), static_cast<float>(mouseY),
+                &logicalMouseX, &logicalMouseY);
+            const float cz = cs2dRenderer->GetZoom();
+            cs2dWorldMouseX = cs2dRenderer->GetCameraX() + logicalMouseX / cz;
+            cs2dWorldMouseY = cs2dRenderer->GetCameraY() + logicalMouseY / cz;
+            cs2dMouseDown = inputManager->IsMouseLeftDown();
+
+            const Uint8* kb = SDL_GetKeyboardState(nullptr);
+            cs2dKeyW = kb[SDL_SCANCODE_W];
+            cs2dKeyA = kb[SDL_SCANCODE_A];
+            cs2dKeyS = kb[SDL_SCANCODE_S];
+            cs2dKeyD = kb[SDL_SCANCODE_D];
+
+            // 准星模式：隐藏系统光标
+            SDL_ShowCursor(SDL_DISABLE);
+            return; // CS2D 使用自己的战斗系统，跳过下方 CombatSystem 逻辑
+        }
+        SDL_ShowCursor(SDL_ENABLE);
+
         combatSystem->UpdateAimAngle();
 
         // 武器切换：1 步枪 / 2 手枪 / 3 近战
@@ -355,6 +402,13 @@ void Engine::Update(float dt) {
     particleSystem->Update(dt);
 
     if (currentState != PLAYING) return;
+
+    // CS2D 模式：独立游戏逻辑
+    if (currentMode == CS2D_MODE) {
+        cs2dGame->Update(dt, cs2dMouseDown, cs2dWorldMouseX, cs2dWorldMouseY,
+                         cs2dKeyW, cs2dKeyA, cs2dKeyS, cs2dKeyD);
+        return;
+    }
 
     // 战斗冷却 / 攻击动画 / 未装配提示计时
     combatSystem->Update(dt);
@@ -499,7 +553,16 @@ void Engine::Render() {
     SDL_SetRenderDrawColor(renderer, 20, 30, 40, 255);
     SDL_RenderClear(renderer);
 
-    if (gameplayVisible) {
+    if (gameplayVisible && currentMode == CS2D_MODE) {
+        // CS2D 独立渲染流程
+        cs2dGame->Render();
+        // 准星
+        int mx, my;
+        SDL_GetMouseState(&mx, &my);
+        float lmx = 0.0f, lmy = 0.0f;
+        SDL_RenderWindowToLogical(renderer, static_cast<float>(mx), static_cast<float>(my), &lmx, &lmy);
+        cs2dRenderer->DrawCrosshair(lmx, lmy, 12.0f);
+    } else if (gameplayVisible) {
         renderSystem->DrawDungeonBackground(*worldMap, 0);
         renderSystem->DrawWorld(*worldMap, player.x, player.y, player.size,
                                 combatSystem->attackAnimActive, combatSystem->aimAngle,
@@ -537,11 +600,15 @@ void Engine::Render() {
     }
 
     if (currentState == PLAYING) {
-        uiRenderer->DrawHUD(currentMode, gameTimer, score, player.health, TIME_ATTACK_DURATION);
+        if (currentMode == CS2D_MODE) {
+            // CS2D 模式 HUD：通过 ImGui InGameCtx 绘制血量/击杀等信息
+        } else {
+            uiRenderer->DrawHUD(currentMode, gameTimer, score, player.health, TIME_ATTACK_DURATION);
 
-        const Weapon* currentWeapon = combatSystem->GetActiveWeapon();
-        SDL_Texture* weaponIcon = renderSystem->GetWeaponIconTexture(currentWeapon->type);
-        uiRenderer->DrawWeaponStatus(weaponIcon);
+            const Weapon* currentWeapon = combatSystem->GetActiveWeapon();
+            SDL_Texture* weaponIcon = renderSystem->GetWeaponIconTexture(currentWeapon->type);
+            uiRenderer->DrawWeaponStatus(weaponIcon);
+        }
     } else if (currentState == GAMEOVER) {
         uiRenderer->DrawGameOver(currentMode, player.diedByTrap, player.diedByMonster, score, gameTimer);
     }
@@ -572,17 +639,30 @@ void Engine::Render() {
         GameUI::InGameCtx ictx;
         ictx.state = currentState;
         ictx.mode = currentMode;
-        ictx.gameTimer = gameTimer;
-        ictx.score = score;
-        ictx.diedByTrap = player.diedByTrap;
-        ictx.diedByMonster = player.diedByMonster;
-        const Weapon* currentWeapon = combatSystem->GetActiveWeapon();
-        ictx.weaponName = currentWeapon->Name();
-        ictx.ammo = currentWeapon->ammo;
-        ictx.magazineSize = currentWeapon->magazineSize;
-        ictx.hasWeaponIcon = renderSystem->GetWeaponIconTexture(currentWeapon->type) != nullptr;
-        ictx.hasNoWeaponHint = combatSystem->HasActiveNoWeaponHint();
-        ictx.hintText = combatSystem->GetNoWeaponHintText();
+
+        if (currentMode == CS2D_MODE) {
+            ictx.gameTimer = 0.0f;
+            ictx.score = cs2dGame->GetPlayerKills();
+            ictx.diedByTrap = false;
+            ictx.diedByMonster = false;
+            ictx.weaponName = "Rifle";
+            ictx.ammo = -1;
+            ictx.magazineSize = 0;
+            ictx.hasWeaponIcon = false;
+            ictx.hasNoWeaponHint = false;
+        } else {
+            ictx.gameTimer = gameTimer;
+            ictx.score = score;
+            ictx.diedByTrap = player.diedByTrap;
+            ictx.diedByMonster = player.diedByMonster;
+            const Weapon* currentWeapon = combatSystem->GetActiveWeapon();
+            ictx.weaponName = currentWeapon->Name();
+            ictx.ammo = currentWeapon->ammo;
+            ictx.magazineSize = currentWeapon->magazineSize;
+            ictx.hasWeaponIcon = renderSystem->GetWeaponIconTexture(currentWeapon->type) != nullptr;
+            ictx.hasNoWeaponHint = combatSystem->HasActiveNoWeaponHint();
+            ictx.hintText = combatSystem->GetNoWeaponHintText();
+        }
         gameUI->DrawInGame(ictx, imGuiUI.get());
     }
 

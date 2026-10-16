@@ -26,19 +26,19 @@ bool AudioManager::Initialize() {
         return chunk;
     };
 
-    pickupSound = loadChunk("../assets/audio/pickup.wav", "金币");
-    buttonHoverSound = loadChunk("../assets/audio/button.ogg", "按钮悬停");
-    clickSound = loadChunk("../assets/audio/click.ogg", "按钮点击");
-    attackSound = loadChunk("../assets/audio/attack_swing.wav", "挥剑攻击");
-    breakSound = loadChunk("../assets/audio/obstacle_break.wav", "障碍物击碎");
-    deathSound = loadChunk("../assets/audio/player_death.wav", "惨死");
-    shootSound = loadChunk("../assets/audio/shoot.ogg", "射击");
-    hitSound = loadChunk("../assets/audio/hit.ogg", "命中");
-    killSound = loadChunk("../assets/audio/kill.ogg", "击杀");
-    playerHurtSound = loadChunk("../assets/audio/player_hurt.ogg", "玩家受击");
-    ak47Sound = loadChunk("../assets/audio/ak47.mp3", "AK47 射击");
-    deagleSound = loadChunk("../assets/audio/deagle.mp3", "沙漠之鹰射击");
-    katanaSound = loadChunk("../assets/audio/katana.mp3", "武士刀挥砍");
+    pickupSound = loadChunk("assets/audio/pickup.wav", "金币");
+    buttonHoverSound = loadChunk("assets/audio/button.ogg", "按钮悬停");
+    clickSound = loadChunk("assets/audio/click.ogg", "按钮点击");
+    attackSound = loadChunk("assets/audio/attack_swing.wav", "挥剑攻击");
+    breakSound = loadChunk("assets/audio/obstacle_break.wav", "障碍物击碎");
+    deathSound = loadChunk("assets/audio/player_death.wav", "惨死");
+    shootSound = loadChunk("assets/audio/shoot.ogg", "射击");
+    hitSound = loadChunk("assets/audio/hit.ogg", "命中");
+    killSound = loadChunk("assets/audio/kill.ogg", "击杀");
+    playerHurtSound = loadChunk("assets/audio/player_hurt.ogg", "玩家受击");
+    ak47Sound = loadChunk("assets/audio/ak47.mp3", "AK47 射击");
+    deagleSound = loadChunk("assets/audio/deagle.mp3", "沙漠之鹰射击");
+    katanaSound = loadChunk("assets/audio/katana.mp3", "武士刀挥砍");
 
     UpdateVolumes();
     return true;

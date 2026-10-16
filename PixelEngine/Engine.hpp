@@ -18,6 +18,8 @@
 #include "Graphics/TextTweakerUI.hpp"
 #include "Storage/SaveManager.hpp"
 #include "MazeGenerator.hpp"
+#include "CS2D/CS2DRenderer.hpp"
+#include "CS2D/CS2DGame.hpp"
 #include <SDL2/SDL.h>
 #include <memory>
 #include <random>
@@ -47,6 +49,16 @@ private:
     std::unique_ptr<SaveManager> saveManager;
     std::unique_ptr<CombatSystem> combatSystem;
     std::unique_ptr<EnemyManager> enemyManager;
+
+    // CS2D 模式子系统（完全独立于模式一/二）
+    std::unique_ptr<CS2DRenderer> cs2dRenderer;
+    std::unique_ptr<CS2DGame>     cs2dGame;
+
+    // CS2D 模式输入状态（HandleInput 采集 → Update 消费）
+    bool cs2dMouseDown = false;
+    float cs2dWorldMouseX = 0.0f;
+    float cs2dWorldMouseY = 0.0f;
+    bool cs2dKeyW = false, cs2dKeyA = false, cs2dKeyS = false, cs2dKeyD = false;
 
     // 核心时钟与状态机
     const float MS_PER_UPDATE = 16.6666f; // 固定逻辑更新间隔（约 60 FPS，单位毫秒）

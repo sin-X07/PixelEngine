@@ -1,5 +1,6 @@
 #include "TextTweakerUI.hpp"
 #include "TextConfig.hpp"
+#include "../Core/PathUtils.hpp"
 #include "../ThirdParty/imgui/imgui.h"
 #include <cstdlib>
 
@@ -13,7 +14,7 @@ void TextTweakerUI::Draw(TextConfig& config) {
 
     // 顶部操作
     if (ImGui::Button("保存全部")) {
-        config.Save("../assets/config/text.ini");
+        config.Save(PathUtils::ResolveAppPath("assets/config/text.ini"));
     }
     ImGui::SameLine();
     if (ImGui::Button("重置全部")) {

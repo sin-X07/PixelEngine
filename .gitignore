@@ -1,2 +1,18 @@
+# 构建输出
 /build
 /build2
+/build-release
+/build-*/
+
+# 运行时生成物（存档、文字配置模板、生成的迷宫）
+/score_saves.txt
+/time_saves.txt
+/role_saves.txt
+/assets/config/text.ini
+/map2.txt
+/PixelEngine/score_saves.txt
+/PixelEngine/time_saves.txt
+/PixelEngine/role_saves.txt
+
+# 打包输出
+/dist

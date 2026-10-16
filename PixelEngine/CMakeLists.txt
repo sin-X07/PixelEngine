@@ -1,102 +1,40 @@
-set(CMAKE_MAKE_PROGRAM "D:/mingw/x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0/mingw64/bin/mingw32-make.exe" CACHE FILEPATH "" FORCE)
-
-# Disable RC language before any add_subdirectory calls
-if(MINGW OR MSYS)
-  set(CMAKE_RC_COMPILER "")
-  set(CMAKE_RC_COMPILER_WORKS TRUE)
-endif()
+# PixelEngine — 可移植构建配置
+# 依赖（SDL2 / SDL2_mixer / SDL2_image）通过 FetchContent 自动下载并校验 SHA-256，
+# 无需任何本机绝对路径。前置要求仅：CMake 3.16+ 与 MinGW-w64（x86_64 UCRT）。
+#
+# 离线或使用本地源码时，可用 CMake 变量指向已解压的源码目录：
+#   -DFETCHCONTENT_SOURCE_DIR_SDL2=...
+#   -DFETCHCONTENT_SOURCE_DIR_SDL2_mixer=...
+#   -DFETCHCONTENT_SOURCE_DIR_SDL2_image=...
+# 详见 README「构建与运行」。
 
 cmake_minimum_required(VERSION 3.16)
 project(PixelGameEngine LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Build SDL2 only as static library (no RC file needed)
-set(SDL2_DISABLE_SDL2MAIN OFF CACHE BOOL "" FORCE)
-set(SDL2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
-set(SDL_SHARED OFF CACHE BOOL "Build SDL2 as static library" FORCE)
+# 全部依赖静态构建：SDL2_mixer / SDL2_image 依据 BUILD_SHARED_LIBS 决定导出目标名
+# （SDL2_mixer::SDL2_mixer-static / SDL2_image::SDL2_image-static），故必须为 OFF。
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
 
-# ---- SDL2: use local source ----
-set(SDL2_SOURCE_DIR "${CMAKE_SOURCE_DIR}/../build/_deps/sdl2-src")
-set(SDL2_BINARY_DIR "${CMAKE_BINARY_DIR}/_deps/sdl2-build")
-add_subdirectory(${SDL2_SOURCE_DIR} ${SDL2_BINARY_DIR})
+include(FetchContent)
 
-# ---- SDL2_mixer: download with bounded timeouts, then use a local source fallback ----
-set(PIXELENGINE_SDL2_MIXER_SOURCE_DIR "" CACHE PATH "Local SDL2_mixer source directory")
-set(PIXELENGINE_SDL2_MIXER_DOWNLOAD_TIMEOUT 300 CACHE STRING "SDL2_mixer download timeout in seconds")
-set(PIXELENGINE_SDL2_MIXER_INACTIVITY_TIMEOUT 60 CACHE STRING "SDL2_mixer download inactivity timeout in seconds")
+# ---- SDL2：静态构建，保留 SDL2main 以便在 Windows 上接管 WinMain ----
+set(SDL_SHARED OFF CACHE BOOL "Build SDL2 as shared library" FORCE)
+set(SDL_STATIC ON CACHE BOOL "Build SDL2 as static library" FORCE)
+set(SDL_TEST OFF CACHE BOOL "Build the SDL2_test library" FORCE)
+set(SDL2_DISABLE_SDL2MAIN OFF CACHE BOOL "Keep SDL2main" FORCE)
+set(SDL2_DISABLE_INSTALL ON CACHE BOOL "Disable SDL2 install target" FORCE)
 
-set(_pixelengine_sdl2_mixer_version "2.6.3")
-set(_pixelengine_sdl2_mixer_sha256 "91DD065E9E63F499E5317350B110184B0BA96BC5F63C39B3A9939A136C40C035")
-set(_pixelengine_sdl2_mixer_download_dir "${CMAKE_BINARY_DIR}/_deps")
-set(_pixelengine_sdl2_mixer_download_source "${_pixelengine_sdl2_mixer_download_dir}/SDL_mixer-release-${_pixelengine_sdl2_mixer_version}")
-set(_pixelengine_sdl2_mixer_local_fallback "${CMAKE_SOURCE_DIR}/../build/_deps/SDL2_mixer-src")
-set(_pixelengine_sdl2_mixer_source_dir "")
+FetchContent_Declare(
+    SDL2
+    URL https://www.libsdl.org/release/SDL2-2.30.3.tar.gz
+    URL_HASH SHA256=820440072f8f5b50188c1dae104f2ad25984de268785be40c41a099a510f0aec
+)
 
-if(PIXELENGINE_SDL2_MIXER_SOURCE_DIR AND
-   EXISTS "${PIXELENGINE_SDL2_MIXER_SOURCE_DIR}/CMakeLists.txt" AND
-   EXISTS "${PIXELENGINE_SDL2_MIXER_SOURCE_DIR}/include/SDL_mixer.h")
-    set(_pixelengine_sdl2_mixer_source_dir "${PIXELENGINE_SDL2_MIXER_SOURCE_DIR}")
-elseif(PIXELENGINE_SDL2_MIXER_SOURCE_DIR)
-    message(WARNING "PIXELENGINE_SDL2_MIXER_SOURCE_DIR is not a valid SDL2_mixer source directory; trying the online source.")
-endif()
-
-if(NOT _pixelengine_sdl2_mixer_source_dir AND
-   EXISTS "${_pixelengine_sdl2_mixer_download_source}/CMakeLists.txt" AND
-   EXISTS "${_pixelengine_sdl2_mixer_download_source}/include/SDL_mixer.h")
-    set(_pixelengine_sdl2_mixer_source_dir "${_pixelengine_sdl2_mixer_download_source}")
-    message(STATUS "Using cached SDL2_mixer ${_pixelengine_sdl2_mixer_version} source.")
-endif()
-
-if(NOT _pixelengine_sdl2_mixer_source_dir)
-    file(MAKE_DIRECTORY "${_pixelengine_sdl2_mixer_download_dir}")
-    set(_pixelengine_sdl2_mixer_archive "${_pixelengine_sdl2_mixer_download_dir}/SDL_mixer-${_pixelengine_sdl2_mixer_version}.tar.gz")
-    file(DOWNLOAD
-        "https://codeload.github.com/libsdl-org/SDL_mixer/tar.gz/refs/tags/release-${_pixelengine_sdl2_mixer_version}"
-        "${_pixelengine_sdl2_mixer_archive}"
-        EXPECTED_HASH "SHA256=${_pixelengine_sdl2_mixer_sha256}"
-        TLS_VERIFY ON
-        SHOW_PROGRESS
-        TIMEOUT "${PIXELENGINE_SDL2_MIXER_DOWNLOAD_TIMEOUT}"
-        INACTIVITY_TIMEOUT "${PIXELENGINE_SDL2_MIXER_INACTIVITY_TIMEOUT}"
-        STATUS _pixelengine_sdl2_mixer_download_status
-    )
-    list(GET _pixelengine_sdl2_mixer_download_status 0 _pixelengine_sdl2_mixer_download_code)
-
-    if(_pixelengine_sdl2_mixer_download_code EQUAL 0)
-        execute_process(
-            COMMAND "${CMAKE_COMMAND}" -E tar xzf "${_pixelengine_sdl2_mixer_archive}"
-            WORKING_DIRECTORY "${_pixelengine_sdl2_mixer_download_dir}"
-            RESULT_VARIABLE _pixelengine_sdl2_mixer_extract_result
-        )
-        if("${_pixelengine_sdl2_mixer_extract_result}" STREQUAL "0" AND
-           EXISTS "${_pixelengine_sdl2_mixer_download_source}/CMakeLists.txt" AND
-           EXISTS "${_pixelengine_sdl2_mixer_download_source}/include/SDL_mixer.h")
-            set(_pixelengine_sdl2_mixer_source_dir "${_pixelengine_sdl2_mixer_download_source}")
-        else()
-            message(WARNING "SDL2_mixer ${_pixelengine_sdl2_mixer_version} could not be extracted; checking the local source fallback.")
-        endif()
-    else()
-        list(GET _pixelengine_sdl2_mixer_download_status 1 _pixelengine_sdl2_mixer_download_message)
-        message(WARNING "Online SDL2_mixer download failed (${_pixelengine_sdl2_mixer_download_message}); checking the local source fallback.")
-    endif()
-endif()
-
-if(NOT _pixelengine_sdl2_mixer_source_dir AND
-   EXISTS "${_pixelengine_sdl2_mixer_local_fallback}/CMakeLists.txt" AND
-   EXISTS "${_pixelengine_sdl2_mixer_local_fallback}/include/SDL_mixer.h")
-    set(_pixelengine_sdl2_mixer_source_dir "${_pixelengine_sdl2_mixer_local_fallback}")
-    message(STATUS "Using local SDL2_mixer source: ${_pixelengine_sdl2_mixer_source_dir}")
-endif()
-
-if(NOT _pixelengine_sdl2_mixer_source_dir)
-    message(FATAL_ERROR
-        "SDL2_mixer could not be downloaded or found locally. Download SDL_mixer release-${_pixelengine_sdl2_mixer_version}, extract it, then set PIXELENGINE_SDL2_MIXER_SOURCE_DIR to its source directory. The default fallback is ${_pixelengine_sdl2_mixer_local_fallback}."
-    )
-endif()
-
+# ---- SDL2_mixer：静态构建，MP3 用 dr_mp3，OGG Vorbis 用 stb 后端 ----
 set(SDL2MIXER_INSTALL OFF CACHE BOOL "" FORCE)
 set(SDL2MIXER_SAMPLES OFF CACHE BOOL "" FORCE)
 set(SDL2MIXER_CMD OFF CACHE BOOL "" FORCE)
@@ -107,90 +45,14 @@ set(SDL2MIXER_MP3_DRMP3 ON CACHE BOOL "" FORCE)
 set(SDL2MIXER_MIDI OFF CACHE BOOL "" FORCE)
 set(SDL2MIXER_OPUS OFF CACHE BOOL "" FORCE)
 set(SDL2MIXER_VORBIS "STB" CACHE STRING "" FORCE)
-set(SDL2MIXER_WAVPACK OFF CACHE BOOL "" FORCE)
-set(BUILD_SHARED_LIBS OFF)
-add_subdirectory(
-    "${_pixelengine_sdl2_mixer_source_dir}"
-    "${CMAKE_BINARY_DIR}/_deps/sdl2_mixer-build"
+
+FetchContent_Declare(
+    SDL2_mixer
+    URL https://codeload.github.com/libsdl-org/SDL_mixer/tar.gz/refs/tags/release-2.6.3
+    URL_HASH SHA256=91dd065e9e63f499e5317350b110184b0ba96bc5f63c39b3a9939a136c40c035
 )
 
-# ---- SDL2_image: PNG/JPG support with the bundled stb backend ----
-set(PIXELENGINE_SDL2_IMAGE_SOURCE_DIR "" CACHE PATH "Local SDL2_image source directory")
-set(_pixelengine_sdl2_image_version "2.8.2")
-set(_pixelengine_sdl2_image_sha256 "8FD59B2C17772D7AC1192B11C645BE8D7874F595C1714F4B200EE70B7CC38F3E")
-set(_pixelengine_sdl2_image_download_dir "${CMAKE_BINARY_DIR}/_deps")
-set(_pixelengine_sdl2_image_download_source "${_pixelengine_sdl2_image_download_dir}/SDL_image-release-${_pixelengine_sdl2_image_version}")
-set(_pixelengine_sdl2_image_local_fallback "${CMAKE_SOURCE_DIR}/../build/_deps/SDL_image-release-${_pixelengine_sdl2_image_version}")
-set(_pixelengine_sdl2_image_source_dir "")
-
-if(PIXELENGINE_SDL2_IMAGE_SOURCE_DIR AND
-   EXISTS "${PIXELENGINE_SDL2_IMAGE_SOURCE_DIR}/CMakeLists.txt" AND
-   EXISTS "${PIXELENGINE_SDL2_IMAGE_SOURCE_DIR}/include/SDL_image.h")
-    set(_pixelengine_sdl2_image_source_dir "${PIXELENGINE_SDL2_IMAGE_SOURCE_DIR}")
-elseif(PIXELENGINE_SDL2_IMAGE_SOURCE_DIR)
-    message(WARNING "PIXELENGINE_SDL2_IMAGE_SOURCE_DIR is not a valid SDL2_image source directory; trying the online source.")
-endif()
-
-if(NOT _pixelengine_sdl2_image_source_dir AND
-   EXISTS "${_pixelengine_sdl2_image_download_source}/CMakeLists.txt" AND
-   EXISTS "${_pixelengine_sdl2_image_download_source}/include/SDL_image.h")
-    set(_pixelengine_sdl2_image_source_dir "${_pixelengine_sdl2_image_download_source}")
-    message(STATUS "Using cached SDL2_image ${_pixelengine_sdl2_image_version} source.")
-endif()
-
-if(NOT _pixelengine_sdl2_image_source_dir AND
-   EXISTS "${_pixelengine_sdl2_image_local_fallback}/CMakeLists.txt" AND
-   EXISTS "${_pixelengine_sdl2_image_local_fallback}/include/SDL_image.h")
-    set(_pixelengine_sdl2_image_source_dir "${_pixelengine_sdl2_image_local_fallback}")
-    message(STATUS "Using local SDL2_image source: ${_pixelengine_sdl2_image_source_dir}")
-endif()
-
-if(NOT _pixelengine_sdl2_image_source_dir)
-    file(MAKE_DIRECTORY "${_pixelengine_sdl2_image_download_dir}")
-    set(_pixelengine_sdl2_image_archive "${_pixelengine_sdl2_image_download_dir}/SDL2_image-${_pixelengine_sdl2_image_version}.tar.gz")
-    file(DOWNLOAD
-        "https://codeload.github.com/libsdl-org/SDL_image/tar.gz/refs/tags/release-${_pixelengine_sdl2_image_version}"
-        "${_pixelengine_sdl2_image_archive}"
-        EXPECTED_HASH "SHA256=${_pixelengine_sdl2_image_sha256}"
-        TLS_VERIFY ON
-        SHOW_PROGRESS
-        TIMEOUT "${PIXELENGINE_SDL2_MIXER_DOWNLOAD_TIMEOUT}"
-        INACTIVITY_TIMEOUT "${PIXELENGINE_SDL2_MIXER_INACTIVITY_TIMEOUT}"
-        STATUS _pixelengine_sdl2_image_download_status
-    )
-    list(GET _pixelengine_sdl2_image_download_status 0 _pixelengine_sdl2_image_download_code)
-
-    if(_pixelengine_sdl2_image_download_code EQUAL 0)
-        execute_process(
-            COMMAND "${CMAKE_COMMAND}" -E tar xzf "${_pixelengine_sdl2_image_archive}"
-            WORKING_DIRECTORY "${_pixelengine_sdl2_image_download_dir}"
-            RESULT_VARIABLE _pixelengine_sdl2_image_extract_result
-        )
-        if("${_pixelengine_sdl2_image_extract_result}" STREQUAL "0" AND
-           EXISTS "${_pixelengine_sdl2_image_download_source}/CMakeLists.txt" AND
-           EXISTS "${_pixelengine_sdl2_image_download_source}/include/SDL_image.h")
-            set(_pixelengine_sdl2_image_source_dir "${_pixelengine_sdl2_image_download_source}")
-        else()
-            message(WARNING "SDL2_image ${_pixelengine_sdl2_image_version} could not be extracted; checking the local source fallback.")
-        endif()
-    else()
-        list(GET _pixelengine_sdl2_image_download_status 1 _pixelengine_sdl2_image_download_message)
-        message(WARNING "Online SDL2_image download failed (${_pixelengine_sdl2_image_download_message}); checking the local source fallback.")
-    endif()
-endif()
-
-if(NOT _pixelengine_sdl2_image_source_dir AND
-   EXISTS "${_pixelengine_sdl2_image_local_fallback}/CMakeLists.txt" AND
-   EXISTS "${_pixelengine_sdl2_image_local_fallback}/include/SDL_image.h")
-    set(_pixelengine_sdl2_image_source_dir "${_pixelengine_sdl2_image_local_fallback}")
-endif()
-
-if(NOT _pixelengine_sdl2_image_source_dir)
-    message(FATAL_ERROR
-        "SDL2_image could not be downloaded or found locally. Download SDL_image release-${_pixelengine_sdl2_image_version}, extract it, then set PIXELENGINE_SDL2_IMAGE_SOURCE_DIR to its source directory. The default fallback is ${_pixelengine_sdl2_image_local_fallback}."
-    )
-endif()
-
+# ---- SDL2_image：静态构建，PNG/JPG 使用内置 stb 后端 ----
 set(SDL2IMAGE_INSTALL OFF CACHE BOOL "" FORCE)
 set(SDL2IMAGE_SAMPLES OFF CACHE BOOL "" FORCE)
 set(SDL2IMAGE_TESTS OFF CACHE BOOL "" FORCE)
@@ -204,13 +66,17 @@ set(SDL2IMAGE_PNG ON CACHE BOOL "" FORCE)
 set(SDL2IMAGE_SVG OFF CACHE BOOL "" FORCE)
 set(SDL2IMAGE_TIF OFF CACHE BOOL "" FORCE)
 set(SDL2IMAGE_WEBP OFF CACHE BOOL "" FORCE)
-set(BUILD_SHARED_LIBS OFF)
-add_subdirectory(
-    "${_pixelengine_sdl2_image_source_dir}"
-    "${CMAKE_BINARY_DIR}/_deps/sdl2_image-build"
+
+FetchContent_Declare(
+    SDL2_image
+    URL https://codeload.github.com/libsdl-org/SDL_image/tar.gz/refs/tags/release-2.8.2
+    URL_HASH SHA256=8fd59b2c17772d7ac1192b11c645be8d7874f595c1714f4b200ee70b7cc38f3e
 )
 
-# ---- Sources ----
+FetchContent_MakeAvailable(SDL2)
+FetchContent_MakeAvailable(SDL2_mixer SDL2_image)
+
+# ---- 源码 ----
 set(SOURCES
     main.cpp
     Engine.cpp
@@ -219,6 +85,7 @@ set(SOURCES
     MazeGenerator.cpp
     Core/Types.hpp
     Core/PathUtils.hpp
+    Core/Roles.hpp
     Audio/AudioManager.cpp
     Input/InputManager.cpp
     World/WorldMap.cpp
@@ -236,6 +103,12 @@ set(SOURCES
     Graphics/TextConfig.cpp
     Graphics/TextTweakerUI.cpp
     Storage/SaveManager.cpp
+    CS2D/CS2DTypes.hpp
+    CS2D/MiniJSON.hpp
+    CS2D/TMJParser.cpp
+    CS2D/CS2DWorld.cpp
+    CS2D/CS2DRenderer.cpp
+    CS2D/CS2DGame.cpp
     ThirdParty/imgui/imgui.cpp
     ThirdParty/imgui/imgui_draw.cpp
     ThirdParty/imgui/imgui_tables.cpp
@@ -247,9 +120,8 @@ set(SOURCES
 add_executable(EngineApp ${SOURCES})
 
 target_include_directories(EngineApp PRIVATE
-    ${SDL2_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/ThirdParty/imgui
-    ${CMAKE_SOURCE_DIR}/ThirdParty/imgui/backends
+    ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/imgui
+    ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/imgui/backends
 )
 
 target_link_libraries(EngineApp PRIVATE
@@ -259,14 +131,16 @@ target_link_libraries(EngineApp PRIVATE
     SDL2_image::SDL2_image-static
 )
 
+# 静态链接 C/C++ 运行库：消除对 libgcc_s_seh-1.dll / libstdc++-6.dll /
+# libwinpthread-1.dll 的运行时依赖，产出可独立运行的单文件 exe。
+if(MINGW)
+    target_link_options(EngineApp PRIVATE -static -static-libgcc -static-libstdc++)
+endif()
+
+# 将仓库根目录的 assets 复制到可执行文件旁，使运行时以 exe 所在目录为基准找到资源。
 add_custom_command(TARGET EngineApp POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "D:/mingw/x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0/mingw64/bin/libgcc_s_seh-1.dll"
-        "$<TARGET_FILE_DIR:EngineApp>"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "D:/mingw/x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0/mingw64/bin/libstdc++-6.dll"
-        "$<TARGET_FILE_DIR:EngineApp>"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "D:/mingw/x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0/mingw64/bin/libwinpthread-1.dll"
-        "$<TARGET_FILE_DIR:EngineApp>"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/../assets"
+        "$<TARGET_FILE_DIR:EngineApp>/assets"
+    COMMENT "Copying assets next to EngineApp executable"
 )

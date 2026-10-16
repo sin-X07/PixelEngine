@@ -13,7 +13,7 @@ bool RenderSystem::Initialize(SDL_Renderer* ren, int screenWidth, int screenHeig
         std::cerr << "SDL2_image PNG 初始化失败: " << IMG_GetError() << std::endl;
     } else {
         auto loadTexture = [this](const std::string& filename) {
-            const std::string path = PathUtils::ResolveProjectFile("../assets/images/dungeon/" + filename);
+            const std::string path = PathUtils::ResolveProjectFile("assets/images/dungeon/" + filename);
             SDL_Texture* texture = IMG_LoadTexture(renderer, path.c_str());
             if (!texture) {
                 std::cerr << "图片加载失败 " << filename << ": " << IMG_GetError() << std::endl;
@@ -36,17 +36,17 @@ bool RenderSystem::Initialize(SDL_Renderer* ren, int screenWidth, int screenHeig
             }
             return texture;
         };
-        gruntTexture = loadAsset("../assets/images/monsters/grunt.png");
-        bruteTexture = loadAsset("../assets/images/monsters/brute.png");
-        shooterTexture = loadAsset("../assets/images/monsters/shooter.png");
-        daggerTexture = loadAsset("../assets/images/Knife.png");
-        katanaTexture = loadAsset("../assets/images/weapons/bushido.png");
-        pistolTexture = loadAsset("../assets/images/weapons/Deagle.png");
-        rifleTexture = loadAsset("../assets/images/weapons/AK47.png");
-        spikesTexture = loadAsset("../assets/images/traps/spikes.png");
-        bearTrapTexture = loadAsset("../assets/images/traps/barricade.png");
-        bulletTexture = loadAsset("../assets/images/effects/bullet.png");
-        bloodTexture = loadAsset("../assets/images/effects/blood.png");
+        gruntTexture = loadAsset("assets/images/monsters/grunt.png");
+        bruteTexture = loadAsset("assets/images/monsters/brute.png");
+        shooterTexture = loadAsset("assets/images/monsters/shooter.png");
+        daggerTexture = loadAsset("assets/images/weapons/Knife.png");
+        katanaTexture = loadAsset("assets/images/weapons/bushido.png");
+        pistolTexture = loadAsset("assets/images/weapons/Deagle.png");
+        rifleTexture = loadAsset("assets/images/weapons/AK47.png");
+        spikesTexture = loadAsset("assets/images/traps/spikes.png");
+        bearTrapTexture = loadAsset("assets/images/traps/barricade.png");
+        bulletTexture = loadAsset("assets/images/effects/bullet.png");
+        bloodTexture = loadAsset("assets/images/effects/blood.png");
 
         // 可选角色贴图（顺序与 Core/Roles.hpp 的 GetRoles() 一致；失败保持 nullptr，绘制回退纯色）
         for (int i = 0; i < ROLE_COUNT; ++i) {

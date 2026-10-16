@@ -94,7 +94,8 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         ImGui::SetCursorPosY(160.0f);
         if (bigButton("模式一  限时挑战")) doClick([&]{ actions.startGame(TIME_ATTACK); });
         if (bigButton("模式二  迷宫探索")) doClick([&]{ actions.startGame(MAZE_MODE); });
-        ImGui::SetCursorPosY(400.0f);
+        if (bigButton("模式三  CS2D")) doClick([&]{ actions.startGame(CS2D_MODE); });
+        ImGui::SetCursorPosY(440.0f);
         if (bigButton("返回")) doClick([&]{ actions.goState(MAIN_MENU); });
     } else if (ctx.state == ROLE_SELECT) {
         drawStatic("menu_role_title", "选择角色", TextStyle{0.0f, 60.0f, 26, 255, 255, 255, 255, 0, false});

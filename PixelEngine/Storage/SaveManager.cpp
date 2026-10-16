@@ -22,7 +22,7 @@ void SaveManager::SaveAll() {
 }
 
 void SaveManager::SaveScoreHistory() {
-    const std::string savePath = PathUtils::ResolveProjectFile("score_saves.txt");
+    const std::string savePath = PathUtils::ResolveWritablePath("score_saves.txt");
     std::ofstream outFile(savePath);
 
     if (!outFile) {
@@ -39,7 +39,7 @@ void SaveManager::SaveScoreHistory() {
 }
 
 void SaveManager::SaveTimeHistory() {
-    const std::string savePath = PathUtils::ResolveProjectFile("time_saves.txt");
+    const std::string savePath = PathUtils::ResolveWritablePath("time_saves.txt");
     std::ofstream outFile(savePath);
 
     if (!outFile) {
@@ -56,7 +56,7 @@ void SaveManager::SaveTimeHistory() {
 }
 
 void SaveManager::LoadScoreHistory() {
-    const std::string savePath = PathUtils::ResolveProjectFile("score_saves.txt");
+    const std::string savePath = PathUtils::ResolveAppPath("score_saves.txt");
     std::ifstream inFile(savePath);
 
     if (!inFile) {
@@ -90,7 +90,7 @@ void SaveManager::LoadScoreHistory() {
 }
 
 void SaveManager::LoadTimeHistory() {
-    const std::string savePath = PathUtils::ResolveProjectFile("time_saves.txt");
+    const std::string savePath = PathUtils::ResolveAppPath("time_saves.txt");
     std::ifstream inFile(savePath);
 
     if (!inFile) {
@@ -128,7 +128,7 @@ void SaveManager::AddTimeRecord(float time) {
 }
 
 void SaveManager::LoadRoleIndex() {
-    const std::string savePath = PathUtils::ResolveProjectFile("role_saves.txt");
+    const std::string savePath = PathUtils::ResolveAppPath("role_saves.txt");
     std::ifstream inFile(savePath);
 
     selectedRole = 0; // 默认角色：豆丁
@@ -149,7 +149,7 @@ void SaveManager::LoadRoleIndex() {
 }
 
 void SaveManager::SaveRoleIndex() {
-    const std::string savePath = PathUtils::ResolveProjectFile("role_saves.txt");
+    const std::string savePath = PathUtils::ResolveWritablePath("role_saves.txt");
     std::ofstream outFile(savePath);
 
     if (!outFile) {

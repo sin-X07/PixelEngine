@@ -32,28 +32,53 @@
 
 ## 构建与运行
 
-项目使用 CMake 3.16+、C++17、MinGW-w64、SDL2、SDL2_image 和 SDL2_mixer，另 vendor 了 Dear ImGui（MIT）用于文字与菜单渲染。SDL2_mixer 固定为 2.6.3；SDL2_image 固定为 2.8.2，静态构建并使用内置 stb 后端解码 PNG/JPG。SDL2_image 源码会在首次配置时下载并校验 SHA-256，也可通过 `PIXELENGINE_SDL2_IMAGE_SOURCE_DIR` 指向本地源码目录。引擎会尝试打开音频设备，设备不可用时仍可静音运行。背景音乐、按钮悬停/点击音效和拾取音效素材位于 `assets/audio/`。
+项目使用 CMake 3.16+、C++17、MinGW-w64、SDL2、SDL2_image 和 SDL2_mixer，另 vendor 了 Dear ImGui（MIT）用于文字与菜单渲染。SDL2 固定为 2.30.3、SDL2_mixer 固定为 2.6.3、SDL2_image 固定为 2.8.2，三者均为**静态构建**（SDL2_mixer 使用内置 dr_mp3/stb 后端，SDL2_image 使用内置 stb 后端解码 PNG/JPG）。所有第三方依赖通过 CMake 的 FetchContent 在首次配置时**自动下载并校验 SHA-256**，无需手工准备依赖，也无需任何本机绝对路径。
+
+### 前置要求
+
+在 Windows 上仅需一次性安装标准工具链：
+
+- [CMake](https://cmake.org/download/) 3.16 或更高（确保 `cmake` 在 PATH 中）。
+- [MinGW-w64](https://winlibs.com/)（x86_64、UCRT 运行时；确保 `gcc`/`g++`/`mingw32-make` 在 PATH 中）。
+- 可选：VS Code + [C/C++ 扩展](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) + [CMake Tools 扩展](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cmake-tools)，用于 IDE 内配置/构建/调试。
+
+### 命令行构建（零配置）
+
+```powershell
+# 在仓库根目录执行：配置 + 编译
+cmake --preset mingw-debug
+cmake --build build
+```
+
+生成的程序为 `build/EngineApp.exe`，`assets/` 会自动复制到 exe 旁，直接双击或命令行运行即可：
+
+```powershell
+.\build\EngineApp.exe
+```
+
+### 使用 VS Code（零配置）
+
+1. 用 VS Code 打开仓库根目录。
+2. 安装 C/C++ 与 CMake Tools 扩展。
+3. 在底部状态栏选择编译器（CMake Tools 会自动识别 MinGW），选择 `mingw-debug` 预设并构建。
+4. 按 `F5` 直接进入 GDB 调试并运行游戏。
+
+`IntelliSense`、`F5` 调试、构建目录均已通过 `.vscode/` 与 `PixelEngine/CMakePresets.json` 配置为相对路径，clone 到任意位置开箱即用。
+
+### 依赖与离线构建
+
+依赖源码在首次配置时从官方地址下载并用 SHA-256 校验；若需离线或使用本地源码，可在配置时指向已解压的源码目录：
+
+```powershell
+cmake --preset mingw-debug `
+  -DFETCHCONTENT_SOURCE_DIR_SDL2=D:/path/to/SDL-release-2.30.3 `
+  -DFETCHCONTENT_SOURCE_DIR_SDL2_MIXER=D:/path/to/SDL_mixer-release-2.6.3 `
+  -DFETCHCONTENT_SOURCE_DIR_SDL2_IMAGE=D:/path/to/SDL_image-release-2.8.2
+```
+
+引擎会尝试打开音频设备，设备不可用时仍可静音运行。背景音乐、按钮悬停/点击音效和拾取音效素材位于 `assets/audio/`。
 
 地牢图片取自 Kenney 的 [Tiny Dungeon](https://kenney.nl/assets/tiny-dungeon) 资源包，页面标注 Creative Commons CC0；本项目使用其中的砂地、石砖墙、玩家和宝箱精灵，许可文本随素材保存在 `assets/images/dungeon/License.txt`。
-
-当前 Windows 开发环境的源码路径和工具链路径配置在 `PixelEngine/CMakeLists.txt` 与 `.vscode/tasks.json` 中，并非跨机器通用配置。该配置预期 SDL2 源码位于仓库的 `build/_deps/sdl2-src`。SDL2_mixer 首次配置时从 GitHub 获取固定版本，验证 SHA-256 后解压到构建目录的 `_deps`；默认总超时为 300 秒、无数据活动超时为 60 秒。后续配置会复用已下载源码。
-
-若在线下载失败，CMake 会尝试仓库中的 `build/_deps/SDL2_mixer-src` 本地源码缓存。也可以手动下载并解压 SDL_mixer 2.6.3，然后通过 `PIXELENGINE_SDL2_MIXER_SOURCE_DIR` 指定源码目录；设置有效目录后会直接使用本地源码。下载等待时间可通过 `PIXELENGINE_SDL2_MIXER_DOWNLOAD_TIMEOUT` 和 `PIXELENGINE_SDL2_MIXER_INACTIVITY_TIMEOUT` 调整。若线上与本地源码都不可用，配置会提示所需目录和参数。
-
-在这台机器上可运行 VS Code 的 **CMake: Configure** 和 **CMake: Build** 任务。若需指定本地 mixer 源码，在配置命令中增加：
-
-```powershell
--DPIXELENGINE_SDL2_MIXER_SOURCE_DIR=D:/path/to/SDL_mixer-release-2.6.3
-```
-
-也可在仓库根目录执行当前环境对应的命令：
-
-```powershell
-cmake -S PixelEngine -B D:/PixelEngineBuild-Local -G "MinGW Makefiles"
-cmake --build D:/PixelEngineBuild-Local --target EngineApp -- -j4
-```
-
-生成的程序为 `D:/PixelEngineBuild-Local/EngineApp.exe`。在其他机器构建前，需要先调整 CMake 和 VS Code 任务中的 MinGW、依赖源码及运行时 DLL 路径。
 
 ## 项目文件
 

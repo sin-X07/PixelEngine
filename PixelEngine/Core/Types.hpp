@@ -20,7 +20,8 @@ enum GameState {
 // 游戏模式枚举
 enum GameMode {
     TIME_ATTACK, // 模式一：限时挑战
-    MAZE_MODE    // 模式二：迷宫探索
+    MAZE_MODE,   // 模式二：迷宫探索
+    CS2D_MODE    // 模式三：CS2D 俯视角射击对抗（Tiled TMJ 地图）
 };
 
 // 限时挑战总时长（秒），倒计时与 HUD 进度条共用，保证填充条与底框长度一致

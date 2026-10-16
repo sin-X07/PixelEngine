@@ -1,4 +1,5 @@
 #include "MazeGenerator.hpp"
+#include "Core/PathUtils.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -287,7 +288,7 @@ void GenerateRandomMazeFile(const std::string& filename, std::mt19937& gen) {
         return;
     }
 
-    std::ofstream outFile(filename);
+    std::ofstream outFile(PathUtils::ResolveWritablePath(filename));
     if (!outFile.is_open()) {
         std::cerr << "无法写入迷宫文件：" << filename << std::endl;
         return;

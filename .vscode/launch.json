@@ -10,7 +10,7 @@
       "externalConsole": false,
       "stopAtEntry": false,
       "MIMode": "gdb",
-      "miDebuggerPath": "D:/mingw/x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0/mingw64/bin/gdb.exe",
+      "miDebuggerPath": "gdb.exe",
       "environment": [
         {
           "name": "PATH",

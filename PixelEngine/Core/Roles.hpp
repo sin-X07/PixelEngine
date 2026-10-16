@@ -12,10 +12,10 @@ struct RoleDef {
 
 inline const std::array<RoleDef, 4>& GetRoles() {
     static const std::array<RoleDef, 4> roles = {{
-        {"豆丁",   "../assets/images/role/player.png",                            "老牌小小勇者，哪里都能钻"},
-        {"莉娅",   "../assets/images/role/character_femaleAdventurer_side.png",   "敏捷的探险家，走位风骚"},
-        {"阿凯",   "../assets/images/role/character_maleAdventurer_duck.png",     "绿衣少年，元气满满"},
-        {"老约翰", "../assets/images/role/character_malePerson_side.png",         "沉稳大叔，见多识广"},
+        {"豆丁",   "assets/images/role/player.png",                            "老牌小小勇者，哪里都能钻"},
+        {"莉娅",   "assets/images/role/character_femaleAdventurer_side.png",   "敏捷的探险家，走位风骚"},
+        {"阿凯",   "assets/images/role/character_maleAdventurer_duck.png",     "绿衣少年，元气满满"},
+        {"老约翰", "assets/images/role/character_malePerson_side.png",         "沉稳大叔，见多识广"},
     }};
     return roles;
 }
