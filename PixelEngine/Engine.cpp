@@ -6,6 +6,7 @@
 #include <iostream>
 #include <cmath>
 #include <algorithm>
+#include <filesystem>
 
 Engine::Engine() : isRunning(false), window(nullptr), renderer(nullptr) {
     audioManager = std::make_unique<AudioManager>();
@@ -97,8 +98,9 @@ bool Engine::Initialize(const char* title, int width, int height) {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_RenderSetLogicalSize(renderer, width, height);
 
-    // 加载文字样式配置（无文件 → 默认值，不崩溃）
-    const std::string textConfigPath = PathUtils::ResolveProjectFile("assets/config/text.ini");
+    // 加载文字样式配置：读写在 exe 目录下同一份 text.ini（写入语义，稳定落盘）。
+    const std::string textConfigPath = PathUtils::ResolveWritablePath("assets/config/text.ini");
+    const bool textIniExists = std::filesystem::exists(textConfigPath);
     textConfig->Load(textConfigPath);
     // [global] font= 传给 ImGuiUI（仅启动生效）
     if (!textConfig->GlobalFontPath().empty()) {
@@ -113,8 +115,10 @@ bool Engine::Initialize(const char* title, int width, int height) {
     // CS2D 渲染器初始化（地图目录为 assets/cs2d/maps/）
     cs2dRenderer->Initialize(renderer, "assets/cs2d/maps");
 
-    // 首次运行：立即生成模板 ini
-    textConfig->Save(textConfigPath);
+    // 仅在首次运行（文件不存在）时生成默认模板；已存在的配置绝不覆盖，保证持久化。
+    if (!textIniExists) {
+        textConfig->Save(textConfigPath);
+    }
 
     // ImGui 后端消费原始 SDL 事件
     inputManager->SetEventCallback([this](const SDL_Event& e) {
@@ -184,7 +188,7 @@ void Engine::Clean() {
         saveManager->SaveAll();
     }
     if (textConfig) {
-        textConfig->Save(PathUtils::ResolveProjectFile("assets/config/text.ini"));
+        textConfig->Save(PathUtils::ResolveWritablePath("assets/config/text.ini"));
     }
 
     if (audioManager) audioManager->Clean();
@@ -370,6 +374,11 @@ void Engine::HandleInput() {
             cs2dKeyA = kb[SDL_SCANCODE_A];
             cs2dKeyS = kb[SDL_SCANCODE_S];
             cs2dKeyD = kb[SDL_SCANCODE_D];
+
+            // 武器槽切换：1=主武器, 2=副武器, 3=近战
+            if (inputManager->IsDigit1Requested()) cs2dGame->SwitchWeaponSlot(0);
+            if (inputManager->IsDigit2Requested()) cs2dGame->SwitchWeaponSlot(1);
+            if (inputManager->IsDigit3Requested()) cs2dGame->SwitchWeaponSlot(2);
 
             // 准星模式：隐藏系统光标
             SDL_ShowCursor(SDL_DISABLE);

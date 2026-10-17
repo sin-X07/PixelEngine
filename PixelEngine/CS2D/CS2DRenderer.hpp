@@ -4,40 +4,66 @@
 #include <SDL_image.h>
 #include <vector>
 #include <string>
-#include <unordered_map>
 
 // ============================================================================
 // CS2DRenderer —— CS2D 独立渲染器
-//   背景图 + tileset tile 层 + 实体绘制
+//   背景图 + tileset tile 层 + 精灵图角色 + 武器 + 视野遮罩
 // ============================================================================
+
+// 精灵绘制参数（由 CS2DGame 填充，避免循环 include）
+struct SpriteDrawParams {
+    float x       = 0.0f;
+    float y       = 0.0f;
+    float size    = 6.0f;       // 仅作命中盒参考，视觉尺寸由 SPRITE_VISUAL_SIZE 决定
+    float aimAngle = 0.0f;
+    int   spriteKey  = 0;   // 0=CT头盔, 1=T无头盔, 2=T备选
+    int   weaponType = 0;   // 0=AK47, 1=M4A1（主武器外观）
+    int   weaponSlot = 0;   // 0=主武器, 1=副武器, 2=近战（决定切片帧与手中武器）
+    int   animState  = 0;   // 0=Idle, 1=Walk, 2=Shoot, 3=Dead
+    float animTimer  = 0.0f;
+    float deathTimer = 0.0f;
+    Uint8 alpha      = 255;
+};
+
+// 序列帧精灵图元数据：3 行 × 2 列，共 6 帧移动姿态
+struct SpriteSheetDef {
+    SDL_Texture* tex  = nullptr;
+    int frameW   = 32;
+    int frameH   = 32;
+    int cols     = 2;
+    int rows     = 3;
+};
+
 class CS2DRenderer {
 public:
     CS2DRenderer() = default;
     ~CS2DRenderer() { Clean(); }
 
-    bool Initialize(SDL_Renderer* ren, const std::string& mapDir);
+    bool Initialize(SDL_Renderer* ren, const std::string& mapDir, int viewW = 800, int viewH = 600);
     void Clean();
 
-    // 关联世界数据（用于获取图层/tileset/背景图信息）
     void SetWorld(const CS2DWorld* world);
 
-    // 更新相机位置（以玩家为中心）
     void UpdateCamera(float playerCenterX, float playerCenterY,
                       int viewportW, int viewportH);
 
-    // 主体绘制：背景图 → tile layers → overlay
+    // 背景 + tile 层
     void DrawWorld();
     void DrawOverlay();
 
-    // 绘制玩家（简单矩形 + 朝向线）
-    void DrawPlayer(float x, float y, float size, float aimAngle,
-                    bool isCT, Uint8 alpha = 255);
-    void DrawBOT(float x, float y, float size, float aimAngle,
-                 bool isCT, Uint8 alpha = 255);
+    // 角色精灵绘制（统一玩家/BOT）
+    void DrawCharacter(const SpriteDrawParams& p);
+
+    // 子弹 / 准星
     void DrawBullet(float x, float y, float vx, float vy);
     void DrawCrosshair(float cx, float cy, float size = 12.0f);
 
-    // 相机访问
+    // 右下角武器栏（复刻模式一 DrawWeaponStatus）
+    void DrawWeaponStatus(int weaponSlot, int weaponType);
+
+    // 视野遮罩
+    void DrawVisionFog(float playerX, float playerY, float aimAngle);
+
     float GetCameraX() const { return cameraX_; }
     float GetCameraY() const { return cameraY_; }
     float GetZoom()   const { return zoom_; }
@@ -50,12 +76,14 @@ private:
 
     float cameraX_ = 0.0f;
     float cameraY_ = 0.0f;
-    float zoom_    = 1.0f;
+    float zoom_    = 6.0f;   // 镜头缩放（6px 命中盒 → 屏上约 36px）
 
-    // 背景图纹理
+    int viewW_ = 800;        // 逻辑视口尺寸（供 tile 剔除与视野纹理重建）
+    int viewH_ = 600;
+
+    // ========= 背景 & tileset =========
     SDL_Texture* backgroundTex_ = nullptr;
 
-    // tileset 纹理
     struct TilesetTexture {
         SDL_Texture* texture  = nullptr;
         int          tileW     = 32;
@@ -70,4 +98,37 @@ private:
     void DrawTileLayer(const std::vector<int>& data, int layerWidth, int layerHeight);
     void DrawImageBackground();
     void DrawTileFallback(int gid, const SDL_Rect& dst) const;
+
+    // ========= 精灵系统 =========
+    // 三张角色序列帧贴图（2列×3行；切片帧按武器槽固定，不再循环播放）
+    SpriteSheetDef ctSheet_   {};   // soldier_with_helmet    64×96 → 32×32/frame
+    SpriteSheetDef tSheet_    {};   // soldier_no_helmet      64×96 → 32×32/frame
+    SpriteSheetDef tAltSheet_ {};   // soldier_by_risingXD   64×94 → 32×31/frame
+    SDL_Texture* ak47Tex_   = nullptr;
+    SDL_Texture* m4a1Tex_   = nullptr;
+    SDL_Texture* deagleTex_ = nullptr;
+    SDL_Texture* knifeTex_  = nullptr;
+    SDL_Texture* bulletTex_ = nullptr;
+
+    void DrawWeaponForCharacter(float cx, float cy, float size, float aimAngle,
+                                int weaponSlot, int weaponType);
+
+    // ========= 视野遮罩 =========
+    static constexpr int   VISION_MASK_SCALE = 4;
+    static constexpr float VISION_RADIUS     = 150.0f;  // 扇形远视野半径（世界单位）
+    static constexpr float VISION_SOFT_EDGE  = 28.0f;   // 距离软边
+    static constexpr float VISION_CONE_DEG   = 120.0f;  // 扇形总角度
+    static constexpr float VISION_ANGLE_SOFT = 14.0f;   // 角度软边（度）
+    static constexpr Uint8 VISION_FOG_ALPHA  = 160;     // 不可见区半透明上限
+    static constexpr Uint8 VISION_FOG_R      = 200;     // 浅灰遮罩颜色
+    static constexpr Uint8 VISION_FOG_G      = 200;
+    static constexpr Uint8 VISION_FOG_B      = 200;
+
+    SDL_Texture*      visionTex_ = nullptr;
+    std::vector<Uint8> visionPixels_;
+    int maskW_ = 0;
+    int maskH_ = 0;
+
+    void CreateVisionTexture();   // 创建/重建视野 streaming 纹理
+    bool HasLineOfSight(float fromX, float fromY, float toX, float toY) const;
 };

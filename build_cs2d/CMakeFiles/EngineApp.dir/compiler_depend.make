@@ -2728,6 +2728,7 @@ CMakeFiles/EngineApp.dir/Graphics/GameUI.cpp.obj: D:/BJTU/Cpp/Outstanding\ Proje
   D:/BJTU/Cpp/Outstanding\ Projects/PixelEngine/PixelEngine/Graphics/TextConfig.hpp
 
 CMakeFiles/EngineApp.dir/Graphics/ImGuiUI.cpp.obj: D:/BJTU/Cpp/Outstanding\ Projects/PixelEngine/PixelEngine/Graphics/ImGuiUI.cpp \
+  D:/BJTU/Cpp/Outstanding\ Projects/PixelEngine/PixelEngine/Core/UiTextChars.hpp \
   D:/BJTU/Cpp/Outstanding\ Projects/PixelEngine/PixelEngine/ThirdParty/imgui/backends/imgui_impl_sdl2.h \
   D:/BJTU/Cpp/Outstanding\ Projects/PixelEngine/PixelEngine/ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.h \
   D:/BJTU/Cpp/Outstanding\ Projects/PixelEngine/PixelEngine/ThirdParty/imgui/imconfig.h \
@@ -10254,6 +10255,8 @@ D:/BJTU/Cpp/Outstanding\ Projects/PixelEngine/PixelEngine/Graphics/GameUI.hpp:
 D:/mingw/x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0/mingw64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/avx10_2bf16intrin.h:
 
 D:/mingw/x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0/mingw64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/avx10_2convertintrin.h:
+
+D:/BJTU/Cpp/Outstanding\ Projects/PixelEngine/PixelEngine/Core/UiTextChars.hpp:
 
 D:/mingw/x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0/mingw64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/avx10_2copyintrin.h:
 

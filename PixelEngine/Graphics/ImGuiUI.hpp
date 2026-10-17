@@ -18,6 +18,9 @@ private:
     std::vector<int> fontSizes;   // 固定档位（升序）
     std::vector<ImFont*> fonts;   // 与 fontSizes 一一对应；加载失败对应项为 nullptr
     std::string fontPathOverride; // [global] font= 指定路径（启动加载优先）
+    // 字形范围数组须在整个字体构建期间持久（ImGui 延迟到首次 NewFrame 才读取 GlyphRanges），
+    // 存为成员避免局部 ImVector 悬空导致断言崩溃。ImWchar == unsigned short。
+    std::vector<unsigned short> glyphRanges;
 
 public:
     ImGuiUI() = default;

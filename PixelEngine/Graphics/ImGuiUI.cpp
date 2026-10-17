@@ -1,4 +1,5 @@
 #include "ImGuiUI.hpp"
+#include "../Core/UiTextChars.hpp"
 #include "../ThirdParty/imgui/imgui.h"
 #include "../ThirdParty/imgui/backends/imgui_impl_sdl2.h"
 #include "../ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.h"
@@ -59,12 +60,31 @@ bool ImGuiUI::Initialize(SDL_Window* win, SDL_Renderer* ren) {
     }
 
     if (!chosen.empty()) {
-        // 常用简体字表（2500 字，覆盖 97.97%）：图集缩小约 8 倍，单张纹理放得下；
-        // 项目 UI 文案全为常用字；若未来出现生僻字，用 ImFontGlyphRangesBuilder 补充合并，勿退回全量表。
-        const ImWchar* ranges = io.Fonts->GetGlyphRangesChineseSimplifiedCommon();
+        // 用 GlyphRangesBuilder 精确构建字形表：基础 ASCII + 全角标点 + 项目全部汉字。
+        // 比 GetGlyphRangesChineseSimplifiedCommon(2500 常用字) 更稳：不含生僻字缺字，也不浪费图集。
+        ImFontGlyphRangesBuilder builder;
+        ImWchar baseRanges[] = {
+            0x0020, 0x00FF, // Basic Latin + Latin-1 Supplement
+            0x2000, 0x206F, // General Punctuation
+            0x3000, 0x303F, // CJK Symbols and Punctuation
+            0xFF00, 0xFFEF, // Halfwidth and Fullwidth Forms
+            0,
+        };
+        builder.AddRanges(baseRanges);
+        builder.AddText(kUiChineseChars);
+        ImVector<ImWchar> ranges;
+        builder.BuildRanges(&ranges);
+
+        // 拷贝到成员，保证 GlyphRanges 指针在 ImGui 延迟构建字体时仍有效（否则悬空指针断言崩溃）。
+        glyphRanges.clear();
+        glyphRanges.assign(ranges.begin(), ranges.end());
+        const ImWchar* rangeData = glyphRanges.empty()
+            ? io.Fonts->GetGlyphRangesDefault()
+            : reinterpret_cast<const ImWchar*>(glyphRanges.data());
+
         for (size_t i = 0; i < fontSizes.size(); ++i) {
             fonts[i] = io.Fonts->AddFontFromFileTTF(chosen.c_str(), static_cast<float>(fontSizes[i]),
-                                                    nullptr, ranges);
+                                                    nullptr, rangeData);
         }
     } else {
         io.Fonts->AddFontDefault();

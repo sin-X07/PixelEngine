@@ -5,15 +5,47 @@
 #include <iostream>
 #include <filesystem>
 
-bool CS2DRenderer::Initialize(SDL_Renderer* ren, const std::string& mapDir) {
+// ============================================================================
+// 初始化 / 清理
+// ============================================================================
+
+bool CS2DRenderer::Initialize(SDL_Renderer* ren, const std::string& mapDir, int viewW, int viewH) {
     renderer_ = ren;
     mapDir_   = mapDir;
+    viewW_    = viewW;
+    viewH_    = viewH;
+    zoom_     = 6.0f;   // 镜头缩放（6px 命中盒 → 屏上约 36px）
     const std::string absDir = PathUtils::ResolveAppPath(mapDir);
     if (std::filesystem::exists(absDir)) {
         mapDir_ = absDir;
     }
     std::cout << "[CS2DRenderer] 地图目录: " << mapDir_ << std::endl;
+
+    CreateVisionTexture();
     return true;
+}
+
+void CS2DRenderer::CreateVisionTexture() {
+    // 先销毁旧纹理，避免重复创建泄漏
+    if (visionTex_) {
+        SDL_DestroyTexture(visionTex_);
+        visionTex_ = nullptr;
+    }
+    visionPixels_.clear();
+
+    if (!renderer_ || viewW_ <= 0 || viewH_ <= 0) return;
+
+    maskW_ = viewW_ / VISION_MASK_SCALE;
+    maskH_ = viewH_ / VISION_MASK_SCALE;
+    visionTex_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32,
+                                   SDL_TEXTUREACCESS_STREAMING, maskW_, maskH_);
+    if (visionTex_) {
+        SDL_SetTextureBlendMode(visionTex_, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(visionTex_, SDL_ScaleModeLinear);
+        visionPixels_.resize(static_cast<size_t>(maskW_) * maskH_ * 4);
+    } else {
+        std::cerr << "[CS2DRenderer] 视野纹理创建失败: " << SDL_GetError() << std::endl;
+    }
 }
 
 void CS2DRenderer::Clean() {
@@ -22,8 +54,25 @@ void CS2DRenderer::Clean() {
         if (tt.texture) { SDL_DestroyTexture(tt.texture); tt.texture = nullptr; }
     }
     tilesetTextures_.clear();
+
+    if (ctSheet_.tex)   { SDL_DestroyTexture(ctSheet_.tex);   ctSheet_.tex   = nullptr; }
+    if (tSheet_.tex)    { SDL_DestroyTexture(tSheet_.tex);    tSheet_.tex    = nullptr; }
+    if (tAltSheet_.tex) { SDL_DestroyTexture(tAltSheet_.tex); tAltSheet_.tex = nullptr; }
+    if (ak47Tex_)   { SDL_DestroyTexture(ak47Tex_);   ak47Tex_   = nullptr; }
+    if (m4a1Tex_)   { SDL_DestroyTexture(m4a1Tex_);   m4a1Tex_   = nullptr; }
+    if (deagleTex_) { SDL_DestroyTexture(deagleTex_); deagleTex_ = nullptr; }
+    if (knifeTex_)  { SDL_DestroyTexture(knifeTex_);  knifeTex_  = nullptr; }
+    if (bulletTex_) { SDL_DestroyTexture(bulletTex_); bulletTex_ = nullptr; }
+
+    if (visionTex_) { SDL_DestroyTexture(visionTex_); visionTex_ = nullptr; }
+    visionPixels_.clear();
+
     world_ = nullptr;
 }
+
+// ============================================================================
+// 资源加载
+// ============================================================================
 
 void CS2DRenderer::SetWorld(const CS2DWorld* world) {
     Clean();
@@ -46,31 +95,60 @@ void CS2DRenderer::SetWorld(const CS2DWorld* world) {
     }
 
     // ---- 加载 tileset 贴图 ----
-    if (!world_->GetMapData()) return;
-    const auto& data = *world_->GetMapData();
-    for (const auto& ts : data.tilesets) {
-        if (ts.imagePath.empty()) continue;
-        std::string imgPath;
-        if (ts.imagePath.find(":/") != std::string::npos ||
-            (ts.imagePath.size() >= 2 && ts.imagePath[0] == '/')) {
-            imgPath = ts.imagePath;
-        } else {
-            imgPath = mapDir_ + "/" + ts.imagePath;
-        }
-        SDL_Texture* tex = LoadTexture(imgPath);
-        if (tex) {
-            TilesetTexture tt;
-            tt.texture  = tex;
-            tt.tileW    = ts.tileWidth;
-            tt.tileH    = ts.tileHeight;
-            tt.columns  = ts.columns > 0 ? ts.columns : 1;
-            tt.firstGid = ts.firstGid;
-            tilesetTextures_.push_back(tt);
-            std::cout << "[CS2DRenderer] 加载 tileset: " << ts.name
-                      << " (" << ts.tileWidth << "x" << ts.tileHeight
-                      << ", col=" << tt.columns << ")" << std::endl;
+    if (world_->GetMapData()) {
+        const auto& data = *world_->GetMapData();
+        for (const auto& ts : data.tilesets) {
+            if (ts.imagePath.empty()) continue;
+            std::string imgPath;
+            if (ts.imagePath.find(":/") != std::string::npos ||
+                (ts.imagePath.size() >= 2 && ts.imagePath[0] == '/')) {
+                imgPath = ts.imagePath;
+            } else {
+                imgPath = mapDir_ + "/" + ts.imagePath;
+            }
+            SDL_Texture* tex = LoadTexture(imgPath);
+            if (tex) {
+                TilesetTexture tt;
+                tt.texture  = tex;
+                tt.tileW    = ts.tileWidth;
+                tt.tileH    = ts.tileHeight;
+                tt.columns  = ts.columns > 0 ? ts.columns : 1;
+                tt.firstGid = ts.firstGid;
+                tilesetTextures_.push_back(tt);
+                std::cout << "[CS2DRenderer] 加载 tileset: " << ts.name
+                          << " (" << ts.tileWidth << "x" << ts.tileHeight
+                          << ", col=" << tt.columns << ")" << std::endl;
+            }
         }
     }
+
+    // ---- 加载角色精灵（2列×3行；切片帧按武器槽固定，不循环播放） ----
+    ctSheet_.tex     = LoadTexture(mapDir_ + "/../sprites/ct_player.png");
+    ctSheet_.frameW  = 32; ctSheet_.frameH = 32; ctSheet_.cols = 2; ctSheet_.rows = 3;
+
+    tSheet_.tex      = LoadTexture(mapDir_ + "/../sprites/t_player.png");
+    tSheet_.frameW   = 32; tSheet_.frameH  = 32; tSheet_.cols  = 2; tSheet_.rows  = 3;
+
+    tAltSheet_.tex   = LoadTexture(mapDir_ + "/../sprites/t_player_alt.png");
+    tAltSheet_.frameW = 32; tAltSheet_.frameH = 31; tAltSheet_.cols = 2; tAltSheet_.rows = 3;
+
+    ak47Tex_   = LoadTexture(mapDir_ + "/../sprites/ak47.png");
+    m4a1Tex_   = LoadTexture(mapDir_ + "/../sprites/m4a1.png");
+    deagleTex_ = LoadTexture(mapDir_ + "/../sprites/deagle.png");
+    knifeTex_  = LoadTexture(mapDir_ + "/../sprites/knife.png");
+    bulletTex_ = LoadTexture("assets/images/effects/bullet.png");
+
+    std::cout << "[CS2DRenderer] 精灵加载: CT=" << (ctSheet_.tex ? "OK" : "FAIL")
+              << " T=" << (tSheet_.tex ? "OK" : "FAIL")
+              << " T_alt=" << (tAltSheet_.tex ? "OK" : "FAIL")
+              << " AK47=" << (ak47Tex_ ? "OK" : "FAIL")
+              << " M4A1=" << (m4a1Tex_ ? "OK" : "FAIL")
+              << " Deagle=" << (deagleTex_ ? "OK" : "FAIL")
+              << " Knife=" << (knifeTex_ ? "OK" : "FAIL")
+              << " Bullet=" << (bulletTex_ ? "OK" : "FAIL") << std::endl;
+
+    // Clean() 已销毁视野纹理，此处重建（修复视野雾失效 bug）
+    CreateVisionTexture();
 }
 
 SDL_Texture* CS2DRenderer::LoadTexture(const std::string& filename) {
@@ -106,13 +184,16 @@ bool CS2DRenderer::FindTileSrc(int gid, SDL_Texture*& outTex, SDL_Rect& outSrc) 
     return true;
 }
 
+// ============================================================================
+// 相机
+// ============================================================================
+
 void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
                                 int viewportW, int viewportH) {
     if (!world_) return;
     const float viewW = static_cast<float>(viewportW) / zoom_;
     const float viewH = static_cast<float>(viewportH) / zoom_;
 
-    // 使用 map 像素尺寸和背景图尺寸中的较大者
     float totalW = world_->GetMapPixelW();
     float totalH = world_->GetMapPixelH();
     if (world_->HasBackgroundImage()) {
@@ -124,36 +205,29 @@ void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
     cameraY_ = std::clamp(playerCenterY - viewH * 0.5f, 0.0f, std::max(0.0f, totalH - viewH));
 }
 
-// ========= 背景图绘制 =========
+// ============================================================================
+// 背景图 & tile 层
+// ============================================================================
 
 void CS2DRenderer::DrawImageBackground() {
     if (!backgroundTex_ || !world_) return;
-
     const float viewW = world_->GetImageW();
     const float viewH = world_->GetImageH();
-
-    // 背景图按原始像素绘制，跟随相机
     SDL_Rect dst;
     dst.x = static_cast<int>(std::lround(-cameraX_ * zoom_));
     dst.y = static_cast<int>(std::lround(-cameraY_ * zoom_));
     dst.w = static_cast<int>(std::lround(viewW * zoom_));
     dst.h = static_cast<int>(std::lround(viewH * zoom_));
-
     SDL_RenderCopy(renderer_, backgroundTex_, nullptr, &dst);
 }
-
-// ========= 瓦片层绘制 =========
 
 void CS2DRenderer::DrawTileLayer(const std::vector<int>& data,
                                  int layerWidth, int layerHeight) {
     if (!world_ || data.empty()) return;
-
     const int tileW = world_->GetTileWidth();
     const int tileH = world_->GetTileHeight();
-
-    const int viewW = static_cast<int>(std::ceil(800.0f / zoom_));
-    const int viewH = static_cast<int>(std::ceil(600.0f / zoom_));
-
+    const int viewW = static_cast<int>(std::ceil(static_cast<float>(viewW_) / zoom_));
+    const int viewH = static_cast<int>(std::ceil(static_cast<float>(viewH_) / zoom_));
     const int colMin = std::max(0, static_cast<int>(std::floor(cameraX_ / tileW)) - 1);
     const int colMax = std::min(layerWidth  - 1, static_cast<int>(std::ceil((cameraX_ + viewW) / tileW)) + 1);
     const int rowMin = std::max(0, static_cast<int>(std::floor(cameraY_ / tileH)) - 1);
@@ -183,7 +257,6 @@ void CS2DRenderer::DrawTileLayer(const std::vector<int>& data,
                 DrawTileFallback(gid, fallbackDst);
                 continue;
             }
-
             SDL_Rect dst = {
                 static_cast<int>(std::lround(screenX)),
                 static_cast<int>(std::lround(screenY)),
@@ -197,11 +270,7 @@ void CS2DRenderer::DrawTileLayer(const std::vector<int>& data,
 
 void CS2DRenderer::DrawWorld() {
     if (!world_) return;
-
-    // 1. 背景图（永远在最底层）
     DrawImageBackground();
-
-    // 2. 瓦片层
     const auto& names = world_->GetVisibleLayerNames();
     const auto& datas = world_->GetVisibleLayerData();
     for (size_t i = 0; i < names.size(); ++i) {
@@ -227,65 +296,149 @@ void CS2DRenderer::DrawOverlay() {
     }
 }
 
-// ========= 实体绘制 =========
+// ============================================================================
+// 角色精灵绘制（固定切片：按武器槽选取固定帧，不循环播放）
+//   主武器 → 第1行第1列；副武器 → 第2行第2列；近战 → 第2行第1列
+// ============================================================================
 
-void CS2DRenderer::DrawPlayer(float x, float y, float size, float aimAngle,
-                              bool isCT, Uint8 alpha) {
-    const float cx = (x - cameraX_) * zoom_;
-    const float cy = (y - cameraY_) * zoom_;
-    const float sz = size * zoom_;
+static constexpr float WALK_BOB_AMPLITUDE   = 0.6f;   // 世界单位（×zoom 后约 2.4px）
 
-    SDL_Rect body = {
-        static_cast<int>(std::lround(cx - sz * 0.5f)),
-        static_cast<int>(std::lround(cy - sz * 0.5f)),
-        static_cast<int>(std::lround(sz)),
-        static_cast<int>(std::lround(sz))
-    };
-    SDL_SetRenderDrawColor(renderer_, isCT ? 70 : 220, isCT ? 130 : 70,
-                           isCT ? 240 : 70, alpha);
-    SDL_RenderFillRect(renderer_, &body);
+void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
+    // 选序列帧 sheet
+    const SpriteSheetDef* sheet = nullptr;
+    if (p.spriteKey == 0)      sheet = &ctSheet_;
+    else if (p.spriteKey == 1) sheet = &tSheet_;
+    else                       sheet = &tAltSheet_;
 
-    const float lineLen = sz * 0.6f;
-    const int lx = static_cast<int>(std::lround(cx + std::cos(aimAngle) * lineLen));
-    const int ly = static_cast<int>(std::lround(cy + std::sin(aimAngle) * lineLen));
-    SDL_SetRenderDrawColor(renderer_, 255, 255, 255, alpha);
-    SDL_RenderDrawLine(renderer_,
-                       static_cast<int>(std::lround(cx)),
-                       static_cast<int>(std::lround(cy)), lx, ly);
+    if (!sheet || !sheet->tex) return;
+
+    // ---- 按武器槽固定切片（死亡用主武器帧 + 倾斜淡出） ----
+    int frameCol = 0, frameRow = 0;   // 默认：第1行第1列（主武器）
+    if (p.animState != 3) {           // 非死亡状态才按槽位切帧
+        switch (p.weaponSlot) {
+            case 1:  frameCol = 1; frameRow = 1; break;  // 副武器：第2行第2列
+            case 2:  frameCol = 0; frameRow = 1; break;  // 近战：  第2行第1列
+            default: frameCol = 0; frameRow = 0; break;  // 主武器：第1行第1列
+        }
+    }
+
+    // ---- srcRect：从整张图中"取景框"切出固定帧 ----
+    SDL_Rect src;
+    src.x = frameCol * sheet->frameW;
+    src.y = frameRow * sheet->frameH;
+    src.w = sheet->frameW;
+    src.h = sheet->frameH;
+
+    // ---- 屏幕坐标：视觉盒严格等于命中盒 p.size ----
+    const float cx = (p.x - cameraX_) * zoom_;
+    const float cy = (p.y - cameraY_) * zoom_;
+    const float sz = p.size * zoom_;
+    Uint8 alpha = p.alpha;
+
+    // 死亡动画：倾斜 + 淡出
+    float tiltDeg = 0.0f;
+    if (p.animState == 3) {
+        tiltDeg = -90.0f;
+        const float fadeFactor = std::max(0.0f, 1.0f - p.deathTimer / 2.0f);
+        alpha = static_cast<Uint8>(alpha * fadeFactor);
+        if (alpha < 5) return;
+    }
+
+    // 行走 bobbing（世界单位，随缩放）
+    float yOff = 0.0f;
+    if (p.animState == 1) {
+        yOff = std::sin(p.animTimer * 12.0f) * WALK_BOB_AMPLITUDE * zoom_;
+    }
+
+    // 射击后坐力（世界单位）
+    float xOff = 0.0f;
+    if (p.animState == 2) {
+        xOff = -std::max(0.0f, 1.0f - p.animTimer * 6.0f) * 0.8f * zoom_;
+    }
+
+    SDL_FRect dst;
+    dst.x = cx - sz * 0.5f + xOff;
+    dst.y = cy - sz * 0.5f + yOff;
+    dst.w = sz;
+    dst.h = sz;
+
+    SDL_SetTextureAlphaMod(sheet->tex, alpha);
+    SDL_FPoint center = { sz * 0.5f, sz * 0.5f };
+    SDL_RenderCopyExF(renderer_, sheet->tex, &src, &dst,
+                      p.aimAngle * 180.0f / 3.14159265f + tiltDeg,
+                      &center, SDL_FLIP_NONE);
+    SDL_SetTextureAlphaMod(sheet->tex, 255);
+
+    // 武器
+    if (p.animState != 3) {
+        DrawWeaponForCharacter(cx + xOff, cy + yOff, p.size, p.aimAngle,
+                               p.weaponSlot, p.weaponType);
+    }
 }
 
-void CS2DRenderer::DrawBOT(float x, float y, float size, float aimAngle,
-                            bool isCT, Uint8 alpha) {
-    const float cx = (x - cameraX_) * zoom_;
-    const float cy = (y - cameraY_) * zoom_;
-    const float sz = size * zoom_;
+void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float aimAngle,
+                                          int weaponSlot, int weaponType) {
+    SDL_Texture* weaponTex = nullptr;
+    float degOffset = 90.0f;   // 多数贴图原生朝上，需要 +90° 使其指向 aimAngle
+    float weaponSz   = 4.0f;   // 世界单位（×zoom 后约 16px）
 
-    SDL_Rect body = {
-        static_cast<int>(std::lround(cx - sz * 0.5f)),
-        static_cast<int>(std::lround(cy - sz * 0.5f)),
-        static_cast<int>(std::lround(sz)),
-        static_cast<int>(std::lround(sz))
-    };
-    SDL_SetRenderDrawColor(renderer_, isCT ? 50 : 200, isCT ? 100 : 50,
-                           isCT ? 210 : 50, alpha);
-    SDL_RenderFillRect(renderer_, &body);
+    switch (weaponSlot) {
+        case 1:  // 副武器：Deagle（原生朝右，偏移 0°）
+            weaponTex = deagleTex_;
+            degOffset = 0.0f;
+            weaponSz  = 3.0f;
+            break;
+        case 2:  // 近战：Knife（原生朝上）
+            weaponTex = knifeTex_;
+            degOffset = 90.0f;
+            weaponSz  = 4.5f;
+            break;
+        default: // 主武器：AK47 或 M4A1（原生朝上）
+            weaponTex = (weaponType == 0) ? ak47Tex_ : m4a1Tex_;
+            degOffset = 90.0f;
+            weaponSz  = 4.0f;
+            break;
+    }
+    if (!weaponTex) return;
 
-    const float lineLen = sz * 0.6f;
-    const int lx = static_cast<int>(std::lround(cx + std::cos(aimAngle) * lineLen));
-    const int ly = static_cast<int>(std::lround(cy + std::sin(aimAngle) * lineLen));
-    SDL_SetRenderDrawColor(renderer_, 255, 255, 200, alpha);
-    SDL_RenderDrawLine(renderer_,
-                       static_cast<int>(std::lround(cx)),
-                       static_cast<int>(std::lround(cy)), lx, ly);
+    // 武器绘制在精灵前方偏移（世界单位，随缩放）
+    const float offset = size * 0.6f * zoom_;
+    const float wx = cx + std::cos(aimAngle) * offset;
+    const float wy = cy + std::sin(aimAngle) * offset;
+    const float drawSz = weaponSz * zoom_;
+
+    SDL_FRect wdst;
+    wdst.x = wx - drawSz * 0.5f;
+    wdst.y = wy - drawSz * 0.5f;
+    wdst.w = drawSz;
+    wdst.h = drawSz;
+
+    SDL_FPoint wcenter = { drawSz * 0.5f, drawSz * 0.5f };
+    SDL_RenderCopyExF(renderer_, weaponTex, nullptr, &wdst,
+                      aimAngle * 180.0f / 3.14159265f + degOffset,
+                      &wcenter, SDL_FLIP_NONE);
 }
+
+// ============================================================================
+// 子弹 / 准星
+// ============================================================================
 
 void CS2DRenderer::DrawBullet(float x, float y, float vx, float vy) {
+    if (!bulletTex_) return;
+
     const float cx = (x - cameraX_) * zoom_;
     const float cy = (y - cameraY_) * zoom_;
-    const int r = std::max(2, static_cast<int>(std::lround(3.0f * zoom_)));
-    SDL_Rect rect = {static_cast<int>(cx) - r, static_cast<int>(cy) - r, r * 2, r * 2};
-    SDL_SetRenderDrawColor(renderer_, 255, 255, 100, 255);
-    SDL_RenderFillRect(renderer_, &rect);
+    const float s = 6.0f * zoom_;   // 世界单位，缩放后约 24px
+
+    SDL_Rect dst = {
+        static_cast<int>(std::lround(cx - s * 0.5f)),
+        static_cast<int>(std::lround(cy - s * 0.5f)),
+        static_cast<int>(std::lround(s)),
+        static_cast<int>(std::lround(s))
+    };
+    // bullet.png 竖直朝上，+90° 使其沿速度方向对齐
+    const double angle = std::atan2(vy, vx) * 180.0 / 3.14159265358979323846 + 90.0;
+    SDL_RenderCopyEx(renderer_, bulletTex_, nullptr, &dst, angle, nullptr, SDL_FLIP_NONE);
 }
 
 void CS2DRenderer::DrawCrosshair(float cx, float cy, float size) {
@@ -296,6 +449,141 @@ void CS2DRenderer::DrawCrosshair(float cx, float cy, float size) {
     SDL_RenderDrawLine(renderer_, static_cast<int>(cx), static_cast<int>(cy) - s,
                        static_cast<int>(cx), static_cast<int>(cy) + s);
 }
+
+void CS2DRenderer::DrawWeaponStatus(int weaponSlot, int weaponType) {
+    // 复刻模式一 UIRenderer::DrawWeaponStatus 的右下角武器栏视觉
+    SDL_Rect panel = {640, 536, 150, 54};
+    SDL_SetRenderDrawColor(renderer_, 24, 35, 43, 235);
+    SDL_RenderFillRect(renderer_, &panel);
+    SDL_SetRenderDrawColor(renderer_, 231, 176, 70, 255);
+    SDL_RenderDrawRect(renderer_, &panel);
+
+    // 按武器槽选图标（与 DrawWeaponForCharacter 映射一致）
+    SDL_Texture* icon = nullptr;
+    switch (weaponSlot) {
+        case 1:  icon = deagleTex_; break;
+        case 2:  icon = knifeTex_;  break;
+        default: icon = (weaponType == 0) ? ak47Tex_ : m4a1Tex_; break;
+    }
+    if (!icon) return;
+
+    int tw = 0, th = 0;
+    SDL_QueryTexture(icon, nullptr, nullptr, &tw, &th);
+    const int box = 38;
+    int dw = box;
+    int dh = box;
+    if (tw > 0 && th > 0) {
+        if (tw >= th) {
+            dh = std::max(1, static_cast<int>(std::lround(static_cast<float>(box) * th / tw)));
+        } else {
+            dw = std::max(1, static_cast<int>(std::lround(static_cast<float>(box) * tw / th)));
+        }
+    }
+    const int iconCX = panel.x + 6 + box / 2;
+    const int iconCY = panel.y + panel.h / 2;
+    SDL_Rect iconRect = {iconCX - dw / 2, iconCY - dh / 2, dw, dh};
+    SDL_RenderCopy(renderer_, icon, nullptr, &iconRect);
+}
+
+// ============================================================================
+// 视野遮罩
+// ============================================================================
+
+bool CS2DRenderer::HasLineOfSight(float fromX, float fromY, float toX, float toY) const {
+    if (!world_) return false;
+
+    const int tileW = world_->GetTileWidth();
+    const int tileH = world_->GetTileHeight();
+    const float dx = toX - fromX;
+    const float dy = toY - fromY;
+    const float dist = std::sqrt(dx * dx + dy * dy);
+    if (dist < 1.0f) return true;
+
+    const int steps = std::max(2, static_cast<int>(dist / (std::min(tileW, tileH) * 0.5f)));
+    for (int i = 0; i <= steps; ++i) {
+        const float t = static_cast<float>(i) / steps;
+        const float sx = fromX + dx * t;
+        const float sy = fromY + dy * t;
+        int row, col;
+        world_->WorldToTile(sx, sy, row, col);
+        if (world_->IsBlockingBullet(row, col)) return false;
+    }
+    return true;
+}
+
+void CS2DRenderer::DrawVisionFog(float playerX, float playerY, float aimAngle) {
+    if (!visionTex_ || visionPixels_.empty() || !world_) return;
+
+    const float fullyLitRadius = VISION_RADIUS - VISION_SOFT_EDGE;
+    const float px = playerX;
+    const float py = playerY;
+    const float halfConeRad = (VISION_CONE_DEG * 0.5f - VISION_ANGLE_SOFT * 0.5f) * 3.14159265f / 180.0f;
+    const float angleSoftRad = VISION_ANGLE_SOFT * 3.14159265f / 180.0f;
+
+    for (int y = 0; y < maskH_; ++y) {
+        for (int x = 0; x < maskW_; ++x) {
+            const float worldX = cameraX_ + (x + 0.5f) * VISION_MASK_SCALE / zoom_;
+            const float worldY = cameraY_ + (y + 0.5f) * VISION_MASK_SCALE / zoom_;
+            const float deltaX = worldX - px;
+            const float deltaY = worldY - py;
+            const float dist = std::sqrt(deltaX * deltaX + deltaY * deltaY);
+
+            // 距离因子：半径内 1.0，边缘 smoothstep → 0.0
+            float distFactor = 0.0f;
+            if (dist <= fullyLitRadius) {
+                distFactor = 1.0f;
+            } else if (dist < VISION_RADIUS) {
+                float blend = (dist - fullyLitRadius) / VISION_SOFT_EDGE;
+                blend = blend * blend * (3.0f - 2.0f * blend);  // smoothstep
+                distFactor = 1.0f - blend;
+            }
+
+            // 角度因子：扇形内 1.0，边缘 smoothstep → 0.0
+            float coneFactor = 0.0f;
+            {
+                const float targetAngle = std::atan2(deltaY, deltaX);
+                float diff = targetAngle - aimAngle;
+                while (diff > 3.14159265f)  diff -= 6.28318531f;
+                while (diff < -3.14159265f) diff += 6.28318531f;
+                const float absDiff = std::abs(diff);
+
+                if (absDiff <= halfConeRad) {
+                    coneFactor = 1.0f;
+                } else if (absDiff < halfConeRad + angleSoftRad) {
+                    float blend = (absDiff - halfConeRad) / angleSoftRad;
+                    blend = blend * blend * (3.0f - 2.0f * blend);  // smoothstep
+                    coneFactor = 1.0f - blend;
+                }
+            }
+
+            // LOS 遮挡：半径 + 角度均可达时检查，被墙挡则置 0
+            float losFactor = 1.0f;
+            if (distFactor > 0.0f && coneFactor > 0.0f) {
+                if (!HasLineOfSight(px, py, worldX, worldY)) {
+                    losFactor = 0.0f;
+                }
+            }
+
+            // 三条件同时满足才可见
+            const float vis = std::min({distFactor, coneFactor, losFactor});
+            const Uint8 alpha = static_cast<Uint8>(std::lround((1.0f - vis) * VISION_FOG_ALPHA));
+
+            const size_t idx = (static_cast<size_t>(y) * maskW_ + x) * 4;
+            visionPixels_[idx]     = VISION_FOG_R;
+            visionPixels_[idx + 1] = VISION_FOG_G;
+            visionPixels_[idx + 2] = VISION_FOG_B;
+            visionPixels_[idx + 3] = alpha;
+        }
+    }
+
+    SDL_UpdateTexture(visionTex_, nullptr, visionPixels_.data(), maskW_ * 4);
+    SDL_Rect viewport = {0, 0, 800, 600};
+    SDL_RenderCopy(renderer_, visionTex_, nullptr, &viewport);
+}
+
+// ============================================================================
+// 回退方块
+// ============================================================================
 
 void CS2DRenderer::DrawTileFallback(int gid, const SDL_Rect& dst) const {
     const int hash = (gid * 2654435761u) & 0xFFFFFF;

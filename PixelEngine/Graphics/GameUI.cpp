@@ -69,6 +69,8 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         float x = s.x;
         if (s.alignX == 1) {
             x = (800.0f - ImGui::CalcTextSize(text).x) * 0.5f;
+            // 实时把居中计算出的 x 写回配置，保证保存时落盘的是真实坐标（持久化）
+            if (cfg_) cfg_->GetMutable(key).x = x;
         }
         ImGui::SetCursorPosX(x);
         ImGui::SetCursorPosY(s.y);
@@ -180,7 +182,15 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 char buf[64];
                 snprintf(buf, sizeof(buf), "%02d  %d 分  %s", static_cast<int>(i + 1),
                          rec.score, rec.success ? "成功" : "失败");
-                ImGui::TextUnformatted(buf);
+                const TextStyle rs = ResolveStyle(cfg_, "menu_history_score_row", TextStyle{36.0f, 0.0f, 20, 255, 255, 255, 255, 0, false});
+                if (imGuiUI_) {
+                    ImFont* font = imGuiUI_->GetFont(rs.size);
+                    if (font) ImGui::PushFont(font);
+                    ImGui::TextColored(ImVec4(rs.r / 255.0f, rs.g / 255.0f, rs.b / 255.0f, rs.a / 255.0f), "%s", buf);
+                    if (font) ImGui::PopFont();
+                } else {
+                    ImGui::TextUnformatted(buf);
+                }
 
                 const float barW = rec.score > 0 ? scoreBarMaxW * static_cast<float>(rec.score) / static_cast<float>(maxScore) : 0.0f;
                 const ImU32 barCol = rec.success ? IM_COL32(80, 200, 120, 255) : IM_COL32(220, 80, 80, 255);
@@ -191,7 +201,15 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
             if (timeHistory && i < timeHistory->size()) {
                 char buf[64];
                 snprintf(buf, sizeof(buf), "%02d  %.2f 秒", static_cast<int>(i + 1), (*timeHistory)[i]);
-                ImGui::TextUnformatted(buf);
+                const TextStyle rt = ResolveStyle(cfg_, "menu_history_time_row", TextStyle{426.0f, 0.0f, 20, 255, 255, 255, 255, 0, false});
+                if (imGuiUI_) {
+                    ImFont* font = imGuiUI_->GetFont(rt.size);
+                    if (font) ImGui::PushFont(font);
+                    ImGui::TextColored(ImVec4(rt.r / 255.0f, rt.g / 255.0f, rt.b / 255.0f, rt.a / 255.0f), "%s", buf);
+                    if (font) ImGui::PopFont();
+                } else {
+                    ImGui::TextUnformatted(buf);
+                }
 
                 const float t = (*timeHistory)[i];
                 const float barW = t > 0.0f ? minTime / t * timeBarMaxW : 0.0f;
@@ -205,9 +223,9 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
     } else if (ctx.state == CONTROLS) {
         drawStatic("menu_controls_title", "操作说明", TextStyle{0.0f, 120.0f, 20, 255, 255, 255, 255, 0, false});
         ImGui::Separator();
-        // 多行 key：只参数化 x（y 保持 ImGui 自然流）
-        const TextStyle ls = ResolveStyle(cfg_, "menu_controls_lines", TextStyle{80.0f, 0.0f, 20, 255, 255, 255, 255, 0, false});
-        auto drawLine = [&](const char* text) {
+        // 每行独立 key：可单独调 x / 字号 / 颜色（y 保持 ImGui 自然流）
+        auto drawLine = [&](const std::string& key, const char* text) {
+            const TextStyle ls = ResolveStyle(cfg_, key, TextStyle{80.0f, 0.0f, 20, 255, 255, 255, 255, 0, false});
             ImGui::SetCursorPosX(ls.x);
             if (imGuiUI_) {
                 ImFont* font = imGuiUI_->GetFont(ls.size);
@@ -218,12 +236,12 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 ImGui::TextUnformatted(text);
             }
         };
-        drawLine("游戏中");
-        drawLine("W / A / S / D  或  方向键：移动");
-        drawLine("Shift：蓄力冲刺；Ctrl：聚焦视野");
-        drawLine("鼠标左键/空格：攻击；1/2/3：切换武器；F：拾取/丢弃");
-        drawLine("ESC：暂停游戏；F11：全屏；F1：静音");
-        drawLine("选择角色页：数字键 1-4 快捷选中对应角色");
+        drawLine("menu_controls_line1", "游戏中");
+        drawLine("menu_controls_line2", "W / A / S / D  或  方向键：移动");
+        drawLine("menu_controls_line3", "Shift：蓄力冲刺；Ctrl：聚焦视野");
+        drawLine("menu_controls_line4", "鼠标左键/空格：攻击；1/2/3：切换武器；F：拾取/丢弃");
+        drawLine("menu_controls_line5", "ESC：暂停游戏；F11：全屏；F1：静音");
+        drawLine("menu_controls_line6", "选择角色页：数字键 1-4 快捷选中对应角色");
         ImGui::SetCursorPosY(500.0f);
         if (bigButton("返回")) doClick([&]{ actions.goState(MAIN_MENU); });
     } else if (ctx.state == SETTINGS) {
@@ -240,16 +258,24 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
         const float startX = (800.0f - (labelW + gap + sliderW)) * 0.5f;
 
-        auto volumeSlider = [&](const char* label, const char* id, int* value, const std::function<void(int)>& apply) {
+        auto volumeSlider = [&](const char* label, const std::string& key, const char* id, int* value, const std::function<void(int)>& apply) {
+            const TextStyle ls = ResolveStyle(cfg_, key, TextStyle{0.0f, 0.0f, 20, 255, 255, 255, 255, 0, false});
             ImGui::SetCursorPosX(startX);
-            ImGui::TextUnformatted(label);
+            if (imGuiUI_) {
+                ImFont* font = imGuiUI_->GetFont(ls.size);
+                if (font) ImGui::PushFont(font);
+                ImGui::TextColored(ImVec4(ls.r / 255.0f, ls.g / 255.0f, ls.b / 255.0f, ls.a / 255.0f), "%s", label);
+                if (font) ImGui::PopFont();
+            } else {
+                ImGui::TextUnformatted(label);
+            }
             ImGui::SameLine(startX + labelW + gap);
             ImGui::SetNextItemWidth(sliderW);
             if (ImGui::SliderInt(id, value, 0, 100)) apply(*value);
         };
-        volumeSlider("主音量", "##master", &master, actions.setMasterVolume);
-        volumeSlider("音乐", "##music", &music, actions.setMusicVolume);
-        volumeSlider("音效", "##effects", &effects, actions.setEffectsVolume);
+        volumeSlider("主音量", "menu_settings_label_master", "##master", &master, actions.setMasterVolume);
+        volumeSlider("音乐", "menu_settings_label_music", "##music", &music, actions.setMusicVolume);
+        volumeSlider("音效", "menu_settings_label_effects", "##effects", &effects, actions.setEffectsVolume);
 
         const float muteW = 220.0f;
         ImGui::SetCursorPosX((800.0f - muteW) * 0.5f);
@@ -271,6 +297,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         ImGui::SetCursorPosY(330.0f);
         ImGui::SetCursorPosX(145.0f);
         if (ImGui::Button("算了，那我玩完吧", ImVec2(245, 58))) doClick([&]{ actions.goState(PAUSED); });
+        ImGui::SetCursorPosY(330.0f);
         ImGui::SetCursorPosX(410.0f);
         if (ImGui::Button("老子不玩了", ImVec2(245, 58))) doClick([&]{ actions.quitApp(); });
     }
@@ -281,6 +308,19 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 }
 
 void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
+    // 绘制 + 居中写回：alignX==1 时把居中计算出的 x 回写到 cfg_（持久化）
+    auto drawWithStyle = [&](const std::string& key, const char* text, const TextStyle& s) {
+        float x = s.x;
+        if (s.alignX == 1) {
+            ImFont* font = imGuiUI ? imGuiUI->GetFont(s.size) : nullptr;
+            if (font) ImGui::PushFont(font);
+            x = (800.0f - ImGui::CalcTextSize(text).x) * 0.5f;
+            if (font) ImGui::PopFont();
+            if (cfg_) cfg_->GetMutable(key).x = x;
+        }
+        DrawImGuiText(imGuiUI, text, x, s.y, s.r, s.g, s.b, s.a, s.size);
+    };
+
     if (ctx.state == PLAYING) {
         // 武器状态文字：panel = {640,536,150,54}
         std::string line = ctx.weaponName;
@@ -295,6 +335,11 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
         if (ctx.hasNoWeaponHint) {
             const TextStyle nh = ResolveStyle(cfg_, "no_weapon_hint", TextStyle{0.0f, 512.0f, 22, 245, 200, 90, 255, 1, false});
             if (nh.alignX == 1) {
+                ImFont* font = imGuiUI ? imGuiUI->GetFont(nh.size) : nullptr;
+                if (font) ImGui::PushFont(font);
+                const float cx = (800.0f - ImGui::CalcTextSize(ctx.hintText.c_str()).x) * 0.5f;
+                if (font) ImGui::PopFont();
+                if (cfg_) cfg_->GetMutable("no_weapon_hint").x = cx;
                 DrawImGuiTextCentered(imGuiUI, ctx.hintText.c_str(), nh.y, nh.r, nh.g, nh.b, nh.a, nh.size);
             } else {
                 DrawImGuiText(imGuiUI, ctx.hintText.c_str(), nh.x, nh.y, nh.r, nh.g, nh.b, nh.a, nh.size);
@@ -308,13 +353,13 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
         const TextStyle ht  = ResolveStyle(cfg_, "gameover_hint", TextStyle{248.0f, 350.0f, 18, 134, 222, 190, 255, 0, false});
 
         if (ctx.mode == TIME_ATTACK && ctx.diedByMonster) {
-            DrawImGuiText(imGuiUI, "失  败", ft.x, ft.y, ft.r, ft.g, ft.b, ft.a, ft.size, ft.alignX);
-            DrawImGuiText(imGuiUI, "被怪物击杀，惨遭致死！", fs.x, fs.y, fs.r, fs.g, fs.b, fs.a, fs.size, fs.alignX);
+            drawWithStyle("gameover_fail_title", "失  败", ft);
+            drawWithStyle("gameover_fail_subtitle", "被怪物击杀，惨遭致死！", fs);
         } else if (ctx.mode == TIME_ATTACK && ctx.diedByTrap) {
-            DrawImGuiText(imGuiUI, "失  败", ft.x, ft.y, ft.r, ft.g, ft.b, ft.a, ft.size, ft.alignX);
-            DrawImGuiText(imGuiUI, "触发致命陷阱，惨遭致死！", fs.x, fs.y, fs.r, fs.g, fs.b, fs.a, fs.size, fs.alignX);
+            drawWithStyle("gameover_fail_title", "失  败", ft);
+            drawWithStyle("gameover_fail_subtitle", "触发致命陷阱，惨遭致死！", fs);
         } else {
-            DrawImGuiText(imGuiUI, "本局结束", et.x, et.y, et.r, et.g, et.b, et.a, et.size, et.alignX);
+            drawWithStyle("gameover_end_title", "本局结束", et);
         }
 
         std::string result;
@@ -325,7 +370,7 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
             snprintf(buf, sizeof(buf), "通关用时：%.2f 秒", ctx.gameTimer);
             result = buf;
         }
-        DrawImGuiText(imGuiUI, result.c_str(), res.x, res.y, res.r, res.g, res.b, res.a, res.size, res.alignX);
-        DrawImGuiText(imGuiUI, "Enter / 空格：返回模式选择", ht.x, ht.y, ht.r, ht.g, ht.b, ht.a, ht.size, ht.alignX);
+        drawWithStyle("gameover_result", result.c_str(), res);
+        drawWithStyle("gameover_hint", "Enter / 空格：返回模式选择", ht);
     }
 }

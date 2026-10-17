@@ -26,7 +26,7 @@ TextConfig::TextConfig() {
     styles["gameover_result"] = TextStyle{285.0f, 280.0f, 24, 230, 238, 235, 255, 0, false};
     styles["gameover_hint"] = TextStyle{248.0f, 350.0f, 18, 134, 222, 190, 255, 0, false};
 
-    // —— 菜单静态文字（1.3.2 基线表逐字 + 角色选择页）——
+    // —— 菜单静态文字（1.3.2 基线表逐字 + 角色选择页 + 细粒度 key）——
     styles["menu_main_title"] = TextStyle{350.0f, 96.0f, 20, 255, 255, 255, 255, 0, false};
     styles["menu_role_title"] = TextStyle{0.0f, 60.0f, 26, 255, 255, 255, 255, 0, false};
     styles["menu_history_title"] = TextStyle{0.0f, 120.0f, 20, 255, 255, 255, 255, 0, false};
@@ -34,6 +34,20 @@ TextConfig::TextConfig() {
     styles["menu_history_mode2"] = TextStyle{460.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
     styles["menu_controls_title"] = TextStyle{0.0f, 120.0f, 20, 255, 255, 255, 255, 0, false};
     styles["menu_controls_lines"] = TextStyle{80.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
+    // 操作说明 6 行独立 key（默认 x=80，y 自然流；可单独调字号/颜色/x）
+    styles["menu_controls_line1"] = TextStyle{80.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
+    styles["menu_controls_line2"] = TextStyle{80.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
+    styles["menu_controls_line3"] = TextStyle{80.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
+    styles["menu_controls_line4"] = TextStyle{80.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
+    styles["menu_controls_line5"] = TextStyle{80.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
+    styles["menu_controls_line6"] = TextStyle{80.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
+    // 音量标签（设置页 3 个）
+    styles["menu_settings_label_master"] = TextStyle{0.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
+    styles["menu_settings_label_music"] = TextStyle{0.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
+    styles["menu_settings_label_effects"] = TextStyle{0.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
+    // 历史记录动态列表行（字号/颜色，位置由布局决定）
+    styles["menu_history_score_row"] = TextStyle{36.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
+    styles["menu_history_time_row"] = TextStyle{426.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
     styles["menu_settings_title"] = TextStyle{0.0f, 120.0f, 20, 255, 255, 255, 255, 0, false};
     styles["menu_exit_title"] = TextStyle{0.0f, 200.0f, 20, 255, 255, 255, 255, 0, false};
     styles["menu_exit_note"] = TextStyle{0.0f, 270.0f, 20, 255, 255, 255, 255, 0, false};
@@ -59,7 +73,12 @@ std::vector<std::string> TextConfig::Keys() const {
         "gameover_result", "gameover_hint",
         "menu_main_title", "menu_role_title",
         "menu_history_title", "menu_history_mode1", "menu_history_mode2",
-        "menu_controls_title", "menu_controls_lines", "menu_settings_title",
+        "menu_history_score_row", "menu_history_time_row",
+        "menu_controls_title", "menu_controls_lines",
+        "menu_controls_line1", "menu_controls_line2", "menu_controls_line3",
+        "menu_controls_line4", "menu_controls_line5", "menu_controls_line6",
+        "menu_settings_title",
+        "menu_settings_label_master", "menu_settings_label_music", "menu_settings_label_effects",
         "menu_exit_title", "menu_exit_note"
     };
     std::vector<std::string> result;
