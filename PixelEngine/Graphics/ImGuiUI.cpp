@@ -1,10 +1,12 @@
 #include "ImGuiUI.hpp"
 #include "../Core/UiTextChars.hpp"
+#include "../Core/PathUtils.hpp"
 #include "../ThirdParty/imgui/imgui.h"
 #include "../ThirdParty/imgui/backends/imgui_impl_sdl2.h"
 #include "../ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.h"
 #include <iostream>
 #include <cstdlib>
+#include <string>
 
 bool ImGuiUI::Initialize(SDL_Window* win, SDL_Renderer* ren) {
     window = win;
@@ -16,6 +18,71 @@ bool ImGuiUI::Initialize(SDL_Window* win, SDL_Renderer* ren) {
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+    // 锁定 imgui.ini 到 exe 目录，避免多目录启动导致窗口布局丢失
+    static std::string iniPath;
+    iniPath = PathUtils::ResolveWritablePath("imgui.ini");
+    io.IniFilename = iniPath.c_str();
+
+    // —— 游戏风格深色主题（暗蓝灰调） ——
+    {
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.FrameRounding    = 6.0f;
+        style.FrameBorderSize  = 1.0f;
+        style.WindowRounding   = 0.0f;
+        style.GrabRounding     = 4.0f;
+        style.ScrollbarRounding = 6.0f;
+        style.TabRounding      = 5.0f;
+        style.ItemSpacing      = ImVec2(10.0f, 8.0f);
+        style.ItemInnerSpacing = ImVec2(8.0f, 4.0f);
+        style.FramePadding     = ImVec2(10.0f, 6.0f);
+
+        ImVec4* colors = style.Colors;
+        // 底色系
+        colors[ImGuiCol_WindowBg]             = ImVec4(0.06f, 0.09f, 0.13f, 0.94f);
+        colors[ImGuiCol_ChildBg]              = ImVec4(0.08f, 0.11f, 0.15f, 1.00f);
+        colors[ImGuiCol_PopupBg]              = ImVec4(0.10f, 0.14f, 0.19f, 0.96f);
+        // 边框
+        colors[ImGuiCol_Border]               = ImVec4(0.25f, 0.30f, 0.38f, 0.60f);
+        colors[ImGuiCol_BorderShadow]         = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+        // 标题栏
+        colors[ImGuiCol_TitleBg]              = ImVec4(0.07f, 0.10f, 0.16f, 1.00f);
+        colors[ImGuiCol_TitleBgActive]        = ImVec4(0.09f, 0.13f, 0.21f, 1.00f);
+        colors[ImGuiCol_TitleBgCollapsed]     = ImVec4(0.06f, 0.08f, 0.12f, 0.80f);
+        // 按钮 —— 用暖金色调基底，各页面 PushStyleColor 做语义区分
+        colors[ImGuiCol_Button]               = ImVec4(0.14f, 0.18f, 0.25f, 1.00f);
+        colors[ImGuiCol_ButtonHovered]        = ImVec4(0.22f, 0.28f, 0.38f, 1.00f);
+        colors[ImGuiCol_ButtonActive]         = ImVec4(0.30f, 0.38f, 0.52f, 1.00f);
+        // 滑块
+        colors[ImGuiCol_SliderGrab]           = ImVec4(0.34f, 0.55f, 0.76f, 1.00f);
+        colors[ImGuiCol_SliderGrabActive]     = ImVec4(0.42f, 0.66f, 0.90f, 1.00f);
+        colors[ImGuiCol_FrameBg]              = ImVec4(0.10f, 0.13f, 0.18f, 1.00f);
+        colors[ImGuiCol_FrameBgHovered]       = ImVec4(0.14f, 0.18f, 0.25f, 1.00f);
+        colors[ImGuiCol_FrameBgActive]        = ImVec4(0.18f, 0.24f, 0.34f, 1.00f);
+        // 文本
+        colors[ImGuiCol_Text]                 = ImVec4(0.92f, 0.93f, 0.95f, 1.00f);
+        colors[ImGuiCol_TextDisabled]         = ImVec4(0.45f, 0.48f, 0.53f, 1.00f);
+        // 选择/高亮
+        colors[ImGuiCol_Header]               = ImVec4(0.16f, 0.22f, 0.32f, 1.00f);
+        colors[ImGuiCol_HeaderHovered]        = ImVec4(0.22f, 0.30f, 0.42f, 1.00f);
+        colors[ImGuiCol_HeaderActive]         = ImVec4(0.28f, 0.38f, 0.54f, 1.00f);
+        colors[ImGuiCol_CheckMark]            = ImVec4(0.46f, 0.78f, 0.52f, 1.00f);
+        // Tab
+        colors[ImGuiCol_Tab]                  = ImVec4(0.10f, 0.13f, 0.18f, 1.00f);
+        colors[ImGuiCol_TabHovered]           = ImVec4(0.18f, 0.24f, 0.34f, 1.00f);
+        colors[ImGuiCol_TabActive]            = ImVec4(0.14f, 0.18f, 0.25f, 1.00f);
+        colors[ImGuiCol_TabUnfocused]         = ImVec4(0.08f, 0.10f, 0.14f, 0.97f);
+        colors[ImGuiCol_TabUnfocusedActive]   = ImVec4(0.10f, 0.14f, 0.20f, 1.00f);
+        // 滚动条
+        colors[ImGuiCol_ScrollbarBg]          = ImVec4(0.04f, 0.06f, 0.09f, 0.53f);
+        colors[ImGuiCol_ScrollbarGrab]        = ImVec4(0.18f, 0.24f, 0.34f, 1.00f);
+        colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.26f, 0.34f, 0.48f, 1.00f);
+        colors[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.34f, 0.44f, 0.60f, 1.00f);
+        // Separator
+        colors[ImGuiCol_Separator]            = ImVec4(0.18f, 0.24f, 0.32f, 0.80f);
+        colors[ImGuiCol_SeparatorHovered]     = ImVec4(0.30f, 0.42f, 0.58f, 1.00f);
+        colors[ImGuiCol_SeparatorActive]      = ImVec4(0.38f, 0.52f, 0.72f, 1.00f);
+    }
 
     if (!ImGui_ImplSDL2_InitForSDLRenderer(window, renderer)) {
         std::cerr << "ImGui SDL2 后端初始化失败" << std::endl;

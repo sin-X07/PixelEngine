@@ -47,6 +47,8 @@ private:
 
     float cameraX = 0.0f;
     float cameraY = 0.0f;
+    float viewW_ = 800.0f;   // 动态逻辑视口（调用 SetViewportSize 更新）
+    float viewH_ = 600.0f;
     float sprintBlend = 0.0f;
     float focusBlend = 0.0f;
 
@@ -58,6 +60,7 @@ public:
     ~RenderSystem() { Clean(); }
 
     bool Initialize(SDL_Renderer* ren, int screenWidth, int screenHeight);
+    void SetViewportSize(int w, int h);
     void Clean();
 
     void UpdateCamera(float playerX, float playerY, float playerSize, const WorldMap& worldMap,

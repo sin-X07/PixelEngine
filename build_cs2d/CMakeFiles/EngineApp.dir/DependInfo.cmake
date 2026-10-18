@@ -10,6 +10,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
   "D:/BJTU/Cpp/Outstanding Projects/PixelEngine/PixelEngine/Audio/AudioManager.cpp" "CMakeFiles/EngineApp.dir/Audio/AudioManager.cpp.obj" "gcc" "CMakeFiles/EngineApp.dir/Audio/AudioManager.cpp.obj.d"
   "D:/BJTU/Cpp/Outstanding Projects/PixelEngine/PixelEngine/CS2D/CS2DGame.cpp" "CMakeFiles/EngineApp.dir/CS2D/CS2DGame.cpp.obj" "gcc" "CMakeFiles/EngineApp.dir/CS2D/CS2DGame.cpp.obj.d"
+  "D:/BJTU/Cpp/Outstanding Projects/PixelEngine/PixelEngine/CS2D/CS2DOverlay.cpp" "CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.obj" "gcc" "CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.obj.d"
   "D:/BJTU/Cpp/Outstanding Projects/PixelEngine/PixelEngine/CS2D/CS2DRenderer.cpp" "CMakeFiles/EngineApp.dir/CS2D/CS2DRenderer.cpp.obj" "gcc" "CMakeFiles/EngineApp.dir/CS2D/CS2DRenderer.cpp.obj.d"
   "D:/BJTU/Cpp/Outstanding Projects/PixelEngine/PixelEngine/CS2D/CS2DWorld.cpp" "CMakeFiles/EngineApp.dir/CS2D/CS2DWorld.cpp.obj" "gcc" "CMakeFiles/EngineApp.dir/CS2D/CS2DWorld.cpp.obj.d"
   "D:/BJTU/Cpp/Outstanding Projects/PixelEngine/PixelEngine/CS2D/TMJParser.cpp" "CMakeFiles/EngineApp.dir/CS2D/TMJParser.cpp.obj" "gcc" "CMakeFiles/EngineApp.dir/CS2D/TMJParser.cpp.obj.d"

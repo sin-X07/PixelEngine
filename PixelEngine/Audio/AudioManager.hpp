@@ -19,6 +19,9 @@ enum class SoundEffect {
     KATANA_SWING  // 武士刀挥砍
 };
 
+// 专用音频通道（避免连发射击音效相互抢占导致无声）
+constexpr int CHANNEL_AK47_FIRE = 0;   // AK47 连发专用
+
 class AudioManager {
 private:
     bool audioInitialized = false;
@@ -38,7 +41,7 @@ private:
     Mix_Chunk* katanaSound = nullptr;
 
     int masterVolume = 100;
-    int musicVolume = 25;
+    int musicVolume = 40;
     int effectsVolume = 100;
     bool masterMuted = false;
 
@@ -55,6 +58,8 @@ public:
     void StopMusic();
 
     void PlaySound(SoundEffect effect);
+    void PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
+                     float listenerX, float listenerY, float listenerAngle);
     void UpdateVolumes();
 
     void SetMasterVolume(int vol);

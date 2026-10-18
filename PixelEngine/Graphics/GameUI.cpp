@@ -14,7 +14,7 @@ static void DrawImGuiText(ImGuiUI* ui, const char* text, float x, float y,
     if (font) ImGui::PushFont(font);
     if (alignX == 1) {
         const ImVec2 sz = ImGui::CalcTextSize(text);
-        x = (800.0f - sz.x) * 0.5f;
+        x = (ImGui::GetIO().DisplaySize.x - sz.x) * 0.5f;
     }
     ImGui::GetForegroundDrawList()->AddText(ImVec2(x, y), IM_COL32(r, g, b, a), text);
     if (font) ImGui::PopFont();
@@ -27,7 +27,7 @@ static void DrawImGuiTextCentered(ImGuiUI* ui, const char* text, float centerY,
     ImFont* font = ui->GetFont(size);
     if (font) ImGui::PushFont(font);
     const ImVec2 sz = ImGui::CalcTextSize(text);
-    const float x = (800.0f - sz.x) / 2.0f;
+    const float x = (ImGui::GetIO().DisplaySize.x - sz.x) / 2.0f;
     ImGui::GetForegroundDrawList()->AddText(ImVec2(x, centerY), IM_COL32(r, g, b, a), text);
     if (font) ImGui::PopFont();
 }
@@ -49,7 +49,8 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                  ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
                  ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-    const float centerX = 400.0f;
+    const float vpW = viewport->WorkSize.x;
+    const float centerX = vpW * 0.5f;
     const float buttonW = 300.0f;
     const float buttonH = 46.0f;
     auto bigButton = [&](const char* label) {
@@ -68,7 +69,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 
         float x = s.x;
         if (s.alignX == 1) {
-            x = (800.0f - ImGui::CalcTextSize(text).x) * 0.5f;
+            x = (vpW - ImGui::CalcTextSize(text).x) * 0.5f;
             // 实时把居中计算出的 x 写回配置，保证保存时落盘的是真实坐标（持久化）
             if (cfg_) cfg_->GetMutable(key).x = x;
         }
@@ -106,7 +107,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         // 卡片矩形由 Core/Roles.hpp::GetRoleCardRect 提供，与 Engine 的立绘预览严格对齐；
         // 预览区占卡片上部（Engine 已画好），按钮画在卡片下部。
         for (int i = 0; i < ROLE_COUNT; ++i) {
-            const SDL_FRect card = GetRoleCardRect(i);
+            const SDL_FRect card = GetRoleCardRect(i, ImGui::GetIO().DisplaySize.x);
             const float buttonH = 84.0f;
             ImGui::SetCursorPos(ImVec2(card.x + 6.0f, card.y + card.h - buttonH - 6.0f));
             ImGui::PushID(i);
@@ -245,18 +246,25 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         ImGui::SetCursorPosY(500.0f);
         if (bigButton("返回")) doClick([&]{ actions.goState(MAIN_MENU); });
     } else if (ctx.state == SETTINGS) {
-        drawStatic("menu_settings_title", "设置", TextStyle{0.0f, 120.0f, 20, 255, 255, 255, 255, 0, false});
-        ImGui::Separator();
+        drawStatic("menu_settings_title", "设置", TextStyle{0.0f, 40.0f, 20, 255, 255, 255, 255, 0, false});
 
         int master = ctx.masterVolume;
         int music = ctx.musicVolume;
         int effects = ctx.effectsVolume;
 
         // 固定标签列宽 + 滑条列宽，整体水平居中，避免行内标签宽度不同导致滑条起点漂移。
+        const float vpW = viewport->WorkSize.x;
         const float labelW = 90.0f;
         const float sliderW = 360.0f;
         const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
-        const float startX = (800.0f - (labelW + gap + sliderW)) * 0.5f;
+        const float startX = (vpW - (labelW + gap + sliderW)) * 0.5f;
+
+        // —— 可滚动区域：主内容在上方滚动，底部按钮固定 ——
+        ImGui::SetCursorPosY(70.0f);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.078f, 0.118f, 0.157f, 1.0f));  // 与页面背景 (20,30,40) 一致
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, ImVec4(0.05f, 0.07f, 0.10f, 0.60f));
+        ImGui::BeginChild("SettingsScroll", ImVec2(vpW, 460.0f), false,
+                          ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
         auto volumeSlider = [&](const char* label, const std::string& key, const char* id, int* value, const std::function<void(int)>& apply) {
             const TextStyle ls = ResolveStyle(cfg_, key, TextStyle{0.0f, 0.0f, 20, 255, 255, 255, 255, 0, false});
@@ -278,11 +286,184 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         volumeSlider("音效", "menu_settings_label_effects", "##effects", &effects, actions.setEffectsVolume);
 
         const float muteW = 220.0f;
-        ImGui::SetCursorPosX((800.0f - muteW) * 0.5f);
+        ImGui::SetCursorPosX((vpW - muteW) * 0.5f);
         if (ImGui::Button(ctx.muted ? "已静音（点击取消）" : "切换静音", ImVec2(muteW, 0.0f))) {
             actions.toggleMute();
         }
-        ImGui::SetCursorPosY(500.0f);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // ====== CS2D 设置 ======
+        // 鼠标灵敏度
+        {
+            float sens = ctx.mouseSensitivity;
+            ImGui::SetCursorPosX(startX);
+            ImGui::Text("鼠标灵敏度");
+            ImGui::SameLine(startX + labelW + gap);
+            ImGui::SetNextItemWidth(sliderW);
+            if (ImGui::SliderFloat("##sens", &sens, 0.1f, 3.0f, "%.1f")) {
+                actions.setMouseSensitivity(sens);
+            }
+        }
+
+        // 帧率
+        {
+            ImGui::SetCursorPosX(startX);
+            ImGui::Text("帧率上限");
+            ImGui::SameLine(startX + labelW + gap);
+            ImGui::SetNextItemWidth(sliderW);
+            int fps = ctx.targetFPS;
+            const char* fpsLabels[] = { "30", "60", "120" };
+            int fpsIdx = (fps >= 120) ? 2 : (fps >= 60) ? 1 : 0;
+            if (ImGui::Combo("##fps", &fpsIdx, fpsLabels, 3)) {
+                const int newFps = (fpsIdx == 2) ? 120 : (fpsIdx == 1) ? 60 : 30;
+                actions.setTargetFPS(newFps);
+            }
+        }
+
+        // 分辨率
+        {
+            ImGui::SetCursorPosX(startX);
+            ImGui::Text("分辨率");
+            ImGui::SameLine(startX + labelW + gap);
+            ImGui::SetNextItemWidth(sliderW);
+            const char* resLabels[] = { "800x600", "1024x768", "1280x960", "1920x1080", "2560x1440", "2560x1600" };
+            int resIdx = ctx.resIdx;
+            if (ImGui::Combo("##res", &resIdx, resLabels, 6)) {
+                const int resW[] = { 800, 1024, 1280, 1920, 2560, 2560 };
+                const int resH[] = { 600, 768, 960, 1080, 1440, 1600 };
+                actions.setResolution(resW[resIdx], resH[resIdx], resIdx);
+            }
+        }
+
+        // 全屏
+        {
+            ImGui::SetCursorPosX(startX);
+            bool fs = ctx.isFullscreen;
+            if (ImGui::Checkbox("全屏 (F11)", &fs)) {
+                actions.setFullscreen(fs);
+            }
+            ImGui::SameLine(startX + labelW + gap + 160.0f);
+            ImGui::TextDisabled("(F11)");
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // ====== 准星设置 ======
+        ImGui::SetCursorPosX(startX);
+        ImGui::TextColored(ImVec4(0.35f, 0.75f, 0.95f, 1.0f), "准星设置");
+        ImGui::Spacing();
+
+        // 颜色
+        {
+            float col[4] = { ctx.crosshairR / 255.0f, ctx.crosshairG / 255.0f, ctx.crosshairB / 255.0f, ctx.crosshairA / 255.0f };
+            ImGui::SetCursorPosX(startX);
+            ImGui::Text("颜色");
+            ImGui::SameLine(startX + labelW + gap);
+            ImGui::SetNextItemWidth(sliderW);
+            if (ImGui::ColorEdit4("##crossColor", col, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar)) {
+                actions.setCrosshairColor(
+                    static_cast<Uint8>(col[0] * 255),
+                    static_cast<Uint8>(col[1] * 255),
+                    static_cast<Uint8>(col[2] * 255),
+                    static_cast<Uint8>(col[3] * 255));
+            }
+        }
+
+        // 粗细
+        {
+            float t = ctx.crosshairThickness;
+            ImGui::SetCursorPosX(startX);
+            ImGui::Text("粗细");
+            ImGui::SameLine(startX + labelW + gap);
+            ImGui::SetNextItemWidth(sliderW);
+            if (ImGui::SliderFloat("##crossThick", &t, 0.5f, 4.0f, "%.1f")) actions.setCrosshairThickness(t);
+        }
+
+        // 长度
+        {
+            float len = ctx.crosshairLength;
+            ImGui::SetCursorPosX(startX);
+            ImGui::Text("长度");
+            ImGui::SameLine(startX + labelW + gap);
+            ImGui::SetNextItemWidth(sliderW);
+            if (ImGui::SliderFloat("##crossLen", &len, 4.0f, 30.0f, "%.0f")) actions.setCrosshairLength(len);
+        }
+
+        // 间隔
+        {
+            float g = ctx.crosshairGap;
+            ImGui::SetCursorPosX(startX);
+            ImGui::Text("中心间隔");
+            ImGui::SameLine(startX + labelW + gap);
+            ImGui::SetNextItemWidth(sliderW);
+            if (ImGui::SliderFloat("##crossGap", &g, 0.0f, 12.0f, "%.1f")) actions.setCrosshairGap(g);
+        }
+
+        // 中心点
+        {
+            bool dot = ctx.crosshairCenterDot;
+            ImGui::SetCursorPosX(startX);
+            if (ImGui::Checkbox("显示中心点", &dot)) actions.setCrosshairCenterDot(dot);
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // ====== 雷达设置 ======
+        ImGui::SetCursorPosX(startX);
+        ImGui::TextColored(ImVec4(0.35f, 0.75f, 0.95f, 1.0f), "雷达设置");
+        ImGui::Spacing();
+
+        {
+            bool pc = ctx.radarPlayerCentered;
+            ImGui::SetCursorPosX(startX);
+            if (ImGui::Checkbox("玩家居中（否则固定在左上角）", &pc)) actions.setRadarPlayerCentered(pc);
+        }
+        {
+            bool rwp = ctx.radarRotateWithPlayer;
+            ImGui::SetCursorPosX(startX);
+            if (ImGui::Checkbox("雷达随玩家旋转", &rwp)) actions.setRadarRotateWithPlayer(rwp);
+        }
+        {
+            bool blend = ctx.radarBlendBg;
+            ImGui::SetCursorPosX(startX);
+            if (ImGui::Checkbox("半透明背景", &blend)) actions.setRadarBlendBg(blend);
+        }
+        {
+            int alpha = ctx.radarBgAlpha;
+            ImGui::SetCursorPosX(startX);
+            ImGui::Text("背景透明度");
+            ImGui::SameLine(startX + labelW + gap);
+            ImGui::SetNextItemWidth(sliderW);
+            if (ImGui::SliderInt("##radarAlpha", &alpha, 0, 255)) actions.setRadarBgAlpha(alpha);
+        }
+        {
+            int size = ctx.radarHudSize;
+            ImGui::SetCursorPosX(startX);
+            ImGui::Text("雷达大小");
+            ImGui::SameLine(startX + labelW + gap);
+            ImGui::SetNextItemWidth(sliderW);
+            if (ImGui::SliderInt("##radarSize", &size, 60, 220)) actions.setRadarHudSize(size);
+        }
+        {
+            float zoom = ctx.radarMapZoom;
+            ImGui::SetCursorPosX(startX);
+            ImGui::Text("地图缩放");
+            ImGui::SameLine(startX + labelW + gap);
+            ImGui::SetNextItemWidth(sliderW);
+            if (ImGui::SliderFloat("##radarZoom", &zoom, 0.001f, 0.01f, "%.3f")) actions.setRadarMapZoom(zoom);
+        }
+
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+
+        ImGui::SetCursorPosY(540.0f);
         if (bigButton("返回")) doClick([&]{ actions.goState(ctx.settingsReturnState); });
     } else if (ctx.state == PAUSED) {
         ImGui::SetCursorPosY(150.0f);
@@ -295,11 +476,11 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         drawStatic("menu_exit_title", "确认退出", TextStyle{0.0f, 200.0f, 20, 255, 255, 255, 255, 0, false});
         drawStatic("menu_exit_note", "本次游戏数据将不会被保存", TextStyle{0.0f, 270.0f, 20, 255, 255, 255, 255, 0, false});
         ImGui::SetCursorPosY(330.0f);
-        ImGui::SetCursorPosX(145.0f);
-        if (ImGui::Button("算了，那我玩完吧", ImVec2(245, 58))) doClick([&]{ actions.goState(PAUSED); });
+        ImGui::SetCursorPosX(centerX - buttonW - 15.0f);
+        if (ImGui::Button("算了，那我玩完吧", ImVec2(buttonW, buttonH))) doClick([&]{ actions.goState(PAUSED); });
         ImGui::SetCursorPosY(330.0f);
-        ImGui::SetCursorPosX(410.0f);
-        if (ImGui::Button("老子不玩了", ImVec2(245, 58))) doClick([&]{ actions.quitApp(); });
+        ImGui::SetCursorPosX(centerX + 15.0f);
+        if (ImGui::Button("老子不玩了", ImVec2(buttonW, buttonH))) doClick([&]{ actions.quitApp(); });
     }
 
     ImGui::End();
@@ -308,13 +489,14 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 }
 
 void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
+    const float vpW = ImGui::GetIO().DisplaySize.x;
     // 绘制 + 居中写回：alignX==1 时把居中计算出的 x 回写到 cfg_（持久化）
     auto drawWithStyle = [&](const std::string& key, const char* text, const TextStyle& s) {
         float x = s.x;
         if (s.alignX == 1) {
             ImFont* font = imGuiUI ? imGuiUI->GetFont(s.size) : nullptr;
             if (font) ImGui::PushFont(font);
-            x = (800.0f - ImGui::CalcTextSize(text).x) * 0.5f;
+            x = (ImGui::GetIO().DisplaySize.x - ImGui::CalcTextSize(text).x) * 0.5f;
             if (font) ImGui::PopFont();
             if (cfg_) cfg_->GetMutable(key).x = x;
         }
@@ -322,13 +504,20 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
     };
 
     if (ctx.state == PLAYING) {
+        // CS2D 计分板（顶端正中）
+        if (ctx.mode == CS2D_MODE) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "人数: %d    击杀: %d    阵亡: %d", ctx.cs2dTotal, ctx.cs2dKills, ctx.cs2dDeaths);
+            DrawImGuiTextCentered(imGuiUI, buf, 14.0f, 200, 200, 200, 255, 20);
+        }
+
         // 武器状态文字：panel = {640,536,150,54}
         std::string line = ctx.weaponName;
         if (ctx.magazineSize > 0) {
             line += " " + std::to_string(ctx.ammo) + "/" + std::to_string(ctx.magazineSize);
         }
         const TextStyle ws = ResolveStyle(cfg_, "weapon_status", TextStyle{0.0f, 549.0f, 18, 230, 238, 235, 255, 0, true});
-        const float textX = ws.anchored ? (640.0f + (ctx.hasWeaponIcon ? 50.0f : 12.0f)) : ws.x;
+        const float textX = ws.anchored ? (vpW - 160.0f + (ctx.hasWeaponIcon ? 50.0f : 12.0f)) : ws.x;
         DrawImGuiText(imGuiUI, line.c_str(), textX, ws.y, ws.r, ws.g, ws.b, ws.a, ws.size);
 
         // 无武器提示（居中，y=512）
@@ -337,7 +526,7 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
             if (nh.alignX == 1) {
                 ImFont* font = imGuiUI ? imGuiUI->GetFont(nh.size) : nullptr;
                 if (font) ImGui::PushFont(font);
-                const float cx = (800.0f - ImGui::CalcTextSize(ctx.hintText.c_str()).x) * 0.5f;
+                const float cx = (ImGui::GetIO().DisplaySize.x - ImGui::CalcTextSize(ctx.hintText.c_str()).x) * 0.5f;
                 if (font) ImGui::PopFont();
                 if (cfg_) cfg_->GetMutable("no_weapon_hint").x = cx;
                 DrawImGuiTextCentered(imGuiUI, ctx.hintText.c_str(), nh.y, nh.r, nh.g, nh.b, nh.a, nh.size);

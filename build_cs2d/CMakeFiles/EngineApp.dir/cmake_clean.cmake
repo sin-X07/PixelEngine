@@ -3,6 +3,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/EngineApp.dir/Audio/AudioManager.cpp.obj.d"
   "CMakeFiles/EngineApp.dir/CS2D/CS2DGame.cpp.obj"
   "CMakeFiles/EngineApp.dir/CS2D/CS2DGame.cpp.obj.d"
+  "CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.obj"
+  "CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.obj.d"
   "CMakeFiles/EngineApp.dir/CS2D/CS2DRenderer.cpp.obj"
   "CMakeFiles/EngineApp.dir/CS2D/CS2DRenderer.cpp.obj.d"
   "CMakeFiles/EngineApp.dir/CS2D/CS2DWorld.cpp.obj"

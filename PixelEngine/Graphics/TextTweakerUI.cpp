@@ -14,7 +14,7 @@ void TextTweakerUI::Draw(TextConfig& config) {
 
     // 顶部操作
     if (ImGui::Button("保存全部")) {
-        config.Save(PathUtils::ResolveWritablePath("assets/config/text.ini"));
+        config.Save(PathUtils::ResolveWritablePath("text_config.ini"));
     }
     ImGui::SameLine();
     if (ImGui::Button("重置全部")) {

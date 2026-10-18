@@ -73,6 +73,26 @@ bool RenderSystem::Initialize(SDL_Renderer* ren, int screenWidth, int screenHeig
     return true;
 }
 
+void RenderSystem::SetViewportSize(int w, int h) {
+    viewW_ = static_cast<float>(w);
+    viewH_ = static_cast<float>(h);
+    // 视野遮罩纹理需要重建以匹配新尺寸
+    if (visionTexture) { SDL_DestroyTexture(visionTexture); visionTexture = nullptr; }
+    visionTexture = SDL_CreateTexture(
+        renderer,
+        SDL_PIXELFORMAT_RGBA8888,
+        SDL_TEXTUREACCESS_STREAMING,
+        w / VISION_MASK_SCALE,
+        h / VISION_MASK_SCALE
+    );
+    if (visionTexture) {
+        SDL_SetTextureBlendMode(visionTexture, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(visionTexture, SDL_ScaleModeLinear);
+        visionPixels.resize(static_cast<size_t>(w / VISION_MASK_SCALE) *
+                            (h / VISION_MASK_SCALE) * 4);
+    }
+}
+
 void RenderSystem::Clean() {
     if (dungeonFloorTexture) { SDL_DestroyTexture(dungeonFloorTexture); dungeonFloorTexture = nullptr; }
     if (dungeonWallTexture) { SDL_DestroyTexture(dungeonWallTexture); dungeonWallTexture = nullptr; }
@@ -139,8 +159,8 @@ void RenderSystem::UpdateCamera(float playerX, float playerY, float playerSize,
     }
 
     const float cameraZoom = CurrentCameraZoom();
-    const float viewportWorldWidth = 800.0f / cameraZoom;
-    const float viewportWorldHeight = 600.0f / cameraZoom;
+    const float viewportWorldWidth = viewW_ / cameraZoom;
+    const float viewportWorldHeight = viewH_ / cameraZoom;
     const float mapPixelWidth = static_cast<float>(worldMap.GetMapWidthTiles() * worldMap.GetTileSize());
     const float mapPixelHeight = static_cast<float>(worldMap.GetMapHeightTiles() * worldMap.GetTileSize());
     const float maxCameraX = std::max(0.0f, mapPixelWidth - viewportWorldWidth);
@@ -154,7 +174,7 @@ void RenderSystem::UpdateCamera(float playerX, float playerY, float playerSize,
 }
 
 void RenderSystem::DrawDungeonBackground(const WorldMap& worldMap, Uint8 overlayAlpha) {
-    SDL_Rect background = {0, 0, 800, 600};
+    SDL_Rect background = {0, 0, static_cast<int>(viewW_), static_cast<int>(viewH_)};
     SDL_SetRenderDrawColor(renderer, 18, 36, 43, 255);
     SDL_RenderFillRect(renderer, &background);
 
@@ -184,7 +204,7 @@ void RenderSystem::DrawDungeonBackground(const WorldMap& worldMap, Uint8 overlay
 }
 
 void RenderSystem::DrawAnimatedMenuBackground(const WorldMap& worldMap, float timeSeconds) {
-    SDL_Rect background = {0, 0, 800, 600};
+    SDL_Rect background = {0, 0, static_cast<int>(viewW_), static_cast<int>(viewH_)};
     SDL_SetRenderDrawColor(renderer, 14, 28, 35, 255);
     SDL_RenderFillRect(renderer, &background);
 
@@ -429,8 +449,8 @@ bool RenderSystem::HasLineOfSight(float targetWorldX, float targetWorldY,
 void RenderSystem::DrawVisionFog(float playerX, float playerY, float playerSize, const WorldMap& worldMap) {
     if (!visionTexture || visionPixels.empty()) return;
 
-    const int maskWidth = 800 / VISION_MASK_SCALE;
-    const int maskHeight = 600 / VISION_MASK_SCALE;
+    const int maskWidth = static_cast<int>(viewW_) / VISION_MASK_SCALE;
+    const int maskHeight = static_cast<int>(viewH_) / VISION_MASK_SCALE;
     const float playerCenterX = playerX + playerSize * 0.5f;
     const float playerCenterY = playerY + playerSize * 0.5f;
     const float visionRadius = CurrentVisionRadius();
@@ -466,7 +486,7 @@ void RenderSystem::DrawVisionFog(float playerX, float playerY, float playerSize,
     }
 
     SDL_UpdateTexture(visionTexture, nullptr, visionPixels.data(), maskWidth * 4);
-    SDL_Rect viewport = {0, 0, 800, 600};
+    SDL_Rect viewport = {0, 0, static_cast<int>(viewW_), static_cast<int>(viewH_)};
     SDL_RenderCopy(renderer, visionTexture, nullptr, &viewport);
 }
 

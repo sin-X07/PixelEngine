@@ -6,6 +6,12 @@
 #include <algorithm>
 #include <iostream>
 
+// GCC 15 误报: TextStyle struct 赋值触发的 stringop-overflow（实际安全，struct 有 9 个字段共 36 字节）
+#if defined(__GNUC__) && __GNUC__ >= 13
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
+
 namespace {
     // 裁剪首尾空白与回车
     std::string Trim(const std::string& s) {
@@ -18,42 +24,46 @@ namespace {
 
 TextConfig::TextConfig() {
     // —— 游戏内 7 key（1.3.1 基线表逐字）——
-    styles["weapon_status"] = TextStyle{0.0f, 549.0f, 18, 230, 238, 235, 255, 0, true};
-    styles["no_weapon_hint"] = TextStyle{0.0f, 512.0f, 22, 245, 200, 90, 255, 1, false};
-    styles["gameover_fail_title"] = TextStyle{355.0f, 216.0f, 30, 245, 80, 80, 255, 0, false};
-    styles["gameover_fail_subtitle"] = TextStyle{305.0f, 256.0f, 18, 240, 140, 140, 255, 0, false};
-    styles["gameover_end_title"] = TextStyle{334.0f, 216.0f, 30, 247, 211, 130, 255, 0, false};
-    styles["gameover_result"] = TextStyle{285.0f, 280.0f, 24, 230, 238, 235, 255, 0, false};
-    styles["gameover_hint"] = TextStyle{248.0f, 350.0f, 18, 134, 222, 190, 255, 0, false};
+    styles["weapon_status"] = TextStyle{0.0f, 549.0f, 18, 180, 215, 230, 255, 0, true};
+    styles["no_weapon_hint"] = TextStyle{0.0f, 512.0f, 22, 255, 210, 90, 255, 1, false};
+    styles["gameover_fail_title"] = TextStyle{355.0f, 216.0f, 30, 245, 60, 60, 255, 0, false};
+    styles["gameover_fail_subtitle"] = TextStyle{305.0f, 256.0f, 18, 230, 115, 115, 255, 0, false};
+    styles["gameover_end_title"] = TextStyle{334.0f, 216.0f, 30, 255, 215, 80, 255, 0, false};
+    styles["gameover_result"] = TextStyle{285.0f, 280.0f, 24, 200, 230, 220, 255, 0, false};
+    styles["gameover_hint"] = TextStyle{248.0f, 350.0f, 18, 105, 195, 175, 255, 0, false};
 
-    // —— 菜单静态文字（1.3.2 基线表逐字 + 角色选择页 + 细粒度 key）——
-    styles["menu_main_title"] = TextStyle{350.0f, 96.0f, 20, 255, 255, 255, 255, 0, false};
-    styles["menu_role_title"] = TextStyle{0.0f, 60.0f, 26, 255, 255, 255, 255, 0, false};
-    styles["menu_history_title"] = TextStyle{0.0f, 120.0f, 20, 255, 255, 255, 255, 0, false};
-    styles["menu_history_mode1"] = TextStyle{60.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
-    styles["menu_history_mode2"] = TextStyle{460.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
-    styles["menu_controls_title"] = TextStyle{0.0f, 120.0f, 20, 255, 255, 255, 255, 0, false};
-    styles["menu_controls_lines"] = TextStyle{80.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
-    // 操作说明 6 行独立 key（默认 x=80，y 自然流；可单独调字号/颜色/x）
-    styles["menu_controls_line1"] = TextStyle{80.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
-    styles["menu_controls_line2"] = TextStyle{80.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
-    styles["menu_controls_line3"] = TextStyle{80.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
-    styles["menu_controls_line4"] = TextStyle{80.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
-    styles["menu_controls_line5"] = TextStyle{80.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
-    styles["menu_controls_line6"] = TextStyle{80.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
-    // 音量标签（设置页 3 个）
-    styles["menu_settings_label_master"] = TextStyle{0.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
-    styles["menu_settings_label_music"] = TextStyle{0.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
-    styles["menu_settings_label_effects"] = TextStyle{0.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
-    // 历史记录动态列表行（字号/颜色，位置由布局决定）
-    styles["menu_history_score_row"] = TextStyle{36.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
-    styles["menu_history_time_row"] = TextStyle{426.0f, 0.0f, 20, 255, 255, 255, 255, 0, false};
-    styles["menu_settings_title"] = TextStyle{0.0f, 120.0f, 20, 255, 255, 255, 255, 0, false};
-    styles["menu_exit_title"] = TextStyle{0.0f, 200.0f, 20, 255, 255, 255, 255, 0, false};
-    styles["menu_exit_note"] = TextStyle{0.0f, 270.0f, 20, 255, 255, 255, 255, 0, false};
+    // —— 菜单静态文字（视觉层级：金色标题 > 白色正文 > 青色提示 > 灰色注释）——
+    styles["menu_main_title"] = TextStyle{350.0f, 96.0f, 20, 255, 215, 70, 255, 0, false};
+    styles["menu_role_title"] = TextStyle{0.0f, 60.0f, 26, 255, 215, 70, 255, 0, false};
+    styles["menu_history_title"] = TextStyle{0.0f, 120.0f, 20, 255, 215, 70, 255, 0, false};
+    styles["menu_history_mode1"] = TextStyle{60.0f, 0.0f, 20, 200, 220, 240, 255, 0, false};
+    styles["menu_history_mode2"] = TextStyle{460.0f, 0.0f, 20, 200, 220, 240, 255, 0, false};
+    styles["menu_controls_title"] = TextStyle{0.0f, 120.0f, 20, 255, 215, 70, 255, 0, false};
+    styles["menu_controls_lines"] = TextStyle{80.0f, 0.0f, 20, 190, 210, 225, 255, 0, false};
+    // 操作说明 6 行：键位名用青色高亮、描述用浅灰白，整体偏暖白底
+    styles["menu_controls_line1"] = TextStyle{80.0f, 0.0f, 20, 120, 205, 185, 255, 0, false};
+    styles["menu_controls_line2"] = TextStyle{80.0f, 0.0f, 20, 220, 225, 230, 255, 0, false};
+    styles["menu_controls_line3"] = TextStyle{80.0f, 0.0f, 20, 220, 225, 230, 255, 0, false};
+    styles["menu_controls_line4"] = TextStyle{80.0f, 0.0f, 20, 220, 225, 230, 255, 0, false};
+    styles["menu_controls_line5"] = TextStyle{80.0f, 0.0f, 20, 220, 225, 230, 255, 0, false};
+    styles["menu_controls_line6"] = TextStyle{80.0f, 0.0f, 20, 155, 190, 210, 255, 0, false};
+    // 音量标签
+    styles["menu_settings_label_master"] = TextStyle{0.0f, 0.0f, 20, 190, 215, 230, 255, 0, false};
+    styles["menu_settings_label_music"] = TextStyle{0.0f, 0.0f, 20, 190, 215, 230, 255, 0, false};
+    styles["menu_settings_label_effects"] = TextStyle{0.0f, 0.0f, 20, 190, 215, 230, 255, 0, false};
+    // 历史记录动态列表行
+    styles["menu_history_score_row"] = TextStyle{36.0f, 0.0f, 20, 210, 220, 230, 255, 0, false};
+    styles["menu_history_time_row"] = TextStyle{426.0f, 0.0f, 20, 210, 220, 230, 255, 0, false};
+    styles["menu_settings_title"] = TextStyle{0.0f, 120.0f, 20, 255, 215, 70, 255, 0, false};
+    styles["menu_exit_title"] = TextStyle{0.0f, 200.0f, 20, 245, 100, 80, 255, 0, false};
+    styles["menu_exit_note"] = TextStyle{0.0f, 270.0f, 20, 160, 170, 180, 255, 0, false};
 
     globalFontPath = "C:/Windows/Fonts/msyh.ttc";
 }
+
+#if defined(__GNUC__) && __GNUC__ >= 13
+#pragma GCC diagnostic pop
+#endif
 
 const TextStyle& TextConfig::Get(const std::string& key) const {
     auto it = styles.find(key);

@@ -56,18 +56,40 @@ public:
 
     // 子弹 / 准星
     void DrawBullet(float x, float y, float vx, float vy);
-    void DrawCrosshair(float cx, float cy, float size = 12.0f);
+    void DrawCrosshair(float cx, float cy,
+                       Uint8 r = 255, Uint8 g = 255, Uint8 b = 255, Uint8 a = 200,
+                       float thickness = 1.5f, bool centerDot = true,
+                       float length = 12.0f, float gap = 3.0f);
+
+    // 雷达（左上角 HUD + 中心全屏覆盖 — Tab）
+    void DrawRadarHUD(float playerX, float playerY, float playerAngle,
+                      const std::vector<float>& botXs,
+                      const std::vector<float>& botYs,
+                      const std::vector<bool>& botAlive,
+                      float mapW, float mapH,
+                      bool playerCentered, bool rotateWithPlayer,
+                      bool blendBg, int bgAlpha,
+                      int hudSize, float mapZoom,
+                      bool showCenterRadar = false,
+                      int viewW = 800, int viewH = 600);
+
+    // 计分板（屏幕顶端正中）
+    void DrawScoreboard(int total, int kills, int deaths, int viewW = 800, int viewH = 600);
 
     // 右下角武器栏（复刻模式一 DrawWeaponStatus）
-    void DrawWeaponStatus(int weaponSlot, int weaponType);
+    void DrawWeaponStatus(int weaponSlot, int weaponType, int viewW = 800, int viewH = 600);
 
     // 视野遮罩
     void DrawVisionFog(float playerX, float playerY, float aimAngle);
+
+    // 视线检查（供 CS2DGame 使用）
+    bool HasLineOfSight(float fromX, float fromY, float toX, float toY) const;
 
     float GetCameraX() const { return cameraX_; }
     float GetCameraY() const { return cameraY_; }
     float GetZoom()   const { return zoom_; }
     void  SetZoom(float z) { zoom_ = z; }
+    void  SetViewportSize(int w, int h);   // 全屏 FOV 自适应后重建视野纹理
 
 private:
     SDL_Renderer* renderer_ = nullptr;
@@ -105,6 +127,8 @@ private:
     SpriteSheetDef tSheet_    {};   // soldier_no_helmet      64×96 → 32×32/frame
     SpriteSheetDef tAltSheet_ {};   // soldier_by_risingXD   64×94 → 32×31/frame
     SDL_Texture* ak47Tex_   = nullptr;
+    SDL_Texture* ak47dTex_  = nullptr;   // AK47_d.png（武器栏用）
+    SDL_Texture* m4a1dTex_  = nullptr;   // M4A1_d.png（武器栏用）
     SDL_Texture* m4a1Tex_   = nullptr;
     SDL_Texture* deagleTex_ = nullptr;
     SDL_Texture* knifeTex_  = nullptr;
@@ -130,5 +154,4 @@ private:
     int maskH_ = 0;
 
     void CreateVisionTexture();   // 创建/重建视野 streaming 纹理
-    bool HasLineOfSight(float fromX, float fromY, float toX, float toY) const;
 };

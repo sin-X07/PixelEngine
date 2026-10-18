@@ -25,7 +25,25 @@ public:
         std::function<void(int)>           setMasterVolume;
         std::function<void(int)>           setMusicVolume;
         std::function<void(int)>           setEffectsVolume;
+        std::function<void(float)>         setMouseSensitivity;  // CS2D 鼠标灵敏度
+        std::function<void(int)>           setTargetFPS;          // 帧率档位 30/60/120
         std::function<void(int)>           selectRole;        // 选中角色（索引对应 Core/Roles.hpp）
+        // 准星
+        std::function<void(Uint8,Uint8,Uint8,Uint8)> setCrosshairColor;
+        std::function<void(float)>  setCrosshairThickness;
+        std::function<void(bool)>   setCrosshairCenterDot;
+        std::function<void(float)>  setCrosshairLength;
+        std::function<void(float)>  setCrosshairGap;
+        // 雷达
+        std::function<void(bool)>   setRadarPlayerCentered;
+        std::function<void(bool)>   setRadarRotateWithPlayer;
+        std::function<void(bool)>   setRadarBlendBg;
+        std::function<void(int)>    setRadarBgAlpha;
+        std::function<void(int)>    setRadarHudSize;
+        std::function<void(float)>  setRadarMapZoom;
+        // 分辨率
+        std::function<void(int,int,int)>   setResolution;
+        std::function<void(bool)>          setFullscreen;
     };
 
     struct MenuCtx {
@@ -37,8 +55,27 @@ public:
         int       musicVolume = 0;
         int       effectsVolume = 0;
         bool      muted = false;
+        float     mouseSensitivity = 1.0f;      // CS2D 鼠标灵敏度
+        int       targetFPS = 60;                  // 帧率档位 30/60/120
         const SaveManager* saves = nullptr;
         int       selectedRole = 0;            // 当前选中角色（高亮"使用中"）
+        // 准星
+        Uint8 crosshairR = 255, crosshairG = 255, crosshairB = 255, crosshairA = 200;
+        float crosshairThickness = 1.5f;
+        bool  crosshairCenterDot = true;
+        float crosshairLength    = 12.0f;
+        float crosshairGap       = 3.0f;
+        // 雷达
+        bool  radarPlayerCentered   = true;
+        bool  radarRotateWithPlayer = false;
+        bool  radarBlendBg          = false;
+        int   radarBgAlpha          = 160;
+        int   radarHudSize          = 120;
+        float radarMapZoom          = 0.0001f;
+        // 分辨率
+        int   resW = 800, resH = 600;
+        int   resIdx = 0;
+        bool  isFullscreen = false;
     };
 
     struct InGameCtx {
@@ -54,6 +91,10 @@ public:
         int         ammo = 0;
         int         magazineSize = 0;
         bool        hasWeaponIcon = false;
+        // CS2D 计分板
+        int         cs2dTotal = 0;
+        int         cs2dKills = 0;
+        int         cs2dDeaths = 0;
     };
 
     void DrawMenu(const MenuCtx& ctx, const Actions& actions);

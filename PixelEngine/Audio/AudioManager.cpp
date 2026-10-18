@@ -32,11 +32,11 @@ bool AudioManager::Initialize() {
     attackSound = loadChunk("assets/audio/attack_swing.wav", "挥剑攻击");
     breakSound = loadChunk("assets/audio/obstacle_break.wav", "障碍物击碎");
     deathSound = loadChunk("assets/audio/player_death.wav", "惨死");
-    shootSound = loadChunk("assets/audio/shoot.ogg", "射击");
+    shootSound = loadChunk("assets/audio/deagle.mp3", "射击");
     hitSound = loadChunk("assets/audio/hit.ogg", "命中");
     killSound = loadChunk("assets/audio/kill.ogg", "击杀");
     playerHurtSound = loadChunk("assets/audio/player_hurt.ogg", "玩家受击");
-    ak47Sound = loadChunk("assets/audio/ak47.mp3", "AK47 射击");
+    ak47Sound = loadChunk("assets/audio/ak47.wav", "AK47 射击");
     deagleSound = loadChunk("assets/audio/deagle.mp3", "沙漠之鹰射击");
     katanaSound = loadChunk("assets/audio/katana.mp3", "武士刀挥砍");
 
@@ -122,8 +122,65 @@ void AudioManager::PlaySound(SoundEffect effect) {
     }
 
     if (targetChunk) {
-        Mix_PlayChannel(-1, targetChunk, 0);
+        // AK47 连发使用专用通道，新枪声直接覆盖旧枪声，避免通道耗尽后失声
+        const int chan = (effect == SoundEffect::AK47_FIRE) ? CHANNEL_AK47_FIRE : -1;
+        Mix_PlayChannel(chan, targetChunk, 0);
     }
+}
+
+void AudioManager::PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
+                                float listenerX, float listenerY, float listenerAngle) {
+    if (!audioInitialized) return;
+
+    Mix_Chunk* targetChunk = nullptr;
+    int reservedChan = -1;
+    switch (effect) {
+        case SoundEffect::PICKUP:       targetChunk = pickupSound;      break;
+        case SoundEffect::BUTTON_HOVER: targetChunk = buttonHoverSound; break;
+        case SoundEffect::CLICK:        targetChunk = clickSound;       break;
+        case SoundEffect::ATTACK_SWING: targetChunk = attackSound;      break;
+        case SoundEffect::OBSTACLE_BREAK: targetChunk = breakSound;     break;
+        case SoundEffect::PLAYER_DEATH: targetChunk = deathSound;       break;
+        case SoundEffect::SHOOT:        targetChunk = shootSound;       break;
+        case SoundEffect::HIT:          targetChunk = hitSound;         break;
+        case SoundEffect::KILL:         targetChunk = killSound;        break;
+        case SoundEffect::PLAYER_HURT:  targetChunk = playerHurtSound;  break;
+        case SoundEffect::AK47_FIRE:    targetChunk = ak47Sound;        break;
+        case SoundEffect::DEAGLE_FIRE:  targetChunk = deagleSound;      break;
+        case SoundEffect::KATANA_SWING: targetChunk = katanaSound;      break;
+    }
+
+    if (!targetChunk) return;
+
+    const int chan = Mix_PlayChannel(reservedChan, targetChunk, 0);
+    if (chan < 0) return;
+
+    // ---- 计算方位：声源相对于听者的方向 ----
+    const float dx = sourceX - listenerX;
+    const float dy = sourceY - listenerY;
+    const float dist = std::sqrt(dx * dx + dy * dy);
+    const float sourceAngle = std::atan2(dy, dx);
+
+    // 相对角度（声源在听者正前方 = 0，右侧 = +π/2，左侧 = -π/2）
+    float relAngle = sourceAngle - listenerAngle;
+    while (relAngle >  3.14159265f) relAngle -= 6.28318531f;
+    while (relAngle < -3.14159265f) relAngle += 6.28318531f;
+
+    // 全景定位：sin 映射到左右声道
+    const float pan = std::sin(relAngle);  // -1=全左, 0=居中, +1=全右
+    const int leftVol  = static_cast<int>((1.0f - pan) * 0.5f * 255.0f);
+    const int rightVol = static_cast<int>((1.0f + pan) * 0.5f * 255.0f);
+    Mix_SetPanning(chan, leftVol, rightVol);
+
+    // 距离衰减：200 单位内正常，超出按线性衰减到 0
+    constexpr float FULL_RANGE = 200.0f;
+    constexpr float MAX_RANGE  = 400.0f;
+    float distFactor = 1.0f;
+    if (dist > FULL_RANGE) {
+        distFactor = 1.0f - std::min(1.0f, (dist - FULL_RANGE) / (MAX_RANGE - FULL_RANGE));
+    }
+    const int vol = static_cast<int>(distFactor * MIX_MAX_VOLUME);
+    Mix_Volume(chan, vol);
 }
 
 void AudioManager::UpdateVolumes() {

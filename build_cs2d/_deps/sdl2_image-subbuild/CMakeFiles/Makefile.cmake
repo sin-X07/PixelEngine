@@ -10,10 +10,8 @@ set(CMAKE_MAKEFILE_DEPENDS
   "CMakeFiles/4.3.2/CMakeSystem.cmake"
   "CMakeLists.txt"
   "sdl2_image-populate-prefix/tmp/sdl2_image-populate-mkdirs.cmake"
-  "D:/cmake/cmake-4.3.2-windows-x86_64/share/cmake-4.3/Modules/CMakeDetermineSystem.cmake"
   "D:/cmake/cmake-4.3.2-windows-x86_64/share/cmake-4.3/Modules/CMakeGenericSystem.cmake"
   "D:/cmake/cmake-4.3.2-windows-x86_64/share/cmake-4.3/Modules/CMakeInitializeConfigs.cmake"
-  "D:/cmake/cmake-4.3.2-windows-x86_64/share/cmake-4.3/Modules/CMakeSystem.cmake.in"
   "D:/cmake/cmake-4.3.2-windows-x86_64/share/cmake-4.3/Modules/CMakeSystemSpecificInformation.cmake"
   "D:/cmake/cmake-4.3.2-windows-x86_64/share/cmake-4.3/Modules/CMakeSystemSpecificInitialize.cmake"
   "D:/cmake/cmake-4.3.2-windows-x86_64/share/cmake-4.3/Modules/ExternalProject.cmake"
@@ -38,7 +36,6 @@ set(CMAKE_MAKEFILE_OUTPUTS
 
 # Byproducts of CMake generate step:
 set(CMAKE_MAKEFILE_PRODUCTS
-  "CMakeFiles/4.3.2/CMakeSystem.cmake"
   "sdl2_image-populate-prefix/tmp/sdl2_image-populate-mkdirs.cmake"
   "sdl2_image-populate-prefix/src/sdl2_image-populate-stamp/download-sdl2_image-populate.cmake"
   "sdl2_image-populate-prefix/src/sdl2_image-populate-stamp/verify-sdl2_image-populate.cmake"

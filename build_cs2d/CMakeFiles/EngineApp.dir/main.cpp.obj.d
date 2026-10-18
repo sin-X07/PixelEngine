@@ -594,4 +594,5 @@ CMakeFiles/EngineApp.dir/main.cpp.obj: \
  D:/mingw/x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0/mingw64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/c++/bits/atomic_lockfree_defines.h \
  D:/mingw/x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0/mingw64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/c++/backward/auto_ptr.h \
  D:/mingw/x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0/mingw64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/c++/pstl/glue_memory_defs.h \
+ D:\BJTU\Cpp\Outstanding\ Projects\PixelEngine\PixelEngine\CS2D/CS2DOverlay.hpp \
  D:\BJTU\Cpp\Outstanding\ Projects\PixelEngine\PixelEngine\Core/PathUtils.hpp

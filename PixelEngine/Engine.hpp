@@ -20,6 +20,7 @@
 #include "MazeGenerator.hpp"
 #include "CS2D/CS2DRenderer.hpp"
 #include "CS2D/CS2DGame.hpp"
+#include "CS2D/CS2DOverlay.hpp"
 #include <SDL2/SDL.h>
 #include <memory>
 #include <random>
@@ -33,6 +34,8 @@ private:
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     bool isFullscreen = false;
+    int  logicalW_ = 800;       // 当前逻辑视口（全屏时按屏幕比例动态扩展）
+    int  logicalH_ = 600;
 
     // 子系统大类
     std::unique_ptr<AudioManager> audioManager;
@@ -53,12 +56,14 @@ private:
     // CS2D 模式子系统（完全独立于模式一/二）
     std::unique_ptr<CS2DRenderer> cs2dRenderer;
     std::unique_ptr<CS2DGame>     cs2dGame;
+    CS2DOverlay cs2dOverlay;
 
     // CS2D 模式输入状态（HandleInput 采集 → Update 消费）
     bool cs2dMouseDown = false;
     float cs2dWorldMouseX = 0.0f;
     float cs2dWorldMouseY = 0.0f;
     bool cs2dKeyW = false, cs2dKeyA = false, cs2dKeyS = false, cs2dKeyD = false;
+    bool cs2dKeyShift = false, cs2dKeyR = false;
 
     // 核心时钟与状态机
     const float MS_PER_UPDATE = 16.6666f; // 固定逻辑更新间隔（约 60 FPS，单位毫秒）
@@ -68,6 +73,13 @@ private:
     bool exitToDesktop = false;
     uint32_t gameOverStartTime = 0;
     bool tweakerOpen = false;
+
+    // CS2D 帧率设置
+    int targetFPS_ = 60;  // 30 / 60 / 120
+
+    // ---- 分辨率设置 ----
+    int   currentResW_ = 800, currentResH_ = 600;
+    int   currentResIdx_ = 0;   // 0=800x600, 1=1280x800, 2=1680x1050, 3=1920x1200, 4=2560x1600
 
     // 游戏性数据
     float gameTimer = TIME_ATTACK_DURATION;

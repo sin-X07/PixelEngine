@@ -23,12 +23,12 @@ inline const std::array<RoleDef, 4>& GetRoles() {
 // 角色数量便捷常量
 inline constexpr int ROLE_COUNT = 4;
 
-// 选择页卡片矩形（800x600 逻辑画布）：立绘预览区占上部，GameUI 按钮画下部同一矩形内。
-inline SDL_FRect GetRoleCardRect(int index) {
+// 选择页卡片矩形（接受动态视口宽度；默认 800 用于兼容）
+inline SDL_FRect GetRoleCardRect(int index, float viewW = 800.0f) {
     constexpr float cardW = 170.0f;
     constexpr float cardH = 300.0f;
     constexpr float gap = 14.0f;
     constexpr float totalW = cardW * ROLE_COUNT + gap * (ROLE_COUNT - 1);
-    const float startX = (800.0f - totalW) * 0.5f;
+    const float startX = (viewW - totalW) * 0.5f;
     return SDL_FRect{startX + index * (cardW + gap), 140.0f, cardW, cardH};
 }

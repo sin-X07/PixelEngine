@@ -431,11 +431,26 @@ CMakeFiles/EngineApp.dir/CS2D/CS2DGame.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/EngineApp.dir/CS2D/CS2DGame.cpp.s"
 	D:\mingw\x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0\mingw64\bin\c++.exe $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S "D:\BJTU\Cpp\Outstanding Projects\PixelEngine\PixelEngine\CS2D\CS2DGame.cpp" -o CMakeFiles\EngineApp.dir\CS2D\CS2DGame.cpp.s
 
+CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.obj: CMakeFiles/EngineApp.dir/flags.make
+CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.obj: CMakeFiles/EngineApp.dir/includes_CXX.rsp
+CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.obj: D:/BJTU/Cpp/Outstanding\ Projects/PixelEngine/PixelEngine/CS2D/CS2DOverlay.cpp
+CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.obj: CMakeFiles/EngineApp.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir="D:\BJTU\Cpp\Outstanding Projects\PixelEngine\build_cs2d\CMakeFiles" --progress-num=$(CMAKE_PROGRESS_25) "Building CXX object CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.obj"
+	D:\mingw\x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0\mingw64\bin\c++.exe $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.obj -MF CMakeFiles\EngineApp.dir\CS2D\CS2DOverlay.cpp.obj.d -o CMakeFiles\EngineApp.dir\CS2D\CS2DOverlay.cpp.obj -c "D:\BJTU\Cpp\Outstanding Projects\PixelEngine\PixelEngine\CS2D\CS2DOverlay.cpp"
+
+CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.i"
+	D:\mingw\x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0\mingw64\bin\c++.exe $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E "D:\BJTU\Cpp\Outstanding Projects\PixelEngine\PixelEngine\CS2D\CS2DOverlay.cpp" > CMakeFiles\EngineApp.dir\CS2D\CS2DOverlay.cpp.i
+
+CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.s"
+	D:\mingw\x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0\mingw64\bin\c++.exe $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S "D:\BJTU\Cpp\Outstanding Projects\PixelEngine\PixelEngine\CS2D\CS2DOverlay.cpp" -o CMakeFiles\EngineApp.dir\CS2D\CS2DOverlay.cpp.s
+
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui.cpp.obj: CMakeFiles/EngineApp.dir/flags.make
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui.cpp.obj: CMakeFiles/EngineApp.dir/includes_CXX.rsp
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui.cpp.obj: D:/BJTU/Cpp/Outstanding\ Projects/PixelEngine/PixelEngine/ThirdParty/imgui/imgui.cpp
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui.cpp.obj: CMakeFiles/EngineApp.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir="D:\BJTU\Cpp\Outstanding Projects\PixelEngine\build_cs2d\CMakeFiles" --progress-num=$(CMAKE_PROGRESS_25) "Building CXX object CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui.cpp.obj"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir="D:\BJTU\Cpp\Outstanding Projects\PixelEngine\build_cs2d\CMakeFiles" --progress-num=$(CMAKE_PROGRESS_26) "Building CXX object CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui.cpp.obj"
 	D:\mingw\x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0\mingw64\bin\c++.exe $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui.cpp.obj -MF CMakeFiles\EngineApp.dir\ThirdParty\imgui\imgui.cpp.obj.d -o CMakeFiles\EngineApp.dir\ThirdParty\imgui\imgui.cpp.obj -c "D:\BJTU\Cpp\Outstanding Projects\PixelEngine\PixelEngine\ThirdParty\imgui\imgui.cpp"
 
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui.cpp.i: cmake_force
@@ -450,7 +465,7 @@ CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_draw.cpp.obj: CMakeFiles/EngineA
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_draw.cpp.obj: CMakeFiles/EngineApp.dir/includes_CXX.rsp
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_draw.cpp.obj: D:/BJTU/Cpp/Outstanding\ Projects/PixelEngine/PixelEngine/ThirdParty/imgui/imgui_draw.cpp
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_draw.cpp.obj: CMakeFiles/EngineApp.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir="D:\BJTU\Cpp\Outstanding Projects\PixelEngine\build_cs2d\CMakeFiles" --progress-num=$(CMAKE_PROGRESS_26) "Building CXX object CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_draw.cpp.obj"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir="D:\BJTU\Cpp\Outstanding Projects\PixelEngine\build_cs2d\CMakeFiles" --progress-num=$(CMAKE_PROGRESS_27) "Building CXX object CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_draw.cpp.obj"
 	D:\mingw\x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0\mingw64\bin\c++.exe $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_draw.cpp.obj -MF CMakeFiles\EngineApp.dir\ThirdParty\imgui\imgui_draw.cpp.obj.d -o CMakeFiles\EngineApp.dir\ThirdParty\imgui\imgui_draw.cpp.obj -c "D:\BJTU\Cpp\Outstanding Projects\PixelEngine\PixelEngine\ThirdParty\imgui\imgui_draw.cpp"
 
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_draw.cpp.i: cmake_force
@@ -465,7 +480,7 @@ CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_tables.cpp.obj: CMakeFiles/Engin
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_tables.cpp.obj: CMakeFiles/EngineApp.dir/includes_CXX.rsp
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_tables.cpp.obj: D:/BJTU/Cpp/Outstanding\ Projects/PixelEngine/PixelEngine/ThirdParty/imgui/imgui_tables.cpp
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_tables.cpp.obj: CMakeFiles/EngineApp.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir="D:\BJTU\Cpp\Outstanding Projects\PixelEngine\build_cs2d\CMakeFiles" --progress-num=$(CMAKE_PROGRESS_27) "Building CXX object CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_tables.cpp.obj"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir="D:\BJTU\Cpp\Outstanding Projects\PixelEngine\build_cs2d\CMakeFiles" --progress-num=$(CMAKE_PROGRESS_28) "Building CXX object CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_tables.cpp.obj"
 	D:\mingw\x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0\mingw64\bin\c++.exe $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_tables.cpp.obj -MF CMakeFiles\EngineApp.dir\ThirdParty\imgui\imgui_tables.cpp.obj.d -o CMakeFiles\EngineApp.dir\ThirdParty\imgui\imgui_tables.cpp.obj -c "D:\BJTU\Cpp\Outstanding Projects\PixelEngine\PixelEngine\ThirdParty\imgui\imgui_tables.cpp"
 
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_tables.cpp.i: cmake_force
@@ -480,7 +495,7 @@ CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_widgets.cpp.obj: CMakeFiles/Engi
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_widgets.cpp.obj: CMakeFiles/EngineApp.dir/includes_CXX.rsp
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_widgets.cpp.obj: D:/BJTU/Cpp/Outstanding\ Projects/PixelEngine/PixelEngine/ThirdParty/imgui/imgui_widgets.cpp
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_widgets.cpp.obj: CMakeFiles/EngineApp.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir="D:\BJTU\Cpp\Outstanding Projects\PixelEngine\build_cs2d\CMakeFiles" --progress-num=$(CMAKE_PROGRESS_28) "Building CXX object CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_widgets.cpp.obj"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir="D:\BJTU\Cpp\Outstanding Projects\PixelEngine\build_cs2d\CMakeFiles" --progress-num=$(CMAKE_PROGRESS_29) "Building CXX object CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_widgets.cpp.obj"
 	D:\mingw\x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0\mingw64\bin\c++.exe $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_widgets.cpp.obj -MF CMakeFiles\EngineApp.dir\ThirdParty\imgui\imgui_widgets.cpp.obj.d -o CMakeFiles\EngineApp.dir\ThirdParty\imgui\imgui_widgets.cpp.obj -c "D:\BJTU\Cpp\Outstanding Projects\PixelEngine\PixelEngine\ThirdParty\imgui\imgui_widgets.cpp"
 
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_widgets.cpp.i: cmake_force
@@ -495,7 +510,7 @@ CMakeFiles/EngineApp.dir/ThirdParty/imgui/backends/imgui_impl_sdl2.cpp.obj: CMak
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/backends/imgui_impl_sdl2.cpp.obj: CMakeFiles/EngineApp.dir/includes_CXX.rsp
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/backends/imgui_impl_sdl2.cpp.obj: D:/BJTU/Cpp/Outstanding\ Projects/PixelEngine/PixelEngine/ThirdParty/imgui/backends/imgui_impl_sdl2.cpp
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/backends/imgui_impl_sdl2.cpp.obj: CMakeFiles/EngineApp.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir="D:\BJTU\Cpp\Outstanding Projects\PixelEngine\build_cs2d\CMakeFiles" --progress-num=$(CMAKE_PROGRESS_29) "Building CXX object CMakeFiles/EngineApp.dir/ThirdParty/imgui/backends/imgui_impl_sdl2.cpp.obj"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir="D:\BJTU\Cpp\Outstanding Projects\PixelEngine\build_cs2d\CMakeFiles" --progress-num=$(CMAKE_PROGRESS_30) "Building CXX object CMakeFiles/EngineApp.dir/ThirdParty/imgui/backends/imgui_impl_sdl2.cpp.obj"
 	D:\mingw\x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0\mingw64\bin\c++.exe $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/EngineApp.dir/ThirdParty/imgui/backends/imgui_impl_sdl2.cpp.obj -MF CMakeFiles\EngineApp.dir\ThirdParty\imgui\backends\imgui_impl_sdl2.cpp.obj.d -o CMakeFiles\EngineApp.dir\ThirdParty\imgui\backends\imgui_impl_sdl2.cpp.obj -c "D:\BJTU\Cpp\Outstanding Projects\PixelEngine\PixelEngine\ThirdParty\imgui\backends\imgui_impl_sdl2.cpp"
 
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/backends/imgui_impl_sdl2.cpp.i: cmake_force
@@ -510,7 +525,7 @@ CMakeFiles/EngineApp.dir/ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.cpp.o
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.cpp.obj: CMakeFiles/EngineApp.dir/includes_CXX.rsp
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.cpp.obj: D:/BJTU/Cpp/Outstanding\ Projects/PixelEngine/PixelEngine/ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.cpp
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.cpp.obj: CMakeFiles/EngineApp.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir="D:\BJTU\Cpp\Outstanding Projects\PixelEngine\build_cs2d\CMakeFiles" --progress-num=$(CMAKE_PROGRESS_30) "Building CXX object CMakeFiles/EngineApp.dir/ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.cpp.obj"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir="D:\BJTU\Cpp\Outstanding Projects\PixelEngine\build_cs2d\CMakeFiles" --progress-num=$(CMAKE_PROGRESS_31) "Building CXX object CMakeFiles/EngineApp.dir/ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.cpp.obj"
 	D:\mingw\x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0\mingw64\bin\c++.exe $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/EngineApp.dir/ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.cpp.obj -MF CMakeFiles\EngineApp.dir\ThirdParty\imgui\backends\imgui_impl_sdlrenderer2.cpp.obj.d -o CMakeFiles\EngineApp.dir\ThirdParty\imgui\backends\imgui_impl_sdlrenderer2.cpp.obj -c "D:\BJTU\Cpp\Outstanding Projects\PixelEngine\PixelEngine\ThirdParty\imgui\backends\imgui_impl_sdlrenderer2.cpp"
 
 CMakeFiles/EngineApp.dir/ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.cpp.i: cmake_force
@@ -547,6 +562,7 @@ EngineApp_OBJECTS = \
 "CMakeFiles/EngineApp.dir/CS2D/CS2DWorld.cpp.obj" \
 "CMakeFiles/EngineApp.dir/CS2D/CS2DRenderer.cpp.obj" \
 "CMakeFiles/EngineApp.dir/CS2D/CS2DGame.cpp.obj" \
+"CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.obj" \
 "CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui.cpp.obj" \
 "CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_draw.cpp.obj" \
 "CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_tables.cpp.obj" \
@@ -581,6 +597,7 @@ EngineApp.exe: CMakeFiles/EngineApp.dir/CS2D/TMJParser.cpp.obj
 EngineApp.exe: CMakeFiles/EngineApp.dir/CS2D/CS2DWorld.cpp.obj
 EngineApp.exe: CMakeFiles/EngineApp.dir/CS2D/CS2DRenderer.cpp.obj
 EngineApp.exe: CMakeFiles/EngineApp.dir/CS2D/CS2DGame.cpp.obj
+EngineApp.exe: CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.obj
 EngineApp.exe: CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui.cpp.obj
 EngineApp.exe: CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_draw.cpp.obj
 EngineApp.exe: CMakeFiles/EngineApp.dir/ThirdParty/imgui/imgui_tables.cpp.obj
@@ -596,7 +613,7 @@ EngineApp.exe: _deps/sdl2-build/libSDL2.a
 EngineApp.exe: CMakeFiles/EngineApp.dir/linkLibs.rsp
 EngineApp.exe: CMakeFiles/EngineApp.dir/objects1.rsp
 EngineApp.exe: CMakeFiles/EngineApp.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir="D:\BJTU\Cpp\Outstanding Projects\PixelEngine\build_cs2d\CMakeFiles" --progress-num=$(CMAKE_PROGRESS_31) "Linking CXX executable EngineApp.exe"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir="D:\BJTU\Cpp\Outstanding Projects\PixelEngine\build_cs2d\CMakeFiles" --progress-num=$(CMAKE_PROGRESS_32) "Linking CXX executable EngineApp.exe"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles\EngineApp.dir\link.txt --verbose=$(VERBOSE)
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --blue --bold "Copying assets next to EngineApp executable"
 	D:\cmake\cmake-4.3.2-windows-x86_64\bin\cmake.exe -E copy_directory "D:/BJTU/Cpp/Outstanding Projects/PixelEngine/PixelEngine/../assets" "D:/BJTU/Cpp/Outstanding Projects/PixelEngine/build_cs2d/assets"

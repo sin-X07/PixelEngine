@@ -2,6 +2,7 @@
 #include "../Core/PathUtils.hpp"
 #include <cmath>
 #include <algorithm>
+#include <cstdio>
 #include <iostream>
 #include <filesystem>
 
@@ -48,6 +49,13 @@ void CS2DRenderer::CreateVisionTexture() {
     }
 }
 
+void CS2DRenderer::SetViewportSize(int w, int h) {
+    if (w == viewW_ && h == viewH_) return;
+    viewW_ = w;
+    viewH_ = h;
+    CreateVisionTexture();
+}
+
 void CS2DRenderer::Clean() {
     if (backgroundTex_) { SDL_DestroyTexture(backgroundTex_); backgroundTex_ = nullptr; }
     for (auto& tt : tilesetTextures_) {
@@ -59,6 +67,8 @@ void CS2DRenderer::Clean() {
     if (tSheet_.tex)    { SDL_DestroyTexture(tSheet_.tex);    tSheet_.tex    = nullptr; }
     if (tAltSheet_.tex) { SDL_DestroyTexture(tAltSheet_.tex); tAltSheet_.tex = nullptr; }
     if (ak47Tex_)   { SDL_DestroyTexture(ak47Tex_);   ak47Tex_   = nullptr; }
+    if (ak47dTex_)  { SDL_DestroyTexture(ak47dTex_);  ak47dTex_  = nullptr; }
+    if (m4a1dTex_)  { SDL_DestroyTexture(m4a1dTex_);  m4a1dTex_  = nullptr; }
     if (m4a1Tex_)   { SDL_DestroyTexture(m4a1Tex_);   m4a1Tex_   = nullptr; }
     if (deagleTex_) { SDL_DestroyTexture(deagleTex_); deagleTex_ = nullptr; }
     if (knifeTex_)  { SDL_DestroyTexture(knifeTex_);  knifeTex_  = nullptr; }
@@ -133,6 +143,8 @@ void CS2DRenderer::SetWorld(const CS2DWorld* world) {
     tAltSheet_.frameW = 32; tAltSheet_.frameH = 31; tAltSheet_.cols = 2; tAltSheet_.rows = 3;
 
     ak47Tex_   = LoadTexture(mapDir_ + "/../sprites/ak47.png");
+    ak47dTex_  = LoadTexture("assets/images/weapons/AK47_d.png");
+    m4a1dTex_  = LoadTexture("assets/images/weapons/M4A1_d.png");
     m4a1Tex_   = LoadTexture(mapDir_ + "/../sprites/m4a1.png");
     deagleTex_ = LoadTexture(mapDir_ + "/../sprites/deagle.png");
     knifeTex_  = LoadTexture(mapDir_ + "/../sprites/knife.png");
@@ -364,9 +376,11 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
 
     SDL_SetTextureAlphaMod(sheet->tex, alpha);
     SDL_FPoint center = { sz * 0.5f, sz * 0.5f };
+    // 精灵默认面朝上方，需 +90° 使人物朝向与武器朝向一致
+    const float charAngle = p.aimAngle * 180.0f / 3.14159265f + tiltDeg
+                            + (p.animState == 3 ? 0.0f : 90.0f);
     SDL_RenderCopyExF(renderer_, sheet->tex, &src, &dst,
-                      p.aimAngle * 180.0f / 3.14159265f + tiltDeg,
-                      &center, SDL_FLIP_NONE);
+                      charAngle, &center, SDL_FLIP_NONE);
     SDL_SetTextureAlphaMod(sheet->tex, 255);
 
     // 武器
@@ -402,7 +416,7 @@ void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float 
     if (!weaponTex) return;
 
     // 武器绘制在精灵前方偏移（世界单位，随缩放）
-    const float offset = size * 0.6f * zoom_;
+    const float offset = size * 0.35f * zoom_;
     const float wx = cx + std::cos(aimAngle) * offset;
     const float wy = cy + std::sin(aimAngle) * offset;
     const float drawSz = weaponSz * zoom_;
@@ -428,7 +442,7 @@ void CS2DRenderer::DrawBullet(float x, float y, float vx, float vy) {
 
     const float cx = (x - cameraX_) * zoom_;
     const float cy = (y - cameraY_) * zoom_;
-    const float s = 6.0f * zoom_;   // 世界单位，缩放后约 24px
+    const float s = 1.0f * zoom_;   
 
     SDL_Rect dst = {
         static_cast<int>(std::lround(cx - s * 0.5f)),
@@ -441,35 +455,70 @@ void CS2DRenderer::DrawBullet(float x, float y, float vx, float vy) {
     SDL_RenderCopyEx(renderer_, bulletTex_, nullptr, &dst, angle, nullptr, SDL_FLIP_NONE);
 }
 
-void CS2DRenderer::DrawCrosshair(float cx, float cy, float size) {
-    const int s = static_cast<int>(std::lround(size));
-    SDL_SetRenderDrawColor(renderer_, 0, 255, 0, 200);
-    SDL_RenderDrawLine(renderer_, static_cast<int>(cx) - s, static_cast<int>(cy),
-                       static_cast<int>(cx) + s, static_cast<int>(cy));
-    SDL_RenderDrawLine(renderer_, static_cast<int>(cx), static_cast<int>(cy) - s,
-                       static_cast<int>(cx), static_cast<int>(cy) + s);
+void CS2DRenderer::DrawCrosshair(float cx, float cy,
+                                  Uint8 r, Uint8 g, Uint8 b, Uint8 a,
+                                  float thickness, bool centerDot,
+                                  float length, float gap) {
+    // 水平线：左段 + 右段，中间 gap
+    SDL_SetRenderDrawColor(renderer_, r, g, b, a);
+    for (float i = 0.0f; i < thickness; i += 1.0f) {
+        const float off = i - thickness * 0.5f;
+        const float lx = static_cast<float>(static_cast<int>(cx - gap - length));
+        const float rx = static_cast<float>(static_cast<int>(cx + gap));
+        const float lx2 = static_cast<float>(static_cast<int>(cx - gap));
+        const float rx2 = static_cast<float>(static_cast<int>(cx + gap + length));
+        const float sy = static_cast<float>(static_cast<int>(cy + off));
+        SDL_RenderDrawLineF(renderer_, lx, sy, lx2, sy);
+        SDL_RenderDrawLineF(renderer_, rx, sy, rx2, sy);
+    }
+    // 竖直线：上段 + 下段，中间 gap
+    for (float i = 0.0f; i < thickness; i += 1.0f) {
+        const float off = i - thickness * 0.5f;
+        const float ty = static_cast<float>(static_cast<int>(cy - gap - length));
+        const float by = static_cast<float>(static_cast<int>(cy + gap));
+        const float ty2 = static_cast<float>(static_cast<int>(cy - gap));
+        const float by2 = static_cast<float>(static_cast<int>(cy + gap + length));
+        const float sx = static_cast<float>(static_cast<int>(cx + off));
+        SDL_RenderDrawLineF(renderer_, sx, ty, sx, ty2);
+        SDL_RenderDrawLineF(renderer_, sx, by, sx, by2);
+    }
+    // 中心点
+    if (centerDot) {
+        for (float i = -1.0f; i <= 1.0f; i += 1.0f)
+            for (float j = -1.0f; j <= 1.0f; j += 1.0f)
+                SDL_RenderDrawPointF(renderer_, cx + i, cy + j);
+    }
 }
 
-void CS2DRenderer::DrawWeaponStatus(int weaponSlot, int weaponType) {
-    // 复刻模式一 UIRenderer::DrawWeaponStatus 的右下角武器栏视觉
-    SDL_Rect panel = {640, 536, 150, 54};
-    SDL_SetRenderDrawColor(renderer_, 24, 35, 43, 235);
+void CS2DRenderer::DrawWeaponStatus(int weaponSlot, int weaponType, int viewW, int viewH) {
+    // 右下角武器栏视觉 — 相对视口右下角定位
+    const int panelW = 160, panelH = 56;
+    const int panelX = viewW - panelW - 10;
+    const int panelY = viewH - panelH - 10;
+    SDL_Rect panel = {panelX, panelY, panelW, panelH};
+    SDL_SetRenderDrawColor(renderer_, 18, 28, 38, 240);
     SDL_RenderFillRect(renderer_, &panel);
-    SDL_SetRenderDrawColor(renderer_, 231, 176, 70, 255);
+    SDL_SetRenderDrawColor(renderer_, 200, 155, 60, 200);
     SDL_RenderDrawRect(renderer_, &panel);
+    // 底沿金色高亮线
+    SDL_SetRenderDrawColor(renderer_, 230, 185, 80, 140);
+    SDL_RenderDrawLine(renderer_, panel.x + 2, panel.y + panel.h - 1, panel.x + panel.w - 2, panel.y + panel.h - 1);
 
-    // 按武器槽选图标（与 DrawWeaponForCharacter 映射一致）
+    // 按武器槽选图标：AK47 用 AK47_d.png 专有图
     SDL_Texture* icon = nullptr;
     switch (weaponSlot) {
         case 1:  icon = deagleTex_; break;
         case 2:  icon = knifeTex_;  break;
-        default: icon = (weaponType == 0) ? ak47Tex_ : m4a1Tex_; break;
+        default: icon = (weaponType == 0) ? ak47dTex_ : m4a1dTex_;
+                 if (!icon) icon = (weaponType == 0) ? ak47Tex_ : m4a1Tex_;
+                 break;
     }
     if (!icon) return;
 
+    // 图标放在面板左侧，文字放在右侧（通过 anchored offset 与 ImGui 文字错开）
     int tw = 0, th = 0;
     SDL_QueryTexture(icon, nullptr, nullptr, &tw, &th);
-    const int box = 38;
+    const int box = 44;
     int dw = box;
     int dh = box;
     if (tw > 0 && th > 0) {
@@ -479,9 +528,10 @@ void CS2DRenderer::DrawWeaponStatus(int weaponSlot, int weaponType) {
             dw = std::max(1, static_cast<int>(std::lround(static_cast<float>(box) * tw / th)));
         }
     }
-    const int iconCX = panel.x + 6 + box / 2;
-    const int iconCY = panel.y + panel.h / 2;
-    SDL_Rect iconRect = {iconCX - dw / 2, iconCY - dh / 2, dw, dh};
+    // 图标偏左放置，给右侧文字留空间
+    const int iconX = panel.x + 10 + box / 2;
+    const int iconY = panel.y + panel.h / 2;
+    SDL_Rect iconRect = {iconX - dw / 2, iconY - dh / 2, dw, dh};
     SDL_RenderCopy(renderer_, icon, nullptr, &iconRect);
 }
 
@@ -577,8 +627,140 @@ void CS2DRenderer::DrawVisionFog(float playerX, float playerY, float aimAngle) {
     }
 
     SDL_UpdateTexture(visionTex_, nullptr, visionPixels_.data(), maskW_ * 4);
-    SDL_Rect viewport = {0, 0, 800, 600};
+    SDL_Rect viewport = {0, 0, viewW_, viewH_};
     SDL_RenderCopy(renderer_, visionTex_, nullptr, &viewport);
+}
+
+// ============================================================================
+// 计分板 / 雷达
+// ============================================================================
+
+void CS2DRenderer::DrawScoreboard(int total, int kills, int deaths, int viewW, int viewH) {
+    char buf[128];
+    snprintf(buf, sizeof(buf), "人数: %d    击杀: %d    阵亡: %d", total, kills, deaths);
+    // 屏幕顶端正中黑底半透明条
+    const int barW = 500, barH = 28;
+    const int bx = (viewW - barW) / 2, by = 8;
+    SDL_Rect rect = {bx, by, barW, barH};
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 140);
+    SDL_RenderFillRect(renderer_, &rect);
+    SDL_SetRenderDrawColor(renderer_, 200, 200, 200, 120);
+    SDL_RenderDrawRect(renderer_, &rect);
+
+    // 用内置字体（简单方式：直接渲染文字省略；这里仅画背景条，文字由 ImGui 层覆盖更好）
+    // 但为简单，这里用 SDL 无字体渲染；实际文字在 CS2DGame::Render 中由 ImGui DrawList 追加
+    // 此处仅留作位
+}
+
+void CS2DRenderer::DrawRadarHUD(float playerX, float playerY, float playerAngle,
+                                 const std::vector<float>& botXs,
+                                 const std::vector<float>& botYs,
+                                 const std::vector<bool>& botAlive,
+                                 float mapW, float mapH,
+                                 bool playerCentered, bool rotateWithPlayer,
+                                 bool blendBg, int bgAlpha,
+                                 int hudSize, float mapZoom,
+                                 bool showCenterRadar,
+                                 int viewW, int viewH) {
+    const int radarSize = showCenterRadar ? 320 : hudSize;
+    const int radarX = showCenterRadar ? (viewW - radarSize) / 2 : 8;
+    const int radarY = showCenterRadar ? (viewH - radarSize) / 2 : 8;
+
+    // 背景
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, static_cast<Uint8>(showCenterRadar ? 200 : bgAlpha));
+    const SDL_Rect bgRect = {radarX, radarY, radarSize, radarSize};
+    SDL_RenderFillRect(renderer_, &bgRect);
+    SDL_SetRenderDrawColor(renderer_, 100, 100, 100, 180);
+    SDL_RenderDrawRect(renderer_, &bgRect);
+
+    const float scale = static_cast<float>(radarSize) * mapZoom;
+    const float half = static_cast<float>(radarSize) * 0.5f;
+
+    // 计算地图在雷达中的中心偏移
+    float mapCenterX = playerCentered ? playerX : (mapW * 0.5f);
+    float mapCenterY = playerCentered ? playerY : (mapH * 0.5f);
+
+    // ---- 从碰撞网格逐像素采样, 渲染地图地形（替代纯黑背景） ----
+    if (world_) {
+        const auto& grid = world_->GetCollisionGrid();
+        const int gridW = world_->GetMapWidth();
+        const int gridH = world_->GetMapHeight();
+        if (!grid.empty() && gridW > 0 && gridH > 0) {
+            const float invScale = 1.0f / scale;
+            // 每个雷达像素 → 世界坐标 → 碰撞类型 → 着色
+            for (int ry = 0; ry < radarSize; ++ry) {
+                for (int rx = 0; rx < radarSize; ++rx) {
+                    const float radarWorldX = (rx - half) * invScale + mapCenterX;
+                    const float radarWorldY = (ry - half) * invScale + mapCenterY;
+                    if (radarWorldX < 0.0f || radarWorldX >= mapW ||
+                        radarWorldY < 0.0f || radarWorldY >= mapH) continue;
+                    const int gx = static_cast<int>(radarWorldX / world_->GetTileWidth());
+                    const int gy = static_cast<int>(radarWorldY / world_->GetTileHeight());
+                    if (gx < 0 || gx >= gridW || gy < 0 || gy >= gridH) continue;
+                    const auto cell = grid[gy * gridW + gx];
+                    Uint8 cr = 40, cg = 40, cb = 40;
+                    switch (cell) {
+                        case CS2DWorld::CellType::Solid:      cr = 70; cg = 60; cb = 55; break;
+                        case CS2DWorld::CellType::Penetrable: cr = 50; cg = 55; cb = 50; break;
+                        case CS2DWorld::CellType::Damage:     cr = 80; cg = 30; cb = 20; break;
+                        default:                               cr = 30; cg = 35; cb = 30; break;
+                    }
+                    SDL_SetRenderDrawColor(renderer_, cr, cg, cb, 255);
+                    SDL_RenderDrawPoint(renderer_, radarX + rx, radarY + ry);
+                }
+            }
+        }
+    }
+
+    // 辅助函数：世界坐标→雷达屏幕坐标
+    auto worldToRadar = [&](float wx, float wy) {
+        float rx, ry;
+        if (rotateWithPlayer) {
+            const float dx = wx - mapCenterX;
+            const float dy = wy - mapCenterY;
+            const float cosA = std::cos(-playerAngle);
+            const float sinA = std::sin(-playerAngle);
+            const float rx_rot = dx * cosA - dy * sinA;
+            const float ry_rot = dx * sinA + dy * cosA;
+            rx = rx_rot * scale + half + radarX;
+            ry = ry_rot * scale + half + radarY;
+        } else {
+            rx = (wx - mapCenterX) * scale + half + radarX;
+            ry = (wy - mapCenterY) * scale + half + radarY;
+        }
+        return std::make_pair(rx, ry);
+    };
+
+    // 绘制 BOT 点（已隐藏——雷达不显示敌人位置）
+    // 如需启用，取消注释即可
+    /*
+    for (size_t i = 0; i < botXs.size(); ++i) {
+        if (!botAlive[i]) continue;
+        auto [bx, by] = worldToRadar(botXs[i], botYs[i]);
+        if (bx < radarX || bx > radarX + radarSize ||
+            by < radarY || by > radarY + radarSize) continue;
+        SDL_SetRenderDrawColor(renderer_, 255, 80, 80, 220);
+        const int r = 3;
+        const SDL_Rect dot = {static_cast<int>(bx) - r, static_cast<int>(by) - r, r * 2, r * 2};
+        SDL_RenderFillRect(renderer_, &dot);
+    }
+    */
+
+    // 绘制玩家点（三角箭头）
+    auto [px, py] = worldToRadar(playerX, playerY);
+    const float arrowAngle = rotateWithPlayer ? 0.0f : playerAngle;
+    const float arrowSize = 5.0f;
+    SDL_SetRenderDrawColor(renderer_, 80, 180, 255, 255);
+    // 画三角形
+    const float tipX = px + std::cos(arrowAngle) * arrowSize;
+    const float tipY = py + std::sin(arrowAngle) * arrowSize;
+    const float leftX = px + std::cos(arrowAngle + 2.5f) * (arrowSize * 0.6f);
+    const float leftY = py + std::sin(arrowAngle + 2.5f) * (arrowSize * 0.6f);
+    const float rightX = px + std::cos(arrowAngle - 2.5f) * (arrowSize * 0.6f);
+    const float rightY = py + std::sin(arrowAngle - 2.5f) * (arrowSize * 0.6f);
+    SDL_RenderDrawLineF(renderer_, tipX, tipY, leftX, leftY);
+    SDL_RenderDrawLineF(renderer_, tipX, tipY, rightX, rightY);
+    SDL_RenderDrawLineF(renderer_, leftX, leftY, rightX, rightY);
 }
 
 // ============================================================================

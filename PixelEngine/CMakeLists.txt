@@ -109,6 +109,7 @@ set(SOURCES
     CS2D/CS2DWorld.cpp
     CS2D/CS2DRenderer.cpp
     CS2D/CS2DGame.cpp
+    CS2D/CS2DOverlay.cpp
     ThirdParty/imgui/imgui.cpp
     ThirdParty/imgui/imgui_draw.cpp
     ThirdParty/imgui/imgui_tables.cpp

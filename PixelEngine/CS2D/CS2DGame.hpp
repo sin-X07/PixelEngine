@@ -5,6 +5,9 @@
 #include <vector>
 #include <random>
 #include <memory>
+#include <algorithm>
+
+class AudioManager;
 
 // ============================================================================
 // CS2DGame —— CS2D 模式游戏逻辑（俯视角射击对抗）
@@ -45,6 +48,14 @@ public:
         int       spriteKey  = 0;    // 0=CT头盔, 1=T无头盔, 2=T备选
         float     deathTimer = 0.0f;
         float     shootAnimTimer = 0.0f;  // 射击动画计时（>0 表示射击状态）
+        // 换弹系统（仅主武器）
+        int       ammo      = 30;    // 当前弹夹子弹数
+        int       maxAmmo   = 30;    // 弹夹容量
+        bool      reloading = false;
+        float     reloadTimer = 0.0f;
+        static constexpr float RELOAD_TIME = 2.0f;  // 换弹耗时（秒）
+        // 潜行
+        bool      stealth   = false;
     };
 
     // ---- 子弹 ----
@@ -71,10 +82,12 @@ public:
 
     // 每帧更新
     void Update(float dt, bool mouseLeftDown, float mouseWorldX, float mouseWorldY,
-                bool wPressed, bool aPressed, bool sPressed, bool dPressed);
+                bool wPressed, bool aPressed, bool sPressed, bool dPressed,
+                bool shiftPressed, bool rPressed,
+                class AudioManager* audio = nullptr);
 
     // 渲染
-    void Render();
+    void Render(int viewW = 800, int viewH = 600);
 
     // 访问器
     CS2DWorld&       GetWorld()       { return *world_; }
@@ -96,6 +109,13 @@ public:
     // 武器槽切换：0=主武器, 1=副武器, 2=近战
     void SwitchWeaponSlot(int slot);
 
+    // 武器名称（按 slot 返回）
+    std::string GetWeaponName() const;
+
+    // 鼠标灵敏度（默认 1.0f）
+    float GetMouseSensitivity() const { return mouseSensitivity_; }
+    void  SetMouseSensitivity(float s) { mouseSensitivity_ = std::clamp(s, 0.1f, 5.0f); }
+
 private:
     std::unique_ptr<CS2DWorld> world_;
     CS2DRenderer* renderer_ = nullptr;
@@ -113,18 +133,27 @@ private:
     static constexpr float BOT_RESPAWN_DELAY = 3.0f;
     static constexpr int   MAX_BOTS          = 8;
     static constexpr int   ACTIVE_BOTS       = 4;
+    static constexpr float BOT_VIEW_RADIUS    = 50.0f;  // BOT 视野半径（世界单位，约等于屏幕可见范围）
+    static constexpr float PLAYER_VIEW_RADIUS = 200.0f;  // 玩家视野半径（世界单位）
 
     std::mt19937 rng_;
     std::uniform_real_distribution<float> angleDist_{0.0f, 6.283185f};
+
+    float mouseSensitivity_ = 1.0f;   // 鼠标灵敏度倍率
+    bool  prevMouseDown_    = false;  // 上一帧鼠标状态（用于半自动武器边沿检测）
+
+    // 每个武器槽独立的弹药（避免切换武器时自动补满）
+    int   slotAmmo_[2]    = {30, 7};   // [0]=主武器, [1]=副武器
+    int   slotMaxAmmo_[2] = {30, 7};
 
     // 内部方法
     void SpawnPlayer();
     void SpawnBOT(Player& bot, bool isCT);
     bool PickRandomSpawn(float& outX, float& outY);
-    void UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d);
-    void UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, float worldMY);
-    void UpdateBOTs(float dt);
-    void UpdateBullets(float dt);
+    void UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bool stealth);
+    void UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, float worldMY, class AudioManager* audio);
+    void UpdateBOTs(float dt, class AudioManager* audio);
+    void UpdateBullets(float dt, class AudioManager* audio);
     void RespawnBOT(Player& bot);
 
     // 碰撞移动（分离轴推挤）
@@ -132,4 +161,17 @@ private:
 
     // 发射子弹（按武器槽参数）
     void FireBullet(float x, float y, float angle, const WeaponSlotParams& wp, int ownerIdx);
+
+    // BOT 是否能看见玩家（距离+视野半径+LOS 检查）
+    bool BotCanSeePlayer(const Player& bot) const;
+
+    // 玩家是否能看见 BOT（同理）
+    bool PlayerCanSeeBot(const Player& bot) const;
+
+    // 换弹逻辑（仅主武器）
+    void StartReload(Player& p);
+    void UpdateReload(Player& p, float dt);
+
+    // 检查是否有敌人过于靠近
+    bool IsEnemyNearby(float x, float y, float safeRadius) const;
 };

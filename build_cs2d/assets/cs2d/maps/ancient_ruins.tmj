@@ -15,7 +15,6 @@
          "y":0
         }, 
         {
-         "color":"#ff0000",
          "draworder":"topdown",
          "id":3,
          "name":"Collisions",

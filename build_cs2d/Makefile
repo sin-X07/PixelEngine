@@ -254,6 +254,30 @@ CS2D/CS2DGame.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles\EngineApp.dir\build.make CMakeFiles/EngineApp.dir/CS2D/CS2DGame.cpp.s
 .PHONY : CS2D/CS2DGame.cpp.s
 
+CS2D/CS2DOverlay.obj: CS2D/CS2DOverlay.cpp.obj
+.PHONY : CS2D/CS2DOverlay.obj
+
+# target to build an object file
+CS2D/CS2DOverlay.cpp.obj:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\EngineApp.dir\build.make CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.obj
+.PHONY : CS2D/CS2DOverlay.cpp.obj
+
+CS2D/CS2DOverlay.i: CS2D/CS2DOverlay.cpp.i
+.PHONY : CS2D/CS2DOverlay.i
+
+# target to preprocess a source file
+CS2D/CS2DOverlay.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\EngineApp.dir\build.make CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.i
+.PHONY : CS2D/CS2DOverlay.cpp.i
+
+CS2D/CS2DOverlay.s: CS2D/CS2DOverlay.cpp.s
+.PHONY : CS2D/CS2DOverlay.s
+
+# target to generate assembly for a file
+CS2D/CS2DOverlay.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\EngineApp.dir\build.make CMakeFiles/EngineApp.dir/CS2D/CS2DOverlay.cpp.s
+.PHONY : CS2D/CS2DOverlay.cpp.s
+
 CS2D/CS2DRenderer.obj: CS2D/CS2DRenderer.cpp.obj
 .PHONY : CS2D/CS2DRenderer.obj
 
@@ -947,6 +971,9 @@ help:
 	@echo ... CS2D/CS2DGame.obj
 	@echo ... CS2D/CS2DGame.i
 	@echo ... CS2D/CS2DGame.s
+	@echo ... CS2D/CS2DOverlay.obj
+	@echo ... CS2D/CS2DOverlay.i
+	@echo ... CS2D/CS2DOverlay.s
 	@echo ... CS2D/CS2DRenderer.obj
 	@echo ... CS2D/CS2DRenderer.i
 	@echo ... CS2D/CS2DRenderer.s

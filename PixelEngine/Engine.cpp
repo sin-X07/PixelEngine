@@ -4,7 +4,9 @@
 #include "ThirdParty/imgui/imgui.h"
 #include "ThirdParty/imgui/backends/imgui_impl_sdl2.h"
 #include <iostream>
+#include <fstream>
 #include <cmath>
+#include <cstring>
 #include <algorithm>
 #include <filesystem>
 
@@ -51,18 +53,93 @@ GameUI::Actions Engine::BuildActions() {
     a.confirmExit = [this](bool toDesktop){ exitToDesktop = toDesktop; currentState = EXIT_CONFIRM; };
     a.quitApp = [this]{
         inputManager->ResetMovementKeys();
+        SDL_SetRelativeMouseMode(SDL_FALSE);
+        SDL_ShowCursor(SDL_ENABLE);
         if (exitToDesktop) { isRunning = false; }
         else { currentState = MAIN_MENU; audioManager->ResumeMusic(); }
     };
     a.quitToDesktop = [this]{
         inputManager->ResetMovementKeys();
+        SDL_SetRelativeMouseMode(SDL_FALSE);
         isRunning = false;
     };
     a.toggleMute = [this]{ audioManager->ToggleMute(); };
     a.setMasterVolume = [this](int v){ audioManager->SetMasterVolume(v); };
     a.setMusicVolume = [this](int v){ audioManager->SetMusicVolume(v); };
     a.setEffectsVolume = [this](int v){ audioManager->SetEffectsVolume(v); };
+    a.setMouseSensitivity = [this](float s){ cs2dGame->SetMouseSensitivity(s); };
+    a.setTargetFPS = [this](int fps){ targetFPS_ = fps; };
     a.selectRole = [this](int idx){ SelectRole(idx); };
+    // 准星
+    a.setCrosshairColor      = cs2dOverlay.MakeSetCrosshairColor();
+    a.setCrosshairThickness   = cs2dOverlay.MakeSetCrosshairThickness();
+    a.setCrosshairCenterDot   = cs2dOverlay.MakeSetCrosshairCenterDot();
+    a.setCrosshairLength      = cs2dOverlay.MakeSetCrosshairLength();
+    a.setCrosshairGap         = cs2dOverlay.MakeSetCrosshairGap();
+    // 雷达
+    a.setRadarPlayerCentered  = cs2dOverlay.MakeSetRadarPlayerCentered();
+    a.setRadarRotateWithPlayer = cs2dOverlay.MakeSetRadarRotateWithPlayer();
+    a.setRadarBlendBg         = cs2dOverlay.MakeSetRadarBlendBg();
+    a.setRadarBgAlpha         = cs2dOverlay.MakeSetRadarBgAlpha();
+    a.setRadarHudSize         = cs2dOverlay.MakeSetRadarHudSize();
+    a.setRadarMapZoom         = cs2dOverlay.MakeSetRadarMapZoom();
+    // 分辨率
+    a.setResolution = [this](int w, int h, int idx){
+        currentResW_ = w; currentResH_ = h; currentResIdx_ = idx;
+        if (!isFullscreen) {
+            // 防止窗口超出桌面可用区域（2560×1600 屏幕设 2560×1600 会因标题栏撑大）
+            SDL_Rect usable;
+            SDL_GetDisplayUsableBounds(0, &usable);
+            if (SDL_RectEmpty(&usable)) { usable.x = 0; usable.y = 0; usable.w = w; usable.h = h; }
+            const int clampedW = std::min(w, usable.w);
+            const int clampedH = std::min(h, usable.h);
+            SDL_SetWindowSize(window, clampedW, clampedH);
+            SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+            logicalW_ = clampedW; logicalH_ = clampedH;
+            SDL_RenderSetLogicalSize(renderer, logicalW_, logicalH_);
+            if (cs2dRenderer) cs2dRenderer->SetViewportSize(logicalW_, logicalH_);
+            if (renderSystem) renderSystem->SetViewportSize(logicalW_, logicalH_);
+            if (uiRenderer) uiRenderer->SetViewportSize(logicalW_, logicalH_);
+            cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
+            cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
+        }
+    };
+    a.setFullscreen = [this](bool v){
+    if (v != isFullscreen) {
+        if (v) {
+            SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+            // 动态 FOV：按屏幕宽高比扩展逻辑视口，而不是拉伸 800×600
+            int screenW = 0, screenH = 0;
+            SDL_GetRendererOutputSize(renderer, &screenW, &screenH);
+            // 以高度为基准，宽度按屏幕比例扩展
+            const float aspect = (screenH > 0) ? static_cast<float>(screenW) / static_cast<float>(screenH) : (4.0f / 3.0f);
+            logicalH_ = 600;
+            logicalW_ = static_cast<int>(600.0f * aspect);
+            SDL_RenderSetLogicalSize(renderer, logicalW_, logicalH_);
+            if (cs2dRenderer) cs2dRenderer->SetViewportSize(logicalW_, logicalH_);
+            if (renderSystem) renderSystem->SetViewportSize(logicalW_, logicalH_);
+            if (uiRenderer) uiRenderer->SetViewportSize(logicalW_, logicalH_);
+        } else {
+            SDL_SetWindowFullscreen(window, 0);
+            // 回到用户选定的分辨率，同样 clamp 到可用区域
+            SDL_Rect usable;
+            SDL_GetDisplayUsableBounds(0, &usable);
+            if (SDL_RectEmpty(&usable)) { usable.x = 0; usable.y = 0; usable.w = currentResW_; usable.h = currentResH_; }
+            const int clampedW = std::min(currentResW_, usable.w);
+            const int clampedH = std::min(currentResH_, usable.h);
+            SDL_SetWindowSize(window, clampedW, clampedH);
+            SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+            logicalW_ = clampedW; logicalH_ = clampedH;
+            SDL_RenderSetLogicalSize(renderer, logicalW_, logicalH_);
+            if (cs2dRenderer) cs2dRenderer->SetViewportSize(logicalW_, logicalH_);
+            if (renderSystem) renderSystem->SetViewportSize(logicalW_, logicalH_);
+            if (uiRenderer) uiRenderer->SetViewportSize(logicalW_, logicalH_);
+            cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
+            cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
+        }
+        isFullscreen = v;
+    }
+};
     return a;
 }
 
@@ -81,6 +158,31 @@ bool Engine::Initialize(const char* title, int width, int height) {
     audioManager->Initialize();
     audioManager->PlayMusic("assets/audio/menu.wav");
 
+    // 恢复音频设置（音量 / 静音）；若文件缺失则使用 AudioManager 自带默认值
+    {
+        const std::string audioPath = PathUtils::ResolveAppPath("audio_config.ini");
+        std::ifstream audioFile(audioPath);
+        if (audioFile) {
+            int master = 100, music = 25, effects = 100, muted = 0;
+            std::string line;
+            while (std::getline(audioFile, line)) {
+                if (line.empty() || line[0] == ';') continue;
+                size_t eq = line.find('=');
+                if (eq == std::string::npos) continue;
+                std::string k = line.substr(0, eq);
+                std::string v = line.substr(eq + 1);
+                if (k == "master") master = std::stoi(v);
+                else if (k == "music") music = std::stoi(v);
+                else if (k == "effects") effects = std::stoi(v);
+                else if (k == "muted") muted = std::stoi(v);
+            }
+            audioManager->SetMasterVolume(master);
+            audioManager->SetMusicVolume(music);
+            audioManager->SetEffectsVolume(effects);
+            if (muted) audioManager->SetMuted(true);
+        }
+    }
+
     // 创建窗口与硬件渲染器
     window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_SHOWN);
     if (!window) {
@@ -98,10 +200,21 @@ bool Engine::Initialize(const char* title, int width, int height) {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_RenderSetLogicalSize(renderer, width, height);
 
-    // 加载文字样式配置：读写在 exe 目录下同一份 text.ini（写入语义，稳定落盘）。
-    const std::string textConfigPath = PathUtils::ResolveWritablePath("assets/config/text.ini");
-    const bool textIniExists = std::filesystem::exists(textConfigPath);
-    textConfig->Load(textConfigPath);
+    // 文字样式配置：读写分离，用户配置落盘到 exe 同级 text_config.ini（不受 CMake
+    // POST_BUILD 覆盖）；assets/config/text.ini 仅作为首次运行的工厂模板。
+    const std::string userCfgPath   = PathUtils::ResolveWritablePath("text_config.ini");
+    const std::string templatePath  = PathUtils::ResolveAppPath("assets/config/text.ini");
+
+    if (std::filesystem::exists(userCfgPath)) {
+        textConfig->Load(userCfgPath);
+    } else if (std::filesystem::exists(templatePath)) {
+        // 首次运行：从模板拷贝一份到用户配置路径
+        std::error_code ec;
+        std::filesystem::copy_file(templatePath, userCfgPath, ec);
+        textConfig->Load(userCfgPath);
+    }
+    // 两文件都不存在：保持 C++ 默认值，F2 面板首次保存时会写出
+
     // [global] font= 传给 ImGuiUI（仅启动生效）
     if (!textConfig->GlobalFontPath().empty()) {
         imGuiUI->SetFontPath(textConfig->GlobalFontPath());
@@ -111,14 +224,11 @@ bool Engine::Initialize(const char* title, int width, int height) {
     if (!renderSystem->Initialize(renderer, width, height)) return false;
     if (!uiRenderer->Initialize(renderer)) return false;
     if (!imGuiUI->Initialize(window, renderer)) return false;
+    renderSystem->SetViewportSize(logicalW_, logicalH_);
+    uiRenderer->SetViewportSize(logicalW_, logicalH_);
 
     // CS2D 渲染器初始化（地图目录为 assets/cs2d/maps/）
     cs2dRenderer->Initialize(renderer, "assets/cs2d/maps");
-
-    // 仅在首次运行（文件不存在）时生成默认模板；已存在的配置绝不覆盖，保证持久化。
-    if (!textIniExists) {
-        textConfig->Save(textConfigPath);
-    }
 
     // ImGui 后端消费原始 SDL 事件
     inputManager->SetEventCallback([this](const SDL_Event& e) {
@@ -188,7 +298,19 @@ void Engine::Clean() {
         saveManager->SaveAll();
     }
     if (textConfig) {
-        textConfig->Save(PathUtils::ResolveWritablePath("assets/config/text.ini"));
+        textConfig->Save(PathUtils::ResolveWritablePath("text_config.ini"));
+    }
+
+    // 持久化音频设置
+    if (audioManager && audioManager->IsInitialized()) {
+        std::ofstream audioFile(PathUtils::ResolveWritablePath("audio_config.ini"));
+        if (audioFile) {
+            audioFile << "; PixelEngine 音频设置（自动生成）\n";
+            audioFile << "master="  << audioManager->GetMasterVolume()   << "\n";
+            audioFile << "music="   << audioManager->GetMusicVolume()    << "\n";
+            audioFile << "effects=" << audioManager->GetEffectsVolume()  << "\n";
+            audioFile << "muted="   << (audioManager->IsMuted() ? 1 : 0) << "\n";
+        }
     }
 
     if (audioManager) audioManager->Clean();
@@ -203,15 +325,42 @@ void Engine::Clean() {
 }
 
 void Engine::ToggleFullscreen() {
-    if (window) {
-        Uint32 flags = SDL_GetWindowFlags(window);
-        if (flags & SDL_WINDOW_FULLSCREEN_DESKTOP) {
-            SDL_SetWindowFullscreen(window, 0);
-            isFullscreen = false;
-        } else {
-            SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
-            isFullscreen = true;
-        }
+    if (!window) return;
+    Uint32 flags = SDL_GetWindowFlags(window);
+    if (flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) {
+        // 退出全屏
+        SDL_SetWindowFullscreen(window, 0);
+        SDL_Rect usable;
+        SDL_GetDisplayUsableBounds(0, &usable);
+        if (SDL_RectEmpty(&usable)) { usable.x = 0; usable.y = 0; usable.w = currentResW_; usable.h = currentResH_; }
+        const int clampedW = std::min(currentResW_, usable.w);
+        const int clampedH = std::min(currentResH_, usable.h);
+        SDL_SetWindowSize(window, clampedW, clampedH);
+        SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        logicalW_ = clampedW; logicalH_ = clampedH;
+        SDL_RenderSetLogicalSize(renderer, logicalW_, logicalH_);
+        if (cs2dRenderer) cs2dRenderer->SetViewportSize(logicalW_, logicalH_);
+        if (renderSystem) renderSystem->SetViewportSize(logicalW_, logicalH_);
+        if (uiRenderer) uiRenderer->SetViewportSize(logicalW_, logicalH_);
+        cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
+        cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
+        isFullscreen = false;
+    } else {
+        // 进入全屏：动态 FOV
+        SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+        int screenW = 0, screenH = 0;
+        SDL_GetRendererOutputSize(renderer, &screenW, &screenH);
+        const float aspect = (screenH > 0) ? static_cast<float>(screenW) / static_cast<float>(screenH) : (4.0f / 3.0f);
+        logicalH_ = 600;
+        logicalW_ = static_cast<int>(600.0f * aspect);
+        SDL_RenderSetLogicalSize(renderer, logicalW_, logicalH_);
+        if (cs2dRenderer) cs2dRenderer->SetViewportSize(logicalW_, logicalH_);
+        if (renderSystem) renderSystem->SetViewportSize(logicalW_, logicalH_);
+        if (uiRenderer) uiRenderer->SetViewportSize(logicalW_, logicalH_);
+        // 重新居中虚拟准星以避免 shift
+        cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
+        cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
+        isFullscreen = true;
     }
 }
 
@@ -278,6 +427,9 @@ void Engine::StartGame(GameMode mode) {
         gameTimer = 0.0f;
         gameOverStartTime = 0;
 
+        // CS2D 模式关闭背景音乐（使用枪声音效系统）
+        audioManager->StopMusic();
+
         // 加载 CS2D 地图（TMJ JSON 格式）
         const std::string cs2dMapPath = PathUtils::ResolveAppPath("assets/cs2d/maps/cs_office.tmj");
         if (!cs2dGame->LoadMap(cs2dMapPath, cs2dRenderer.get())) {
@@ -287,6 +439,10 @@ void Engine::StartGame(GameMode mode) {
 
         inputManager->SwitchToEnglishKeyboardLayout();
         currentState = PLAYING;
+        SDL_ShowCursor(SDL_DISABLE);
+        SDL_SetRelativeMouseMode(SDL_TRUE);   // 相对鼠标模式，灵敏度由偏移量控制
+        cs2dOverlay.virtCursorX = logicalW_ * 0.5f;  // 重置虚拟准星到屏幕中心
+        cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
         std::cout << "模式 3: CS2D 俯视角射击对抗开始!" << std::endl;
         return; // CS2D 有自己的主循环逻辑，跳过其余初始化
     } else {
@@ -312,6 +468,8 @@ void Engine::HandleInput() {
     if (inputManager->IsPauseToggleRequested()) {
         if (currentState == PLAYING) {
             currentState = PAUSED;
+            SDL_SetRelativeMouseMode(SDL_FALSE);
+            SDL_ShowCursor(SDL_ENABLE);
             inputManager->ResetMovementKeys();
             player.vx = player.vy = 0.0f;
             audioManager->PauseMusic();
@@ -358,15 +516,16 @@ void Engine::HandleInput() {
     if (currentState == PLAYING) {
         // CS2D 模式：采集输入状态，由 Update() 消费
         if (currentMode == CS2D_MODE) {
-            int mouseX, mouseY;
-            SDL_GetMouseState(&mouseX, &mouseY);
-            float logicalMouseX = 0.0f, logicalMouseY = 0.0f;
-            SDL_RenderWindowToLogical(renderer,
-                static_cast<float>(mouseX), static_cast<float>(mouseY),
-                &logicalMouseX, &logicalMouseY);
-            const float cz = cs2dRenderer->GetZoom();
-            cs2dWorldMouseX = cs2dRenderer->GetCameraX() + logicalMouseX / cz;
-            cs2dWorldMouseY = cs2dRenderer->GetCameraY() + logicalMouseY / cz;
+            SDL_SetRelativeMouseMode(SDL_TRUE);
+            // 相对鼠标模式：用鼠标位移量 × 灵敏度控制虚拟准星
+            int relX = 0, relY = 0;
+            SDL_GetRelativeMouseState(&relX, &relY);
+            cs2dOverlay.UpdateCursor(relX, relY,
+                                     cs2dGame->GetMouseSensitivity(),
+                                     cs2dRenderer->GetZoom(),
+                                     cs2dRenderer->GetCameraX(), cs2dRenderer->GetCameraY(),
+                                     logicalW_, logicalH_,
+                                     cs2dWorldMouseX, cs2dWorldMouseY);
             cs2dMouseDown = inputManager->IsMouseLeftDown();
 
             const Uint8* kb = SDL_GetKeyboardState(nullptr);
@@ -374,6 +533,12 @@ void Engine::HandleInput() {
             cs2dKeyA = kb[SDL_SCANCODE_A];
             cs2dKeyS = kb[SDL_SCANCODE_S];
             cs2dKeyD = kb[SDL_SCANCODE_D];
+            cs2dKeyShift = kb[SDL_SCANCODE_LSHIFT] || kb[SDL_SCANCODE_RSHIFT];
+            cs2dKeyR = kb[SDL_SCANCODE_R];
+            // Tab 边沿检测 → 中心雷达切换
+            cs2dOverlay.prevTab = cs2dOverlay.keyTab;
+            cs2dOverlay.keyTab = kb[SDL_SCANCODE_TAB];
+            cs2dOverlay.UpdateTabToggle();
 
             // 武器槽切换：1=主武器, 2=副武器, 3=近战
             if (inputManager->IsDigit1Requested()) cs2dGame->SwitchWeaponSlot(0);
@@ -384,6 +549,8 @@ void Engine::HandleInput() {
             SDL_ShowCursor(SDL_DISABLE);
             return; // CS2D 使用自己的战斗系统，跳过下方 CombatSystem 逻辑
         }
+        // 非 CS2D 模式：恢复绝对鼠标
+        SDL_SetRelativeMouseMode(SDL_FALSE);
         SDL_ShowCursor(SDL_ENABLE);
 
         combatSystem->UpdateAimAngle();
@@ -415,7 +582,9 @@ void Engine::Update(float dt) {
     // CS2D 模式：独立游戏逻辑
     if (currentMode == CS2D_MODE) {
         cs2dGame->Update(dt, cs2dMouseDown, cs2dWorldMouseX, cs2dWorldMouseY,
-                         cs2dKeyW, cs2dKeyA, cs2dKeyS, cs2dKeyD);
+                         cs2dKeyW, cs2dKeyA, cs2dKeyS, cs2dKeyD,
+                         cs2dKeyShift, cs2dKeyR,
+                         audioManager.get());
         return;
     }
 
@@ -564,13 +733,9 @@ void Engine::Render() {
 
     if (gameplayVisible && currentMode == CS2D_MODE) {
         // CS2D 独立渲染流程
-        cs2dGame->Render();
-        // 准星
-        int mx, my;
-        SDL_GetMouseState(&mx, &my);
-        float lmx = 0.0f, lmy = 0.0f;
-        SDL_RenderWindowToLogical(renderer, static_cast<float>(mx), static_cast<float>(my), &lmx, &lmy);
-        cs2dRenderer->DrawCrosshair(lmx, lmy, 12.0f);
+        cs2dGame->Render(logicalW_, logicalH_);
+        // 准星 / 雷达 / 计分板（独立模块）
+        cs2dOverlay.Render(cs2dRenderer.get(), cs2dGame.get(), logicalW_, logicalH_);
     } else if (gameplayVisible) {
         renderSystem->DrawDungeonBackground(*worldMap, 0);
         renderSystem->DrawWorld(*worldMap, player.x, player.y, player.size,
@@ -593,7 +758,7 @@ void Engine::Render() {
     if (currentState == MAIN_MENU || currentState == MODE_SELECT || currentState == ROLE_SELECT) {
         renderSystem->DrawAnimatedMenuBackground(*worldMap, menuTime);
     } else if (currentState == HISTORY || currentState == CONTROLS || currentState == SETTINGS) {
-        SDL_Rect bg = {0, 0, 800, 600};
+        SDL_Rect bg = {0, 0, logicalW_, logicalH_};
         SDL_SetRenderDrawColor(renderer, 20, 39, 45, 255);
         SDL_RenderFillRect(renderer, &bg);
     }
@@ -601,7 +766,7 @@ void Engine::Render() {
     // 角色选择页：先在 ImGui 之下画 4 张角色立绘预览（与 GameUI 的卡片矩形严格对齐）
     if (currentState == ROLE_SELECT) {
         for (int i = 0; i < ROLE_COUNT; ++i) {
-            const SDL_FRect card = GetRoleCardRect(i);
+            const SDL_FRect card = GetRoleCardRect(i, static_cast<float>(logicalW_));
             // 预览区取卡片上部（下部留给按钮，见 GameUI 的 ROLE_SELECT 分支）
             const SDL_FRect previewArea = {card.x + 6.0f, card.y + 6.0f, card.w - 12.0f, card.h - 96.0f};
             renderSystem->DrawRolePreview(i, previewArea);
@@ -641,8 +806,27 @@ void Engine::Render() {
         ctx.musicVolume = audioManager->GetMusicVolume();
         ctx.effectsVolume = audioManager->GetEffectsVolume();
         ctx.muted = audioManager->IsMuted();
+        ctx.mouseSensitivity = cs2dGame->GetMouseSensitivity();
+        ctx.targetFPS = targetFPS_;
         ctx.saves = saveManager.get();
         ctx.selectedRole = selectedRole;
+        // 准星
+        ctx.crosshairR = cs2dOverlay.crosshair.r; ctx.crosshairG = cs2dOverlay.crosshair.g;
+        ctx.crosshairB = cs2dOverlay.crosshair.b; ctx.crosshairA = cs2dOverlay.crosshair.a;
+        ctx.crosshairThickness = cs2dOverlay.crosshair.thickness;
+        ctx.crosshairCenterDot = cs2dOverlay.crosshair.centerDot;
+        ctx.crosshairLength     = cs2dOverlay.crosshair.length;
+        ctx.crosshairGap        = cs2dOverlay.crosshair.gap;
+        // 雷达
+        ctx.radarPlayerCentered   = cs2dOverlay.radar.playerCentered;
+        ctx.radarRotateWithPlayer = cs2dOverlay.radar.rotateWithPlayer;
+        ctx.radarBlendBg          = cs2dOverlay.radar.blendBg;
+        ctx.radarBgAlpha          = cs2dOverlay.radar.bgAlpha;
+        ctx.radarHudSize          = cs2dOverlay.radar.hudSize;
+        ctx.radarMapZoom          = cs2dOverlay.radar.mapZoom;
+        // 分辨率
+        ctx.resW = currentResW_; ctx.resH = currentResH_; ctx.resIdx = currentResIdx_;
+        ctx.isFullscreen = isFullscreen;
         gameUI->DrawMenu(ctx, BuildActions());
     } else {
         GameUI::InGameCtx ictx;
@@ -654,11 +838,15 @@ void Engine::Render() {
             ictx.score = cs2dGame->GetPlayerKills();
             ictx.diedByTrap = false;
             ictx.diedByMonster = false;
-            ictx.weaponName = "Rifle";
-            ictx.ammo = -1;
-            ictx.magazineSize = 0;
-            ictx.hasWeaponIcon = false;
-            ictx.hasNoWeaponHint = false;
+            ictx.weaponName = cs2dGame->GetWeaponName();
+            ictx.ammo = cs2dGame->GetPlayer().ammo;
+            ictx.magazineSize = (cs2dGame->GetPlayer().weaponSlot == 2) ? 0 : cs2dGame->GetPlayer().maxAmmo;
+            ictx.hasWeaponIcon = true;
+            ictx.hasNoWeaponHint = cs2dGame->GetPlayer().reloading;
+            ictx.hintText = "换弹中...";
+            ictx.cs2dTotal  = cs2dGame->GetBotCount() + 1;
+            ictx.cs2dKills  = cs2dGame->GetPlayerKills();
+            ictx.cs2dDeaths = cs2dGame->GetPlayerDeaths();
         } else {
             ictx.gameTimer = gameTimer;
             ictx.score = score;
@@ -682,5 +870,5 @@ void Engine::Render() {
     imGuiUI->EndFrame();
 
     SDL_RenderPresent(renderer);
-    SDL_Delay(16);
+    SDL_Delay(1000 / targetFPS_);
 }
