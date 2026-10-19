@@ -262,6 +262,32 @@ bool Engine::Initialize(const char* title, int width, int height) {
     selectedRole = saveManager->GetSelectedRole();
     renderSystem->SetActiveRole(selectedRole);
 
+    // ---- LLM BOT 初始化 ----
+    // 读取配置文件: 优先 exe 同目录的 llm.ini (CMake POST_BUILD 会从 assets/config 复制),
+    // 若不存在则回退到源码 assets/config/llm.ini
+    {
+        std::string cfgPath = PathUtils::ResolveAppPath("assets/config/llm.ini");
+        LLMConfig llmCfg = LLMConfig::FromFile(cfgPath);
+
+        // 把相对路径转成绝对路径 (CreateProcess 需要; 相对基准是 exe 目录)
+        if (!llmCfg.serverExePath.empty()) {
+            std::string resolved = PathUtils::ResolveAppPath(llmCfg.serverExePath);
+            if (!resolved.empty()) llmCfg.serverExePath = resolved;
+        }
+        if (!llmCfg.modelPath.empty()) {
+            std::string resolved = PathUtils::ResolveAppPath(llmCfg.modelPath);
+            if (!resolved.empty()) llmCfg.modelPath = resolved;
+        }
+
+        llmBot = std::make_unique<LLMBotController>();
+        if (llmBot->Initialize(llmCfg)) {
+            std::cout << "[LLM] LLM BOT 已就绪 (server: " << llmCfg.serverUrl
+                      << (llmCfg.autoLaunch ? ", 自动拉起" : "") << ")" << std::endl;
+        } else {
+            std::cout << "[LLM] LLM 不可用, BOT 使用传统行为树" << std::endl;
+        }
+    }
+
     isRunning = true;
     return true;
 }
@@ -317,6 +343,7 @@ void Engine::Clean() {
     if (renderSystem) renderSystem->Clean();
     if (uiRenderer) uiRenderer->Clean();
     if (imGuiUI) imGuiUI->Shutdown();
+    if (llmBot) { llmBot->Shutdown(); llmBot.reset(); }
 
     if (renderer) { SDL_DestroyRenderer(renderer); renderer = nullptr; }
     if (window) { SDL_DestroyWindow(window); window = nullptr; }
@@ -585,6 +612,16 @@ void Engine::Update(float dt) {
                          cs2dKeyW, cs2dKeyA, cs2dKeyS, cs2dKeyD,
                          cs2dKeyShift, cs2dKeyR,
                          audioManager.get());
+
+        // ---- LLM BOT 思考间隔 ----
+        if (llmBot && llmBot->IsReady()) {
+            llmCooldownTimer_ -= dt;
+            if (llmCooldownTimer_ <= 0.0f) {
+                llmCooldownTimer_ = LLM_THINK_INTERVAL;
+                RequestLLMDecision();
+            }
+        }
+
         return;
     }
 
@@ -871,4 +908,108 @@ void Engine::Render() {
 
     SDL_RenderPresent(renderer);
     SDL_Delay(1000 / targetFPS_);
+}
+
+// ============================================================================
+// LLM 决策请求 —— 采集第一个存活 BOT 的状态, 发送到 llama-server
+// ============================================================================
+void Engine::RequestLLMDecision() {
+    if (!cs2dGame || !llmBot) return;
+    const auto& bots = cs2dGame->GetBOTs();
+    const auto& playerData = cs2dGame->GetPlayer();
+
+    // 找一个存活的 BOT
+    const CS2DGame::Player* targetBot = nullptr;
+    for (const auto& b : bots) {
+        if (b.alive) { targetBot = &b; break; }
+    }
+    if (!targetBot) return;  // 没有存活 BOT, 跳过
+
+    // ---- 构建状态信息 ----
+    float hp = static_cast<float>(targetBot->health);
+    float maxHp = static_cast<float>(targetBot->maxHealth);
+    float armor = 0.0f;  // 当前未实现护甲系统
+
+    // 武器名
+    std::string weaponName;
+    if (targetBot->weaponSlot == 0)      weaponName = targetBot->weaponType == 0 ? "AK47" : "M4A1";
+    else if (targetBot->weaponSlot == 1) weaponName = "手枪";
+    else                                 weaponName = "近战";
+
+    int ammo = targetBot->ammo;
+    int maxAmmo = targetBot->maxAmmo;
+
+    std::string area = "CS2D地图";
+
+    // 敌人信息 = 玩家
+    bool enemyVisible = false;
+    float enemyDist = 0.0f;
+    std::string enemyDir = "前方";
+    bool enemyFiring = false;
+
+    if (playerData.alive) {
+        float dx = playerData.x - targetBot->x;
+        float dy = playerData.y - targetBot->y;
+        enemyDist = std::sqrt(dx * dx + dy * dy);
+
+        // 视野半径检查
+        if (enemyDist < CS2DGame::BOT_VIEW_RADIUS) {
+            enemyVisible = true;
+
+            // 方向
+            if (std::abs(dx) > std::abs(dy)) {
+                enemyDir = (dx > 0) ? "右前方" : "左前方";
+            } else {
+                enemyDir = (dy > 0) ? "正前方" : "";  // 下方通常不在视野
+                if (enemyDir.empty()) enemyDir = (dx > 0) ? "右" : "左";
+            }
+        }
+    }
+
+    // 队友信息 = 其他存活 BOT
+    bool teammateAlive = false;
+    float teammateDist = 0.0f;
+    std::string teammateDir = "后方";
+    int aliveCount = 0;
+    for (const auto& b : bots) {
+        if (&b == targetBot) continue;
+        if (b.alive) {
+            aliveCount++;
+            float dx = b.x - targetBot->x;
+            float dy = b.y - targetBot->y;
+            float d = std::sqrt(dx * dx + dy * dy);
+            if (d < CS2DGame::BOT_VIEW_RADIUS * 1.5f) {
+                teammateAlive = true;
+                teammateDist = d;
+                teammateDir = (dx > 0) ? "右" : "左";
+                teammateDir += (dy > 0) ? "前方" : "后方";
+            }
+        }
+    }
+
+    // 构建请求
+    std::string userMsg = PromptBuilder::BuildUserMessage(
+        hp, maxHp, armor, weaponName, ammo, maxAmmo,
+        targetBot->x, targetBot->y, area,
+        enemyVisible, enemyDist, enemyDir, enemyFiring,
+        teammateAlive, teammateDist, teammateDir,
+        targetBot->reloading);
+
+    std::string requestBody = PromptBuilder::BuildRequestBody(userMsg);
+
+    // 发送异步请求
+    llmBot->Decide(requestBody, [this](const LLMDecision& d) {
+        if (d.valid) {
+            llmDecisionCache_ = d;
+            llmDecisionFresh_ = true;
+        }
+    });
+
+    // 调试输出 (每 10 秒一次)
+    llmDebugTimer_ += LLM_THINK_INTERVAL;
+    if (llmDebugTimer_ >= 10.0f) {
+        llmDebugTimer_ = 0.0f;
+        std::cout << "[LLM] 决策请求已发送, BOT(" << static_cast<int>(targetBot->health)
+                  << "HP, " << weaponName << ")" << std::endl;
+    }
 }

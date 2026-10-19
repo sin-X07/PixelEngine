@@ -112,6 +112,10 @@ public:
     // 武器名称（按 slot 返回）
     std::string GetWeaponName() const;
 
+    // BOT/玩家视野半径常量 (供 LLM 状态采样器使用)
+    static constexpr float BOT_VIEW_RADIUS    = 50.0f;
+    static constexpr float PLAYER_VIEW_RADIUS = 200.0f;
+
     // 鼠标灵敏度（默认 1.0f）
     float GetMouseSensitivity() const { return mouseSensitivity_; }
     void  SetMouseSensitivity(float s) { mouseSensitivity_ = std::clamp(s, 0.1f, 5.0f); }
@@ -132,9 +136,7 @@ private:
     float botRespawnTimer_  = 0.0f;
     static constexpr float BOT_RESPAWN_DELAY = 3.0f;
     static constexpr int   MAX_BOTS          = 8;
-    static constexpr int   ACTIVE_BOTS       = 4;
-    static constexpr float BOT_VIEW_RADIUS    = 50.0f;  // BOT 视野半径（世界单位，约等于屏幕可见范围）
-    static constexpr float PLAYER_VIEW_RADIUS = 200.0f;  // 玩家视野半径（世界单位）
+    static constexpr int   ACTIVE_BOTS       = 8;
 
     std::mt19937 rng_;
     std::uniform_real_distribution<float> angleDist_{0.0f, 6.283185f};

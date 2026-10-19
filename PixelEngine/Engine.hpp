@@ -21,6 +21,7 @@
 #include "CS2D/CS2DRenderer.hpp"
 #include "CS2D/CS2DGame.hpp"
 #include "CS2D/CS2DOverlay.hpp"
+#include "LLM/LLMBotController.hpp"
 #include <SDL2/SDL.h>
 #include <memory>
 #include <random>
@@ -57,6 +58,17 @@ private:
     std::unique_ptr<CS2DRenderer> cs2dRenderer;
     std::unique_ptr<CS2DGame>     cs2dGame;
     CS2DOverlay cs2dOverlay;
+
+    // LLM 驱动 BOT 系统（异步 HTTP 客户端 + 决策缓存）
+    std::unique_ptr<LLMBotController> llmBot;
+    LLMDecision              llmDecisionCache_;    // 最新决策缓存
+    bool                     llmDecisionFresh_ = false;  // 缓存是否来自最新请求
+    float                    llmCooldownTimer_ = 0.0f;    // BOT 思考间隔计时器
+    static constexpr float   LLM_THINK_INTERVAL = 3.0f;   // 每 3 秒请求一次 LLM
+    float                    llmDebugTimer_ = 0.0f;        // 调试输出节流
+
+    // 将 CS2D BOT 状态构建为 JSON 发送给 LLM, 结果写入 llmDecisionCache_
+    void RequestLLMDecision();
 
     // CS2D 模式输入状态（HandleInput 采集 → Update 消费）
     bool cs2dMouseDown = false;

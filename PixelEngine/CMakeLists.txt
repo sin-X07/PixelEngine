@@ -116,6 +116,7 @@ set(SOURCES
     ThirdParty/imgui/imgui_widgets.cpp
     ThirdParty/imgui/backends/imgui_impl_sdl2.cpp
     ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.cpp
+    LLM/LLMBotController.cpp
 )
 
 add_executable(EngineApp ${SOURCES})
@@ -130,6 +131,8 @@ target_link_libraries(EngineApp PRIVATE
     SDL2::SDL2
     SDL2_mixer::SDL2_mixer-static
     SDL2_image::SDL2_image-static
+    ws2_32
+    winhttp
 )
 
 # 静态链接 C/C++ 运行库：消除对 libgcc_s_seh-1.dll / libstdc++-6.dll /

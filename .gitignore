@@ -16,3 +16,7 @@
 
 # 打包输出
 /dist
+
+# LLM 模型和二进制文件 (>100MB, 通过脚本下载)
+/llm_bot/llama.cpp/
+/llm_bot/models/
