@@ -21,7 +21,7 @@
 #include "CS2D/CS2DRenderer.hpp"
 #include "CS2D/CS2DGame.hpp"
 #include "CS2D/CS2DOverlay.hpp"
-#include "LLM/LLMBotController.hpp"
+#include "LLM/BotDecisionScheduler.hpp"
 #include <SDL2/SDL.h>
 #include <memory>
 #include <random>
@@ -59,16 +59,8 @@ private:
     std::unique_ptr<CS2DGame>     cs2dGame;
     CS2DOverlay cs2dOverlay;
 
-    // LLM 驱动 BOT 系统（异步 HTTP 客户端 + 决策缓存）
-    std::unique_ptr<LLMBotController> llmBot;
-    LLMDecision              llmDecisionCache_;    // 最新决策缓存
-    bool                     llmDecisionFresh_ = false;  // 缓存是否来自最新请求
-    float                    llmCooldownTimer_ = 0.0f;    // BOT 思考间隔计时器
-    static constexpr float   LLM_THINK_INTERVAL = 3.0f;   // 每 3 秒请求一次 LLM
-    float                    llmDebugTimer_ = 0.0f;        // 调试输出节流
-
-    // 将 CS2D BOT 状态构建为 JSON 发送给 LLM, 结果写入 llmDecisionCache_
-    void RequestLLMDecision();
+    // LLM 驱动 BOT 系统（调度器内部管理 HTTP 客户端、轮询索引与冷却计时）
+    std::unique_ptr<BotDecisionScheduler> botDriver;
 
     // CS2D 模式输入状态（HandleInput 采集 → Update 消费）
     bool cs2dMouseDown = false;
@@ -108,6 +100,11 @@ private:
     void StartGame(GameMode mode);
     void SelectRole(int index); // 更新选中角色并同步渲染/存档
     GameUI::Actions BuildActions();
+
+    // 配置加载（Initialize 内部拆分，各自独立失败降级）
+    void LoadAudioConfig();   // audio_config.ini → 音量/静音
+    void LoadTextConfig();    // text_config.ini → 字体样式（缺失时从模板拷贝）
+    void InitLLMBot();        // llm.ini → BotDecisionScheduler
 
     // 战斗与武器（已迁入 CombatSystem；DamagePlayer 保留为受击/死亡效果编排）
     void DamagePlayer(int amount);

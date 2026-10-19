@@ -85,6 +85,19 @@ public:
     // 视线检查（供 CS2DGame 使用）
     bool HasLineOfSight(float fromX, float fromY, float toX, float toY) const;
 
+    // ---- 玩家视野可见度（唯一来源，遮罩与敌人剔除共用） ----
+    // 返回 [0,1]：距离因子(VISION_RADIUS, VISION_SOFT_EDGE 软边)
+    //          × 扇形因子(VISION_CONE_DEG 总角, VISION_ANGLE_SOFT 软边)
+    //          × 视线遮挡，三者取最小。0 表示完全不可见。
+    float ComputeVisibility(float playerX, float playerY, float aimAngle,
+                            float targetX, float targetY) const;
+
+    // 目标是否落在玩家视野内（ComputeVisibility > 0）
+    bool IsVisibleToPlayer(float playerX, float playerY, float aimAngle,
+                           float targetX, float targetY) const {
+        return ComputeVisibility(playerX, playerY, aimAngle, targetX, targetY) > 0.0f;
+    }
+
     float GetCameraX() const { return cameraX_; }
     float GetCameraY() const { return cameraY_; }
     float GetZoom()   const { return zoom_; }

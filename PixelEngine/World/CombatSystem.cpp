@@ -125,7 +125,7 @@ void CombatSystem::TryAttack() {
         if (weapon->type == WeaponType::KATANA) {
             audio_->PlaySound(SoundEffect::KATANA_SWING);
         } else {
-            audio_->PlaySound(SoundEffect::ATTACK_SWING);
+            audio_->PlaySound(SoundEffect::DAGGER_FIRE);
         }
 
         // 破坏前方障碍

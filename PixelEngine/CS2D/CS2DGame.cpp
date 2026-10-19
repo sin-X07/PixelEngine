@@ -17,20 +17,19 @@ CS2DGame::CS2DGame()
 bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* renderer) {
     renderer_ = renderer;
 
-    // 1. 解析 TMJ
+    // 1. Parse TMJ
     CS2DMapData mapData;
     if (!TMJParser::Parse(resolvedTMJPath, mapData)) {
         return false;
     }
 
-    // 2. 构建世界
+    // 2. Build world
     if (!world_->Build(mapData)) {
         return false;
     }
 
-    // 3. 设置渲染器
+    // 3. Set renderer
     if (renderer_) {
-        // 提取 TMJ 所在目录，用于加载 tileset 图片
         std::string mapDir;
         const auto slashPos = resolvedTMJPath.find_last_of("/\\");
         if (slashPos != std::string::npos) {
@@ -39,40 +38,42 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
         renderer_->SetWorld(world_.get());
     }
 
-    // 终止任何残留 BOT
+    // Clear stale BOTs
     bots_.clear();
+    botExecutors_.clear();
     bullets_.clear();
     playerKills_ = 0;
     playerDeaths_ = 0;
 
     SpawnPlayer();
-    // 预生成初始 BOT
     for (int i = 0; i < ACTIVE_BOTS; ++i) {
         Player bot;
         SpawnBOT(bot, i % 2 != 0);
         bots_.push_back(bot);
+        botExecutors_.emplace_back();
     }
 
-    std::cout << "[CS2DGame] 地图加载完成，玩家 + " << bots_.size() << " 个 BOT 就绪" << std::endl;
+    std::cout << "[CS2DGame] Map loaded, player + " << bots_.size() << " BOTs ready" << std::endl;
     return true;
 }
 
 void CS2DGame::Reset() {
     bullets_.clear();
     bots_.clear();
+    botExecutors_.clear();
     playerKills_  = 0;
     playerDeaths_ = 0;
-    botAITimer_   = 0.0f;
     botRespawnTimer_ = 0.0f;
     SpawnPlayer();
     for (int i = 0; i < ACTIVE_BOTS; ++i) {
         Player bot;
         SpawnBOT(bot, i % 2 != 0);
         bots_.push_back(bot);
+        botExecutors_.emplace_back();
     }
 }
 
-// ========= 出生点分配 =========
+// ========= Spawn point allocation =========
 
 bool CS2DGame::PickRandomSpawn(float& outX, float& outY) {
     const auto& spawns = world_->GetSpawnPoints();
@@ -81,7 +82,6 @@ bool CS2DGame::PickRandomSpawn(float& outX, float& outY) {
         outY = world_->GetMapPixelH() * 0.5f;
         return false;
     }
-    // 均匀随机选点，用命中盒尺寸验证不与墙体重叠，最多重试 8 次
     constexpr float HITBOX = 6.0f;
     std::uniform_int_distribution<size_t> pick(0, spawns.size() - 1);
     for (int attempt = 0; attempt < 8; ++attempt) {
@@ -93,7 +93,6 @@ bool CS2DGame::PickRandomSpawn(float& outX, float& outY) {
             return true;
         }
     }
-    // 全部失败：取第一个点兜底（该地图 12 个点实测全部自由，不会走到这里）
     outX = spawns[0].x;
     outY = spawns[0].y;
     return true;
@@ -106,27 +105,25 @@ void CS2DGame::SpawnPlayer() {
     player_.vx = player_.vy = 0.0f;
     player_.aimAngle = 0.0f;
     player_.shootCooldown = 0.0f;
-    player_.isCT = true; // 玩家固定为反恐方
+    player_.isCT = true;
     player_.animState  = AnimState::Idle;
     player_.animTimer  = 0.0f;
     player_.deathTimer = 0.0f;
     player_.shootAnimTimer = 0.0f;
-    player_.spriteKey  = 0;    // CT 头盔
-    player_.weaponType = (rng_() % 2);  // 0=AK47, 1=M4A1（55开）
-    player_.weaponSlot = 0;    // 主武器
+    player_.spriteKey  = 0;
+    player_.weaponType = (rng_() % 2);
+    player_.weaponSlot = 0;
     player_.ammo      = 30;
     player_.maxAmmo    = 30;
     player_.reloading  = false;
     player_.reloadTimer = 0.0f;
     player_.stealth    = false;
 
-    // 初始化每个武器槽独立弹药
     slotAmmo_[0]    = 30;
     slotMaxAmmo_[0] = 30;
     slotAmmo_[1]    = 7;
     slotMaxAmmo_[1] = 7;
 
-    // 安全复活：重试直到远离所有敌人
     for (int attempt = 0; attempt < 20; ++attempt) {
         PickRandomSpawn(player_.x, player_.y);
         if (!IsEnemyNearby(player_.x, player_.y, 120.0f)) break;
@@ -149,30 +146,26 @@ void CS2DGame::SpawnBOT(Player& bot, bool isCT) {
     bot.reloading  = false;
     bot.reloadTimer = 0.0f;
     bot.stealth    = false;
-    // BOT 随机精灵 + 主武器 50%/50% AK47 vs M4A1
-    bot.spriteKey   = isCT ? 0 : (1 + static_cast<int>(rng_() % 2));  // CT=0, T=1或2
-    bot.weaponType  = (rng_() % 2);                                     // 0=AK47, 1=M4A1（55开）
-    bot.weaponSlot  = static_cast<int>(rng_() % 2);                     // 仅主武器/副武器，BOT 不用近战
+    bot.spriteKey   = isCT ? 0 : (1 + static_cast<int>(rng_() % 2));
+    bot.weaponType  = (rng_() % 2);
+    bot.weaponSlot  = static_cast<int>(rng_() % 2);
+    bot.llmIntent.Reset();
 
     bot.aimAngle = angleDist_(rng_);
-    // 安全复活：重试直到远离玩家和所有已存活 BOT
     for (int attempt = 0; attempt < 20; ++attempt) {
         PickRandomSpawn(bot.x, bot.y);
-        // 远离玩家
         const float pdx = player_.x - bot.x;
         const float pdy = player_.y - bot.y;
         const float pdist2 = pdx * pdx + pdy * pdy;
-        if (pdist2 < 120.0f * 120.0f) continue;  // 离玩家太近，重试
-        // 远离已存在的 BOT
+        if (pdist2 < 120.0f * 120.0f) continue;
         if (!IsEnemyNearby(bot.x, bot.y, 120.0f)) break;
     }
 }
 
-// ========= 武器槽切换 =========
+// ========= Weapon slot switch =========
 
 void CS2DGame::SwitchWeaponSlot(int slot) {
     if (slot < 0 || slot > 2) return;
-    // 保存当前槽位弹药
     const int oldSlot = player_.weaponSlot;
     if (oldSlot == 0 || oldSlot == 1) {
         slotAmmo_[oldSlot]    = player_.ammo;
@@ -188,8 +181,8 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
     }
     player_.reloading = false;
     player_.reloadTimer = 0.0f;
-    static const char* kSlotNames[] = { "主武器", "副武器", "近战" };
-    std::cout << "[CS2D] 切换到" << kSlotNames[slot] << std::endl;
+    static const char* kSlotNames[] = { "main", "sidearm", "melee" };
+    std::cout << "[CS2D] Switched to " << kSlotNames[slot] << std::endl;
 }
 
 std::string CS2DGame::GetWeaponName() const {
@@ -201,7 +194,7 @@ std::string CS2DGame::GetWeaponName() const {
     }
 }
 
-// ========= 每帧更新 =========
+// ========= Per-frame update =========
 
 void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mouseWorldY,
                        bool wPressed, bool aPressed, bool sPressed, bool dPressed,
@@ -209,36 +202,29 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
                        AudioManager* audio) {
     if (!world_) return;
 
-    // 玩家潜行
     player_.stealth = shiftPressed;
 
-    // 玩家换弹（R 键，仅主武器/副武器且非换弹中且弹夹未满）
     if (rPressed && !player_.reloading) {
         if ((player_.weaponSlot == 0 || player_.weaponSlot == 1) && player_.ammo < player_.maxAmmo) {
             StartReload(player_);
         }
     }
 
-    // 玩家移动（潜行减速）
     if (player_.alive) {
         UpdatePlayerMovement(dt, wPressed, aPressed, sPressed, dPressed, player_.stealth);
         UpdatePlayerShooting(dt, mouseLeftDown, mouseWorldX, mouseWorldY, audio);
         UpdateReload(player_, dt);
     } else {
-        // 玩家死亡后等待重生
         botRespawnTimer_ -= dt;
         if (botRespawnTimer_ <= 0.0f) {
             SpawnPlayer();
         }
     }
 
-    // BOT AI
     UpdateBOTs(dt, audio);
-
-    // 子弹
     UpdateBullets(dt, audio);
 
-    // ---- 动画状态机 ----
+    // Animation state machine
     auto updateAnim = [](Player& p) {
         if (!p.alive) {
             p.animState = AnimState::Dead;
@@ -267,18 +253,16 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     prevMouseDown_ = mouseLeftDown;
 }
 
-// ========= 玩家移动 =========
+// ========= Player movement =========
 
 void CS2DGame::UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bool stealth) {
     constexpr float ACCEL   = 600.0f;
     constexpr float FRICTION = 8.0f;
-    float maxSpeed = stealth ? 25.0f : 60.0f;   // 潜行减速
+    float maxSpeed = stealth ? 25.0f : 60.0f;
 
-    // 加速度
     int dx = (d ? 1 : 0) - (a ? 1 : 0);
     int dy = (s ? 1 : 0) - (w ? 1 : 0);
 
-    // 归一化对角线移动
     float len = std::sqrt(static_cast<float>(dx * dx + dy * dy));
     if (len > 0.001f) {
         player_.vx += (dx / len) * ACCEL * dt;
@@ -290,7 +274,6 @@ void CS2DGame::UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bo
         if (std::abs(player_.vy) < 1.0f) player_.vy = 0.0f;
     }
 
-    // 限速
     float speed = std::sqrt(player_.vx * player_.vx + player_.vy * player_.vy);
     if (speed > maxSpeed) {
         player_.vx = player_.vx / speed * maxSpeed;
@@ -303,7 +286,6 @@ void CS2DGame::UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bo
 void CS2DGame::MoveWithCollision(Player& entity, float dt) {
     const float halfSize = entity.size * 0.5f;
 
-    // X 轴
     float newX = entity.x + entity.vx * dt;
     if (!world_->CheckRectCollision(newX - halfSize, entity.y - halfSize,
                                      entity.size, entity.size)) {
@@ -312,7 +294,6 @@ void CS2DGame::MoveWithCollision(Player& entity, float dt) {
         entity.vx = 0.0f;
     }
 
-    // Y 轴
     float newY = entity.y + entity.vy * dt;
     if (!world_->CheckRectCollision(entity.x - halfSize, newY - halfSize,
                                      entity.size, entity.size)) {
@@ -321,38 +302,34 @@ void CS2DGame::MoveWithCollision(Player& entity, float dt) {
         entity.vy = 0.0f;
     }
 
-    // 夹在边界内
     entity.x = std::clamp(entity.x, 0.0f, world_->GetMapPixelW() - 1.0f);
     entity.y = std::clamp(entity.y, 0.0f, world_->GetMapPixelH() - 1.0f);
 }
 
-// ========= 武器槽参数表 =========
+// ========= Weapon slot params =========
 static WeaponSlotParams GetSlotParams(int slot) {
     switch (slot) {
-        case 1:  return { 35.0f, 0.40f, 700.0f, 700.0f };  // Deagle：高伤慢速
-        case 2:  return { 50.0f, 0.50f, 900.0f, 45.0f  };  // Knife：近战挥砍（与模式一相同）
-        default: return { 25.0f, 0.12f, 600.0f, 800.0f };  // 步枪：连发快
+        case 1:  return { 35.0f, 0.40f, 700.0f, 700.0f };
+        case 2:  return { 50.0f, 0.50f, 900.0f, 45.0f  };
+        default: return { 25.0f, 0.12f, 600.0f, 800.0f };
     }
 }
 
-// ========= 玩家射击 =========
+// ========= Player shooting =========
 
 void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, float worldMY, AudioManager* audio) {
     if (!player_.alive) return;
 
-    // 更新瞄准角（换弹时也要跟随鼠标）
     const float dx = worldMX - player_.x;
     const float dy = worldMY - player_.y;
     player_.aimAngle = std::atan2(dy, dx);
 
     if (player_.reloading) return;
 
-    // 冷却
     if (player_.shootCooldown > 0.0f) {
         player_.shootCooldown -= dt;
     }
 
-    // 副武器（Deagle）半自动：仅当鼠标由松开变为按下时击发一次
     const bool mouseEdge = mouseDown && !prevMouseDown_;
     if (player_.weaponSlot == 1) {
         if (!mouseEdge || player_.shootCooldown > 0.0f) return;
@@ -362,9 +339,7 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
 
     const WeaponSlotParams wp = GetSlotParams(player_.weaponSlot);
 
-    // 近战武器（Knife）：不射子弹，直接近战攻击（与模式一相同，范围伤害）
     if (player_.weaponSlot == 2) {
-        // 近战挥砍：检测范围内的敌人
         for (auto& bot : bots_) {
             if (!bot.alive) continue;
             const float bdx = bot.x - player_.x;
@@ -377,7 +352,7 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
                     bot.health = 0;
                     bot.deathTimer = 0.0f;
                     ++playerKills_;
-                    std::cout << "[CS2D] 击杀 BOT! 总计: " << playerKills_ << " kills" << std::endl;
+                    std::cout << "[CS2D] BOT killed! Total: " << playerKills_ << " kills" << std::endl;
                 }
             }
         }
@@ -387,9 +362,7 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
         return;
     }
 
-    // 主武器/副武器：需要弹药
     if (player_.ammo <= 0) {
-        // 空弹夹，自动触发换弹
         StartReload(player_);
         return;
     }
@@ -399,7 +372,6 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     player_.shootCooldown = wp.cooldown;
     player_.shootAnimTimer = 0.12f;
 
-    // 播放音效
     if (audio) {
         if (player_.weaponSlot == 0) {
             audio->PlaySound(SoundEffect::AK47_FIRE);
@@ -423,124 +395,116 @@ void CS2DGame::FireBullet(float x, float y, float angle, const WeaponSlotParams&
     bullets_.push_back(b);
 }
 
-// ========= BOT AI =========
+// ========= BOT AI (layered: LLM intent -> BotBehaviorExecutor -> Move/Shoot) =========
 
 void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
-    for (auto& bot : bots_) {
+    while (botExecutors_.size() < bots_.size()) {
+        botExecutors_.emplace_back();
+    }
+
+    for (size_t i = 0; i < bots_.size(); ++i) {
+        auto& bot = bots_[i];
         if (!bot.alive) continue;
-        if (bot.reloading) continue;
 
-        // 简单 AI：随机游走（速度与玩家上限一致）
-        botAITimer_ -= dt;
-        if (botAITimer_ <= 0.0f) {
-            std::uniform_real_distribution<float> dirDist(-1.0f, 1.0f);
-            bot.vx = dirDist(rng_) * 60.0f;
-            bot.vy = dirDist(rng_) * 60.0f;
-            // 归一化对角线速度，避免 √2 倍速
-            const float spd = std::sqrt(bot.vx * bot.vx + bot.vy * bot.vy);
-            if (spd > 60.0f) {
-                bot.vx = bot.vx / spd * 60.0f;
-                bot.vy = bot.vy / spd * 60.0f;
-            }
-            bot.aimAngle = std::atan2(bot.vy, bot.vx);
-            if (std::abs(bot.vx) < 5.0f && std::abs(bot.vy) < 5.0f) {
-                bot.aimAngle = angleDist_(rng_);
-            }
-            botAITimer_ = 1.0f + static_cast<float>(rng_() % 100) / 100.0f;
-        }
+        const bool canSee = BotCanSeePlayer(bot);
+        const float pdx = player_.x - bot.x;
+        const float pdy = player_.y - bot.y;
+        const float dist = std::sqrt(pdx * pdx + pdy * pdy);
 
+        bot.llmIntent.Tick(dt);
+
+        BehaviorOutput out = botExecutors_[i].Execute(
+            bot.llmIntent,
+            bot.x, bot.y,
+            player_.x, player_.y,
+            canSee, dist,
+            bot.ammo > 0, bot.reloading, bot.weaponSlot,
+            rng_, dt);
+
+        // Layer 1: Movement
+        bot.vx = out.vx;
+        bot.vy = out.vy;
         MoveWithCollision(bot, dt);
 
-        // 仅当 BOT 能看见玩家时才攻击
-        if (!BotCanSeePlayer(bot)) continue;
-        // 潜行玩家更难被看见（射程缩减）
-        const float effectiveRange = GetSlotParams(bot.weaponSlot).range *
-                                     (player_.stealth ? 0.5f : 1.0f);
+        // Layer 1: Aim
+        if (canSee) bot.aimAngle = out.aimAngle;
 
-        // BOT 朝向玩家
-        {
-            const float dx = player_.x - bot.x;
-            const float dy = player_.y - bot.y;
-            bot.aimAngle = std::atan2(dy, dx);
-        }
+        // Layer 1: Shoot
+        if (out.shouldShoot && canSee && bot.weaponSlot < 2) {
+            if (bot.shootCooldown > 0.0f) bot.shootCooldown -= dt;
 
-        // 向玩家方向射击
-        if (bot.shootCooldown > 0.0f) bot.shootCooldown -= dt;
-        if (bot.shootCooldown <= 0.0f) {
-            const float toPlayerDx = player_.x - bot.x;
-            const float toPlayerDy = player_.y - bot.y;
-            const float toPlayerDist = std::sqrt(toPlayerDx * toPlayerDx + toPlayerDy * toPlayerDy);
-            const WeaponSlotParams wp = GetSlotParams(bot.weaponSlot);
-            if (toPlayerDist < effectiveRange + 200.0f) {
-                // 近战武器：不射子弹（伤害削弱为 1/3，避免秒杀）
-                if (bot.weaponSlot == 2) {
-                    if (toPlayerDist < wp.range && player_.alive) {
-                        player_.health -= static_cast<int>(wp.damage * 0.33f);
-                        if (player_.health <= 0) {
-                            player_.alive = false;
-                            player_.health = 0;
-                            player_.deathTimer = 0.0f;
-                            ++playerDeaths_;
-                            botRespawnTimer_ = BOT_RESPAWN_DELAY;
-                            std::cout << "[CS2D] 玩家阵亡! 总计: " << playerDeaths_ << " deaths" << std::endl;
-                        }
+            if (bot.shootCooldown <= 0.0f) {
+                const WeaponSlotParams wp = GetSlotParams(bot.weaponSlot);
+                const float effectiveRange = wp.range * (player_.stealth ? 0.5f : 1.0f);
+
+                if (dist < effectiveRange + 200.0f) {
+                    if (bot.ammo <= 0) {
+                        StartReload(bot);
+                        continue;
                     }
-                    bot.shootCooldown = wp.cooldown * 1.5f;  // 近战攻速降低
-                    bot.shootAnimTimer = 0.12f;
-                    continue;
-                }
 
-                // 主武器/副武器：消耗弹药
-                if (bot.ammo <= 0) {
-                    StartReload(bot);
-                    continue;
-                }
-
-                // 瞄准玩家方向（30% 精确命中，70% 散布；精确也有微抖）
-                float spreadAngle = 0.0f;
-                {
+                    float spreadAngle = 0.0f;
                     std::uniform_real_distribution<float> hitRoll(0.0f, 1.0f);
                     if (hitRoll(rng_) < 0.30f) {
-                        // 精确命中但有微小抖动
-                        std::uniform_real_distribution<float> jitter(-0.08f, 0.08f);
+                        std::uniform_real_distribution<float> jitter(-0.08f * out.spreadMul,
+                                                                      0.08f * out.spreadMul);
                         spreadAngle = jitter(rng_);
                     } else {
-                        // 故意打偏（更大散布）
-                        std::uniform_real_distribution<float> missSpread(-0.8f, 0.8f);
+                        std::uniform_real_distribution<float> missSpread(-0.8f * out.spreadMul,
+                                                                          0.8f * out.spreadMul);
                         spreadAngle = missSpread(rng_);
                     }
+
+                    const float aimAngle = std::atan2(pdy, pdx) + spreadAngle;
+                    FireBullet(bot.x, bot.y, aimAngle, wp, static_cast<int>(i));
+                    bot.ammo--;
+                    bot.shootCooldown = wp.cooldown * 1.8f * out.shootCooldownMul;
+                    bot.shootAnimTimer = 0.12f;
+
+                    if (audio) {
+                        if (bot.weaponSlot == 0)
+                            audio->PlaySoundAt(SoundEffect::AK47_FIRE, bot.x, bot.y,
+                                               player_.x, player_.y, player_.aimAngle);
+                        else if (bot.weaponSlot == 1)
+                            audio->PlaySoundAt(SoundEffect::SHOOT, bot.x, bot.y,
+                                               player_.x, player_.y, player_.aimAngle);
+                    }
                 }
-                const float aimAngle = std::atan2(toPlayerDy, toPlayerDx) + spreadAngle;
-                const int botIdx = static_cast<int>(&bot - &bots_[0]);
-                FireBullet(bot.x, bot.y, aimAngle, wp, botIdx);
-                bot.ammo--;
-                bot.shootCooldown = wp.cooldown * 1.8f;  // 射速降低 1.8x
+            }
+        } else if (bot.weaponSlot == 2 && canSee && dist < 20.0f && player_.alive) {
+            const WeaponSlotParams wp = GetSlotParams(2);
+            if (bot.shootCooldown > 0.0f) bot.shootCooldown -= dt;
+            if (bot.shootCooldown <= 0.0f) {
+                player_.health -= static_cast<int>(wp.damage * 0.33f);
+                if (player_.health <= 0) {
+                    player_.alive = false;
+                    player_.health = 0;
+                    player_.deathTimer = 0.0f;
+                    ++playerDeaths_;
+                    botRespawnTimer_ = BOT_RESPAWN_DELAY;
+                    std::cout << "[CS2D] Player died! Total: " << playerDeaths_ << " deaths" << std::endl;
+                }
+                bot.shootCooldown = wp.cooldown * 1.5f * out.shootCooldownMul;
                 bot.shootAnimTimer = 0.12f;
-                // BOT 射击音效（听声辩位）
-                if (audio) {
-                    if (bot.weaponSlot == 0)
-                        audio->PlaySoundAt(SoundEffect::AK47_FIRE, bot.x, bot.y,
-                                           player_.x, player_.y, player_.aimAngle);
-                    else if (bot.weaponSlot == 1)
-                        audio->PlaySoundAt(SoundEffect::SHOOT, bot.x, bot.y,
-                                           player_.x, player_.y, player_.aimAngle);
-                }
             }
         }
     }
 
-    // BOT 重生
+    // BOT respawn
     for (auto& bot : bots_) {
         if (!bot.alive) {
+            bot.llmIntent.Reset();
             RespawnBOT(bot);
         }
     }
 
-    // 保持 BOT 数量
+    // Maintain BOT count
     while (static_cast<int>(bots_.size()) < ACTIVE_BOTS) {
         Player bot;
+        bot.llmIntent.Reset();
         SpawnBOT(bot, bots_.size() % 2 != 0);
         bots_.push_back(bot);
+        botExecutors_.emplace_back();
     }
 }
 
@@ -548,7 +512,7 @@ void CS2DGame::RespawnBOT(Player& bot) {
     SpawnBOT(bot, bot.isCT);
 }
 
-// ========= 换弹系统 =========
+// ========= Reload system =========
 
 void CS2DGame::StartReload(Player& p) {
     p.reloading = true;
@@ -561,11 +525,11 @@ void CS2DGame::UpdateReload(Player& p, float dt) {
     if (p.reloadTimer <= 0.0f) {
         p.reloading = false;
         p.reloadTimer = 0.0f;
-        p.ammo = p.maxAmmo;  // 备弹无限
+        p.ammo = p.maxAmmo;
     }
 }
 
-// ========= BOT 视野检查 =========
+// ========= BOT vision =========
 
 bool CS2DGame::BotCanSeePlayer(const Player& bot) const {
     if (!player_.alive) return false;
@@ -579,15 +543,13 @@ bool CS2DGame::BotCanSeePlayer(const Player& bot) const {
 
 bool CS2DGame::PlayerCanSeeBot(const Player& bot) const {
     if (!bot.alive) return false;
-    const float dx = bot.x - player_.x;
-    const float dy = bot.y - player_.y;
-    const float dist = std::sqrt(dx * dx + dy * dy);
-    if (dist > PLAYER_VIEW_RADIUS) return false;
-    if (!renderer_) return true;
-    return renderer_->HasLineOfSight(player_.x, player_.y, bot.x, bot.y);
+    if (!renderer_) return true;   // 无渲染器时保持旧行为
+    // 距离 + 120° 扇形 + 墙体遮挡，与视野遮罩共用同一套几何
+    return renderer_->IsVisibleToPlayer(player_.x, player_.y, player_.aimAngle,
+                                        bot.x, bot.y);
 }
 
-// ========= 安全距离检查 =========
+// ========= Safe distance check =========
 
 bool CS2DGame::IsEnemyNearby(float x, float y, float safeRadius) const {
     for (const auto& bot : bots_) {
@@ -600,7 +562,7 @@ bool CS2DGame::IsEnemyNearby(float x, float y, float safeRadius) const {
     return false;
 }
 
-// ========= 子弹更新 =========
+// ========= Bullet update =========
 
 void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
     for (auto& bullet : bullets_) {
@@ -612,13 +574,11 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
         bullet.y += stepY;
         bullet.traveled += std::sqrt(stepX * stepX + stepY * stepY);
 
-        // 射程耗尽
         if (bullet.traveled >= bullet.maxDist) {
             bullet.active = false;
             continue;
         }
 
-        // 碰撞固体
         int tileCol = 0, tileRow = 0;
         world_->WorldToTile(bullet.x, bullet.y, tileRow, tileCol);
         if (world_->IsBlockingBullet(tileRow, tileCol)) {
@@ -626,7 +586,6 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             continue;
         }
 
-        // 命中实体
         if (bullet.ownerIdx == -1) {
             for (auto& bot : bots_) {
                 if (!bot.alive) continue;
@@ -643,11 +602,11 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                         bot.deathTimer = 0.0f;
                         ++playerKills_;
                         if (audio) audio->PlaySoundAt(SoundEffect::KILL, bot.x, bot.y,
-                                                       player_.x, player_.y, player_.aimAngle);
-                        std::cout << "[CS2D] 击杀 BOT! 总计: " << playerKills_ << " kills" << std::endl;
+                                                        player_.x, player_.y, player_.aimAngle);
+                        std::cout << "[CS2D] BOT killed! Total: " << playerKills_ << " kills" << std::endl;
                     } else {
                         if (audio) audio->PlaySoundAt(SoundEffect::HIT, bot.x, bot.y,
-                                                       player_.x, player_.y, player_.aimAngle);
+                                                        player_.x, player_.y, player_.aimAngle);
                     }
                     break;
                 }
@@ -661,39 +620,34 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             if (pdist2 < hitR * hitR) {
                 player_.health -= bullet.damage;
                 bullet.active = false;
-                if (audio) audio->PlaySound(SoundEffect::PLAYER_HURT);
+                if (audio) audio->PlaySound(SoundEffect::HIT);
                 if (player_.health <= 0) {
                     player_.alive  = false;
                     player_.health = 0;
                     player_.deathTimer = 0.0f;
                     ++playerDeaths_;
                     botRespawnTimer_ = BOT_RESPAWN_DELAY;
-                    if (audio) audio->PlaySound(SoundEffect::PLAYER_DEATH);
-                    std::cout << "[CS2D] 玩家阵亡! 总计: " << playerDeaths_ << " deaths" << std::endl;
+                    if (audio) audio->PlaySound(SoundEffect::KILL);
+                    std::cout << "[CS2D] Player died! Total: " << playerDeaths_ << " deaths" << std::endl;
                 }
             }
         }
     }
 
-    // 清理非活跃子弹
     bullets_.erase(
         std::remove_if(bullets_.begin(), bullets_.end(),
                        [](const Bullet& b) { return !b.active; }),
         bullets_.end());
 }
 
-// ========= 渲染 =========
+// ========= Render =========
 
 void CS2DGame::Render(int viewW, int viewH) {
     if (!renderer_ || !world_) return;
 
-    // 1. 相机跟随玩家
     renderer_->UpdateCamera(player_.x, player_.y, viewW, viewH);
-
-    // 2. 世界图层（背景图 → tile 层）
     renderer_->DrawWorld();
 
-    // 3. 绘制所有角色（BOT + 玩家）
     auto fillParams = [](const Player& p, SpriteDrawParams& sp) {
         sp.x          = p.x;
         sp.y          = p.y;
@@ -708,10 +662,11 @@ void CS2DGame::Render(int viewW, int viewH) {
         sp.alpha      = 255;
     };
 
+    // 玩家存活时按视野剔除敌人；阵亡后不绘制视野遮罩，故也跳过剔除
+    const bool applyVisionCull = player_.alive;
     for (const auto& bot : bots_) {
         if (!bot.alive && bot.deathTimer > 2.0f) continue;
-        // 敌人仅在玩家视野内可见（距离 + LOS）
-        if (!PlayerCanSeeBot(bot)) continue;
+        if (applyVisionCull && !PlayerCanSeeBot(bot)) continue;
         SpriteDrawParams sp;
         fillParams(bot, sp);
         renderer_->DrawCharacter(sp);
@@ -723,20 +678,15 @@ void CS2DGame::Render(int viewW, int viewH) {
         renderer_->DrawCharacter(sp);
     }
 
-    // 4. 绘制子弹
     for (const auto& b : bullets_) {
         if (!b.active) continue;
         renderer_->DrawBullet(b.x, b.y, b.vx, b.vy);
     }
 
-    // 5. 视野遮罩（扇形，面朝方向）
     if (player_.alive) {
         renderer_->DrawVisionFog(player_.x, player_.y, player_.aimAngle);
     }
 
-    // 6. overlay 层
     renderer_->DrawOverlay();
-
-    // 7. 右下角武器栏（常驻）
     renderer_->DrawWeaponStatus(player_.weaponSlot, player_.weaponType, viewW, viewH);
 }

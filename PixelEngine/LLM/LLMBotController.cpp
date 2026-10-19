@@ -1,4 +1,5 @@
 #include "LLMBotController.hpp"
+#include "../Core/IniFile.hpp"
 #include <windows.h>
 #include <winhttp.h>
 #include <sstream>
@@ -11,62 +12,10 @@
 #pragma comment(lib, "winhttp.lib")
 
 // ============================================================================
-// INI 解析 (极简实现: 不依赖任何第三方库, 约 50 行)
+// JSON 字符串转义
 // ============================================================================
 namespace {
 
-// 去除首尾空白
-std::string Trim(const std::string& s) {
-    size_t beg = 0, end = s.size();
-    while (beg < end && (s[beg] == ' ' || s[beg] == '\t' || s[beg] == '\r')) ++beg;
-    while (end > beg && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\r')) --end;
-    return s.substr(beg, end - beg);
-}
-
-// 跳过 UTF-8 BOM (EF BB BF)
-void SkipBOM(std::ifstream& f) {
-    char bom[3];
-    if (f.read(bom, 3) && bom[0] == '\xEF' && bom[1] == '\xBB' && bom[2] == '\xBF') return;
-    f.seekg(0);
-}
-
-LLMConfig ParseINI(const std::string& path) {
-    LLMConfig cfg;
-    std::ifstream f(path);
-    if (!f.is_open()) return cfg;  // 文件不存在 → 全默认
-
-    SkipBOM(f);
-
-    std::string line, section;
-    while (std::getline(f, line)) {
-        line = Trim(line);
-        if (line.empty() || line[0] == ';' || line[0] == '#') continue;
-
-        if (line[0] == '[' && line.back() == ']') {
-            section = line.substr(1, line.size() - 2);
-            continue;
-        }
-
-        auto eq = line.find('=');
-        if (eq == std::string::npos) continue;
-
-        std::string key = Trim(line.substr(0, eq));
-        std::string val = Trim(line.substr(eq + 1));
-
-        if (section == "server") {
-            if (key == "url") cfg.serverUrl = val;
-        } else if (section == "launcher") {
-            if (key == "auto_launch")  cfg.autoLaunch     = (val == "1" || val == "true"  || val == "yes");
-            if (key == "exe")          cfg.serverExePath  = val;
-            if (key == "model")        cfg.modelPath       = val;
-            if (key == "ngl")     try { cfg.ngl           = std::stoi(val); } catch (...) {}
-            if (key == "startup_wait") try { cfg.startupWaitSec = std::stoi(val); } catch (...) {}
-        }
-    }
-    return cfg;
-}
-
-// JSON 字符串转义
 std::string EscapeJSON(const std::string& s) {
     std::string out;
     out.reserve(s.size() + 32);
@@ -87,7 +36,19 @@ std::string EscapeJSON(const std::string& s) {
 
 // ---- 公开接口 ----
 LLMConfig LLMConfig::FromFile(const std::string& iniPath) {
-    return ParseINI(iniPath);
+    LLMConfig cfg;
+    IniFile ini = IniFile::Load(iniPath);
+    if (!ini.IsLoaded()) return cfg;   // 文件缺失 → 全默认
+
+    cfg.serverUrl = ini.GetString("server", "url", cfg.serverUrl);
+
+    cfg.autoLaunch     = ini.GetBool  ("launcher", "auto_launch", cfg.autoLaunch);
+    cfg.serverExePath  = ini.GetString("launcher", "exe",         cfg.serverExePath);
+    cfg.modelPath      = ini.GetString("launcher", "model",       cfg.modelPath);
+    cfg.ngl            = ini.GetInt   ("launcher", "ngl",         cfg.ngl);
+    cfg.startupWaitSec = ini.GetInt   ("launcher", "startup_wait", cfg.startupWaitSec);
+
+    return cfg;
 }
 
 // ============================================================================
@@ -135,7 +96,7 @@ std::string PromptBuilder::BuildSystemPrompt() {
         "- 据守有利位置（高地/掩体） → 优先\"防守\"\n"
         "\n"
         "可用行动: 进攻, 防守, 撤退, 掩体移动\n"
-        "可用移动方向: 前方, 左前方, 右前方, 后退\n"
+        "可用目标(target): 敌人, 前方, 左前方, 右前方, 后退, 掩体, 队友\n"
         "射击模式: 连射, 点射, 停止射击";
 }
 
@@ -412,16 +373,19 @@ void LLMBotController::KillServer() {
 }
 
 // ---- Decide ----
-void LLMBotController::Decide(const std::string& stateJSON, DecisionCallback callback) {
+void LLMBotController::Decide(const std::string& stateJSON, DecisionCallback callback,
+                              const std::string& tag) {
     if (!ready_) return;
     if (busy_.load()) {
-        std::cerr << "[LLM] 上一次决策仍在进行中, 丢弃本次请求" << std::endl;
+        std::cerr << "[LLM] 上一次决策仍在进行中, 丢弃本次请求 "
+                  << (tag.empty() ? "" : tag.c_str()) << std::endl;
         return;
     }
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
         pendingBody_ = stateJSON;
+        pendingTag_  = tag;
         pendingCallback_ = std::move(callback);
     }
 
@@ -435,16 +399,18 @@ void LLMBotController::Decide(const std::string& stateJSON, DecisionCallback cal
 void LLMBotController::WorkerLoop() {
     while (running_.load()) {
         std::string body;
+        std::string tag;
         DecisionCallback cb;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (pendingBody_.empty()) { running_ = false; break; }
             body = std::move(pendingBody_);
+            tag  = std::move(pendingTag_);
             cb   = std::move(pendingCallback_);
         }
 
         busy_ = true;
-        LLMDecision result = DoHttpRequest(body);
+        LLMDecision result = DoHttpRequest(body, tag);
         busy_ = false;
 
         if (cb) cb(result);
@@ -457,7 +423,8 @@ void LLMBotController::WorkerLoop() {
 }
 
 // ---- DoHttpRequest (WinHTTP POST) ----
-LLMDecision LLMBotController::DoHttpRequest(const std::string& requestBody) {
+LLMDecision LLMBotController::DoHttpRequest(const std::string& requestBody,
+                                            const std::string& tag) {
     LLMDecision result;
     result.valid = false;
 
@@ -530,7 +497,8 @@ LLMDecision LLMBotController::DoHttpRequest(const std::string& requestBody) {
     auto bc = content.rfind('}');
     if (bo != std::string::npos && bc != std::string::npos && bc > bo) {
         result = LLMDecision::FromJSON(content.substr(bo, bc - bo + 1));
-        std::cout << "[LLM] 决策: " << result.ToJSON() << std::endl;
+        std::cout << "[LLM] 决策 " << (tag.empty() ? "-" : tag.c_str())
+                  << ": " << result.ToJSON() << std::endl;
     } else {
         std::cerr << "[LLM] content 无有效 JSON: " << content << std::endl;
     }

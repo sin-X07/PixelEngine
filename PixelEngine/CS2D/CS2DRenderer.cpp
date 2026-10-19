@@ -561,61 +561,66 @@ bool CS2DRenderer::HasLineOfSight(float fromX, float fromY, float toX, float toY
     return true;
 }
 
+// ---- 玩家视野可见度：距离 × 120° 扇形 × 墙体遮挡 ----
+float CS2DRenderer::ComputeVisibility(float playerX, float playerY, float aimAngle,
+                                     float targetX, float targetY) const {
+    if (!world_) return 0.0f;
+
+    const float deltaX = targetX - playerX;
+    const float deltaY = targetY - playerY;
+    const float dist = std::sqrt(deltaX * deltaX + deltaY * deltaY);
+
+    // 1) 距离因子：半径内 1.0，边缘 smoothstep → 0.0
+    const float fullyLitRadius = VISION_RADIUS - VISION_SOFT_EDGE;
+    float distFactor = 0.0f;
+    if (dist <= fullyLitRadius) {
+        distFactor = 1.0f;
+    } else if (dist < VISION_RADIUS) {
+        float blend = (dist - fullyLitRadius) / VISION_SOFT_EDGE;
+        blend = blend * blend * (3.0f - 2.0f * blend);  // smoothstep
+        distFactor = 1.0f - blend;
+    }
+    if (distFactor <= 0.0f) return 0.0f;   // 超出半径，无需再算
+
+    // 2) 角度因子：扇形内 1.0，边缘 smoothstep → 0.0
+    const float halfConeRad  = (VISION_CONE_DEG * 0.5f - VISION_ANGLE_SOFT * 0.5f) * 3.14159265f / 180.0f;
+    const float angleSoftRad = VISION_ANGLE_SOFT * 3.14159265f / 180.0f;
+
+    const float targetAngle = std::atan2(deltaY, deltaX);
+    float diff = targetAngle - aimAngle;
+    while (diff > 3.14159265f)  diff -= 6.28318531f;
+    while (diff < -3.14159265f) diff += 6.28318531f;
+    const float absDiff = std::abs(diff);
+
+    float coneFactor = 0.0f;
+    if (absDiff <= halfConeRad) {
+        coneFactor = 1.0f;
+    } else if (absDiff < halfConeRad + angleSoftRad) {
+        float blend = (absDiff - halfConeRad) / angleSoftRad;
+        blend = blend * blend * (3.0f - 2.0f * blend);  // smoothstep
+        coneFactor = 1.0f - blend;
+    }
+    if (coneFactor <= 0.0f) return 0.0f;   // 扇形外，跳过射线检测
+
+    // 3) 视线遮挡：被墙挡则完全不可见
+    if (!HasLineOfSight(playerX, playerY, targetX, targetY)) return 0.0f;
+
+    return std::min(distFactor, coneFactor);
+}
+
 void CS2DRenderer::DrawVisionFog(float playerX, float playerY, float aimAngle) {
     if (!visionTex_ || visionPixels_.empty() || !world_) return;
 
-    const float fullyLitRadius = VISION_RADIUS - VISION_SOFT_EDGE;
     const float px = playerX;
     const float py = playerY;
-    const float halfConeRad = (VISION_CONE_DEG * 0.5f - VISION_ANGLE_SOFT * 0.5f) * 3.14159265f / 180.0f;
-    const float angleSoftRad = VISION_ANGLE_SOFT * 3.14159265f / 180.0f;
 
     for (int y = 0; y < maskH_; ++y) {
         for (int x = 0; x < maskW_; ++x) {
             const float worldX = cameraX_ + (x + 0.5f) * VISION_MASK_SCALE / zoom_;
             const float worldY = cameraY_ + (y + 0.5f) * VISION_MASK_SCALE / zoom_;
-            const float deltaX = worldX - px;
-            const float deltaY = worldY - py;
-            const float dist = std::sqrt(deltaX * deltaX + deltaY * deltaY);
 
-            // 距离因子：半径内 1.0，边缘 smoothstep → 0.0
-            float distFactor = 0.0f;
-            if (dist <= fullyLitRadius) {
-                distFactor = 1.0f;
-            } else if (dist < VISION_RADIUS) {
-                float blend = (dist - fullyLitRadius) / VISION_SOFT_EDGE;
-                blend = blend * blend * (3.0f - 2.0f * blend);  // smoothstep
-                distFactor = 1.0f - blend;
-            }
-
-            // 角度因子：扇形内 1.0，边缘 smoothstep → 0.0
-            float coneFactor = 0.0f;
-            {
-                const float targetAngle = std::atan2(deltaY, deltaX);
-                float diff = targetAngle - aimAngle;
-                while (diff > 3.14159265f)  diff -= 6.28318531f;
-                while (diff < -3.14159265f) diff += 6.28318531f;
-                const float absDiff = std::abs(diff);
-
-                if (absDiff <= halfConeRad) {
-                    coneFactor = 1.0f;
-                } else if (absDiff < halfConeRad + angleSoftRad) {
-                    float blend = (absDiff - halfConeRad) / angleSoftRad;
-                    blend = blend * blend * (3.0f - 2.0f * blend);  // smoothstep
-                    coneFactor = 1.0f - blend;
-                }
-            }
-
-            // LOS 遮挡：半径 + 角度均可达时检查，被墙挡则置 0
-            float losFactor = 1.0f;
-            if (distFactor > 0.0f && coneFactor > 0.0f) {
-                if (!HasLineOfSight(px, py, worldX, worldY)) {
-                    losFactor = 0.0f;
-                }
-            }
-
-            // 三条件同时满足才可见
-            const float vis = std::min({distFactor, coneFactor, losFactor});
+            // 与敌人剔除共用同一套几何，避免遮罩与可见性漂移
+            const float vis = ComputeVisibility(px, py, aimAngle, worldX, worldY);
             const Uint8 alpha = static_cast<Uint8>(std::lround((1.0f - vis) * VISION_FOG_ALPHA));
 
             const size_t idx = (static_cast<size_t>(y) * maskW_ + x) * 4;

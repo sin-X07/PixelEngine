@@ -87,14 +87,16 @@ public:
     bool IsOwnProcess() const { return ownProcess_; }
 
     // 异步请求决策 (立即返回, 在工作线程上调用 callback)
-    void Decide(const std::string& stateJSON, DecisionCallback callback);
+    // tag: 仅用于日志标识 (如 "BOT#3"), 不影响请求内容
+    void Decide(const std::string& stateJSON, DecisionCallback callback,
+                const std::string& tag = std::string());
 
     // 是否正在等待决策中
     bool IsBusy() const { return busy_.load(); }
 
 private:
     // HTTP 核心
-    LLMDecision DoHttpRequest(const std::string& requestBody);
+    LLMDecision DoHttpRequest(const std::string& requestBody, const std::string& tag);
 
     // 健康检测: 通过 GET /health 探测 server 是否就绪
     bool HealthCheck(int timeoutMs = 15000);
@@ -120,6 +122,7 @@ private:
 
     // 待处理请求
     std::string pendingBody_;
+    std::string pendingTag_;
     DecisionCallback pendingCallback_;
     mutable std::mutex mutex_;
 

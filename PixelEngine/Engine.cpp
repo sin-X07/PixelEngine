@@ -1,6 +1,7 @@
 #include "Engine.hpp"
 #include "Core/PathUtils.hpp"
 #include "Core/Roles.hpp"
+#include "Core/IniFile.hpp"
 #include "ThirdParty/imgui/imgui.h"
 #include "ThirdParty/imgui/backends/imgui_impl_sdl2.h"
 #include <iostream>
@@ -158,30 +159,8 @@ bool Engine::Initialize(const char* title, int width, int height) {
     audioManager->Initialize();
     audioManager->PlayMusic("assets/audio/menu.wav");
 
-    // 恢复音频设置（音量 / 静音）；若文件缺失则使用 AudioManager 自带默认值
-    {
-        const std::string audioPath = PathUtils::ResolveAppPath("audio_config.ini");
-        std::ifstream audioFile(audioPath);
-        if (audioFile) {
-            int master = 100, music = 25, effects = 100, muted = 0;
-            std::string line;
-            while (std::getline(audioFile, line)) {
-                if (line.empty() || line[0] == ';') continue;
-                size_t eq = line.find('=');
-                if (eq == std::string::npos) continue;
-                std::string k = line.substr(0, eq);
-                std::string v = line.substr(eq + 1);
-                if (k == "master") master = std::stoi(v);
-                else if (k == "music") music = std::stoi(v);
-                else if (k == "effects") effects = std::stoi(v);
-                else if (k == "muted") muted = std::stoi(v);
-            }
-            audioManager->SetMasterVolume(master);
-            audioManager->SetMusicVolume(music);
-            audioManager->SetEffectsVolume(effects);
-            if (muted) audioManager->SetMuted(true);
-        }
-    }
+    // 恢复音频设置（音量 / 静音）
+    LoadAudioConfig();
 
     // 创建窗口与硬件渲染器
     window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_SHOWN);
@@ -200,25 +179,8 @@ bool Engine::Initialize(const char* title, int width, int height) {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_RenderSetLogicalSize(renderer, width, height);
 
-    // 文字样式配置：读写分离，用户配置落盘到 exe 同级 text_config.ini（不受 CMake
-    // POST_BUILD 覆盖）；assets/config/text.ini 仅作为首次运行的工厂模板。
-    const std::string userCfgPath   = PathUtils::ResolveWritablePath("text_config.ini");
-    const std::string templatePath  = PathUtils::ResolveAppPath("assets/config/text.ini");
-
-    if (std::filesystem::exists(userCfgPath)) {
-        textConfig->Load(userCfgPath);
-    } else if (std::filesystem::exists(templatePath)) {
-        // 首次运行：从模板拷贝一份到用户配置路径
-        std::error_code ec;
-        std::filesystem::copy_file(templatePath, userCfgPath, ec);
-        textConfig->Load(userCfgPath);
-    }
-    // 两文件都不存在：保持 C++ 默认值，F2 面板首次保存时会写出
-
-    // [global] font= 传给 ImGuiUI（仅启动生效）
-    if (!textConfig->GlobalFontPath().empty()) {
-        imGuiUI->SetFontPath(textConfig->GlobalFontPath());
-    }
+    // 文字样式配置（读写分离，用户配置优先）
+    LoadTextConfig();
 
     // 初始化渲染与UI子系统
     if (!renderSystem->Initialize(renderer, width, height)) return false;
@@ -263,30 +225,7 @@ bool Engine::Initialize(const char* title, int width, int height) {
     renderSystem->SetActiveRole(selectedRole);
 
     // ---- LLM BOT 初始化 ----
-    // 读取配置文件: 优先 exe 同目录的 llm.ini (CMake POST_BUILD 会从 assets/config 复制),
-    // 若不存在则回退到源码 assets/config/llm.ini
-    {
-        std::string cfgPath = PathUtils::ResolveAppPath("assets/config/llm.ini");
-        LLMConfig llmCfg = LLMConfig::FromFile(cfgPath);
-
-        // 把相对路径转成绝对路径 (CreateProcess 需要; 相对基准是 exe 目录)
-        if (!llmCfg.serverExePath.empty()) {
-            std::string resolved = PathUtils::ResolveAppPath(llmCfg.serverExePath);
-            if (!resolved.empty()) llmCfg.serverExePath = resolved;
-        }
-        if (!llmCfg.modelPath.empty()) {
-            std::string resolved = PathUtils::ResolveAppPath(llmCfg.modelPath);
-            if (!resolved.empty()) llmCfg.modelPath = resolved;
-        }
-
-        llmBot = std::make_unique<LLMBotController>();
-        if (llmBot->Initialize(llmCfg)) {
-            std::cout << "[LLM] LLM BOT 已就绪 (server: " << llmCfg.serverUrl
-                      << (llmCfg.autoLaunch ? ", 自动拉起" : "") << ")" << std::endl;
-        } else {
-            std::cout << "[LLM] LLM 不可用, BOT 使用传统行为树" << std::endl;
-        }
-    }
+    InitLLMBot();
 
     isRunning = true;
     return true;
@@ -343,7 +282,7 @@ void Engine::Clean() {
     if (renderSystem) renderSystem->Clean();
     if (uiRenderer) uiRenderer->Clean();
     if (imGuiUI) imGuiUI->Shutdown();
-    if (llmBot) { llmBot->Shutdown(); llmBot.reset(); }
+    if (botDriver) { botDriver->Shutdown(); botDriver.reset(); }
 
     if (renderer) { SDL_DestroyRenderer(renderer); renderer = nullptr; }
     if (window) { SDL_DestroyWindow(window); window = nullptr; }
@@ -397,14 +336,14 @@ void Engine::DamagePlayer(int amount) {
     if (result == 0) return; // 无敌帧，未受伤
 
     particleSystem->TriggerScreenShake(0.2f, 4.0f);
-    audioManager->PlaySound(SoundEffect::PLAYER_HURT);
+    audioManager->PlaySound(SoundEffect::HIT);   // 玩家受击音
     particleSystem->EmitBloodBurst(player.x + player.size * 0.5f, player.y + player.size * 0.5f, 10);
 
     if (result == 2) {
         currentState = GAMEOVER;
         gameOverStartTime = SDL_GetTicks();
 
-        audioManager->PlaySound(SoundEffect::PLAYER_DEATH);
+        audioManager->PlaySound(SoundEffect::KILL);   // 玩家死亡音
         particleSystem->TriggerScreenShake(0.35f, 6.0f);
         particleSystem->EmitDebrisBurst(player.x + player.size * 0.5f, player.y + player.size * 0.5f, 45, {220, 35, 35, 255});
 
@@ -613,13 +552,9 @@ void Engine::Update(float dt) {
                          cs2dKeyShift, cs2dKeyR,
                          audioManager.get());
 
-        // ---- LLM BOT 思考间隔 ----
-        if (llmBot && llmBot->IsReady()) {
-            llmCooldownTimer_ -= dt;
-            if (llmCooldownTimer_ <= 0.0f) {
-                llmCooldownTimer_ = LLM_THINK_INTERVAL;
-                RequestLLMDecision();
-            }
+        // ---- LLM BOT 决策调度（轮询 + 节流都在调度器内部）----
+        if (botDriver) {
+            botDriver->Tick(dt, *cs2dGame);
         }
 
         return;
@@ -722,7 +657,7 @@ void Engine::Update(float dt) {
             currentState = GAMEOVER;
             gameOverStartTime = SDL_GetTicks();
 
-            audioManager->PlaySound(SoundEffect::PLAYER_DEATH);
+            audioManager->PlaySound(SoundEffect::KILL);   // 玩家死亡音
             particleSystem->TriggerScreenShake(0.35f, 6.0f);
             particleSystem->EmitDebrisBurst(player.x + player.size * 0.5f, player.y + player.size * 0.5f, 45, {220, 35, 35, 255});
             particleSystem->EmitExplosion(trap.x + trap.size * 0.5f, trap.y + trap.size * 0.5f, 25);
@@ -911,105 +846,48 @@ void Engine::Render() {
 }
 
 // ============================================================================
-// LLM 决策请求 —— 采集第一个存活 BOT 的状态, 发送到 llama-server
+// 配置加载
 // ============================================================================
-void Engine::RequestLLMDecision() {
-    if (!cs2dGame || !llmBot) return;
-    const auto& bots = cs2dGame->GetBOTs();
-    const auto& playerData = cs2dGame->GetPlayer();
 
-    // 找一个存活的 BOT
-    const CS2DGame::Player* targetBot = nullptr;
-    for (const auto& b : bots) {
-        if (b.alive) { targetBot = &b; break; }
+// 音频设置：从 audio_config.ini 恢复音量与静音状态。
+// 文件缺失或键非法时保留 AudioManager 自带默认值。
+void Engine::LoadAudioConfig() {
+    const std::string path = PathUtils::ResolveAppPath("audio_config.ini");
+    IniFile ini = IniFile::Load(path);
+    if (!ini.IsLoaded()) return;
+
+    audioManager->SetMasterVolume (ini.GetInt("audio", "master",  100));
+    audioManager->SetMusicVolume  (ini.GetInt("audio", "music",    25));
+    audioManager->SetEffectsVolume(ini.GetInt("audio", "effects", 100));
+    audioManager->SetMuted        (ini.GetBool("audio", "muted", false));
+}
+
+// 文字样式：读写分离。用户配置 text_config.ini 优先；缺失时从 Factory 模板
+// assets/config/text.ini 拷贝一份；两者都没有则保持 C++ 默认值。
+void Engine::LoadTextConfig() {
+    const std::string userCfgPath  = PathUtils::ResolveWritablePath("text_config.ini");
+    const std::string templatePath = PathUtils::ResolveAppPath("assets/config/text.ini");
+
+    if (std::filesystem::exists(userCfgPath)) {
+        textConfig->Load(userCfgPath);
+    } else if (std::filesystem::exists(templatePath)) {
+        std::error_code ec;
+        std::filesystem::copy_file(templatePath, userCfgPath, ec);
+        textConfig->Load(userCfgPath);
     }
-    if (!targetBot) return;  // 没有存活 BOT, 跳过
+    // 两文件都不存在：保持默认值，F2 面板首次保存时会写出
 
-    // ---- 构建状态信息 ----
-    float hp = static_cast<float>(targetBot->health);
-    float maxHp = static_cast<float>(targetBot->maxHealth);
-    float armor = 0.0f;  // 当前未实现护甲系统
-
-    // 武器名
-    std::string weaponName;
-    if (targetBot->weaponSlot == 0)      weaponName = targetBot->weaponType == 0 ? "AK47" : "M4A1";
-    else if (targetBot->weaponSlot == 1) weaponName = "手枪";
-    else                                 weaponName = "近战";
-
-    int ammo = targetBot->ammo;
-    int maxAmmo = targetBot->maxAmmo;
-
-    std::string area = "CS2D地图";
-
-    // 敌人信息 = 玩家
-    bool enemyVisible = false;
-    float enemyDist = 0.0f;
-    std::string enemyDir = "前方";
-    bool enemyFiring = false;
-
-    if (playerData.alive) {
-        float dx = playerData.x - targetBot->x;
-        float dy = playerData.y - targetBot->y;
-        enemyDist = std::sqrt(dx * dx + dy * dy);
-
-        // 视野半径检查
-        if (enemyDist < CS2DGame::BOT_VIEW_RADIUS) {
-            enemyVisible = true;
-
-            // 方向
-            if (std::abs(dx) > std::abs(dy)) {
-                enemyDir = (dx > 0) ? "右前方" : "左前方";
-            } else {
-                enemyDir = (dy > 0) ? "正前方" : "";  // 下方通常不在视野
-                if (enemyDir.empty()) enemyDir = (dx > 0) ? "右" : "左";
-            }
-        }
-    }
-
-    // 队友信息 = 其他存活 BOT
-    bool teammateAlive = false;
-    float teammateDist = 0.0f;
-    std::string teammateDir = "后方";
-    int aliveCount = 0;
-    for (const auto& b : bots) {
-        if (&b == targetBot) continue;
-        if (b.alive) {
-            aliveCount++;
-            float dx = b.x - targetBot->x;
-            float dy = b.y - targetBot->y;
-            float d = std::sqrt(dx * dx + dy * dy);
-            if (d < CS2DGame::BOT_VIEW_RADIUS * 1.5f) {
-                teammateAlive = true;
-                teammateDist = d;
-                teammateDir = (dx > 0) ? "右" : "左";
-                teammateDir += (dy > 0) ? "前方" : "后方";
-            }
-        }
-    }
-
-    // 构建请求
-    std::string userMsg = PromptBuilder::BuildUserMessage(
-        hp, maxHp, armor, weaponName, ammo, maxAmmo,
-        targetBot->x, targetBot->y, area,
-        enemyVisible, enemyDist, enemyDir, enemyFiring,
-        teammateAlive, teammateDist, teammateDir,
-        targetBot->reloading);
-
-    std::string requestBody = PromptBuilder::BuildRequestBody(userMsg);
-
-    // 发送异步请求
-    llmBot->Decide(requestBody, [this](const LLMDecision& d) {
-        if (d.valid) {
-            llmDecisionCache_ = d;
-            llmDecisionFresh_ = true;
-        }
-    });
-
-    // 调试输出 (每 10 秒一次)
-    llmDebugTimer_ += LLM_THINK_INTERVAL;
-    if (llmDebugTimer_ >= 10.0f) {
-        llmDebugTimer_ = 0.0f;
-        std::cout << "[LLM] 决策请求已发送, BOT(" << static_cast<int>(targetBot->health)
-                  << "HP, " << weaponName << ")" << std::endl;
+    // [global] font= 传给 ImGuiUI（仅启动生效）
+    if (!textConfig->GlobalFontPath().empty()) {
+        imGuiUI->SetFontPath(textConfig->GlobalFontPath());
     }
 }
+
+// LLM BOT：加载 llm.ini 并启动调度器（内含自动拉起 llama-server 的逻辑）
+void Engine::InitLLMBot() {
+    const std::string cfgPath = PathUtils::ResolveAppPath("assets/config/llm.ini");
+
+    botDriver = std::make_unique<BotDecisionScheduler>();
+    botDriver->Initialize(cfgPath);   // 失败时内部打印提示, BOT 回退传统行为树
+}
+

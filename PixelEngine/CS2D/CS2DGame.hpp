@@ -1,6 +1,8 @@
 #pragma once
 #include "CS2DWorld.hpp"
 #include "CS2DRenderer.hpp"
+#include "../LLM/BotIntent.hpp"
+#include "../LLM/BotBehaviorExecutor.hpp"
 #include <SDL2/SDL.h>
 #include <vector>
 #include <random>
@@ -56,6 +58,8 @@ public:
         static constexpr float RELOAD_TIME = 2.0f;  // 换弹耗时（秒）
         // 潜行
         bool      stealth   = false;
+        // LLM 战略意图 (由 Engine 异步写入, 由 UpdateBOTs 消费)
+        BotIntent llmIntent;
     };
 
     // ---- 子弹 ----
@@ -97,6 +101,7 @@ public:
     Player&          GetPlayer()      { return player_; }
     const Player&    GetPlayer() const { return player_; }
 
+    std::vector<Player>& GetBOTs() { return bots_; }
     const std::vector<Player>& GetBOTs()  const { return bots_; }
     const std::vector<Bullet>& GetBullets() const { return bullets_; }
 
@@ -112,9 +117,10 @@ public:
     // 武器名称（按 slot 返回）
     std::string GetWeaponName() const;
 
-    // BOT/玩家视野半径常量 (供 LLM 状态采样器使用)
+    // BOT 视野半径（供 BOT AI 与 LLM 状态采样器使用）
+    // 注意：玩家视野几何（半径 150px + 120° 扇形 + 遮挡）统一由
+    //       CS2DRenderer::ComputeVisibility() 提供，不在此重复定义。
     static constexpr float BOT_VIEW_RADIUS    = 50.0f;
-    static constexpr float PLAYER_VIEW_RADIUS = 200.0f;
 
     // 鼠标灵敏度（默认 1.0f）
     float GetMouseSensitivity() const { return mouseSensitivity_; }
@@ -131,8 +137,10 @@ private:
     int playerKills_  = 0;
     int playerDeaths_ = 0;
 
+    // BOT AI 分层架构
+    std::vector<BotBehaviorExecutor> botExecutors_;  // 每个 BOT 一个战术层实例
+
     // BOT 计时
-    float botAITimer_       = 0.0f;
     float botRespawnTimer_  = 0.0f;
     static constexpr float BOT_RESPAWN_DELAY = 3.0f;
     static constexpr int   MAX_BOTS          = 8;

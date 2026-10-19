@@ -86,6 +86,7 @@ set(SOURCES
     Core/Types.hpp
     Core/PathUtils.hpp
     Core/Roles.hpp
+    Core/IniFile.cpp
     Audio/AudioManager.cpp
     Input/InputManager.cpp
     World/WorldMap.cpp
@@ -117,6 +118,9 @@ set(SOURCES
     ThirdParty/imgui/backends/imgui_impl_sdl2.cpp
     ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.cpp
     LLM/LLMBotController.cpp
+    LLM/BotIntent.cpp
+    LLM/BotBehaviorExecutor.cpp
+    LLM/BotDecisionScheduler.cpp
 )
 
 add_executable(EngineApp ${SOURCES})

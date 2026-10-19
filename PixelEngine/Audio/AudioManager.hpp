@@ -7,13 +7,11 @@ enum class SoundEffect {
     PICKUP,
     BUTTON_HOVER,
     CLICK,
-    ATTACK_SWING,
+    DAGGER_FIRE,
     OBSTACLE_BREAK,
-    PLAYER_DEATH,
     SHOOT,        // 射击（通用，沙漠之鹰用）
     HIT,          // 命中
     KILL,         // 击杀
-    PLAYER_HURT,  // 玩家受击
     AK47_FIRE,    // AK47 连发枪声
     DEAGLE_FIRE,  // 沙漠之鹰单发枪声（备用）
     KATANA_SWING  // 武士刀挥砍
@@ -29,13 +27,11 @@ private:
     Mix_Chunk* pickupSound = nullptr;
     Mix_Chunk* buttonHoverSound = nullptr;
     Mix_Chunk* clickSound = nullptr;
-    Mix_Chunk* attackSound = nullptr;
+    Mix_Chunk* daggerSound = nullptr;
     Mix_Chunk* breakSound = nullptr;
-    Mix_Chunk* deathSound = nullptr;
     Mix_Chunk* shootSound = nullptr;
     Mix_Chunk* hitSound = nullptr;
     Mix_Chunk* killSound = nullptr;
-    Mix_Chunk* playerHurtSound = nullptr;
     Mix_Chunk* ak47Sound = nullptr;
     Mix_Chunk* deagleSound = nullptr;
     Mix_Chunk* katanaSound = nullptr;
