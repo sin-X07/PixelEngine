@@ -23,6 +23,44 @@ int CS2DGame::GetHostagesRescued() const {
     return n;
 }
 
+void CS2DGame::PushKillFeed(const std::string& text) {
+    killFeed_.insert(killFeed_.begin(), KillFeedEntry{ text, 4.0f });
+    if (killFeed_.size() > 6) killFeed_.resize(6);
+}
+
+// 记分板数据（玩家 + 全部 BOT，按阵营排序）
+std::vector<CS2DGame::ScoreRow> CS2DGame::BuildScoreboard() const {
+    std::vector<ScoreRow> rows;
+
+    ScoreRow me;
+    me.name      = "你";
+    me.team      = player_.team;
+    me.kills     = player_.kills;
+    me.deaths    = player_.deaths;
+    me.money     = player_.money;
+    me.alive     = player_.alive;
+    me.isPlayer  = true;
+    rows.push_back(me);
+
+    for (size_t i = 0; i < bots_.size(); ++i) {
+        const auto& b = bots_[i];
+        ScoreRow r;
+        r.name   = "BOT#" + std::to_string(i);
+        r.team   = b.team;
+        r.kills  = b.kills;
+        r.deaths = b.deaths;
+        r.money  = b.money;
+        r.alive  = b.alive;
+        rows.push_back(r);
+    }
+
+    std::stable_sort(rows.begin(), rows.end(), [](const ScoreRow& a, const ScoreRow& b) {
+        if (a.team != b.team) return static_cast<int>(a.team) > static_cast<int>(b.team);
+        return a.kills > b.kills;
+    });
+    return rows;
+}
+
 // 按模式初始化目标物
 void CS2DGame::SetupObjective() {
     hostages_.clear();

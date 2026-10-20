@@ -181,16 +181,37 @@ void BotDecisionScheduler::DispatchOne(CS2DGame& game) {
             case RoundPhase::RoundEnd: phaseName = "结算"; break;
             default:                   phaseName = "-";    break;
         }
-        char ctx[256];
+        char ctx[384];
         std::snprintf(ctx, sizeof(ctx),
-                      "\n【战局】你是%s阵营，第%d回合，阶段:%s，剩余%d秒，比分 T%d:%d CT，本阵营存活%d人。",
+                      "\n【战局】你是%s阵营，第%d回合，阶段:%s，剩余%d秒，比分 T%d:%d CT，本阵营存活%d人，你的金钱$%d。",
                       TeamName(targetBot.team),
                       game.GetRoundNumber(),
                       phaseName,
                       static_cast<int>(game.GetRoundRemaining()),
                       game.GetScoreT(), game.GetScoreCT(),
-                      game.AliveCount(targetBot.team));
+                      game.AliveCount(targetBot.team),
+                      targetBot.money);
         userMsg += ctx;
+
+        // 目标提示
+        char obj[192] = {0};
+        switch (game.GetMatchMode()) {
+            case MatchMode::BombDefusal:
+                if (game.IsBombPlanted())
+                    std::snprintf(obj, sizeof(obj),
+                                  "\n【任务】C4 已安装，剩余%d秒。CT 需拆包，T 需守住。",
+                                  static_cast<int>(game.GetBombTimer()));
+                else
+                    std::snprintf(obj, sizeof(obj), "\n【任务】T 需前往包点下包，CT 需阻止。");
+                break;
+            case MatchMode::HostageRescue:
+                std::snprintf(obj, sizeof(obj), "\n【任务】CT 需营救人质(%d/%d)，T 需阻止。",
+                              game.GetHostagesRescued(), game.GetHostagesTotal());
+                break;
+            default:
+                break;
+        }
+        if (obj[0] != '\0') userMsg += obj;
     }
 
     const std::string requestBody = PromptBuilder::BuildRequestBody(userMsg);

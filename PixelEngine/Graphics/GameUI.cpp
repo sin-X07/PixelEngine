@@ -388,6 +388,71 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
         }
     }
 
+    // ---- 击杀播报（右上角）----
+    {
+        const float x = ImGui::GetIO().DisplaySize.x - 320.0f;
+        float y = 96.0f;
+        for (const auto& line : ctx.killFeed) {
+            DrawImGuiText(imGuiUI, line.c_str(), x, y, 235, 235, 235, 235, 16);
+            y += 20.0f;
+        }
+    }
+
+    // ---- 记分板（Tab 按住）----
+    if (ctx.showScoreboard) {
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        const float w = 560.0f;
+        const float h = 380.0f;
+        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + (vp->WorkSize.x - w) * 0.5f,
+                                      vp->WorkPos.y + (vp->WorkSize.y - h) * 0.5f),
+                                ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.05f, 0.08f, 0.11f, 0.95f));
+        ImGui::Begin("##Scoreboard", nullptr,
+                     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoTitleBar);
+
+        ImGui::TextColored(ImVec4(0.95f, 0.82f, 0.35f, 1.0f),
+                           "T %d : %d CT", ctx.scoreT, ctx.scoreCT);
+        ImGui::Separator();
+
+        if (ImGui::BeginTable("##score", 5,
+                ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+            ImGui::TableSetupColumn("阵营", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+            ImGui::TableSetupColumn("名称", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("K", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+            ImGui::TableSetupColumn("D", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+            ImGui::TableSetupColumn("$", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+            ImGui::TableHeadersRow();
+
+            for (const auto& r : ctx.scoreRows) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(r.team == 2 ? "CT" : (r.team == 1 ? "T" : "-"));
+                ImGui::TableNextColumn();
+                if (r.isPlayer) {
+                    ImGui::TextColored(ImVec4(0.45f, 0.90f, 0.55f, 1.0f), "%s", r.name.c_str());
+                } else {
+                    ImGui::TextColored(ImVec4(r.alive ? 0.80f : 0.45f,
+                                              r.alive ? 0.80f : 0.45f,
+                                              r.alive ? 0.80f : 0.45f, 1.0f),
+                                       "%s%s", r.name.c_str(), r.alive ? "" : " (阵亡)");
+                }
+                ImGui::TableNextColumn();
+                ImGui::Text("%d", r.kills);
+                ImGui::TableNextColumn();
+                ImGui::Text("%d", r.deaths);
+                ImGui::TableNextColumn();
+                ImGui::Text("$%d", r.money);
+            }
+            ImGui::EndTable();
+        }
+
+        ImGui::End();
+        ImGui::PopStyleColor();
+    }
+
     // 右下角武器状态文字（与 CS2DRenderer 的 160×56 面板对齐）
     {
         std::string line = ctx.weaponName;

@@ -444,10 +444,10 @@ void Engine::HandleInput() {
     cs2dKeyShift = kb[SDL_SCANCODE_LSHIFT] || kb[SDL_SCANCODE_RSHIFT];
     cs2dKeyR     = kb[SDL_SCANCODE_R];
 
-    // Tab 边沿检测 → 中心雷达
+    // Tab 按住 → 记分板
     cs2dOverlay.prevTab = cs2dOverlay.keyTab;
     cs2dOverlay.keyTab  = kb[SDL_SCANCODE_TAB];
-    cs2dOverlay.UpdateTabToggle();
+    showScoreboard_     = cs2dOverlay.keyTab;
 
     // 武器槽：1=主武器 2=副武器 3=近战 4=投掷物
     if (inputManager->IsDigit1Requested()) cs2dGame->SwitchWeaponSlot(0);
@@ -599,6 +599,27 @@ void Engine::Render() {
         ictx.hostagesRescued  = cs2dGame->GetHostagesRescued();
         ictx.hostagesTotal    = cs2dGame->GetHostagesTotal();
         ictx.rescueProgress   = cs2dGame->GetRescueProgress();
+
+        // 击杀播报
+        for (const auto& e : cs2dGame->GetKillFeed()) {
+            ictx.killFeed.push_back(e.text);
+        }
+
+        // 记分板
+        ictx.showScoreboard = showScoreboard_;
+        if (showScoreboard_) {
+            for (const auto& r : cs2dGame->BuildScoreboard()) {
+                GameUI::InGameCtx::ScoreRowView v;
+                v.name     = r.name;
+                v.team     = static_cast<int>(r.team);
+                v.kills    = r.kills;
+                v.deaths   = r.deaths;
+                v.money    = r.money;
+                v.alive    = r.alive;
+                v.isPlayer = r.isPlayer;
+                ictx.scoreRows.push_back(v);
+            }
+        }
 
         gameUI->DrawInGame(ictx, imGuiUI.get());
     }

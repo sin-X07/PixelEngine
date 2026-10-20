@@ -114,6 +114,20 @@ public:
         int   hostagesRescued = 0;
         int   hostagesTotal = 0;
         float rescueProgress = 0.0f;
+
+        // 击杀播报 / 记分板
+        std::vector<std::string> killFeed;
+        struct ScoreRowView {
+            std::string name;
+            int  team = 0;
+            int  kills = 0;
+            int  deaths = 0;
+            int  money = 0;
+            bool alive = true;
+            bool isPlayer = false;
+        };
+        std::vector<ScoreRowView> scoreRows;
+        bool showScoreboard = false;
     };
 
     void DrawMenu(const MenuCtx& ctx, const Actions& actions);

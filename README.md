@@ -1,100 +1,136 @@
-# PixelEngine
+# PixelEngine — CS2D-like 单机版
 
-一个仍在开发中的 C++17 / SDL2 像素风迷宫小游戏。当前优先保持代码和构建说明易于修改；功能、文件布局和依赖配置都可能继续调整。
+C++17 / SDL2 的俯视角 2D 战术射击游戏，玩法对标 Steam 的 **CS2D**。
+玩家（CT）与 LLM 驱动的 BOT 进行 5v5 对抗。
 
-## 当前功能
+---
 
-- 主菜单、模式选择、角色选择、历史记录、按键说明和音量设置页面。
-- 角色系统：主菜单「选择角色」从 4 个角色（豆丁、莉娅、阿凯、老约翰）中任选其一，游戏中玩家显示为所选角色；选择持久化保存，重启后保持，也可在角色选择页按数字键 `1-4` 快捷选中。
-- 限时挑战：在 60 秒内收集金币并累计分数。
-- 迷宫探索：生成随机迷宫，记录通关时间。
-- 地牢主题 PNG 背景、墙面、玩家和宝箱精灵。
-- 游戏中按 `Esc` 暂停，可继续、重新开始、调整音量或确认放弃。
-- F11 全屏切换；历史记录保存在纯文本文件中。
+## 当前玩法
+
+| 模式 | 说明 |
+|---|---|
+| **团队歼灭** | 回合制 T/CT 对抗，歼灭对方全部成员或时间到守方胜 |
+| **爆破** | T 在包点下包，C4 40 秒倒计时；CT 需拆包 |
+| **人质营救** | CT 营救全部人质，T 需阻止 |
+| **死斗** | 自由击杀，即时重生，无回合 |
+
+### 核心系统
+
+- **回合制**：`冻结 → 购买 → 交战 → 结算` 四阶段循环，先到 8 分获胜。
+- **经济**：起始 $800；击杀 +$300；回合胜利 +$3250；失败 $1400 起、连败递增；上限 $16000。
+- **买枪**：购买期按 `B` 打开菜单，需在己方购买区内且余额充足。
+- **武器库**：Glock / Deagle / Galil / AK-47 / M4A1 / SMG / 霰弹枪 / AWP / 匕首 + 三种手雷
+  （高爆、闪光、烟雾）。主/副/近战/投掷四个槽位。
+- **手雷**：高爆范围伤害、闪光致盲、烟雾遮挡双方视线。
+- **目标物**：C4 下包/拆包、人质营救，按住 `E` 交互。
+- **视野**：150px + 120° 扇形 + 墙体遮挡，与遮罩严格一致；队友始终可见。
+- **LLM BOT**：BOT 由本地 `llama-server` 驱动，决策上下文包含阵营、回合阶段、比分、金钱、
+  任务目标；LLM 不可用时自动回退传统行为树。
+
+---
 
 ## 操作
 
-- 菜单：鼠标左键；模式选择页也可按 `1` 或 `2` 开始对应模式；角色选择页可按 `1`-`4` 快捷选中对应角色。点击空白处不会播放点击音效。
-- 移动：`W` / `A` / `S` / `D` 或方向键；松键后会短暂惯性滑行，反向输入会先减速再转向。
-- 冲刺：按住 `Shift`，速度逐渐提升；松开后逐渐恢复。
-- 聚焦：按住 `Ctrl` 扩大视野并放慢移动；松开后恢复。
-- 跳跃：按 `Space` 越过矮墙和小障碍；普通墙无法跳过。迷宫模式会使用可跳过或可破坏障碍制造伪墙、捷径和假死路；矮墙和小障碍不遮挡视线。
-- 全屏：`F11`。
-- 暂停/继续：游戏中按 `Esc` 暂停，再按 `Esc` 或选择“继续游戏”恢复。
-- 静音：`F1` 切换主音量静音；主音量、音乐和音效可在“设置”中分别调节。
-- 返回：子页面按 `Esc` 返回；主菜单按 `Esc` 退出；结算页面按 `Esc` 返回模式选择。
-- 结算页面：按 `Enter` 或空格返回模式选择。
-- 文字调参：按 `F2` 打开/关闭实时文字调参面板（可调位置/字号档位/颜色，所见即所得）；点“保存全部”写入 `assets/config/text.ini`，下次启动自动加载。
+| 按键 | 功能 |
+|---|---|
+| `W` `A` `S` `D` | 移动 |
+| 鼠标左键 | 射击 / 投掷 |
+| `1` `2` `3` `4` | 主武器 / 副武器 / 近战 / 投掷物 |
+| `R` | 换弹 |
+| `Shift` | 潜行（减速、降低被发现概率） |
+| `B` | 买枪菜单（仅购买期） |
+| `E` | 拆包 / 营救人质（按住） |
+| `Tab` | 记分板（按住） |
+| `Esc` | 暂停 |
+| `F11` | 全屏 |
+| `F1` | 静音 |
 
-## 文字调参
-
-所有 ImGui 文字（游戏内 7 处 + 菜单静态文字 9 处）的位置、字号档位、颜色可在 `F2` 面板实时调整并保存到 `assets/config/text.ini`（首次运行自动生成模板）。字号取档位 `{16,18,20,22,24,30,34}` 就近值；`[global] font=` 指定字体文件，**修改后需重启**生效。新增文字 key：在 `GameUI` 调用点查表 + `TextConfig` 默认表加一行即可，面板会自动出现。
+---
 
 ## 构建与运行
 
-项目使用 CMake 3.16+、C++17、MinGW-w64、SDL2、SDL2_image 和 SDL2_mixer，另 vendor 了 Dear ImGui（MIT）用于文字与菜单渲染。SDL2 固定为 2.30.3、SDL2_mixer 固定为 2.6.3、SDL2_image 固定为 2.8.2，三者均为**静态构建**（SDL2_mixer 使用内置 dr_mp3/stb 后端，SDL2_image 使用内置 stb 后端解码 PNG/JPG）。所有第三方依赖通过 CMake 的 FetchContent 在首次配置时**自动下载并校验 SHA-256**，无需手工准备依赖，也无需任何本机绝对路径。
-
-### 前置要求
-
-在 Windows 上仅需一次性安装标准工具链：
-
-- [CMake](https://cmake.org/download/) 3.16 或更高（确保 `cmake` 在 PATH 中）。
-- [MinGW-w64](https://winlibs.com/)（x86_64、UCRT 运行时；确保 `gcc`/`g++`/`mingw32-make` 在 PATH 中）。
-- 可选：VS Code + [C/C++ 扩展](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) + [CMake Tools 扩展](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cmake-tools)，用于 IDE 内配置/构建/调试。
-
-### 命令行构建（零配置）
+前置：CMake 3.16+、MinGW-w64（x86_64 UCRT）。SDL2 / SDL2_mixer / SDL2_image
+通过 FetchContent 自动下载并校验 SHA-256。
 
 ```powershell
-# 在仓库根目录执行：配置 + 编译
 cmake --preset mingw-debug
 cmake --build build
-```
-
-生成的程序为 `build/EngineApp.exe`，`assets/` 会自动复制到 exe 旁，直接双击或命令行运行即可：
-
-```powershell
 .\build\EngineApp.exe
 ```
 
-### 使用 VS Code（零配置）
-
-1. 用 VS Code 打开仓库根目录。
-2. 安装 C/C++ 与 CMake Tools 扩展。
-3. 在底部状态栏选择编译器（CMake Tools 会自动识别 MinGW），选择 `mingw-debug` 预设并构建。
-4. 按 `F5` 直接进入 GDB 调试并运行游戏。
-
-`IntelliSense`、`F5` 调试、构建目录均已通过 `.vscode/` 与 `PixelEngine/CMakePresets.json` 配置为相对路径，clone 到任意位置开箱即用。
-
-### 依赖与离线构建
-
-依赖源码在首次配置时从官方地址下载并用 SHA-256 校验；若需离线或使用本地源码，可在配置时指向已解压的源码目录：
+### 调试参数
 
 ```powershell
-cmake --preset mingw-debug `
-  -DFETCHCONTENT_SOURCE_DIR_SDL2=D:/path/to/SDL-release-2.30.3 `
-  -DFETCHCONTENT_SOURCE_DIR_SDL2_MIXER=D:/path/to/SDL_mixer-release-2.6.3 `
-  -DFETCHCONTENT_SOURCE_DIR_SDL2_IMAGE=D:/path/to/SDL_image-release-2.8.2
+EngineApp.exe --autostart             # 跳过菜单直接开局
+EngineApp.exe --autostart --fastround # 短回合，快速验证回合状态机
+EngineApp.exe --autostart --mode=2    # 0=死斗 1=歼灭 2=爆破 3=人质
 ```
 
-引擎会尝试打开音频设备，设备不可用时仍可静音运行。背景音乐、按钮悬停/点击音效和拾取音效素材位于 `assets/audio/`。
+---
 
-地牢图片取自 Kenney 的 [Tiny Dungeon](https://kenney.nl/assets/tiny-dungeon) 资源包，页面标注 Creative Commons CC0；本项目使用其中的砂地、石砖墙、玩家和宝箱精灵，许可文本随素材保存在 `assets/images/dungeon/License.txt`。
+## LLM BOT 配置
 
-## 项目文件
+配置在 `assets/config/llm.ini`：
 
-- `PixelEngine/main.cpp`：程序入口和引擎启动。
-- `PixelEngine/Engine.hpp`、`PixelEngine/Engine.cpp`：游戏状态、输入、更新、绘制、菜单协调与记录存取。
-- `PixelEngine/Core/Roles.hpp`：角色表（名字/贴图路径/简介）与角色选择页卡片布局。
-- `PixelEngine/Graphics/GameUI.hpp/.cpp`：菜单界面 + 游戏内文字（ImGui 渲染，动作通过回调委托）。
-- `PixelEngine/Graphics/ImGuiUI.hpp/.cpp`：Dear ImGui 基础设施（多字号中文字体、帧边界）。
-- `PixelEngine/Graphics/TextConfig.hpp/.cpp`：文字样式配置（ini 读写，16 个 key）。
-- `PixelEngine/Graphics/TextTweakerUI.hpp/.cpp`：F2 实时调参面板。
-- `PixelEngine/Graphics/UIRenderer.hpp/.cpp`：游戏内图形（HUD 红心/时间条/金币点、武器面板、结算面板背景）。
-- `PixelEngine/MazeGenerator.hpp/.cpp`：随机生成含环路、扩展死路和可通行主路线的编织迷宫。
-- `PixelEngine/map1.txt`：限时模式地图；`map2.txt`：迷宫模式地图文件，运行时会生成随机迷宫。
-- `role_saves.txt`（运行时生成于工作目录）：当前选中角色索引存档。
-- `PixelEngine/CMakeLists.txt`：应用与第三方依赖的构建配置。
+```ini
+[server]
+url=http://127.0.0.1:9931
 
-## 后续修改提示
+[launcher]
+auto_launch=1          ; 自动拉起 llama-server
+exe=llm_bot\llama.cpp\llama-server.exe
+model=llm_bot\models\qwen2.5-7b-instruct-q4_k_m.gguf
+ngl=99
+startup_wait=20
+kill_on_exit=1         ; 退出时关闭本程序拉起的 server 以释放显存
+```
 
-新增菜单页面时，检查 `Engine.hpp` 中的状态定义，以及 `Engine.cpp` 中对应的输入命中、页面绘制和状态切换逻辑。调整游戏数据格式时，同时检查读取、保存和历史页面显示。若整理构建配置，建议将本机绝对路径改为可配置的 CMake 参数或标准依赖查找，并同步更新 `.vscode/tasks.json`。
+- 模型与二进制体积大，不入 Git；运行 `.\model_setup.ps1` 自动下载。
+- 退出时只关闭**本程序拉起**的 server（通过 `llm_server.pid` 记录，跨会话可回收）；
+  外部手动启动的服务不会被误杀。
+
+---
+
+## 素材
+
+素材规格完整契约见 [`tools/ASSET_SPEC.md`](tools/ASSET_SPEC.md)（图片尺寸、朝向、
+音效清单、地图对象层约定）。
+
+当前仓库内的部分素材是**占位文件**（带文字标签），由脚本生成：
+
+```powershell
+python tools/gen_placeholders.py         # 补齐缺失的图片/音效占位
+python tools/gen_placeholder_map.py      # 生成爆破/人质占位地图
+```
+
+**真实素材到位后，直接覆盖同名同路径文件即可，无需改代码。**
+启动日志会汇总缺失项：`[Asset] 贴图缺失 N 项` / `[Asset] 音效缺失 N 项`。
+
+### 地图
+
+Tiled 导出的 `.tmj`，放在 `assets/cs2d/maps/`。对象层约定：
+
+- `Collisions`：矩形 → 碰撞体
+- `Entities`：`spawn_t` / `spawn_ct`（出生点）、`bomb_site`（`name="A"/"B"`）、
+  `hostage`、`buy_zone`（属性 `team=t/ct/both`）
+
+---
+
+## 项目结构
+
+```
+PixelEngine/
+  Engine.{hpp,cpp}          应用外壳：窗口/主循环/输入/菜单/设置
+  Core/                     Types、IniFile、PathUtils
+  CS2D/
+    CS2DGame*.cpp           对局：主逻辑 / 回合 / 战斗 / BOT / 目标物
+    Teams/TeamManager       阵营比分
+    Rounds/RoundManager     回合状态机
+    Economy/EconomySystem   金钱规则
+    Weapons/WeaponDef       武器数据表（唯一数据源）
+    CS2DWorld/Renderer/Overlay/TMJParser/MiniJSON
+  LLM/                      llama-server 客户端、决策调度、意图与行为执行
+  Graphics/                 GameUI（ImGui 菜单/HUD）、ImGuiUI
+  Audio/ Input/ Storage/
+tools/                      素材规格与占位生成脚本
+```

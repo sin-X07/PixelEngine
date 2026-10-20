@@ -39,6 +39,7 @@ void CS2DGame::ResetToNewMatch() {
     playerKills_ = 0;
     playerDeaths_ = 0;
     matchOverAnnounced_ = false;
+    killFeed_.clear();
 
     teams_.Reset();
     teams_.SetScoreToWin(8);
@@ -366,6 +367,12 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     }
 
     prevMouseDown_ = mouseLeftDown;
+
+    // 击杀播报寿命
+    for (auto& e : killFeed_) e.life -= dt;
+    killFeed_.erase(std::remove_if(killFeed_.begin(), killFeed_.end(),
+                                   [](const KillFeedEntry& e) { return e.life <= 0.0f; }),
+                    killFeed_.end());
 }
 
 // ============================================================================

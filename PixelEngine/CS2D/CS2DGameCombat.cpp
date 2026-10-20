@@ -177,12 +177,16 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             if (bot.health <= 0) {
                 OnCombatantKilled(bot, audio);
 
-                // 玩家击杀：计分 + 经济奖励
+                // 玩家击杀：计分 + 经济奖励 + 播报
                 if (bullet.ownerIdx == -1) {
                     ++playerKills_;
                     ++player_.kills;
                     player_.money += economy_.GrantKill();
                     economy_.Clamp(player_.money);
+                    PushKillFeed("你  ▸  击杀 " + std::string(TeamName(bot.team)) + " BOT");
+                } else {
+                    PushKillFeed(std::string("BOT#") + std::to_string(bullet.ownerIdx)
+                                 + "  ▸  击杀 " + TeamName(bot.team) + " BOT");
                 }
 
                 if (audio) audio->PlaySoundAt(SoundEffect::KILL, bot.x, bot.y,
@@ -203,7 +207,10 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                 player_.health -= bullet.damage;
                 bullet.active = false;
                 if (audio) audio->PlaySound(SoundEffect::HIT);
-                if (player_.health <= 0) OnCombatantKilled(player_, audio);
+                if (player_.health <= 0) {
+                    PushKillFeed(std::string("BOT#") + std::to_string(bullet.ownerIdx) + "  ▸  击杀 你");
+                    OnCombatantKilled(player_, audio);
+                }
             }
         }
     }

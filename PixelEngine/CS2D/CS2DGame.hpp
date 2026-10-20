@@ -125,6 +125,23 @@ public:
         bool  rescued = false;
     };
 
+    // 击杀播报条目
+    struct KillFeedEntry {
+        std::string text;
+        float life = 4.0f;
+    };
+
+    // 记分板行
+    struct ScoreRow {
+        std::string name;
+        Team team = Team::None;
+        int  kills = 0;
+        int  deaths = 0;
+        int  money = 0;
+        bool alive = true;
+        bool isPlayer = false;
+    };
+
     CS2DGame();
     ~CS2DGame() = default;
 
@@ -152,6 +169,8 @@ public:
     const std::vector<Bullet>& GetBullets() const { return bullets_; }
     const std::vector<Grenade>& GetGrenades() const { return grenades_; }
     const std::vector<SmokeCloud>& GetSmokes() const { return smokes_; }
+    const std::vector<KillFeedEntry>& GetKillFeed() const { return killFeed_; }
+    std::vector<ScoreRow> BuildScoreboard() const;
 
     // 玩家是否处于闪光致盲中（0..1 强度）
     float GetFlashAmount() const { return (flashTimer_ > 0.0f) ? 1.0f : 0.0f; }
@@ -242,6 +261,10 @@ private:
     float defuseProgress_ = 0.0f;  // 0..1
     float rescueProgress_ = 0.0f;  // 0..1（当前人质）
     int   hostageNearIdx_ = -1;    // 玩家当前靠近的人质索引
+
+    std::vector<KillFeedEntry> killFeed_;
+
+    void PushKillFeed(const std::string& text);
 
     int playerKills_  = 0;
     int playerDeaths_ = 0;

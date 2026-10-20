@@ -48,6 +48,7 @@ private:
     bool  cs2dKeyW = false, cs2dKeyA = false, cs2dKeyS = false, cs2dKeyD = false;
     bool  cs2dKeyShift = false, cs2dKeyR = false;
     bool  buyMenuOpen_ = false;   // 买枪菜单开关
+    bool  showScoreboard_ = false; // Tab 按住显示记分板
     MatchMode currentMatchMode_ = MatchMode::TeamElimination;   // 暂停页"重新开始"用
 
     // 买枪菜单渲染
