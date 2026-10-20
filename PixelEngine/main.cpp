@@ -24,16 +24,21 @@ int main(int argc, char* argv[]) {
 
     // --autostart：跳过菜单直接进入对局（调试 / 回归验证用）
     // --fastround：使用短回合时长（配合 --autostart 验证回合状态机）
+    // --mode=N  ：0=死斗 1=团队歼灭 2=爆破 3=人质
     bool autostart = false;
     bool fastRound = false;
+    int  startMode = 1;
     for (int i = 1; i < argc; ++i) {
         if (!argv[i]) continue;
         const std::string a(argv[i]);
         if (a == "--autostart") autostart = true;
         if (a == "--fastround") fastRound = true;
+        if (a.rfind("--mode=", 0) == 0) {
+            try { startMode = std::stoi(a.substr(7)); } catch (...) {}
+        }
     }
 
-    if (engine.Initialize("CS2D Pixel", 800, 600, autostart, fastRound)) {
+    if (engine.Initialize("CS2D Pixel", 800, 600, autostart, fastRound, startMode)) {
         engine.Run();
     }
 

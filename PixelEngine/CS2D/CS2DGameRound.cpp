@@ -10,7 +10,7 @@
 // ============================================================================
 
 void CS2DGame::UpdateRoundFlow(float dt, AudioManager* /*audio*/) {
-    if (mode_ != MatchMode::TeamElimination) return;
+    if (mode_ == MatchMode::DeathMatch) return;   // 死斗无回合
 
     const RoundPhase before = round_.Phase();
     round_.Update(dt);
@@ -26,6 +26,7 @@ void CS2DGame::UpdateRoundFlow(float dt, AudioManager* /*audio*/) {
 void CS2DGame::BeginNewRound() {
     if (teams_.MatchOver()) return;
     RespawnAllForRound();
+    SetupObjective();   // 每回合重置包点 / 人质
     std::cout << "[CS2D] 第 " << round_.RoundNumber() << " 回合开始 ("
               << teams_.ScoreT() << ":" << teams_.ScoreCT() << ")" << std::endl;
 }
@@ -51,8 +52,9 @@ void CS2DGame::RespawnAllForRound() {
 }
 
 void CS2DGame::CheckWinConditions(AudioManager* audio) {
-    if (mode_ != MatchMode::TeamElimination) return;
+    if (mode_ == MatchMode::DeathMatch) return;
     if (!round_.IsLive()) return;
+    if (round_.IsRoundEnd()) return;
     if (teams_.MatchOver()) return;
 
     const int aliveT  = AliveCount(Team::T);
@@ -61,14 +63,39 @@ void CS2DGame::CheckWinConditions(AudioManager* audio) {
     Team winner = Team::None;
     bool decided = false;
 
-    if (aliveT == 0 || aliveCT == 0) {
-        decided = true;
-        if (aliveT == 0 && aliveCT == 0)      winner = Team::None;   // 同归于尽 → 平局
-        else if (aliveT == 0)                 winner = Team::CT;
-        else                                  winner = Team::T;
-    } else if (round_.IsTimeUp()) {
-        decided = true;
-        winner = Team::CT;   // 时间到：守方（CT）获胜
+    switch (mode_) {
+        case MatchMode::BombDefusal:
+            // 拆包/爆炸已在 UpdateObjective 中结算
+            if (aliveCT == 0 && aliveT > 0) {
+                decided = true; winner = Team::T;             // CT 全灭
+            } else if (aliveT == 0 && !bombPlanted_) {
+                decided = true; winner = Team::CT;            // T 全灭且未下包
+            } else if (round_.IsTimeUp() && !bombPlanted_) {
+                decided = true; winner = Team::CT;            // 守方胜
+            }
+            break;
+
+        case MatchMode::HostageRescue:
+            if (aliveCT == 0 && aliveT > 0) {
+                decided = true; winner = Team::T;
+            } else if (aliveT == 0) {
+                decided = true; winner = Team::CT;
+            } else if (round_.IsTimeUp()) {
+                decided = true; winner = Team::T;             // 人质模式超时由 T 守成功
+            }
+            break;
+
+        case MatchMode::TeamElimination:
+        default:
+            if (aliveT == 0 || aliveCT == 0) {
+                decided = true;
+                if (aliveT == 0 && aliveCT == 0)  winner = Team::None;   // 同归于尽
+                else if (aliveT == 0)             winner = Team::CT;
+                else                              winner = Team::T;
+            } else if (round_.IsTimeUp()) {
+                decided = true; winner = Team::CT;            // 时间到守方胜
+            }
+            break;
     }
 
     if (!decided) return;
@@ -78,6 +105,8 @@ void CS2DGame::CheckWinConditions(AudioManager* audio) {
 }
 
 void CS2DGame::ApplyRoundResult(Team winner) {
+    if (round_.IsRoundEnd()) return;   // 防重复结算（目标物与歼灭可能同帧触发）
+
     if (winner != Team::None) {
         teams_.AddScore(winner);
     }

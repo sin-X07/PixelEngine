@@ -51,6 +51,7 @@ void CS2DGame::ResetToNewMatch() {
     player_.deaths = 0;
     player_.money = economy_.StartMoney();
     SpawnPlayer();
+    SetupObjective();
 
     // CT 侧：玩家 + (TEAM_SIZE-1) 个 BOT；T 侧：TEAM_SIZE 个 BOT
     for (int i = 0; i < TOTAL_BOTS; ++i) {
@@ -260,7 +261,7 @@ void CS2DGame::RespawnBOT(Player& bot) {
 
 void CS2DGame::SwitchWeaponSlot(int slot) {
     if (slot < 0 || slot > 3) return;
-    if (mode_ == MatchMode::TeamElimination && round_.IsFrozen()) return;
+    if (mode_ != MatchMode::DeathMatch && round_.IsFrozen()) return;
     if (player_.weapons[slot] == WeaponId::None) return;   // 空槽位
 
     const int oldSlot = player_.weaponSlot;
@@ -291,14 +292,14 @@ std::string CS2DGame::GetWeaponName() const {
 
 void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mouseWorldY,
                       bool wPressed, bool aPressed, bool sPressed, bool dPressed,
-                      bool shiftPressed, bool rPressed,
+                      bool shiftPressed, bool rPressed, bool interactHeld,
                       AudioManager* audio) {
     if (!world_) return;
 
     UpdateRoundFlow(dt, audio);
 
-    const bool frozen  = (mode_ == MatchMode::TeamElimination) && round_.IsFrozen();
-    const bool ending  = (mode_ == MatchMode::TeamElimination) && round_.IsRoundEnd();
+    const bool frozen  = (mode_ != MatchMode::DeathMatch) && round_.IsFrozen();
+    const bool ending  = (mode_ != MatchMode::DeathMatch) && round_.IsRoundEnd();
     const bool canAct  = !frozen && !ending;
 
     player_.stealth = shiftPressed && canAct;
@@ -332,6 +333,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 
     UpdateBullets(dt, audio);
     UpdateGrenades(dt, audio);
+    UpdateObjective(dt, interactHeld, audio);
     CheckWinConditions(audio);
 
     // ---- 动画状态机 ----

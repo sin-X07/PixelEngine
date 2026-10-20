@@ -48,6 +48,7 @@ private:
     bool  cs2dKeyW = false, cs2dKeyA = false, cs2dKeyS = false, cs2dKeyD = false;
     bool  cs2dKeyShift = false, cs2dKeyR = false;
     bool  buyMenuOpen_ = false;   // 买枪菜单开关
+    MatchMode currentMatchMode_ = MatchMode::TeamElimination;   // 暂停页"重新开始"用
 
     // 买枪菜单渲染
     void RenderBuyMenu();
@@ -65,7 +66,7 @@ private:
     // 内部方法
     void HandleInput();
     GameUI::Actions BuildActions();
-    void StartMatch();
+    void StartMatch(MatchMode mode);   // 按模式加载对应地图并开局
     void LoadAudioConfig();
     void InitLLMBot();
     void ApplySavedSettings();   // 把保存的设置应用到运行时对象
@@ -78,7 +79,7 @@ public:
     ~Engine();
 
     bool Initialize(const char* title, int width, int height, bool autostart = false,
-                    bool fastRound = false);
+                    bool fastRound = false, int startMode = 1);
     void Run();
     void Clean();
     void ToggleFullscreen();

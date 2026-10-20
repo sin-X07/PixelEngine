@@ -74,6 +74,52 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
         bot.llmIntent.Tick(dt);
 
+        // ---- 目标引导：看不见敌人时朝任务目标推进 ----
+        if (!canSee) {
+            bool hasWaypoint = false;
+            float wx = 0.0f, wy = 0.0f;
+
+            if (mode_ == MatchMode::BombDefusal) {
+                if (bot.team == Team::T && !bombPlanted_) {
+                    // 最近的包点中心
+                    const auto& sites = world_->GetBombSites();
+                    float bestD2 = 1e18f;
+                    for (const auto& s : sites) {
+                        const float cx = s.x + s.width * 0.5f;
+                        const float cy = s.y + s.height * 0.5f;
+                        const float dx = cx - bot.x, dy = cy - bot.y;
+                        const float d2 = dx * dx + dy * dy;
+                        if (d2 < bestD2) { bestD2 = d2; wx = cx; wy = cy; hasWaypoint = true; }
+                    }
+                } else if (bot.team == Team::CT && bombPlanted_) {
+                    wx = bombX_; wy = bombY_;          // 前往拆包
+                    hasWaypoint = true;
+                }
+            } else if (mode_ == MatchMode::HostageRescue && bot.team == Team::CT) {
+                // 最近的未救出人质
+                float bestD2 = 1e18f;
+                for (const auto& h : hostages_) {
+                    if (h.rescued) continue;
+                    const float dx = h.x - bot.x, dy = h.y - bot.y;
+                    const float d2 = dx * dx + dy * dy;
+                    if (d2 < bestD2) { bestD2 = d2; wx = h.x; wy = h.y; hasWaypoint = true; }
+                }
+            }
+
+            if (hasWaypoint) {
+                const float dx = wx - bot.x;
+                const float dy = wy - bot.y;
+                const float d  = std::sqrt(dx * dx + dy * dy);
+                if (d > 8.0f) {
+                    bot.vx = dx / d * 60.0f;
+                    bot.vy = dy / d * 60.0f;
+                    bot.aimAngle = std::atan2(dy, dx);
+                    MoveWithCollision(bot, dt);
+                    continue;
+                }
+            }
+        }
+
         BehaviorOutput out = botExecutors_[i].Execute(
             bot.llmIntent,
             bot.x, bot.y,

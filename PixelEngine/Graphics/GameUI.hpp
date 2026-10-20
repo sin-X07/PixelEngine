@@ -17,7 +17,8 @@ public:
         std::function<void()>              playClick;         // 点击音效
         std::function<void(GameState)>     goState;           // 状态切换
         std::function<void(GameState)>     openSettings;      // 进设置（记录返回态）
-        std::function<void()>              startMatch;        // 开始 / 重新开始对局
+        std::function<void()>              startMatch;        // 重新开始（沿用上一模式）
+        std::function<void(int)>           startMatchMode;    // 按模式开始 (MatchMode 枚举值)
         std::function<void()>              resumeGame;        // 暂停页继续
         std::function<void(bool)>          confirmExit;       // 退出游戏(false) / 退出桌面(true)
         std::function<void()>              quitApp;           // 确认框"退出"
@@ -104,6 +105,15 @@ public:
         int   money = 0;
         bool  matchOver = false;
         bool  matchWinnerIsCT = false;
+
+        // 目标物
+        int   objective = 0;          // 0=无 1=爆破 2=人质
+        bool  bombPlanted = false;
+        float bombTimer = 0.0f;
+        float defuseProgress = 0.0f;
+        int   hostagesRescued = 0;
+        int   hostagesTotal = 0;
+        float rescueProgress = 0.0f;
     };
 
     void DrawMenu(const MenuCtx& ctx, const Actions& actions);

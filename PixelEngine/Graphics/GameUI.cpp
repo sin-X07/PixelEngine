@@ -1,6 +1,7 @@
 #include "GameUI.hpp"
 #include "../ThirdParty/imgui/imgui.h"
 #include "ImGuiUI.hpp"
+#include "../CS2D/CS2DGame.hpp"   // MatchMode
 #include <cstdio>
 
 // ============================================================================
@@ -67,7 +68,10 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         DrawImGuiTextCentered(imGuiUI_, "Counter-Strike 2D 单机版", 140.0f, 160, 190, 210, 255, 20);
 
         ImGui::SetCursorPosY(210.0f);
-        if (bigButton("开始游戏")) doClick([&] { actions.startMatch(); });
+        if (bigButton("团队歼灭")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::TeamElimination)); });
+        if (bigButton("爆破模式")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::BombDefusal)); });
+        if (bigButton("人质营救")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::HostageRescue)); });
+        if (bigButton("死斗模式")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::DeathMatch)); });
         if (bigButton("设置"))     doClick([&] { actions.openSettings(MAIN_MENU); });
         if (bigButton("退出游戏")) doClick([&] { actions.quitToDesktop(); });
 
@@ -356,6 +360,32 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
         DrawImGuiTextCentered(imGuiUI,
             ctx.matchWinnerIsCT ? "比赛结束  CT 获胜" : "比赛结束  T 获胜",
             200.0f, 255, 220, 90, 255, 30);
+    }
+
+    // ---- 目标物状态 ----
+    if (ctx.objective == 1) {          // 爆破
+        if (ctx.bombPlanted) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "C4 倒计时 %d 秒", static_cast<int>(ctx.bombTimer));
+            DrawImGuiTextCentered(imGuiUI, buf, 92.0f, 255, 90, 90, 255, 22);
+            if (ctx.defuseProgress > 0.0f) {
+                char db[64];
+                snprintf(db, sizeof(db), "拆包中 %d%%", static_cast<int>(ctx.defuseProgress * 100));
+                DrawImGuiTextCentered(imGuiUI, db, 118.0f, 120, 220, 255, 255, 18);
+            }
+        } else {
+            DrawImGuiTextCentered(imGuiUI, "配合队友防守包点", 92.0f, 200, 210, 220, 255, 18);
+        }
+    } else if (ctx.objective == 2) {   // 人质
+        char buf[64];
+        snprintf(buf, sizeof(buf), "人质 %d / %d",
+                 ctx.hostagesRescued, ctx.hostagesTotal);
+        DrawImGuiTextCentered(imGuiUI, buf, 92.0f, 120, 220, 255, 255, 22);
+        if (ctx.rescueProgress > 0.0f) {
+            char rb[64];
+            snprintf(rb, sizeof(rb), "营救中 %d%%", static_cast<int>(ctx.rescueProgress * 100));
+            DrawImGuiTextCentered(imGuiUI, rb, 118.0f, 230, 240, 160, 255, 18);
+        }
     }
 
     // 右下角武器状态文字（与 CS2DRenderer 的 160×56 面板对齐）

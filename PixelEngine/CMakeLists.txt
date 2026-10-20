@@ -100,6 +100,7 @@ set(SOURCES
     CS2D/CS2DGameRound.cpp
     CS2D/CS2DGameCombat.cpp
     CS2D/CS2DGameBots.cpp
+    CS2D/CS2DGameObjective.cpp
     CS2D/CS2DOverlay.cpp
     CS2D/Teams/TeamManager.hpp
     CS2D/Rounds/RoundManager.hpp

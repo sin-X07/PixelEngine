@@ -51,7 +51,8 @@ GameUI::Actions Engine::BuildActions() {
     a.playClick = [this] { audioManager->PlaySound(SoundEffect::CLICK); };
     a.goState   = [this](GameState s) { currentState = s; };
     a.openSettings = [this](GameState ret) { settingsReturnState = ret; currentState = SETTINGS; };
-    a.startMatch   = [this] { StartMatch(); };
+    a.startMatch     = [this] { StartMatch(currentMatchMode_); };
+    a.startMatchMode = [this](int m) { StartMatch(static_cast<MatchMode>(m)); };
     a.resumeGame   = [this] {
         currentState = PLAYING;
         SDL_SetRelativeMouseMode(SDL_TRUE);
@@ -168,7 +169,8 @@ GameUI::Actions Engine::BuildActions() {
 // 初始化
 // ============================================================================
 
-bool Engine::Initialize(const char* title, int width, int height, bool autostart, bool fastRound) {
+bool Engine::Initialize(const char* title, int width, int height, bool autostart, bool fastRound,
+                        int startMode) {
     cleaned = false;
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0) {
@@ -237,7 +239,10 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
     isRunning = true;
 
     // 调试/回归用：跳过菜单直接进入对局
-    if (autostart) StartMatch();
+    if (autostart) {
+        const int m = (startMode >= 0 && startMode <= 3) ? startMode : 1;
+        StartMatch(static_cast<MatchMode>(m));
+    }
 
     // 快节奏回合（仅测试用，便于快速验证回合状态机）
     if (fastRound) {
@@ -455,10 +460,22 @@ void Engine::HandleInput() {
 // 开始对局
 // ============================================================================
 
-void Engine::StartMatch() {
+void Engine::StartMatch(MatchMode mode) {
     audioManager->StopMusic();
+    currentMatchMode_ = mode;
 
-    const std::string mapPath = PathUtils::ResolveAppPath(kStartMap);
+    // 模式 → 地图
+    const char* mapRel = "assets/cs2d/maps/cs_office.tmj";
+    switch (mode) {
+        case MatchMode::BombDefusal:   mapRel = "assets/cs2d/maps/de_5v5_placeholder.tmj"; break;
+        case MatchMode::HostageRescue: mapRel = "assets/cs2d/maps/cs_hostage_placeholder.tmj"; break;
+        default:                       mapRel = "assets/cs2d/maps/cs_office.tmj"; break;
+    }
+
+    // 模式必须在 LoadMap 之前设定（LoadMap → ResetToNewMatch 依赖 mode_）
+    cs2dGame->SetMatchMode(mode);
+
+    const std::string mapPath = PathUtils::ResolveAppPath(mapRel);
     if (!cs2dGame->LoadMap(mapPath, cs2dRenderer.get())) {
         std::cerr << "CS2D 地图加载失败: " << mapPath << std::endl;
         return;
@@ -472,7 +489,7 @@ void Engine::StartMatch() {
     cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
     cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
 
-    std::cout << "CS2D 对局开始: " << kStartMap << std::endl;
+    std::cout << "CS2D 对局开始: " << mapRel << std::endl;
 }
 
 // ============================================================================
@@ -482,9 +499,13 @@ void Engine::StartMatch() {
 void Engine::Update(float dt) {
     if (currentState != PLAYING) return;
 
+    // E 键用于拆包 / 营救人质（按住）
+    const Uint8* kbNow = SDL_GetKeyboardState(nullptr);
+    const bool interactHeld = kbNow[SDL_SCANCODE_E];
+
     cs2dGame->Update(dt, cs2dMouseDown, cs2dWorldMouseX, cs2dWorldMouseY,
                      cs2dKeyW, cs2dKeyA, cs2dKeyS, cs2dKeyD,
-                     cs2dKeyShift, cs2dKeyR,
+                     cs2dKeyShift, cs2dKeyR, interactHeld,
                      audioManager.get());
 
     // LLM BOT 决策调度（轮询 + 节流在调度器内部）
@@ -565,6 +586,19 @@ void Engine::Render() {
         ictx.money            = cs2dGame->GetPlayerMoney();
         ictx.matchOver        = cs2dGame->IsMatchOver();
         ictx.matchWinnerIsCT  = (cs2dGame->GetMatchWinner() == Team::CT);
+
+        // 目标物
+        switch (cs2dGame->GetMatchMode()) {
+            case MatchMode::BombDefusal:   ictx.objective = 1; break;
+            case MatchMode::HostageRescue: ictx.objective = 2; break;
+            default:                       ictx.objective = 0; break;
+        }
+        ictx.bombPlanted      = cs2dGame->IsBombPlanted();
+        ictx.bombTimer        = cs2dGame->GetBombTimer();
+        ictx.defuseProgress   = cs2dGame->GetDefuseProgress();
+        ictx.hostagesRescued  = cs2dGame->GetHostagesRescued();
+        ictx.hostagesTotal    = cs2dGame->GetHostagesTotal();
+        ictx.rescueProgress   = cs2dGame->GetRescueProgress();
 
         gameUI->DrawInGame(ictx, imGuiUI.get());
     }

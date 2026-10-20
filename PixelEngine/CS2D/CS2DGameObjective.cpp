@@ -1,0 +1,201 @@
+#include "CS2DGame.hpp"
+#include "../Audio/AudioManager.hpp"
+#include <iostream>
+#include <cmath>
+#include <algorithm>
+
+// ============================================================================
+// 目标物：爆破（下包/拆包）与人质营救
+// ============================================================================
+
+namespace {
+constexpr float BOMB_FUSE        = 40.0f;   // 下包后倒计时
+constexpr float PLANT_TIME       = 2.0f;    // T 在包点停留多久完成下包
+constexpr float DEFUSE_TIME      = 5.0f;    // CT 拆包耗时
+constexpr float RESCUE_TIME      = 2.5f;    // 营救一名人质耗时
+constexpr float INTERACT_RADIUS  = 55.0f;   // 交互半径
+constexpr float HOSTAGE_RADIUS   = 45.0f;
+} // namespace
+
+int CS2DGame::GetHostagesRescued() const {
+    int n = 0;
+    for (const auto& h : hostages_) if (h.rescued) ++n;
+    return n;
+}
+
+// 按模式初始化目标物
+void CS2DGame::SetupObjective() {
+    hostages_.clear();
+    bombPlanted_   = false;
+    bombTimer_     = 0.0f;
+    defuseProgress_ = 0.0f;
+    rescueProgress_ = 0.0f;
+    hostageNearIdx_ = -1;
+    bombX_ = bombY_ = 0.0f;
+
+    if (mode_ != MatchMode::HostageRescue) return;
+
+    // 优先使用地图 hostge 对象；缺失则在地图四角放 4 个占位人质
+    const auto& objs = world_->GetHostages();
+    if (!objs.empty()) {
+        for (const auto& o : objs) {
+            hostages_.push_back({ o.x, o.y, false });
+        }
+    } else {
+        const float w = world_->GetMapPixelW();
+        const float h = world_->GetMapPixelH();
+        hostages_.push_back({ w * 0.30f, h * 0.30f, false });
+        hostages_.push_back({ w * 0.70f, h * 0.30f, false });
+        hostages_.push_back({ w * 0.30f, h * 0.70f, false });
+        hostages_.push_back({ w * 0.70f, h * 0.70f, false });
+        std::cout << "[CS2D] 地图无人质对象, 使用 4 个默认人质点" << std::endl;
+    }
+
+    std::cout << "[CS2D] 人质模式: 共 " << hostages_.size() << " 名人质" << std::endl;
+}
+
+// 每帧推进目标物（仅交战期）
+void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio) {
+    if (mode_ != MatchMode::BombDefusal && mode_ != MatchMode::HostageRescue) return;
+    if (!round_.IsLive()) return;
+
+    // ---------------- 爆破 ----------------
+    if (mode_ == MatchMode::BombDefusal) {
+        if (!bombPlanted_) {
+            // T 站在包点内累积下包进度
+            const auto& sites = world_->GetBombSites();
+            bool tInSite = false;
+
+            if (!sites.empty()) {
+                for (const auto& b : bots_) {
+                    if (!b.alive || b.team != Team::T) continue;
+                    for (const auto& s : sites) {
+                        if (b.x >= s.x && b.x <= s.x + s.width &&
+                            b.y >= s.y && b.y <= s.y + s.height) {
+                            tInSite = true;
+                            bombX_ = b.x;
+                            bombY_ = b.y;
+                            break;
+                        }
+                    }
+                    if (tInSite) break;
+                }
+            }
+
+            if (tInSite) {
+                defuseProgress_ += dt;      // 复用为"下包进度"
+                if (defuseProgress_ >= PLANT_TIME) {
+                    PlantBomb(bombX_, bombY_, audio);
+                    defuseProgress_ = 0.0f;
+                }
+            } else {
+                defuseProgress_ = 0.0f;
+            }
+        } else {
+            // 倒计时
+            bombTimer_ -= dt;
+            if (bombTimer_ <= 0.0f) {
+                DetonateBomb(audio);
+                return;
+            }
+
+            // CT 拆包（玩家按住 E 且靠近炸弹）
+            bool defusing = false;
+            if (player_.alive && player_.team == Team::CT && interactHeld) {
+                const float dx = player_.x - bombX_;
+                const float dy = player_.y - bombY_;
+                if (std::sqrt(dx * dx + dy * dy) <= INTERACT_RADIUS) defusing = true;
+            }
+
+            if (defusing) {
+                defuseProgress_ += dt / DEFUSE_TIME;
+                if (defuseProgress_ >= 1.0f) {
+                    std::cout << "[CS2D] C4 已拆除!" << std::endl;
+                    bombPlanted_ = false;
+                    bombTimer_ = 0.0f;
+                    defuseProgress_ = 0.0f;
+                    ApplyRoundResult(Team::CT);
+                    round_.EndRound(Team::CT);
+                }
+            } else {
+                defuseProgress_ = std::max(0.0f, defuseProgress_ - dt * 0.5f);
+            }
+        }
+        return;
+    }
+
+    // ---------------- 人质 ----------------
+    if (mode_ == MatchMode::HostageRescue) {
+        // 找最近的可营救人质
+        int   nearIdx = -1;
+        float nearD   = 1e18f;
+        for (size_t i = 0; i < hostages_.size(); ++i) {
+            if (hostages_[i].rescued) continue;
+            const float dx = player_.x - hostages_[i].x;
+            const float dy = player_.y - hostages_[i].y;
+            const float d  = std::sqrt(dx * dx + dy * dy);
+            if (d <= HOSTAGE_RADIUS && d < nearD) { nearD = d; nearIdx = static_cast<int>(i); }
+        }
+
+        // 换目标则进度重置
+        if (nearIdx != hostageNearIdx_) {
+            hostageNearIdx_ = nearIdx;
+            rescueProgress_ = 0.0f;
+        }
+
+        if (nearIdx >= 0 && interactHeld && player_.alive) {
+            rescueProgress_ += dt / RESCUE_TIME;
+            if (rescueProgress_ >= 1.0f) {
+                hostages_[nearIdx].rescued = true;
+                std::cout << "[CS2D] 已营救人质 " << (GetHostagesRescued())
+                          << "/" << hostages_.size() << std::endl;
+                rescueProgress_ = 0.0f;
+                hostageNearIdx_ = -1;
+
+                if (GetHostagesRescued() >= GetHostagesTotal()) {
+                    std::cout << "[CS2D] 全部人质获救!" << std::endl;
+                    ApplyRoundResult(Team::CT);
+                    round_.EndRound(Team::CT);
+                }
+            }
+        } else {
+            rescueProgress_ = std::max(0.0f, rescueProgress_ - dt * 0.6f);
+        }
+    }
+}
+
+void CS2DGame::PlantBomb(float x, float y, AudioManager* audio) {
+    bombPlanted_ = true;
+    bombX_ = x;
+    bombY_ = y;
+    bombTimer_ = BOMB_FUSE;
+    defuseProgress_ = 0.0f;
+    std::cout << "[CS2D] C4 已安装! " << static_cast<int>(BOMB_FUSE) << " 秒后爆炸" << std::endl;
+    if (audio) audio->PlaySound(SoundEffect::OBSTACLE_BREAK);
+}
+
+void CS2DGame::DetonateBomb(AudioManager* audio) {
+    bombPlanted_ = false;
+    bombTimer_ = 0.0f;
+    std::cout << "[CS2D] C4 爆炸! T 获胜本回合" << std::endl;
+
+    // 爆炸范围伤害（不分阵营）
+    constexpr float RADIUS = 160.0f;
+    auto damageAt = [&](Player& p) {
+        if (!p.alive) return;
+        const float dx = p.x - bombX_;
+        const float dy = p.y - bombY_;
+        const float d = std::sqrt(dx * dx + dy * dy);
+        if (d > RADIUS) return;
+        const float f = 1.0f - d / RADIUS;
+        p.health -= static_cast<int>(200.0f * f);
+        if (p.health <= 0) OnCombatantKilled(p, audio);
+    };
+    damageAt(player_);
+    for (auto& b : bots_) damageAt(b);
+
+    if (audio) audio->PlaySound(SoundEffect::OBSTACLE_BREAK);
+
+    ApplyRoundResult(Team::T);
+    round_.EndRound(Team::T);
+}
