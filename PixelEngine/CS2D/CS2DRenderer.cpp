@@ -402,12 +402,46 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
     // 武器
     if (p.animState != 3) {
         DrawWeaponForCharacter(cx + xOff, cy + yOff, p.size, p.aimAngle,
-                               p.weaponSlot, p.weaponId);
+                               p.weaponSlot, p.weaponId, p.animState == 2);
+    }
+}
+
+// 枪口火焰：cx/cy 为武器中心的屏幕坐标
+void CS2DRenderer::DrawMuzzleFlash(float cx, float cy, float size, float aimAngle,
+                                   int weaponSlot) {
+    const float weaponSz = (weaponSlot == 1) ? 3.0f
+                         : (weaponSlot == 2) ? 4.5f
+                         : 4.0f;
+    // 枪口位置 = 角色中心 + 瞄准方向 * (武器偏移 + 武器长度*/
+    const float tip = size * 0.35f + weaponSz * 0.55f;
+    const float mx = cx + std::cos(aimAngle) * tip * zoom_;
+    const float my = cy + std::sin(aimAngle) * tip * zoom_;
+
+    const float r = 2.6f * zoom_;
+
+    // 外层：橙色柔光
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer_, 255, 170, 60, 130);
+    for (int i = 3; i >= 1; --i) {
+        const float rr = r * static_cast<float>(i) / 3.0f;
+        const int span = static_cast<int>(rr);
+        for (int dy = -span; dy <= span; ++dy) {
+            const float half = std::sqrt(std::max(0.0f, rr * rr - static_cast<float>(dy * dy)));
+            SDL_RenderDrawLineF(renderer_, mx - half, my + dy, mx + half, my + dy);
+        }
+    }
+
+    // 内层：白热点
+    SDL_SetRenderDrawColor(renderer_, 255, 245, 210, 235);
+    const int span = static_cast<int>(r * 0.5f);
+    for (int dy = -span; dy <= span; ++dy) {
+        const float half = std::sqrt(std::max(0.0f, (r * 0.5f) * (r * 0.5f) - static_cast<float>(dy * dy)));
+        SDL_RenderDrawLineF(renderer_, mx - half, my + dy, mx + half, my + dy);
     }
 }
 
 void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float aimAngle,
-                                          int weaponSlot, int weaponId) {
+                                          int weaponSlot, int weaponId, bool muzzleFlash) {
     if (weaponId <= 0 || weaponId >= static_cast<int>(weaponSprites_.size())) return;
     SDL_Texture* tex = weaponSprites_[weaponId];
     if (!tex) return;
@@ -434,6 +468,11 @@ void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float 
     SDL_RenderCopyExF(renderer_, tex, nullptr, &wdst,
                       aimAngle * 180.0f / 3.14159265f + degOffset,
                       &wcenter, SDL_FLIP_NONE);
+
+    // 开枪瞬间的枪口火焰（近战/投掷物不画）
+    if (muzzleFlash && def.cls != WeaponClass::Melee && def.cls != WeaponClass::Grenade) {
+        DrawMuzzleFlash(wx, wy, size, aimAngle, weaponSlot);   // wx/wy 已是屏幕坐标
+    }
 }
 
 // ============================================================================
@@ -641,6 +680,52 @@ void CS2DRenderer::DrawFlashOverlay(Uint8 alpha) {
     SDL_SetRenderDrawColor(renderer_, 255, 255, 255, alpha);
     SDL_Rect full = { 0, 0, viewW_, viewH_ };
     SDL_RenderFillRect(renderer_, &full);
+}
+
+// 命中反馈：准星处画一个 X（四条短斜线）
+void CS2DRenderer::DrawHitMarker(float screenX, float screenY, float scale, Uint8 alpha) {
+    if (!renderer_ || alpha == 0) return;
+
+    const float inner = 4.0f * scale;
+    const float outer = 9.0f * scale;
+
+    SDL_SetRenderDrawColor(renderer_, 255, 255, 255, alpha);
+    for (float t = 0.0f; t < 2.0f; t += 1.0f) {
+        const float off = t * 0.5f;
+        // 左上 → 右下
+        SDL_RenderDrawLineF(renderer_, screenX - outer + off, screenY - outer + off,
+                            screenX - inner + off, screenY - inner + off);
+        SDL_RenderDrawLineF(renderer_, screenX + inner + off, screenY + inner + off,
+                            screenX + outer + off, screenY + outer + off);
+        // 右上 → 左下
+        SDL_RenderDrawLineF(renderer_, screenX + outer + off, screenY - outer + off,
+                            screenX + inner + off, screenY - inner + off);
+        SDL_RenderDrawLineF(renderer_, screenX - inner + off, screenY + inner + off,
+                            screenX - outer + off, screenY + outer + off);
+    }
+}
+
+// 受伤反馈：屏幕四周红色渐隐边框
+void CS2DRenderer::DrawDamageVignette(Uint8 alpha) {
+    if (!renderer_ || alpha == 0) return;
+
+    const int bands = 6;
+    const int maxThick = 56;
+    for (int i = 0; i < bands; ++i) {
+        const int thick = maxThick * (bands - i) / bands;
+        const Uint8 a = static_cast<Uint8>(alpha * (i + 1) / bands);
+        SDL_SetRenderDrawColor(renderer_, 200, 30, 30, a);
+
+        const int w = viewW_, h = viewH_;
+        const SDL_Rect top    = { 0, 0, w, thick };
+        const SDL_Rect bottom = { 0, h - thick, w, thick };
+        const SDL_Rect left   = { 0, 0, thick, h };
+        const SDL_Rect right  = { w - thick, 0, thick, h };
+        SDL_RenderFillRect(renderer_, &top);
+        SDL_RenderFillRect(renderer_, &bottom);
+        SDL_RenderFillRect(renderer_, &left);
+        SDL_RenderFillRect(renderer_, &right);
+    }
 }
 
 void CS2DRenderer::DrawVisionFog(float playerX, float playerY, float aimAngle) {

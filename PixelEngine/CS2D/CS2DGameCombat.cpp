@@ -172,6 +172,9 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
 
             bullet.active = false;
 
+            // 玩家命中反馈（无论是否致死）
+            if (bullet.ownerIdx == -1) hitMarkerTimer_ = 0.18f;
+
             if (ApplyDamage(bot, bullet.damage)) {
                 OnCombatantKilled(bot, audio);
 
@@ -188,10 +191,10 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                 }
 
                 if (audio) audio->PlaySoundAt(SoundEffect::KILL, bot.x, bot.y,
-                                              player_.x, player_.y, player_.aimAngle);
+                                              player_.x, player_.y);
             } else if (audio) {
                 audio->PlaySoundAt(SoundEffect::HIT, bot.x, bot.y,
-                                   player_.x, player_.y, player_.aimAngle);
+                                   player_.x, player_.y);
             }
             break;
         }
@@ -203,6 +206,7 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             const float hitR = player_.size * 0.5f + 2.0f;
             if (dx * dx + dy * dy < hitR * hitR) {
                 bullet.active = false;
+                damageFlashTimer_ = 0.30f;   // 玩家受伤反馈
                 if (audio) audio->PlaySound(SoundEffect::HIT);
                 if (ApplyDamage(player_, bullet.damage)) {
                     PushKillFeed(std::string("BOT#") + std::to_string(bullet.ownerIdx) + "  ▸  击杀 你");

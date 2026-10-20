@@ -89,6 +89,10 @@ public:
     void DrawSmokeCloud(float worldX, float worldY, float worldRadius, Uint8 alpha);
     void DrawFlashOverlay(Uint8 alpha);
 
+    // 命中反馈（屏幕坐标，X 形准星）与受伤红色边缘
+    void DrawHitMarker(float screenX, float screenY, float scale, Uint8 alpha);
+    void DrawDamageVignette(Uint8 alpha);
+
     // 视线检查（供 CS2DGame 使用）
     bool HasLineOfSight(float fromX, float fromY, float toX, float toY) const;
 
@@ -155,7 +159,8 @@ private:
     SDL_Texture* bulletTex_ = nullptr;
 
     void DrawWeaponForCharacter(float cx, float cy, float size, float aimAngle,
-                                int weaponSlot, int weaponId);
+                                int weaponSlot, int weaponId, bool muzzleFlash);
+    void DrawMuzzleFlash(float cx, float cy, float size, float aimAngle, int weaponSlot);
 
     // ========= 视野遮罩 =========
     static constexpr int   VISION_MASK_SCALE = 4;

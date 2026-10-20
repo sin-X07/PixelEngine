@@ -314,7 +314,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
                     if (audio && def.cls == WeaponClass::Rifle) {
                         audio->PlaySoundAt(SoundEffect::AK47_FIRE, bot.x, bot.y,
-                                           player_.x, player_.y, player_.aimAngle);
+                                           player_.x, player_.y);
                     }
                 }
             }

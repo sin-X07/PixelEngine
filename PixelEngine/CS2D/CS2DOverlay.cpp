@@ -41,6 +41,25 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
 
     // 顶部计分板已由 GameUI（ImGui）统一绘制，此处不再重复绘制
 
+    // ---- 命中反馈：准星处短暂 X ----
+    {
+        const float hm = game->GetHitMarkerTimer();
+        if (hm > 0.0f) {
+            const float k = std::min(1.0f, hm / 0.18f);
+            renderer->DrawHitMarker(virtCursorX, virtCursorY, 1.0f,
+                                    static_cast<Uint8>(220.0f * k));
+        }
+    }
+
+    // ---- 受伤反馈：屏幕红色边缘 ----
+    {
+        const float dmg = game->GetDamageFlashTimer();
+        if (dmg > 0.0f) {
+            const float k = std::min(1.0f, dmg / 0.30f);
+            renderer->DrawDamageVignette(static_cast<Uint8>(170.0f * k));
+        }
+    }
+
     // 收集 BOT 坐标
     const auto& bots = game->GetBOTs();
     std::vector<float> bXs, bYs;

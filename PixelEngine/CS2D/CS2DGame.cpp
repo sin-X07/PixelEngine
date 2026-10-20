@@ -438,6 +438,10 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     killFeed_.erase(std::remove_if(killFeed_.begin(), killFeed_.end(),
                                    [](const KillFeedEntry& e) { return e.life <= 0.0f; }),
                     killFeed_.end());
+
+    // 命中 / 受伤反馈衰减
+    if (hitMarkerTimer_ > 0.0f)   hitMarkerTimer_   = std::max(0.0f, hitMarkerTimer_ - dt);
+    if (damageFlashTimer_ > 0.0f) damageFlashTimer_ = std::max(0.0f, damageFlashTimer_ - dt);
 }
 
 // ============================================================================

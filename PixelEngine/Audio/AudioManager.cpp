@@ -130,7 +130,7 @@ void AudioManager::PlaySound(SoundEffect effect) {
 }
 
 void AudioManager::PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
-                                float listenerX, float listenerY, float listenerAngle) {
+                                float listenerX, float listenerY) {
     if (!audioInitialized) return;
 
     Mix_Chunk* targetChunk = nullptr;
@@ -154,19 +154,22 @@ void AudioManager::PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
     const int chan = Mix_PlayChannel(reservedChan, targetChunk, 0);
     if (chan < 0) return;
 
-    // ---- 计算方位：声源相对于听者的方向 ----
+    // ---- 声像：由「声源相对玩家的世界位置」决定 ----
+    // 俯视视角镜头不做旋转，因此屏幕水平方向恒等于世界 +x。
+    // 注意：这里刻意不使用玩家朝向，避免转身时左右声道跟着翻转。
     const float dx = sourceX - listenerX;
     const float dy = sourceY - listenerY;
     const float dist = std::sqrt(dx * dx + dy * dy);
-    const float sourceAngle = std::atan2(dy, dx);
 
-    // 相对角度（声源在听者正前方 = 0，右侧 = +π/2，左侧 = -π/2）
-    float relAngle = sourceAngle - listenerAngle;
-    while (relAngle >  3.14159265f) relAngle -= 6.28318531f;
-    while (relAngle < -3.14159265f) relAngle += 6.28318531f;
+    float pan = 0.0f;
+    if (dist > 0.001f) {
+        pan = dx / dist;                       // -1=左侧, 0=正上/正下, +1=右侧
+        // 贴脸时淡化声像，避免极近距离突然完全单边
+        const float nearFade = std::min(1.0f, dist / 40.0f);
+        pan *= nearFade;
+        pan *= 0.85f;                          // 保留少量另一声道，听感更自然
+    }
 
-    // 全景定位：sin 映射到左右声道
-    const float pan = std::sin(relAngle);  // -1=全左, 0=居中, +1=全右
     const int leftVol  = static_cast<int>((1.0f - pan) * 0.5f * 255.0f);
     const int rightVol = static_cast<int>((1.0f + pan) * 0.5f * 255.0f);
     Mix_SetPanning(chan, leftVol, rightVol);

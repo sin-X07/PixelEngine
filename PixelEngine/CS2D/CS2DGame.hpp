@@ -185,6 +185,10 @@ public:
     // 玩家是否处于闪光致盲中（0..1 强度）
     float GetFlashAmount() const { return (flashTimer_ > 0.0f) ? 1.0f : 0.0f; }
 
+    // 命中 / 受伤反馈计时（秒，>0 表示需要绘制）
+    float GetHitMarkerTimer()   const { return hitMarkerTimer_; }
+    float GetDamageFlashTimer() const { return damageFlashTimer_; }
+
     // ---- 目标物（爆破 / 人质）----
     bool  IsBombPlanted()   const { return bombPlanted_; }
     float GetBombTimer()    const { return bombTimer_; }
@@ -266,6 +270,8 @@ private:
     std::vector<Grenade> grenades_;
     std::vector<SmokeCloud> smokes_;
     float flashTimer_ = 0.0f;      // 玩家闪光致盲剩余秒数
+    float hitMarkerTimer_ = 0.0f;   // 命中敌人反馈
+    float damageFlashTimer_ = 0.0f; // 玩家受伤反馈
 
     // 目标物状态
     std::vector<Hostage> hostages_;

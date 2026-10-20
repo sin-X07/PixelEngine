@@ -54,8 +54,9 @@ public:
     void StopMusic();
 
     void PlaySound(SoundEffect effect);
+    // 3D 音效：声像由声源的世界位置相对听者决定（与听者朝向无关）
     void PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
-                     float listenerX, float listenerY, float listenerAngle);
+                     float listenerX, float listenerY);
     void UpdateVolumes();
 
     void SetMasterVolume(int vol);
