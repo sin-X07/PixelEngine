@@ -1,0 +1,399 @@
+#include "CS2DGame.hpp"
+#include "../Audio/AudioManager.hpp"
+#include <iostream>
+#include <cmath>
+#include <algorithm>
+#include <random>
+
+// ============================================================================
+// 玩家移动 / 射击
+// ============================================================================
+
+void CS2DGame::UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bool stealth) {
+    constexpr float ACCEL    = 600.0f;
+    constexpr float FRICTION = 8.0f;
+    const float maxSpeed = stealth ? 25.0f : 60.0f;
+
+    const int dx = (d ? 1 : 0) - (a ? 1 : 0);
+    const int dy = (s ? 1 : 0) - (w ? 1 : 0);
+
+    const float len = std::sqrt(static_cast<float>(dx * dx + dy * dy));
+    if (len > 0.001f) {
+        player_.vx += (dx / len) * ACCEL * dt;
+        player_.vy += (dy / len) * ACCEL * dt;
+    } else {
+        player_.vx -= player_.vx * FRICTION * dt;
+        player_.vy -= player_.vy * FRICTION * dt;
+        if (std::abs(player_.vx) < 1.0f) player_.vx = 0.0f;
+        if (std::abs(player_.vy) < 1.0f) player_.vy = 0.0f;
+    }
+
+    const float speed = std::sqrt(player_.vx * player_.vx + player_.vy * player_.vy);
+    if (speed > maxSpeed) {
+        player_.vx = player_.vx / speed * maxSpeed;
+        player_.vy = player_.vy / speed * maxSpeed;
+    }
+
+    MoveWithCollision(player_, dt);
+}
+
+void CS2DGame::MoveWithCollision(Player& entity, float dt) {
+    const float half = entity.size * 0.5f;
+
+    const float nx = entity.x + entity.vx * dt;
+    if (!world_->CheckRectCollision(nx - half, entity.y - half, entity.size, entity.size)) {
+        entity.x = nx;
+    } else {
+        entity.vx = 0.0f;
+    }
+
+    const float ny = entity.y + entity.vy * dt;
+    if (!world_->CheckRectCollision(entity.x - half, ny - half, entity.size, entity.size)) {
+        entity.y = ny;
+    } else {
+        entity.vy = 0.0f;
+    }
+
+    entity.x = std::clamp(entity.x, 0.0f, world_->GetMapPixelW() - 1.0f);
+    entity.y = std::clamp(entity.y, 0.0f, world_->GetMapPixelH() - 1.0f);
+}
+
+void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, float worldMY,
+                                    AudioManager* audio) {
+    if (!player_.alive) return;
+
+    player_.aimAngle = std::atan2(worldMY - player_.y, worldMX - player_.x);
+
+    const WeaponDef& def = player_.CurrentWeapon();
+
+    // 投掷物
+    if (def.cls == WeaponClass::Grenade) {
+        if (!mouseDown || player_.shootCooldown > 0.0f) return;
+        if (player_.grenadeCount <= 0) return;
+        ThrowGrenade(player_, player_.aimAngle);
+        player_.shootCooldown = def.cooldown;
+        player_.shootAnimTimer = 0.12f;
+        return;
+    }
+
+    if (player_.reloading) return;
+    if (player_.shootCooldown > 0.0f) player_.shootCooldown -= dt;
+
+    const bool mouseEdge = mouseDown && !prevMouseDown_;
+    if (!def.automatic) {
+        if (!mouseEdge || player_.shootCooldown > 0.0f) return;
+    } else {
+        if (!mouseDown || player_.shootCooldown > 0.0f) return;
+    }
+
+    // ---- 近战 ----
+    if (def.cls == WeaponClass::Melee) {
+        for (auto& bot : bots_) {
+            if (!bot.alive || bot.team == player_.team) continue;
+            const float bdx = bot.x - player_.x;
+            const float bdy = bot.y - player_.y;
+            if (std::sqrt(bdx * bdx + bdy * bdy) < def.range) {
+                bot.health -= static_cast<int>(def.damage);
+                if (bot.health <= 0) OnCombatantKilled(bot, audio);
+            }
+        }
+        player_.shootCooldown = def.cooldown;
+        player_.shootAnimTimer = 0.12f;
+        if (audio) audio->PlaySound(SoundEffect::KATANA_SWING);
+        return;
+    }
+
+    // ---- 枪械 ----
+    if (player_.ammo <= 0) { StartReload(player_); return; }
+
+    // 散布 + 多弹丸（霰弹）
+    std::uniform_real_distribution<float> spreadDist(-def.spreadBase, def.spreadBase);
+    for (int p = 0; p < std::max(1, def.pellets); ++p) {
+        const float angle = player_.aimAngle + spreadDist(rng_);
+        FireBullet(player_.x, player_.y, angle, def, -1, player_.team);
+    }
+
+    player_.ammo--;
+    player_.shootCooldown = def.cooldown;
+    player_.shootAnimTimer = 0.12f;
+
+    if (audio) {
+        if (def.cls == WeaponClass::Rifle) audio->PlaySound(SoundEffect::AK47_FIRE);
+        else                               audio->PlaySound(SoundEffect::SHOOT);
+    }
+}
+
+// 由 WeaponDef 直接发射子弹
+void CS2DGame::FireBullet(float x, float y, float angle, const WeaponDef& def,
+                          int ownerIdx, Team ownerTeam) {
+    Bullet b;
+    b.x = x;
+    b.y = y;
+    b.vx = std::cos(angle) * def.bulletSpeed;
+    b.vy = std::sin(angle) * def.bulletSpeed;
+    b.traveled = 0.0f;
+    b.maxDist  = def.range;
+    b.damage   = static_cast<int>(def.damage);
+    b.ownerIdx = ownerIdx;
+    b.ownerTeam = ownerTeam;
+    b.active   = true;
+    bullets_.push_back(b);
+}
+
+
+// ============================================================================
+// 子弹
+// ============================================================================
+
+void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
+    for (auto& bullet : bullets_) {
+        if (!bullet.active) continue;
+
+        const float stepX = bullet.vx * dt;
+        const float stepY = bullet.vy * dt;
+        bullet.x += stepX;
+        bullet.y += stepY;
+        bullet.traveled += std::sqrt(stepX * stepX + stepY * stepY);
+
+        if (bullet.traveled >= bullet.maxDist) { bullet.active = false; continue; }
+
+        int row = 0, col = 0;
+        world_->WorldToTile(bullet.x, bullet.y, row, col);
+        if (world_->IsBlockingBullet(row, col)) { bullet.active = false; continue; }
+
+        // ---- 命中 BOT ----
+        for (size_t i = 0; i < bots_.size(); ++i) {
+            auto& bot = bots_[i];
+            if (!bot.alive || bot.team == bullet.ownerTeam) continue;
+
+            const float dx = bullet.x - bot.x;
+            const float dy = bullet.y - bot.y;
+            const float hitR = bot.size * 0.5f + 2.0f;
+            if (dx * dx + dy * dy >= hitR * hitR) continue;
+
+            bot.health -= bullet.damage;
+            bullet.active = false;
+
+            if (bot.health <= 0) {
+                OnCombatantKilled(bot, audio);
+                if (audio) audio->PlaySoundAt(SoundEffect::KILL, bot.x, bot.y,
+                                              player_.x, player_.y, player_.aimAngle);
+            } else if (audio) {
+                audio->PlaySoundAt(SoundEffect::HIT, bot.x, bot.y,
+                                   player_.x, player_.y, player_.aimAngle);
+            }
+            break;
+        }
+
+        // ---- 命中玩家 ----
+        if (bullet.active && player_.alive && player_.team != bullet.ownerTeam) {
+            const float dx = bullet.x - player_.x;
+            const float dy = bullet.y - player_.y;
+            const float hitR = player_.size * 0.5f + 2.0f;
+            if (dx * dx + dy * dy < hitR * hitR) {
+                player_.health -= bullet.damage;
+                bullet.active = false;
+                if (audio) audio->PlaySound(SoundEffect::HIT);
+                if (player_.health <= 0) OnCombatantKilled(player_, audio);
+            }
+        }
+    }
+
+    bullets_.erase(std::remove_if(bullets_.begin(), bullets_.end(),
+                                  [](const Bullet& b) { return !b.active; }),
+                   bullets_.end());
+}
+
+
+// ============================================================================
+// 手雷
+// ============================================================================
+
+void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle) {
+    if (thrower.grenadeCount <= 0) return;
+
+    const WeaponId type = thrower.weapons[3];
+    const WeaponDef& def = WeaponDB::Get(type);
+    if (def.cls != WeaponClass::Grenade) return;
+
+    Grenade g;
+    g.x = thrower.x;
+    g.y = thrower.y;
+    g.vx = std::cos(aimAngle) * 260.0f;
+    g.vy = std::sin(aimAngle) * 260.0f;
+    g.fuse = 1.4f;
+    g.type = type;
+    g.team = thrower.team;
+    g.active = true;
+    grenades_.push_back(g);
+
+    --thrower.grenadeCount;
+}
+
+void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
+    // 投掷物飞行 + 引信
+    for (auto& g : grenades_) {
+        if (!g.active) continue;
+
+        g.fuse -= dt;
+        g.x += g.vx * dt;
+        g.y += g.vy * dt;
+
+        // 地面摩擦
+        g.vx -= g.vx * 3.0f * dt;
+        g.vy -= g.vy * 3.0f * dt;
+
+        // 撞墙停下
+        int row = 0, col = 0;
+        world_->WorldToTile(g.x, g.y, row, col);
+        if (world_->IsBlockingBullet(row, col)) {
+            g.vx = g.vy = 0.0f;
+        }
+        g.x = std::clamp(g.x, 0.0f, world_->GetMapPixelW() - 1.0f);
+        g.y = std::clamp(g.y, 0.0f, world_->GetMapPixelH() - 1.0f);
+
+        if (g.fuse <= 0.0f) {
+            ExplodeGrenade(g, audio);
+            g.active = false;
+        }
+    }
+    grenades_.erase(std::remove_if(grenades_.begin(), grenades_.end(),
+                                   [](const Grenade& g) { return !g.active; }),
+                    grenades_.end());
+
+    // 烟雾云寿命
+    for (auto& s : smokes_) s.life -= dt;
+    smokes_.erase(std::remove_if(smokes_.begin(), smokes_.end(),
+                                 [](const SmokeCloud& s) { return s.life <= 0.0f; }),
+                  smokes_.end());
+
+    // 闪光致盲衰减
+    if (flashTimer_ > 0.0f) flashTimer_ -= dt;
+}
+
+void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
+    switch (g.type) {
+        case WeaponId::GrenadeHE: {
+            constexpr float RADIUS = 95.0f;
+            constexpr float MAX_DMG = 98.0f;
+
+            auto damageAt = [&](Player& p) {
+                if (!p.alive || p.team == g.team) return;   // 无友伤
+                const float dx = p.x - g.x;
+                const float dy = p.y - g.y;
+                const float d = std::sqrt(dx * dx + dy * dy);
+                if (d > RADIUS) return;
+                const float falloff = 1.0f - d / RADIUS;
+                p.health -= static_cast<int>(MAX_DMG * falloff);
+                if (p.health <= 0) OnCombatantKilled(p, audio);
+            };
+
+            damageAt(player_);
+            for (auto& b : bots_) damageAt(b);
+
+            if (audio) audio->PlaySound(SoundEffect::OBSTACLE_BREAK);
+            break;
+        }
+        case WeaponId::GrenadeFlash: {
+            // 玩家致盲：距离 + 视线
+            if (player_.alive && player_.team != g.team) {
+                const float dx = player_.x - g.x;
+                const float dy = player_.y - g.y;
+                if (std::sqrt(dx * dx + dy * dy) < 220.0f) {
+                    flashTimer_ = 2.5f;
+                }
+            }
+            if (audio) audio->PlaySound(SoundEffect::HIT);
+            break;
+        }
+        case WeaponId::GrenadeSmoke: {
+            SmokeCloud s;
+            s.x = g.x;
+            s.y = g.y;
+            s.radius = 70.0f;
+            s.life = 12.0f;
+            smokes_.push_back(s);
+            if (audio) audio->PlaySound(SoundEffect::PICKUP);
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+// 线段是否被任一烟雾云遮挡（用于视野判定）
+bool CS2DGame::SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) const {
+    if (smokes_.empty()) return false;
+
+    const float dx = x2 - x1;
+    const float dy = y2 - y1;
+    const float len2 = dx * dx + dy * dy;
+    if (len2 < 0.0001f) return false;
+
+    for (const auto& s : smokes_) {
+        // 点到线段最短距离，与烟雾半径比较
+        float t = ((s.x - x1) * dx + (s.y - y1) * dy) / len2;
+        t = std::clamp(t, 0.0f, 1.0f);
+        const float px = x1 + dx * t;
+        const float py = y1 + dy * t;
+        const float ddx = s.x - px;
+        const float ddy = s.y - py;
+        if (ddx * ddx + ddy * ddy <= s.radius * s.radius) return true;
+    }
+    return false;
+}
+
+// ============================================================================
+// 死亡处理
+// ============================================================================
+
+void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio) {
+    if (!victim.alive) return;
+
+    victim.alive = false;
+    victim.health = 0;
+    victim.deathTimer = 0.0f;
+    victim.vx = victim.vy = 0.0f;
+    victim.reloading = false;
+    ++victim.deaths;
+
+    if (&victim == &player_) {
+        ++playerDeaths_;
+        if (audio) audio->PlaySound(SoundEffect::KILL);
+        if (mode_ == MatchMode::DeathMatch) botRespawnTimer_ = BOT_RESPAWN_DELAY;
+        std::cout << "[CS2D] 玩家阵亡 (累计 " << playerDeaths_ << ")" << std::endl;
+    } else {
+        // BOT 阵亡由击杀方计分；此处只需统计自身
+        std::cout << "[CS2D] BOT 阵亡 (" << TeamName(victim.team) << ")" << std::endl;
+    }
+}
+
+// ============================================================================
+// 换弹 / 视野 / 安全距离
+// ============================================================================
+
+void CS2DGame::StartReload(Player& p) {
+    p.reloading = true;
+    p.reloadTimer = Player::RELOAD_TIME;
+}
+
+void CS2DGame::UpdateReload(Player& p, float dt) {
+    if (!p.reloading) return;
+    p.reloadTimer -= dt;
+    if (p.reloadTimer <= 0.0f) {
+        p.reloading = false;
+        p.reloadTimer = 0.0f;
+        p.ammo = p.maxAmmo;
+    }
+}
+
+bool CS2DGame::IsEnemyNearby(float x, float y, float safeRadius) const {
+    for (const auto& bot : bots_) {
+        if (!bot.alive) continue;
+        const float dx = bot.x - x;
+        const float dy = bot.y - y;
+        if (dx * dx + dy * dy < safeRadius * safeRadius) return true;
+    }
+    return false;
+}
+
