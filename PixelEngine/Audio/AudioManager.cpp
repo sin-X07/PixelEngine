@@ -29,7 +29,7 @@ bool AudioManager::Initialize() {
     pickupSound = loadChunk("assets/audio/pickup.wav", "金币");
     buttonHoverSound = loadChunk("assets/audio/button.ogg", "按钮悬停");
     clickSound = loadChunk("assets/audio/click.ogg", "按钮点击");
-    daggerSound = loadChunk("assets/audio/attack_swing.wav", "匕首攻击");
+    daggerSound = loadChunk("assets/audio/dagger_attack.wav", "匕首攻击");
     breakSound = loadChunk("assets/audio/obstacle_break.wav", "障碍物击碎");
     shootSound = loadChunk("assets/audio/deagle.mp3", "射击");
     hitSound = loadChunk("assets/audio/hit.wav", "命中");
