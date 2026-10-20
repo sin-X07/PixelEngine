@@ -236,8 +236,9 @@ void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle) {
     Grenade g;
     g.x = thrower.x;
     g.y = thrower.y;
-    g.vx = std::cos(aimAngle) * 260.0f;
-    g.vy = std::sin(aimAngle) * 260.0f;
+    // 摩擦 2.0/s → 投掷距离 ≈ 速度/2；420 约 210px
+    g.vx = std::cos(aimAngle) * 420.0f;
+    g.vy = std::sin(aimAngle) * 420.0f;
     g.fuse = 1.4f;
     g.type = type;
     g.team = thrower.team;
@@ -256,9 +257,9 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
         g.x += g.vx * dt;
         g.y += g.vy * dt;
 
-        // 地面摩擦
-        g.vx -= g.vx * 3.0f * dt;
-        g.vy -= g.vy * 3.0f * dt;
+        // 地面摩擦（指数衰减；v0/friction ≈ 总投掷距离）
+        g.vx -= g.vx * 2.0f * dt;
+        g.vy -= g.vy * 2.0f * dt;
 
         // 撞墙停下
         int row = 0, col = 0;

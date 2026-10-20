@@ -78,6 +78,7 @@ public:
         // 武器（按槽位）
         WeaponId  weapons[4] = { WeaponId::M4A1, WeaponId::Glock, WeaponId::Knife, WeaponId::None };
         int       grenadeCount = 0;        // 当前投掷物数量
+        float     grenadeCooldown = 0.0f;  // 投掷冷却（AI 用）
 
         // 弹药（活动槽位）
         int       ammo      = 30;

@@ -452,6 +452,15 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
         bot.llmIntent.Tick(dt);
 
+        // ---- 手雷：有情报但无直接视野时，向情报点投掷 ----
+        if (bot.grenadeCooldown > 0.0f) bot.grenadeCooldown -= dt;
+        if (!target && intel && bot.grenadeCount > 0 && bot.grenadeCooldown <= 0.0f) {
+            if (engageDist > 90.0f && engageDist < 230.0f) {
+                ThrowGrenade(bot, std::atan2(aimY - bot.y, aimX - bot.x));
+                bot.grenadeCooldown = 7.0f;
+            }
+        }
+
         // ---- 目标引导：A* 寻路推进 ----
         // 角色行进速度：突破手全速、支援略慢、断后明显靠后
         const float roleMul = (order.role == BotRole::Entry)   ? 1.00f

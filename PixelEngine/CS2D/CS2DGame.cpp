@@ -312,6 +312,7 @@ void CS2DGame::SpawnBOT(Player& bot, Team team) {
     bot.weapons[2] = WeaponId::Knife;
     bot.weapons[3] = WeaponId::GrenadeHE;
     bot.grenadeCount = 1;
+    bot.grenadeCooldown = 0.0f;
     bot.weaponSlot = 0;
     bot.armor  = 0;
     bot.helmet = false;
