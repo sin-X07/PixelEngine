@@ -1,2 +1,0 @@
-D:\mingw\x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0\mingw64\bin\ar.exe qc libSDL2main.a CMakeFiles/SDL2main.dir/src/main/windows/SDL_windows_main.c.obj
-D:\mingw\x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0\mingw64\bin\ranlib.exe libSDL2main.a

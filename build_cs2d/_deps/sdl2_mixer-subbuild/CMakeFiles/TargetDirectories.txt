@@ -1,3 +1,0 @@
-D:/BJTU/Cpp/Outstanding Projects/PixelEngine/build_cs2d/_deps/sdl2_mixer-subbuild/CMakeFiles/sdl2_mixer-populate.dir
-D:/BJTU/Cpp/Outstanding Projects/PixelEngine/build_cs2d/_deps/sdl2_mixer-subbuild/CMakeFiles/edit_cache.dir
-D:/BJTU/Cpp/Outstanding Projects/PixelEngine/build_cs2d/_deps/sdl2_mixer-subbuild/CMakeFiles/rebuild_cache.dir

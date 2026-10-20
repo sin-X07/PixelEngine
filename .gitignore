@@ -3,6 +3,8 @@
 /build2
 /build-release
 /build-*/
+/build_cs2d
+/build_*/
 
 # 运行时生成物（存档、文字配置模板、生成的迷宫）
 /score_saves.txt

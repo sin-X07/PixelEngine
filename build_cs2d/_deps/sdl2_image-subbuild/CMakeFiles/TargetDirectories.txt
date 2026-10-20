@@ -1,3 +1,0 @@
-D:/BJTU/Cpp/Outstanding Projects/PixelEngine/build_cs2d/_deps/sdl2_image-subbuild/CMakeFiles/sdl2_image-populate.dir
-D:/BJTU/Cpp/Outstanding Projects/PixelEngine/build_cs2d/_deps/sdl2_image-subbuild/CMakeFiles/edit_cache.dir
-D:/BJTU/Cpp/Outstanding Projects/PixelEngine/build_cs2d/_deps/sdl2_image-subbuild/CMakeFiles/rebuild_cache.dir
