@@ -1,5 +1,6 @@
 #include "LLMBotController.hpp"
 #include "../Core/IniFile.hpp"
+#include "../Core/PathUtils.hpp"
 #include <windows.h>
 #include <winhttp.h>
 #include <sstream>
@@ -8,6 +9,7 @@
 #include <chrono>
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 
 #pragma comment(lib, "winhttp.lib")
 
@@ -47,6 +49,7 @@ LLMConfig LLMConfig::FromFile(const std::string& iniPath) {
     cfg.modelPath      = ini.GetString("launcher", "model",       cfg.modelPath);
     cfg.ngl            = ini.GetInt   ("launcher", "ngl",         cfg.ngl);
     cfg.startupWaitSec = ini.GetInt   ("launcher", "startup_wait", cfg.startupWaitSec);
+    cfg.killOnExit     = ini.GetBool  ("launcher", "kill_on_exit", cfg.killOnExit);
 
     return cfg;
 }
@@ -164,6 +167,11 @@ LLMBotController::~LLMBotController() {
 // ---- Initialize → 读取配置 → 可能自动拉起 → 健康检测 ----
 bool LLMBotController::Initialize(const LLMConfig& config) {
     serverUrl_ = config.serverUrl;
+    killOnExit_ = config.killOnExit;
+
+    // 0. 若存在上次运行遗留的 PID 文件，先校验是否仍有效
+    const unsigned long stalePid = ReadPidFile();
+    if (stalePid == 0) RemovePidFile();
 
     // 1. 如果配置了自动拉起
     if (config.autoLaunch && !config.serverExePath.empty() && !config.modelPath.empty()) {
@@ -183,7 +191,16 @@ bool LLMBotController::Initialize(const LLMConfig& config) {
         // 2. 先健康检查 — server 可能已经在运行
         std::cout << "[LLM] 检测现有 llama-server..." << std::endl;
         if (HealthCheck(2000)) {
-            std::cout << "[LLM] 发现已在运行的 llama-server, 复用" << std::endl;
+            if (stalePid != 0) {
+                // 这是本程序上次拉起但未回收的实例 → 接管所有权，退出时终止以释放显存
+                ownedPid_    = stalePid;
+                ownProcess_  = true;
+                std::cout << "[LLM] 发现本程序遗留的 llama-server (PID: " << stalePid
+                          << "), 已接管, 退出时将关闭" << std::endl;
+            } else {
+                std::cout << "[LLM] 发现外部已运行的 llama-server, 复用 (退出时不会关闭它)"
+                          << std::endl;
+            }
             ready_ = true;
             return true;
         }
@@ -228,10 +245,49 @@ void LLMBotController::Shutdown() {
     ready_ = false;
 
     if (workerThread_.joinable()) {
-        workerThread_.join();
+        workerThread_.join();   // 工作线程已设置 WinHTTP 超时，不会无限阻塞
     }
 
-    KillServer();
+    if (killOnExit_) {
+        KillServer();
+    }
+}
+
+// ---- PID 文件（跨会话回收显存）----
+std::string LLMBotController::PidFilePath() {
+    return PathUtils::ResolveWritablePath("llm_server.pid");
+}
+
+void LLMBotController::WritePidFile(unsigned long pid) {
+    std::ofstream f(PidFilePath());
+    if (f) f << pid << "\n";
+}
+
+unsigned long LLMBotController::ReadPidFile() const {
+    std::ifstream f(PidFilePath());
+    if (!f) return 0;
+    unsigned long pid = 0;
+    if (!(f >> pid) || pid == 0) return 0;
+
+    // 校验该进程是否仍是 llama-server（避免 PID 复用误杀）
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!h) return 0;
+    char path[MAX_PATH] = {0};
+    DWORD sz = MAX_PATH;
+    bool ok = false;
+    if (QueryFullProcessImageNameA(h, 0, path, &sz)) {
+        std::string p(path);
+        std::string lower;
+        for (char c : p) lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        ok = (lower.find("llama-server") != std::string::npos);
+    }
+    CloseHandle(h);
+    return ok ? pid : 0;
+}
+
+void LLMBotController::RemovePidFile() {
+    std::error_code ec;
+    std::filesystem::remove(PidFilePath(), ec);
 }
 
 // ---- 健康检测: GET /health ----
@@ -344,32 +400,67 @@ bool LLMBotController::LaunchServer(const std::string& exePath, const std::strin
 
     hServerProcess_ = pi.hProcess;
     hServerThread_  = pi.hThread;
-    ownProcess_ = true;
+    ownedPid_       = pi.dwProcessId;
+    ownProcess_     = true;
+    WritePidFile(ownedPid_);   // 记录 PID，保证下次启动可回收（即便本次异常退出）
 
     std::cout << "[LLM] llama-server 已启动 (PID: " << pi.dwProcessId << ")" << std::endl;
     return true;
 }
 
-// ---- 终止子进程 ----
+// ---- 终止子进程（强制 + 校验）----
 void LLMBotController::KillServer() {
-    if (!ownProcess_ || !hServerProcess_) return;
+    if (!ownProcess_) return;
 
-    // 发送关闭信号 (CTRL_BREAK → llama-server 优雅退出)
-    if (!GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, GetProcessId(hServerProcess_))) {
-        // 失败则直接终止
-        TerminateProcess(hServerProcess_, 0);
+    HANDLE hProc = static_cast<HANDLE>(hServerProcess_);
+
+    // 无句柄但记录了 PID（跨会话接管）→ 用 PID 打开
+    bool openedHere = false;
+    if (!hProc && ownedPid_ != 0) {
+        hProc = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, ownedPid_);
+        openedHere = true;
+    }
+    if (!hProc) {
+        std::cerr << "[LLM] 无法获取 llama-server 句柄, 跳过终止" << std::endl;
+        ownProcess_ = false;
+        ownedPid_ = 0;
+        return;
     }
 
-    // 等待最多 3 秒
-    WaitForSingleObject(hServerProcess_, 3000);
+    // 直接强制终止：CTRL_BREAK 需要子进程为独立进程组，
+    // 而本程序用 CREATE_NO_WINDOW 启动（无新组），该路径不可靠。
+    if (!TerminateProcess(hProc, 0)) {
+        const DWORD err = GetLastError();
+        if (err != ERROR_ACCESS_DENIED) {
+            std::cerr << "[LLM] TerminateProcess 失败, 错误码: " << err << std::endl;
+        }
+    }
 
-    CloseHandle(hServerProcess_);
-    if (hServerThread_) CloseHandle(hServerThread_);
+    // 等待并校验确实退出（释放显存需要进程真正结束）
+    const DWORD waitRes = WaitForSingleObject(hProc, 5000);
+    if (waitRes == WAIT_TIMEOUT) {
+        std::cerr << "[LLM] 警告: llama-server 未在 5 秒内退出 (PID "
+                  << ownedPid_ << ")，显存可能仍被占用" << std::endl;
+    }
+
+    DWORD exitCode = 0;
+    if (GetExitCodeProcess(hProc, &exitCode) && exitCode == STILL_ACTIVE) {
+        std::cerr << "[LLM] 警告: llama-server 仍在运行 (PID " << ownedPid_ << ")" << std::endl;
+    } else {
+        std::cout << "[LLM] llama-server 已关闭 (PID " << ownedPid_ << ")" << std::endl;
+    }
+
+    CloseHandle(hProc);
+    if (openedHere) {
+        // openedHere 的句柄已在上面关闭
+    }
+    if (hServerThread_) { CloseHandle(static_cast<HANDLE>(hServerThread_)); }
+
     hServerProcess_ = nullptr;
     hServerThread_  = nullptr;
-    ownProcess_ = false;
-
-    std::cout << "[LLM] llama-server 已关闭" << std::endl;
+    ownedPid_       = 0;
+    ownProcess_     = false;
+    RemovePidFile();
 }
 
 // ---- Decide ----
@@ -440,6 +531,9 @@ LLMDecision LLMBotController::DoHttpRequest(const std::string& requestBody,
     HINTERNET hSession = WinHttpOpen(L"LLMBotController/1.0",
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession) return result;
+
+    // 设置超时：避免服务端异常时工作线程无限阻塞，从而让 Shutdown() 的 join() 卡死
+    WinHttpSetTimeouts(hSession, 3000, 3000, 5000, 10000);
 
     int wlen = MultiByteToWideChar(CP_UTF8, 0, host.c_str(), -1, nullptr, 0);
     std::wstring wh(wlen, L'\0');

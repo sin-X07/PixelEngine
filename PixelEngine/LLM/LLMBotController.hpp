@@ -30,6 +30,7 @@ struct LLMConfig {
     std::string modelPath;           // 模型 .gguf 路径 (可相对)
     int    ngl             = 99;     // GPU 全卸载层数
     int    startupWaitSec  = 20;     // 自动拉起后等待模型加载最长时间
+    bool   killOnExit      = true;   // 退出时终止本程序拉起的 llama-server (释放显存)
 
     // 从 INI 文件解析 (失败时保留默认值, 不抛出)
     static LLMConfig FromFile(const std::string& iniPath);
@@ -105,8 +106,14 @@ private:
     bool LaunchServer(const std::string& exePath, const std::string& modelPath,
                       const std::string& host, int port, int ngl);
 
-    // 终止子进程
+    // 终止子进程（强制，且校验确实退出）
     void KillServer();
+
+    // PID 文件：跨会话记录"本程序拉起的 llama-server"，保证重启后仍能回收显存
+    static std::string PidFilePath();
+    void WritePidFile(unsigned long pid);
+    unsigned long ReadPidFile() const;   // 0 = 无 / 已失效
+    void RemovePidFile();
 
     void WorkerLoop();
 
@@ -114,11 +121,13 @@ private:
     std::atomic<bool> ready_{false};
     std::atomic<bool> running_{false};
     std::atomic<bool> busy_{false};
-    bool ownProcess_ = false;  // 是否由本对象拉起的子进程
+    bool ownProcess_ = false;  // 是否由本对象（含跨会话接管）拥有的子进程
+    bool killOnExit_ = true;   // 退出时是否终止子进程
 
     // 子进程句柄 (void* 避免引入 windows.h 污染 Engine)
     void* hServerProcess_ = nullptr;
     void* hServerThread_  = nullptr;
+    unsigned long ownedPid_ = 0;   // 拥有的 llama-server PID（无句柄时的回退路径）
 
     // 待处理请求
     std::string pendingBody_;
