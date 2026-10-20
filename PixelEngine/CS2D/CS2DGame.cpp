@@ -148,6 +148,28 @@ bool CS2DGame::TryBuy(WeaponId id) {
     return true;
 }
 
+// 购买护甲：tier 1=护甲($650) 2=护甲+头盔($1000)
+bool CS2DGame::TryBuyArmor(int tier) {
+    if (tier < 1 || tier > 2) return false;
+    if (!IsBuyPhase() || !player_.alive || !IsPlayerInBuyZone()) return false;
+
+    const int price = (tier == 1) ? 650 : 1000;
+    if (player_.money < price) return false;
+
+    // 已满甲（且已带头盔，或本次只买护甲）则无需重复购买
+    if (player_.armor >= 100 && (tier == 1 || player_.helmet)) return false;
+
+    player_.money -= price;
+    economy_.Clamp(player_.money);
+
+    player_.armor = 100;
+    if (tier == 2) player_.helmet = true;
+
+    std::cout << "[Buy] " << (tier == 2 ? "护甲+头盔" : "护甲")
+              << " ($" << price << ") 余额 $" << player_.money << std::endl;
+    return true;
+}
+
 // ============================================================================
 // 出生点
 // ============================================================================
@@ -225,6 +247,8 @@ void CS2DGame::SpawnPlayer() {
     player_.weapons[3] = WeaponId::GrenadeHE;
     player_.grenadeCount = 1;
     player_.weaponSlot = 0;
+    player_.armor  = 0;
+    player_.helmet = false;
 
     const WeaponDef& w = WeaponDB::Get(player_.weapons[0]);
     player_.ammo    = w.magazine;
@@ -279,6 +303,8 @@ void CS2DGame::SpawnBOT(Player& bot, Team team) {
     bot.weapons[3] = WeaponId::GrenadeHE;
     bot.grenadeCount = 1;
     bot.weaponSlot = 0;
+    bot.armor  = 0;
+    bot.helmet = false;
 
     const WeaponDef& bw = WeaponDB::Get(bot.weapons[0]);
     bot.ammo    = bw.magazine;

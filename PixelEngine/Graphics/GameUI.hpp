@@ -103,6 +103,8 @@ public:
         int   aliveT = 0;
         int   aliveCT = 0;
         int   money = 0;
+        int   armor = 0;
+        bool  helmet = false;
         bool  matchOver = false;
         bool  matchWinnerIsCT = false;
 
@@ -135,12 +137,14 @@ public:
 
     // ---- 买枪菜单 ----
     struct BuyItem {
-        int         weaponId = 0;
+        int         weaponId = 0;   // kind==0 时有效
+        int         kind = 0;       // 0=武器 1=护甲
+        int         armorTier = 0;  // kind==1 时有效: 1=护甲 2=护甲+头盔
         std::string name;
         int         price = 0;
         bool        affordable = false;
         bool        owned = false;
-        int         group = 0;      // 0=主武器 1=副武器 2=近战 3=投掷物
+        int         group = 0;      // 0=主武器 1=副武器 2=近战 3=投掷物 4=护甲
     };
     struct BuyMenuCtx {
         std::vector<BuyItem> items;

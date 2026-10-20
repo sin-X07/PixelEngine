@@ -93,8 +93,7 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
             const float bdx = bot.x - player_.x;
             const float bdy = bot.y - player_.y;
             if (std::sqrt(bdx * bdx + bdy * bdy) < def.range) {
-                bot.health -= static_cast<int>(def.damage);
-                if (bot.health <= 0) OnCombatantKilled(bot, audio);
+                if (ApplyDamage(bot, static_cast<int>(def.damage))) OnCombatantKilled(bot, audio);
             }
         }
         player_.shootCooldown = def.cooldown;
@@ -171,10 +170,9 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             const float hitR = bot.size * 0.5f + 2.0f;
             if (dx * dx + dy * dy >= hitR * hitR) continue;
 
-            bot.health -= bullet.damage;
             bullet.active = false;
 
-            if (bot.health <= 0) {
+            if (ApplyDamage(bot, bullet.damage)) {
                 OnCombatantKilled(bot, audio);
 
                 // 玩家击杀：计分 + 经济奖励 + 播报
@@ -204,10 +202,9 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             const float dy = bullet.y - player_.y;
             const float hitR = player_.size * 0.5f + 2.0f;
             if (dx * dx + dy * dy < hitR * hitR) {
-                player_.health -= bullet.damage;
                 bullet.active = false;
                 if (audio) audio->PlaySound(SoundEffect::HIT);
-                if (player_.health <= 0) {
+                if (ApplyDamage(player_, bullet.damage)) {
                     PushKillFeed(std::string("BOT#") + std::to_string(bullet.ownerIdx) + "  ▸  击杀 你");
                     OnCombatantKilled(player_, audio);
                 }
@@ -300,8 +297,9 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
                 const float d = std::sqrt(dx * dx + dy * dy);
                 if (d > RADIUS) return;
                 const float falloff = 1.0f - d / RADIUS;
-                p.health -= static_cast<int>(MAX_DMG * falloff);
-                if (p.health <= 0) OnCombatantKilled(p, audio);
+                if (ApplyDamage(p, static_cast<int>(MAX_DMG * falloff))) {
+                    OnCombatantKilled(p, audio);
+                }
             };
 
             damageAt(player_);
@@ -382,6 +380,33 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio) {
         // BOT 阵亡由击杀方计分；此处只需统计自身
         std::cout << "[CS2D] BOT 阵亡 (" << TeamName(victim.team) << ")" << std::endl;
     }
+}
+
+// ============================================================================
+// 统一伤害入口
+// ============================================================================
+
+bool CS2DGame::ApplyDamage(Player& victim, int amount) {
+    if (!victim.alive || amount <= 0) return false;
+
+    int remaining = amount;
+
+    // 护甲吸收：头盔提高吸收比例；护甲按吸收量等量消耗
+    if (victim.armor > 0) {
+        const float frac = victim.helmet ? 0.60f : 0.50f;
+        int absorbed = static_cast<int>(static_cast<float>(amount) * frac + 0.5f);
+        absorbed = std::min(absorbed, victim.armor);
+        victim.armor -= absorbed;
+        remaining -= absorbed;
+        if (victim.armor <= 0) victim.helmet = false;   // 护甲耗尽，头盔失效
+    }
+
+    victim.health -= remaining;
+    if (victim.health <= 0) {
+        victim.health = 0;
+        return true;
+    }
+    return false;
 }
 
 // ============================================================================

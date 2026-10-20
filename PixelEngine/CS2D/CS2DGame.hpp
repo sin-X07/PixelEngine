@@ -79,6 +79,8 @@ public:
         int       money  = 800;
         int       kills  = 0;
         int       deaths = 0;
+        int       armor  = 0;        // 护甲值（0..100）
+        bool      helmet = false;    // 头盔：提高吸收比例
 
         // LLM 战略意图
         BotIntent llmIntent;
@@ -234,6 +236,10 @@ public:
     bool IsPlayerInBuyZone() const;
     // 尝试购买；成功返回 true（已扣款并装备）
     bool TryBuy(WeaponId id);
+    // 购买护甲：tier 1=护甲 2=护甲+头盔
+    bool TryBuyArmor(int tier);
+    int  GetPlayerArmor()  const { return player_.armor; }
+    bool GetPlayerHelmet() const { return player_.helmet; }
 
     // ---- 武器 ----
     void SwitchWeaponSlot(int slot);
@@ -340,6 +346,8 @@ private:
     void RespawnAllForRound();
     void CheckWinConditions(class AudioManager* audio);
     void ApplyRoundResult(Team winner);
+    // 统一伤害入口：先扣护甲再扣血。返回 true 表示本次伤害致死。
+    bool ApplyDamage(Player& victim, int amount);
     void GrantRoundEndMoney(Team winner);   // 发放回合金钱并重置本回合装备
 
     // 目标物

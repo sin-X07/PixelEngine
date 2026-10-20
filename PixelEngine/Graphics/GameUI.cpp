@@ -294,8 +294,8 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx, const std::function<void(int)>& 
     }
     ImGui::Separator();
 
-    static const char* kGroupNames[] = { "主武器", "副武器", "近战", "投掷物" };
-    for (int g = 0; g < 4; ++g) {
+    static const char* kGroupNames[] = { "主武器", "副武器", "近战", "投掷物", "护甲" };
+    for (int g = 0; g < 5; ++g) {
         bool headerDrawn = false;
         int  col = 0;
         for (const auto& it : ctx.items) {
@@ -350,8 +350,9 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
         DrawImGuiTextCentered(imGuiUI, mid, 40.0f, 180, 200, 215, 255, 18);
 
         char alive[64];
-        snprintf(alive, sizeof(alive), "T 存活 %d   CT 存活 %d   $%d",
-                 ctx.aliveT, ctx.aliveCT, ctx.money);
+        snprintf(alive, sizeof(alive), "T 存活 %d   CT 存活 %d   $%d   甲 %d%s",
+                 ctx.aliveT, ctx.aliveCT, ctx.money, ctx.armor,
+                 ctx.helmet ? "(盔)" : "");
         DrawImGuiTextCentered(imGuiUI, alive, 64.0f, 160, 175, 185, 255, 16);
     }
 

@@ -226,8 +226,9 @@ void CS2DGame::DetonateBomb(AudioManager* audio) {
         const float d = std::sqrt(dx * dx + dy * dy);
         if (d > RADIUS) return;
         const float f = 1.0f - d / RADIUS;
-        p.health -= static_cast<int>(200.0f * f);
-        if (p.health <= 0) OnCombatantKilled(p, audio);
+        if (ApplyDamage(p, static_cast<int>(200.0f * f))) {
+            OnCombatantKilled(p, audio);
+        }
     };
     damageAt(player_);
     for (auto& b : bots_) damageAt(b);

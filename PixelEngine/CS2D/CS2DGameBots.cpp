@@ -324,8 +324,9 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             if (bot.shootCooldown > 0.0f) bot.shootCooldown -= dt;
             if (bot.shootCooldown <= 0.0f) {
                 if (target == &player_) {
-                    player_.health -= static_cast<int>(def.damage * 0.33f);
-                    if (player_.health <= 0) OnCombatantKilled(player_, audio);
+                    if (ApplyDamage(player_, static_cast<int>(def.damage * 0.33f))) {
+                        OnCombatantKilled(player_, audio);
+                    }
                 }
                 bot.shootCooldown = def.cooldown * 1.5f * out.shootCooldownMul;
                 bot.shootAnimTimer = 0.12f;

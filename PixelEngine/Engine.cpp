@@ -584,6 +584,8 @@ void Engine::Render() {
         ictx.aliveT           = cs2dGame->AliveCount(Team::T);
         ictx.aliveCT          = cs2dGame->AliveCount(Team::CT);
         ictx.money            = cs2dGame->GetPlayerMoney();
+        ictx.armor            = cs2dGame->GetPlayerArmor();
+        ictx.helmet           = cs2dGame->GetPlayerHelmet();
         ictx.matchOver        = cs2dGame->IsMatchOver();
         ictx.matchWinnerIsCT  = (cs2dGame->GetMatchWinner() == Team::CT);
 
@@ -684,11 +686,31 @@ void Engine::RenderBuyMenu() {
         bctx.items.push_back(it);
     }
 
-    const int moneyBefore = bctx.money;
-    gameUI->DrawBuyMenu(bctx, [this](int weaponId) {
-        cs2dGame->TryBuy(static_cast<WeaponId>(weaponId));
+    // 护甲条目（用负数 weaponId 编码：-1=护甲 -2=护甲+头盔）
+    {
+        const int money = bctx.money;
+        GameUI::BuyItem k1;
+        k1.kind = 1; k1.armorTier = 1; k1.weaponId = -1;
+        k1.name = "护甲"; k1.price = 650; k1.group = 4;
+        k1.affordable = (money >= 650);
+        k1.owned = (p.armor >= 100);
+        bctx.items.push_back(k1);
+
+        GameUI::BuyItem k2;
+        k2.kind = 1; k2.armorTier = 2; k2.weaponId = -2;
+        k2.name = "护甲+头盔"; k2.price = 1000; k2.group = 4;
+        k2.affordable = (money >= 1000);
+        k2.owned = (p.armor >= 100 && p.helmet);
+        bctx.items.push_back(k2);
+    }
+
+    gameUI->DrawBuyMenu(bctx, [this](int id) {
+        if (id < 0) {
+            cs2dGame->TryBuyArmor(-id);      // -1 → 护甲, -2 → 护甲+头盔
+        } else {
+            cs2dGame->TryBuy(static_cast<WeaponId>(id));
+        }
     });
-    (void)moneyBefore;
 }
 
 void Engine::InitLLMBot() {
