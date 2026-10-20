@@ -27,6 +27,7 @@ void CS2DGame::BeginNewRound() {
     if (teams_.MatchOver()) return;
     RespawnAllForRound();
     SetupObjective();   // 每回合重置包点 / 人质
+    AssignSquadRoles(); // 每回合按新的相对位置重新分工
     std::cout << "[CS2D] 第 " << round_.RoundNumber() << " 回合开始 ("
               << teams_.ScoreT() << ":" << teams_.ScoreCT() << ")" << std::endl;
 }

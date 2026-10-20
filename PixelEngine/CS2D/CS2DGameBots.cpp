@@ -54,6 +54,122 @@ static const CS2DGame::Player* FindNearestEnemy(const CS2DGame::Player& self,
 }
 
 // ============================================================================
+// 小队协同：分工与集火
+// ============================================================================
+
+void CS2DGame::AssignSquadRoles() {
+    squad_.assign(bots_.size(), SquadOrder{});
+    if (bots_.empty()) return;
+
+    // 按阵营分别排序：离敌方质心越近 → 越靠前（Entry）
+    for (int side = 0; side < 2; ++side) {
+        const Team t = (side == 0) ? Team::T : Team::CT;
+
+        std::vector<size_t> members;
+        for (size_t i = 0; i < bots_.size(); ++i) {
+            if (bots_[i].team == t) members.push_back(i);
+        }
+        if (members.empty()) continue;
+
+        // 敌方质心
+        float ex = 0.0f, ey = 0.0f;
+        int   n  = 0;
+        if (player_.alive && player_.team != t) { ex += player_.x; ey += player_.y; ++n; }
+        for (const auto& b : bots_) {
+            if (b.alive && b.team != t) { ex += b.x; ey += b.y; ++n; }
+        }
+        if (n > 0) { ex /= static_cast<float>(n); ey /= static_cast<float>(n); }
+        else {
+            ex = world_->GetMapPixelW() * 0.5f;
+            ey = world_->GetMapPixelH() * 0.5f;
+        }
+
+        std::sort(members.begin(), members.end(), [&](size_t a, size_t b) {
+            auto d2 = [&](size_t i) {
+                const float dx = bots_[i].x - ex;
+                const float dy = bots_[i].y - ey;
+                return dx * dx + dy * dy;
+            };
+            return d2(a) < d2(b);
+        });
+
+        const size_t cnt = members.size();
+        const size_t entryCount  = std::max<size_t>(1, (cnt + 2) / 3);
+        const size_t anchorCount = std::max<size_t>(1, (cnt + 3) / 4);
+
+        for (size_t k = 0; k < cnt; ++k) {
+            BotRole role = BotRole::Support;
+            if (k < entryCount)                        role = BotRole::Entry;
+            else if (k >= cnt - anchorCount)           role = BotRole::Anchor;
+            squad_[members[k]].role = role;
+        }
+    }
+}
+
+// 周期性选集火目标（含集火/掩护偏好），0.5s 一次
+void CS2DGame::UpdateSquadFocus(float dt) {
+    if (squad_.size() != bots_.size()) squad_.assign(bots_.size(), SquadOrder{});
+
+    squadFocusTimer_ -= dt;
+    if (squadFocusTimer_ > 0.0f) return;
+    squadFocusTimer_ = 0.5f;
+
+    for (size_t i = 0; i < bots_.size(); ++i) {
+        const Player& bot = bots_[i];
+        if (!bot.alive) { squad_[i].focus = -2; continue; }
+
+        int   bestFocus = -2;
+        float bestScore = 1e18f;
+
+        auto evaluate = [&](const Player& e, int code) {
+            if (!e.alive || e.team == bot.team) return;
+
+            const float dx = e.x - bot.x;
+            const float dy = e.y - bot.y;
+            float score = std::sqrt(dx * dx + dy * dy);
+
+            // 集火偏好：该敌人周围队友越多越优先
+            int mates = 0;
+            for (const auto& m : bots_) {
+                if (&m == &bot || !m.alive || m.team != bot.team) continue;
+                const float mx = m.x - e.x, my = m.y - e.y;
+                if (mx * mx + my * my < 160.0f * 160.0f) ++mates;
+            }
+            score -= static_cast<float>(mates) * 45.0f;
+
+            // 掩护偏好：正在换弹或低血的队友附近的敌人优先
+            for (const auto& m : bots_) {
+                if (&m == &bot || !m.alive || m.team != bot.team) continue;
+                if (!(m.reloading || m.health < 40)) continue;
+                const float mx = m.x - e.x, my = m.y - e.y;
+                if (mx * mx + my * my < 120.0f * 120.0f) { score -= 60.0f; break; }
+            }
+
+            if (score < bestScore) {
+                bestScore = score;
+                bestFocus = code;
+            }
+        };
+
+        evaluate(player_, -1);
+        for (size_t j = 0; j < bots_.size(); ++j) {
+            evaluate(bots_[j], static_cast<int>(j));
+        }
+
+        squad_[i].focus = bestFocus;
+    }
+}
+
+const CS2DGame::Player* CS2DGame::ResolveFocus(const SquadOrder& order) const {
+    if (order.focus == -1) return player_.alive ? &player_ : nullptr;
+    if (order.focus >= 0 && order.focus < static_cast<int>(bots_.size())) {
+        const Player& b = bots_[order.focus];
+        if (b.alive) return &b;
+    }
+    return nullptr;
+}
+
+// ============================================================================
 // 局部避障（分离力）
 // ============================================================================
 
@@ -117,7 +233,7 @@ void CS2DGame::ApplyAvoidance(float& vx, float& vy, float sepX, float sepY) cons
 // A* 路径跟随
 // ============================================================================
 
-bool CS2DGame::FollowPathTo(Player& bot, float destX, float destY, float dt) {
+bool CS2DGame::FollowPathTo(Player& bot, float destX, float destY, float dt, float speedMul) {
     if (!pathFinder_.IsBuilt()) return false;
 
     // 目标明显移动 / 定时 / 路径走完 → 重算
@@ -160,8 +276,9 @@ bool CS2DGame::FollowPathTo(Player& bot, float destX, float destY, float dt) {
     const float d  = std::sqrt(dx * dx + dy * dy);
     if (d < 0.001f) return false;
 
-    bot.vx = dx / d * 60.0f;
-    bot.vy = dy / d * 60.0f;
+    const float speed = 60.0f * std::clamp(speedMul, 0.3f, 1.0f);
+    bot.vx = dx / d * speed;
+    bot.vy = dy / d * speed;
 
     // 局部避障：防止多人挤在同一路线上互相卡住
     {
@@ -196,13 +313,33 @@ bool CS2DGame::FollowPathTo(Player& bot, float destX, float destY, float dt) {
 void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
     while (botExecutors_.size() < bots_.size()) botExecutors_.emplace_back();
 
+    // 小队协同：刷新集火目标（内部 0.5s 节流）
+    UpdateSquadFocus(dt);
+
     for (size_t i = 0; i < bots_.size(); ++i) {
         auto& bot = bots_[i];
         if (!bot.alive) continue;
 
-        // 目标：最近的存活敌人
+        // 分工指令
+        SquadOrder order;
+        if (i < squad_.size()) order = squad_[i];
+
+        // ---- 目标选择：集火优先，其次最近敌人 ----
         float targetDist = 0.0f;
         const Player* target = FindNearestEnemy(bot, player_, bots_, targetDist);
+
+        if (const Player* focus = ResolveFocus(order)) {
+            if (focus != target) {
+                const float fdx = focus->x - bot.x;
+                const float fdy = focus->y - bot.y;
+                const float fdist = std::sqrt(fdx * fdx + fdy * fdy);
+                // 集火目标在合理范围内就优先打它
+                if (fdist <= 340.0f) {
+                    target = focus;
+                    targetDist = fdist;
+                }
+            }
+        }
         if (!target) continue;
 
         // 视线判定（距离 + 烟雾 + LOS）
@@ -215,8 +352,13 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         bot.llmIntent.Tick(dt);
 
         // ---- 目标引导：A* 寻路推进 ----
+        // 角色行进速度：突破手全速、支援略慢、断后明显靠后
+        const float roleMul = (order.role == BotRole::Entry)   ? 1.00f
+                            : (order.role == BotRole::Anchor)  ? 0.55f
+                            :                                    0.80f;
         {
             bool hasDest = false;
+            bool destIsObjective = false;
             float destX = 0.0f, destY = 0.0f;
 
             if (mode_ == MatchMode::BombDefusal) {
@@ -231,9 +373,11 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                         const float d2 = dx * dx + dy * dy;
                         if (d2 < bestD2) { bestD2 = d2; destX = cx; destY = cy; hasDest = true; }
                     }
+                    destIsObjective = hasDest;
                 } else if (bot.team == Team::CT && bombPlanted_) {
                     destX = bombX_; destY = bombY_;      // 前往拆包
                     hasDest = true;
+                    destIsObjective = true;
                 }
             } else if (mode_ == MatchMode::HostageRescue && bot.team == Team::CT) {
                 // 最近的未救出人质
@@ -244,19 +388,25 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                     const float d2 = dx * dx + dy * dy;
                     if (d2 < bestD2) { bestD2 = d2; destX = h.x; destY = h.y; hasDest = true; }
                 }
+                destIsObjective = hasDest;
             }
 
-            // 无任务目标时，把最近敌人当作推进目标（远距离用路径接近）
+            // 无任务目标时，把当前敌人当作推进目标（远距离用路径接近）
             if (!hasDest && target) {
                 destX = target->x;
                 destY = target->y;
                 hasDest = true;
             }
 
+            // 断后位不主动远距离追击：没有任务目标时守在原地
+            if (!destIsObjective && order.role == BotRole::Anchor && targetDist > 260.0f) {
+                hasDest = false;
+            }
+
             if (hasDest) {
                 // 近距离且可见 → 交给战术执行器（冲刺/绕侧手感更好）
                 const bool closeCombat = canSee && targetDist < 180.0f;
-                if (!closeCombat && FollowPathTo(bot, destX, destY, dt)) {
+                if (!closeCombat && FollowPathTo(bot, destX, destY, dt, roleMul)) {
                     continue;   // 本帧移动已由寻路接管
                 }
             }
@@ -270,8 +420,8 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             bot.ammo > 0, bot.reloading, bot.weaponSlot,
             rng_, dt);
 
-        bot.vx = out.vx;
-        bot.vy = out.vy;
+        bot.vx = out.vx * roleMul;
+        bot.vy = out.vy * roleMul;
 
         // 局部避障（战斗中同样避免叠人）
         {

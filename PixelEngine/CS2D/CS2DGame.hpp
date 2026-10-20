@@ -33,6 +33,19 @@ struct WeaponSlotParams {
     float range;
 };
 
+// BOT 战术分工
+enum class BotRole {
+    Entry,      // 突破手：最靠前，主动接敌
+    Support,    // 支援：居中跟进
+    Anchor      // 断后/守点：靠后，倾向保持位置
+};
+
+// 每名 BOT 的小队指令
+struct SquadOrder {
+    BotRole role  = BotRole::Support;
+    int     focus = -2;    // 集火目标：-2=无, -1=玩家, >=0=BOT 索引
+};
+
 // ============================================================================
 // CS2DGame — CS2D 对局逻辑
 // ============================================================================
@@ -300,6 +313,10 @@ private:
 
     std::vector<BotBehaviorExecutor> botExecutors_;
 
+    // 小队协同状态（索引与 bots_ 对齐）
+    std::vector<SquadOrder> squad_;
+    float squadFocusTimer_ = 0.0f;
+
     float botRespawnTimer_  = 0.0f;
     static constexpr float BOT_RESPAWN_DELAY = 3.0f;
 
@@ -320,8 +337,12 @@ private:
     void UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bool stealth);
     void UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, float worldMY, class AudioManager* audio);
     void UpdateBOTs(float dt, class AudioManager* audio);
+    // ---- 小队协同 ----
+    void AssignSquadRoles();            // 回合开始时分配 突破/支援/断后
+    void UpdateSquadFocus(float dt);    // 周期性选集火目标（含掩护偏好）
+    const Player* ResolveFocus(const SquadOrder& order) const;
     // 沿 A* 路径移动；返回 true 表示本帧移动已由寻路接管
-    bool FollowPathTo(Player& bot, float destX, float destY, float dt);
+    bool FollowPathTo(Player& bot, float destX, float destY, float dt, float speedMul = 1.0f);
     // 局部避障：累加附近单位的排斥向量（outX/outY 已归一化到 0..1 量级）
     void AccumulateSeparation(const Player& self, float& outX, float& outY) const;
     // 把期望速度与分离向量合成，并按最大速度钳制

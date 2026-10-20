@@ -70,6 +70,14 @@ void CS2DGame::ResetToNewMatch() {
 
     std::cout << "[CS2DGame] 对局开始: " << TEAM_SIZE << "v" << TEAM_SIZE
               << " (玩家 CT + " << bots_.size() << " BOT)" << std::endl;
+
+    AssignSquadRoles();
+    for (size_t i = 0; i < squad_.size(); ++i) {
+        std::cout << "  BOT#" << i << " (" << TeamName(bots_[i].team) << ") 角色: "
+                  << (squad_[i].role == BotRole::Entry ? "突破"
+                      : squad_[i].role == BotRole::Anchor ? "断后" : "支援")
+                  << std::endl;
+    }
 }
 
 void CS2DGame::Reset() {
