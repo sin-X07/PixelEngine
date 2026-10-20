@@ -27,6 +27,11 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
 
     if (renderer_) renderer_->SetWorld(world_.get());
 
+    // 烘焙寻路网格（角色半径 3.5，略大于命中盒半宽）
+    pathFinder_.Build(*world_, 3.5f);
+    std::cout << "[PathFinder] 网格 " << pathFinder_.Width() << "x" << pathFinder_.Height()
+              << " 已构建" << std::endl;
+
     ResetToNewMatch();
     return true;
 }
@@ -226,6 +231,10 @@ void CS2DGame::SpawnBOT(Player& bot, Team team) {
     bot.reloadTimer = 0.0f;
     bot.stealth    = false;
     bot.llmIntent.Reset();
+    bot.path.clear();
+    bot.pathIdx     = 0;
+    bot.repathTimer = 0.0f;
+    bot.goalX = bot.goalY = 0.0f;
 
     // 外观与武器：CT 用 M4A1，T 用 AK47；副武器 Glock，近战 Knife
     if (team == Team::CT) {

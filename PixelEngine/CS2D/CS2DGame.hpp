@@ -5,6 +5,7 @@
 #include "Rounds/RoundManager.hpp"
 #include "Weapons/WeaponDef.hpp"
 #include "Economy/EconomySystem.hpp"
+#include "Navigation/PathFinder.hpp"
 #include "../Core/Types.hpp"
 #include "../LLM/BotIntent.hpp"
 #include "../LLM/BotBehaviorExecutor.hpp"
@@ -81,6 +82,13 @@ public:
 
         // LLM 战略意图
         BotIntent llmIntent;
+
+        // 寻路状态（仅 BOT 使用）
+        std::vector<std::pair<float, float>> path;
+        int   pathIdx     = 0;
+        float repathTimer = 0.0f;
+        float goalX       = 0.0f;
+        float goalY       = 0.0f;
 
         // 当前活动武器定义
         const WeaponDef& CurrentWeapon() const {
@@ -264,6 +272,8 @@ private:
 
     std::vector<KillFeedEntry> killFeed_;
 
+    PathFinder pathFinder_;   // 载入地图后烘焙
+
     void PushKillFeed(const std::string& text);
 
     int playerKills_  = 0;
@@ -298,6 +308,8 @@ private:
     void UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bool stealth);
     void UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, float worldMY, class AudioManager* audio);
     void UpdateBOTs(float dt, class AudioManager* audio);
+    // 沿 A* 路径移动；返回 true 表示本帧移动已由寻路接管
+    bool FollowPathTo(Player& bot, float destX, float destY, float dt);
     void UpdateBullets(float dt, class AudioManager* audio);
     void UpdateGrenades(float dt, class AudioManager* audio);
     void ThrowGrenade(Player& thrower, float aimAngle);

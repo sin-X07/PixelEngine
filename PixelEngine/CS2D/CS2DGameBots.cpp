@@ -53,6 +53,67 @@ static const CS2DGame::Player* FindNearestEnemy(const CS2DGame::Player& self,
     return best;
 }
 
+// ============================================================================
+// A* 路径跟随
+// ============================================================================
+
+bool CS2DGame::FollowPathTo(Player& bot, float destX, float destY, float dt) {
+    if (!pathFinder_.IsBuilt()) return false;
+
+    // 目标明显移动 / 定时 / 路径走完 → 重算
+    const float gdx = destX - bot.goalX;
+    const float gdy = destY - bot.goalY;
+    const bool goalMoved = (gdx * gdx + gdy * gdy) > 70.0f * 70.0f;
+
+    bot.repathTimer -= dt;
+    const bool exhausted = (bot.pathIdx >= static_cast<int>(bot.path.size()));
+    if (goalMoved || exhausted || bot.repathTimer <= 0.0f) {
+        bot.goalX = destX;
+        bot.goalY = destY;
+        bot.repathTimer = 0.8f;
+        bot.path.clear();
+        bot.pathIdx = 0;
+        if (!pathFinder_.FindPath(bot.x, bot.y, destX, destY, bot.path)) {
+            bot.path.clear();
+            return false;   // 无路可走 → 由调用方直线兜底
+        }
+    }
+
+    if (bot.path.empty()) return false;
+
+    // 跳过已到达的路点
+    while (bot.pathIdx < static_cast<int>(bot.path.size())) {
+        const auto& p = bot.path[bot.pathIdx];
+        const float dx = p.first - bot.x;
+        const float dy = p.second - bot.y;
+        if (dx * dx + dy * dy <= 8.0f * 8.0f) { ++bot.pathIdx; continue; }
+        break;
+    }
+    if (bot.pathIdx >= static_cast<int>(bot.path.size())) {
+        bot.path.clear();
+        return false;
+    }
+
+    const auto& p = bot.path[bot.pathIdx];
+    const float dx = p.first - bot.x;
+    const float dy = p.second - bot.y;
+    const float d  = std::sqrt(dx * dx + dy * dy);
+    if (d < 0.001f) return false;
+
+    bot.vx = dx / d * 60.0f;
+    bot.vy = dy / d * 60.0f;
+    MoveWithCollision(bot, dt);
+    bot.aimAngle = std::atan2(dy, dx);
+
+    // 被墙卡住（速度被碰撞清零）→ 立刻失效当前路径，下一帧重算
+    if (bot.vx == 0.0f && bot.vy == 0.0f) {
+        bot.path.clear();
+        bot.pathIdx = 0;
+        bot.repathTimer = 0.0f;
+    }
+    return true;
+}
+
 void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
     while (botExecutors_.size() < bots_.size()) botExecutors_.emplace_back();
 
@@ -74,10 +135,10 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
         bot.llmIntent.Tick(dt);
 
-        // ---- 目标引导：看不见敌人时朝任务目标推进 ----
-        if (!canSee) {
-            bool hasWaypoint = false;
-            float wx = 0.0f, wy = 0.0f;
+        // ---- 目标引导：A* 寻路推进 ----
+        {
+            bool hasDest = false;
+            float destX = 0.0f, destY = 0.0f;
 
             if (mode_ == MatchMode::BombDefusal) {
                 if (bot.team == Team::T && !bombPlanted_) {
@@ -89,11 +150,11 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                         const float cy = s.y + s.height * 0.5f;
                         const float dx = cx - bot.x, dy = cy - bot.y;
                         const float d2 = dx * dx + dy * dy;
-                        if (d2 < bestD2) { bestD2 = d2; wx = cx; wy = cy; hasWaypoint = true; }
+                        if (d2 < bestD2) { bestD2 = d2; destX = cx; destY = cy; hasDest = true; }
                     }
                 } else if (bot.team == Team::CT && bombPlanted_) {
-                    wx = bombX_; wy = bombY_;          // 前往拆包
-                    hasWaypoint = true;
+                    destX = bombX_; destY = bombY_;      // 前往拆包
+                    hasDest = true;
                 }
             } else if (mode_ == MatchMode::HostageRescue && bot.team == Team::CT) {
                 // 最近的未救出人质
@@ -102,20 +163,22 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                     if (h.rescued) continue;
                     const float dx = h.x - bot.x, dy = h.y - bot.y;
                     const float d2 = dx * dx + dy * dy;
-                    if (d2 < bestD2) { bestD2 = d2; wx = h.x; wy = h.y; hasWaypoint = true; }
+                    if (d2 < bestD2) { bestD2 = d2; destX = h.x; destY = h.y; hasDest = true; }
                 }
             }
 
-            if (hasWaypoint) {
-                const float dx = wx - bot.x;
-                const float dy = wy - bot.y;
-                const float d  = std::sqrt(dx * dx + dy * dy);
-                if (d > 8.0f) {
-                    bot.vx = dx / d * 60.0f;
-                    bot.vy = dy / d * 60.0f;
-                    bot.aimAngle = std::atan2(dy, dx);
-                    MoveWithCollision(bot, dt);
-                    continue;
+            // 无任务目标时，把最近敌人当作推进目标（远距离用路径接近）
+            if (!hasDest && target) {
+                destX = target->x;
+                destY = target->y;
+                hasDest = true;
+            }
+
+            if (hasDest) {
+                // 近距离且可见 → 交给战术执行器（冲刺/绕侧手感更好）
+                const bool closeCombat = canSee && targetDist < 180.0f;
+                if (!closeCombat && FollowPathTo(bot, destX, destY, dt)) {
+                    continue;   // 本帧移动已由寻路接管
                 }
             }
         }

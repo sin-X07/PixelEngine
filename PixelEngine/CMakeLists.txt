@@ -101,6 +101,8 @@ set(SOURCES
     CS2D/CS2DGameCombat.cpp
     CS2D/CS2DGameBots.cpp
     CS2D/CS2DGameObjective.cpp
+    CS2D/Navigation/PathFinder.hpp
+    CS2D/Navigation/PathFinder.cpp
     CS2D/CS2DOverlay.cpp
     CS2D/Teams/TeamManager.hpp
     CS2D/Rounds/RoundManager.hpp

@@ -128,6 +128,7 @@ PixelEngine/
     Rounds/RoundManager     回合状态机
     Economy/EconomySystem   金钱规则
     Weapons/WeaponDef       武器数据表（唯一数据源）
+    Navigation/PathFinder   网格 A* 寻路（含视线拉直、卡墙自恢复）
     CS2DWorld/Renderer/Overlay/TMJParser/MiniJSON
   LLM/                      llama-server 客户端、决策调度、意图与行为执行
   Graphics/                 GameUI（ImGui 菜单/HUD）、ImGuiUI
