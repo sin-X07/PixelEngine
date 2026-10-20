@@ -45,6 +45,8 @@ void CS2DGame::ResetToNewMatch() {
     playerDeaths_ = 0;
     matchOverAnnounced_ = false;
     killFeed_.clear();
+    contactsT_.clear();
+    contactsCT_.clear();
 
     teams_.Reset();
     teams_.SetScoreToWin(8);
@@ -371,6 +373,9 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     if (!world_) return;
 
     UpdateRoundFlow(dt, audio);
+
+    // 团队情报：老化 + 探点上报（冻结期也推进，保证情报会过期）
+    UpdateTeamContacts(dt);
 
     const bool frozen  = (mode_ != MatchMode::DeathMatch) && round_.IsFrozen();
     const bool ending  = (mode_ != MatchMode::DeathMatch) && round_.IsRoundEnd();

@@ -262,8 +262,20 @@ public:
     void SwitchWeaponSlot(int slot);
     std::string GetWeaponName() const;
 
-    // BOT 视野半径（LLM 状态采样用）
+    // BOT 视野半径（发现敌人并交火的距离）
     static constexpr float BOT_VIEW_RADIUS = 50.0f;
+    // 探点距离：超过交火距离但能「看到并上报」的范围（团队情报来源）
+    static constexpr float BOT_SPOT_RADIUS = 190.0f;
+    // 情报保留时长（秒）
+    static constexpr float CONTACT_MEMORY  = 6.0f;
+
+    // 敌人情报（团队共享；id: -1=玩家, >=0=BOT 索引）
+    struct EnemyContact {
+        int   id  = -1;
+        float x   = 0.0f;
+        float y   = 0.0f;
+        float age = 0.0f;
+    };
 
     // 鼠标灵敏度
     float GetMouseSensitivity() const { return mouseSensitivity_; }
@@ -317,6 +329,10 @@ private:
     std::vector<SquadOrder> squad_;
     float squadFocusTimer_ = 0.0f;
 
+    // 团队情报（按阵营分开）
+    std::vector<EnemyContact> contactsT_;
+    std::vector<EnemyContact> contactsCT_;
+
     float botRespawnTimer_  = 0.0f;
     static constexpr float BOT_RESPAWN_DELAY = 3.0f;
 
@@ -341,6 +357,15 @@ private:
     void AssignSquadRoles();            // 回合开始时分配 突破/支援/断后
     void UpdateSquadFocus(float dt);    // 周期性选集火目标（含掩护偏好）
     const Player* ResolveFocus(const SquadOrder& order) const;
+
+    // ---- 团队情报共享 ----
+    void UpdateTeamContacts(float dt);                 // 上报 + 老化
+    void ReportContact(Team team, int id, float x, float y);
+    const EnemyContact* FindNearestContact(Team team, float x, float y) const;
+    std::vector<EnemyContact>&       ContactsOf(Team t);
+    const std::vector<EnemyContact>& ContactsOf(Team t) const;
+    // 找一个「真实可见」的敌人（距离 + 烟雾 + LOS）
+    const Player* FindVisibleEnemy(const Player& self, float& outDist) const;
     // 沿 A* 路径移动；返回 true 表示本帧移动已由寻路接管
     bool FollowPathTo(Player& bot, float destX, float destY, float dt, float speedMul = 1.0f);
     // 局部避障：累加附近单位的排斥向量（outX/outY 已归一化到 0..1 量级）
