@@ -2,6 +2,7 @@
 #include "../Core/Types.hpp"
 #include <functional>
 #include <string>
+#include <vector>
 
 class ImGuiUI;
 
@@ -100,12 +101,30 @@ public:
         int   roundRemainingSec = 0;
         int   aliveT = 0;
         int   aliveCT = 0;
+        int   money = 0;
         bool  matchOver = false;
         bool  matchWinnerIsCT = false;
     };
 
     void DrawMenu(const MenuCtx& ctx, const Actions& actions);
     void DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI);
+
+    // ---- 买枪菜单 ----
+    struct BuyItem {
+        int         weaponId = 0;
+        std::string name;
+        int         price = 0;
+        bool        affordable = false;
+        bool        owned = false;
+        int         group = 0;      // 0=主武器 1=副武器 2=近战 3=投掷物
+    };
+    struct BuyMenuCtx {
+        std::vector<BuyItem> items;
+        int         money = 0;
+        bool        canBuy = false;   // 是否在购买期 + 购买区内
+        std::string hint;
+    };
+    void DrawBuyMenu(const BuyMenuCtx& ctx, const std::function<void(int)>& onBuy);
 
     void SetImGuiUI(ImGuiUI* ui) { imGuiUI_ = ui; }
 

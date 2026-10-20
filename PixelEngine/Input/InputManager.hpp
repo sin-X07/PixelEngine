@@ -21,6 +21,7 @@ private:
     bool digit2Requested = false;
     bool digit3Requested = false;
     bool digit4Requested = false;
+    bool buyMenuToggleRequested = false;
 
     // 鼠标状态（逻辑视口坐标）
     int mouseLogicalX = 0;
@@ -59,6 +60,7 @@ public:
     bool IsDigit2Requested() const { return digit2Requested; }
     bool IsDigit3Requested() const { return digit3Requested; }
     bool IsDigit4Requested() const { return digit4Requested; }
+    bool IsBuyMenuToggleRequested() const { return buyMenuToggleRequested; }
 
     int GetMouseX() const { return mouseLogicalX; }
     int GetMouseY() const { return mouseLogicalY; }

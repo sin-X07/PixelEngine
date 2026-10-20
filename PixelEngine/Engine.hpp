@@ -47,6 +47,10 @@ private:
     float cs2dWorldMouseY = 0.0f;
     bool  cs2dKeyW = false, cs2dKeyA = false, cs2dKeyS = false, cs2dKeyD = false;
     bool  cs2dKeyShift = false, cs2dKeyR = false;
+    bool  buyMenuOpen_ = false;   // 买枪菜单开关
+
+    // 买枪菜单渲染
+    void RenderBuyMenu();
 
     // 状态机与时钟
     const float MS_PER_UPDATE = 16.6666f;

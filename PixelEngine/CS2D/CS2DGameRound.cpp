@@ -82,11 +82,22 @@ void CS2DGame::ApplyRoundResult(Team winner) {
         teams_.AddScore(winner);
     }
 
+    GrantRoundEndMoney(winner);
+
     if (teams_.MatchOver() && !matchOverAnnounced_) {
         matchOverAnnounced_ = true;
         std::cout << "[CS2D] 比赛结束! " << TeamName(teams_.MatchWinner())
                   << " 获胜 (" << teams_.ScoreT() << ":" << teams_.ScoreCT() << ")" << std::endl;
     }
+}
+
+// 回合结算：发放金钱，并重置为下一回合的初始装备
+void CS2DGame::GrantRoundEndMoney(Team winner) {
+    // 玩家（CT）
+    player_.money += economy_.GrantRoundEnd(winner, player_.team);
+    economy_.Clamp(player_.money);
+
+    std::cout << "[Economy] 回合结算 → 玩家 $" << player_.money << std::endl;
 }
 
 int CS2DGame::AliveCount(Team t) const {

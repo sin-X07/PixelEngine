@@ -262,6 +262,69 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 }
 
 // ============================================================================
+// 买枪菜单
+// ============================================================================
+
+void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx, const std::function<void(int)>& onBuy) {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float w = 600.0f;
+    const float h = 400.0f;
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (viewport->WorkSize.x - w) * 0.5f,
+                                  viewport->WorkPos.y + (viewport->WorkSize.y - h) * 0.5f),
+                            ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.09f, 0.12f, 0.96f));
+    ImGui::Begin("##BuyMenu", nullptr,
+                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_NoTitleBar);
+
+    ImGui::TextColored(ImVec4(0.95f, 0.82f, 0.35f, 1.0f), "购买菜单");
+    ImGui::SameLine(0.0f, 24.0f);
+    ImGui::Text("余额: $%d", ctx.money);
+    ImGui::SameLine(0.0f, 24.0f);
+    ImGui::TextDisabled("[B] 关闭");
+
+    if (!ctx.canBuy && !ctx.hint.empty()) {
+        ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "%s", ctx.hint.c_str());
+    }
+    ImGui::Separator();
+
+    static const char* kGroupNames[] = { "主武器", "副武器", "近战", "投掷物" };
+    for (int g = 0; g < 4; ++g) {
+        bool headerDrawn = false;
+        int  col = 0;
+        for (const auto& it : ctx.items) {
+            if (it.group != g) continue;
+
+            if (!headerDrawn) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.45f, 0.78f, 0.95f, 1.0f), "%s", kGroupNames[g]);
+                headerDrawn = true;
+                col = 0;
+            }
+
+            const bool enabled = ctx.canBuy && it.affordable && !it.owned;
+            if (!enabled) ImGui::BeginDisabled();
+
+            char label[128];
+            snprintf(label, sizeof(label), "%s  $%d%s",
+                     it.name.c_str(), it.price, it.owned ? " (已装备)" : "");
+            if (ImGui::Button(label, ImVec2(182.0f, 0.0f))) {
+                if (onBuy) onBuy(it.weaponId);
+            }
+            if (!enabled) ImGui::EndDisabled();
+
+            ++col;
+            if (col % 3 != 0) ImGui::SameLine();
+        }
+    }
+
+    ImGui::End();
+    ImGui::PopStyleColor();
+}
+
+// ============================================================================
 // 游戏内 HUD
 // ============================================================================
 
@@ -283,7 +346,8 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
         DrawImGuiTextCentered(imGuiUI, mid, 40.0f, 180, 200, 215, 255, 18);
 
         char alive[64];
-        snprintf(alive, sizeof(alive), "T 存活 %d   CT 存活 %d", ctx.aliveT, ctx.aliveCT);
+        snprintf(alive, sizeof(alive), "T 存活 %d   CT 存活 %d   $%d",
+                 ctx.aliveT, ctx.aliveCT, ctx.money);
         DrawImGuiTextCentered(imGuiUI, alive, 64.0f, 160, 175, 185, 255, 16);
     }
 

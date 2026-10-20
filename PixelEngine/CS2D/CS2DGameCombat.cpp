@@ -176,6 +176,15 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
 
             if (bot.health <= 0) {
                 OnCombatantKilled(bot, audio);
+
+                // 玩家击杀：计分 + 经济奖励
+                if (bullet.ownerIdx == -1) {
+                    ++playerKills_;
+                    ++player_.kills;
+                    player_.money += economy_.GrantKill();
+                    economy_.Clamp(player_.money);
+                }
+
                 if (audio) audio->PlaySoundAt(SoundEffect::KILL, bot.x, bot.y,
                                               player_.x, player_.y, player_.aimAngle);
             } else if (audio) {

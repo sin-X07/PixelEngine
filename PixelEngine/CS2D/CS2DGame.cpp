@@ -43,11 +43,13 @@ void CS2DGame::ResetToNewMatch() {
     teams_.Reset();
     teams_.SetScoreToWin(8);
     round_.Reset(RoundConfig{});
+    economy_.Reset();
     prevPhase_ = round_.Phase();
 
     player_.team = Team::CT;
     player_.kills = 0;
     player_.deaths = 0;
+    player_.money = economy_.StartMoney();
     SpawnPlayer();
 
     // CT 侧：玩家 + (TEAM_SIZE-1) 个 BOT；T 侧：TEAM_SIZE 个 BOT
@@ -65,6 +67,78 @@ void CS2DGame::ResetToNewMatch() {
 
 void CS2DGame::Reset() {
     ResetToNewMatch();
+}
+
+// ============================================================================
+// 经济 / 购买
+// ============================================================================
+
+// 玩家是否处于本方购买区（地图未定义购买区时视为全图可买）
+bool CS2DGame::IsPlayerInBuyZone() const {
+    const auto& zones = world_->GetBuyZones();
+    if (zones.empty()) return true;
+
+    const char* myTeam = (player_.team == Team::CT) ? "ct" : "t";
+    for (const auto& z : zones) {
+        // 阵营过滤：属性 team 为空或 both 时对所有阵营开放
+        auto it = z.properties.find("team");
+        if (it != z.properties.end()) {
+            std::string tag = it->second;
+            for (char& c : tag) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (tag != "both" && tag != myTeam) continue;
+        }
+        if (player_.x >= z.x && player_.x <= z.x + z.width &&
+            player_.y >= z.y && player_.y <= z.y + z.height) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool CS2DGame::TryBuy(WeaponId id) {
+    if (id == WeaponId::None) return false;
+    if (!IsBuyPhase()) return false;
+    if (!player_.alive) return false;
+    if (!IsPlayerInBuyZone()) return false;
+
+    const WeaponDef& def = WeaponDB::Get(id);
+    if (def.price <= 0) return false;
+    if (player_.money < def.price) return false;
+
+    switch (def.slot) {
+        case WeaponSlotKind::Primary:
+            player_.weapons[0] = id;
+            if (player_.weaponSlot == 0) {
+                player_.ammo = def.magazine;
+                player_.maxAmmo = def.magazine;
+                player_.reloading = false;
+                player_.reloadTimer = 0.0f;
+            }
+            break;
+        case WeaponSlotKind::Secondary:
+            player_.weapons[1] = id;
+            if (player_.weaponSlot == 1) {
+                player_.ammo = def.magazine;
+                player_.maxAmmo = def.magazine;
+                player_.reloading = false;
+                player_.reloadTimer = 0.0f;
+            }
+            break;
+        case WeaponSlotKind::Melee:
+            player_.weapons[2] = id;
+            break;
+        case WeaponSlotKind::Grenade:
+            player_.weapons[3] = id;
+            player_.grenadeCount = std::min(player_.grenadeCount + 1, 3);
+            break;
+    }
+
+    player_.money -= def.price;
+    economy_.Clamp(player_.money);
+
+    std::cout << "[Buy] " << def.name << " ($" << def.price
+              << ") 余额 $" << player_.money << std::endl;
+    return true;
 }
 
 // ============================================================================

@@ -404,19 +404,32 @@ void Engine::HandleInput() {
 
     if (currentState != PLAYING) return;
 
-    // ---- CS2D 输入采集 ----
-    SDL_SetRelativeMouseMode(SDL_TRUE);
+    // ---- 买枪菜单 ----
+    if (inputManager->IsBuyMenuToggleRequested()) {
+        buyMenuOpen_ = !buyMenuOpen_;
+    }
+    if (buyMenuOpen_ && !cs2dGame->IsBuyPhase()) {
+        buyMenuOpen_ = false;   // 离开购买期自动关闭
+    }
 
-    int relX = 0, relY = 0;
-    SDL_GetRelativeMouseState(&relX, &relY);
-    cs2dOverlay.UpdateCursor(relX, relY,
-                             cs2dGame->GetMouseSensitivity(),
-                             cs2dRenderer->GetZoom(),
-                             cs2dRenderer->GetCameraX(), cs2dRenderer->GetCameraY(),
-                             logicalW_, logicalH_,
-                             cs2dWorldMouseX, cs2dWorldMouseY);
-
-    cs2dMouseDown = inputManager->IsMouseLeftDown();
+    if (buyMenuOpen_) {
+        // 菜单打开：绝对鼠标，允许点击
+        SDL_SetRelativeMouseMode(SDL_FALSE);
+        SDL_ShowCursor(SDL_ENABLE);
+    } else {
+        // 正常对局：相对鼠标瞄准
+        SDL_SetRelativeMouseMode(SDL_TRUE);
+        int relX = 0, relY = 0;
+        SDL_GetRelativeMouseState(&relX, &relY);
+        cs2dOverlay.UpdateCursor(relX, relY,
+                                 cs2dGame->GetMouseSensitivity(),
+                                 cs2dRenderer->GetZoom(),
+                                 cs2dRenderer->GetCameraX(), cs2dRenderer->GetCameraY(),
+                                 logicalW_, logicalH_,
+                                 cs2dWorldMouseX, cs2dWorldMouseY);
+        cs2dMouseDown = inputManager->IsMouseLeftDown();
+        SDL_ShowCursor(SDL_DISABLE);
+    }
 
     const Uint8* kb = SDL_GetKeyboardState(nullptr);
     cs2dKeyW     = kb[SDL_SCANCODE_W];
@@ -436,8 +449,6 @@ void Engine::HandleInput() {
     if (inputManager->IsDigit2Requested()) cs2dGame->SwitchWeaponSlot(1);
     if (inputManager->IsDigit3Requested()) cs2dGame->SwitchWeaponSlot(2);
     if (inputManager->IsDigit4Requested()) cs2dGame->SwitchWeaponSlot(3);
-
-    SDL_ShowCursor(SDL_DISABLE);
 }
 
 // ============================================================================
@@ -551,14 +562,19 @@ void Engine::Render() {
         ictx.roundRemainingSec = static_cast<int>(cs2dGame->GetRoundRemaining());
         ictx.aliveT           = cs2dGame->AliveCount(Team::T);
         ictx.aliveCT          = cs2dGame->AliveCount(Team::CT);
+        ictx.money            = cs2dGame->GetPlayerMoney();
         ictx.matchOver        = cs2dGame->IsMatchOver();
         ictx.matchWinnerIsCT  = (cs2dGame->GetMatchWinner() == Team::CT);
 
         gameUI->DrawInGame(ictx, imGuiUI.get());
     }
 
-    imGuiUI->EndFrame();
+    // 买枪菜单（覆盖在 HUD 之上）
+    if (buyMenuOpen_ && currentState == PLAYING) {
+        RenderBuyMenu();
+    }
 
+    imGuiUI->EndFrame();
     SDL_RenderPresent(renderer);
     SDL_Delay(1000 / std::max(1, targetFPS_));
 }
@@ -576,6 +592,48 @@ void Engine::LoadAudioConfig() {
     audioManager->SetMusicVolume  (ini.GetInt("audio", "music",    25));
     audioManager->SetEffectsVolume(ini.GetInt("audio", "effects", 100));
     audioManager->SetMuted        (ini.GetBool("audio", "muted", false));
+}
+
+// 买枪菜单：由 WeaponDB 生成条目，点击回调直接调用 CS2DGame::TryBuy
+void Engine::RenderBuyMenu() {
+    GameUI::BuyMenuCtx bctx;
+    bctx.money  = cs2dGame->GetPlayerMoney();
+    bctx.canBuy = cs2dGame->IsBuyPhase() && cs2dGame->IsPlayerInBuyZone();
+    if (!bctx.canBuy) {
+        bctx.hint = cs2dGame->IsBuyPhase() ? "不在购买区内" : "当前不是购买阶段";
+    }
+
+    const CS2DGame::Player& p = cs2dGame->GetPlayer();
+    for (int i = 1; i < static_cast<int>(WeaponId::Count); ++i) {
+        const WeaponDef& def = WeaponDB::Get(static_cast<WeaponId>(i));
+        if (def.price <= 0) continue;
+
+        GameUI::BuyItem it;
+        it.weaponId   = i;
+        it.name       = def.name;
+        it.price      = def.price;
+        it.affordable = (bctx.money >= def.price);
+
+        switch (def.slot) {
+            case WeaponSlotKind::Primary:   it.group = 0; break;
+            case WeaponSlotKind::Secondary: it.group = 1; break;
+            case WeaponSlotKind::Melee:     it.group = 2; break;
+            case WeaponSlotKind::Grenade:   it.group = 3; break;
+        }
+        for (int s = 0; s < 4; ++s) {
+            if (static_cast<int>(p.weapons[s]) == i && s == it.group) {
+                it.owned = true;
+                break;
+            }
+        }
+        bctx.items.push_back(it);
+    }
+
+    const int moneyBefore = bctx.money;
+    gameUI->DrawBuyMenu(bctx, [this](int weaponId) {
+        cs2dGame->TryBuy(static_cast<WeaponId>(weaponId));
+    });
+    (void)moneyBefore;
 }
 
 void Engine::InitLLMBot() {

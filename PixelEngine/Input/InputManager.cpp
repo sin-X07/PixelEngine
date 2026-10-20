@@ -14,6 +14,7 @@ void InputManager::ResetPerFrameActions() {
     digit2Requested = false;
     digit3Requested = false;
     digit4Requested = false;
+    buyMenuToggleRequested = false;
     mouseLeftClicked = false;
     mouseLeftReleased = false;
 }
@@ -62,6 +63,7 @@ void InputManager::ProcessEvents(SDL_Renderer* renderer) {
                 case SDLK_2: case SDLK_KP_2: digit2Requested = true; break;
                 case SDLK_3: case SDLK_KP_3: digit3Requested = true; break;
                 case SDLK_4: case SDLK_KP_4: digit4Requested = true; break;
+                case SDLK_b: buyMenuToggleRequested = true; break;
                 default: break;
             }
         }

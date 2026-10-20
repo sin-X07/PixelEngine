@@ -4,6 +4,7 @@
 #include "Teams/TeamManager.hpp"
 #include "Rounds/RoundManager.hpp"
 #include "Weapons/WeaponDef.hpp"
+#include "Economy/EconomySystem.hpp"
 #include "../Core/Types.hpp"
 #include "../LLM/BotIntent.hpp"
 #include "../LLM/BotBehaviorExecutor.hpp"
@@ -177,6 +178,17 @@ public:
     // 各阵营存活人数
     int AliveCount(Team t) const;
 
+    // ---- 经济 / 购买 ----
+    int  GetPlayerMoney() const { return player_.money; }
+    bool IsBuyPhase()    const {
+        return mode_ == MatchMode::TeamElimination &&
+               (round_.Phase() == RoundPhase::Freeze || round_.Phase() == RoundPhase::Buy);
+    }
+    // 玩家当前是否处于购买区内（地图未定义购买区时视为全图可买）
+    bool IsPlayerInBuyZone() const;
+    // 尝试购买；成功返回 true（已扣款并装备）
+    bool TryBuy(WeaponId id);
+
     // ---- 武器 ----
     void SwitchWeaponSlot(int slot);
     std::string GetWeaponName() const;
@@ -209,6 +221,7 @@ private:
     MatchMode  mode_ = MatchMode::TeamElimination;
     TeamManager teams_;
     RoundManager round_;
+    EconomySystem economy_;
     RoundPhase  prevPhase_ = RoundPhase::Freeze;
     bool        matchOverAnnounced_ = false;
 
@@ -259,5 +272,6 @@ private:
     void RespawnAllForRound();
     void CheckWinConditions(class AudioManager* audio);
     void ApplyRoundResult(Team winner);
+    void GrantRoundEndMoney(Team winner);   // 发放回合金钱并重置本回合装备
     void OnCombatantKilled(Player& victim, class AudioManager* audio);
 };
