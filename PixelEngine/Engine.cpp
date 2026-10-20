@@ -431,10 +431,11 @@ void Engine::HandleInput() {
     cs2dOverlay.keyTab  = kb[SDL_SCANCODE_TAB];
     cs2dOverlay.UpdateTabToggle();
 
-    // 武器槽：1=主武器 2=副武器 3=近战
+    // 武器槽：1=主武器 2=副武器 3=近战 4=投掷物
     if (inputManager->IsDigit1Requested()) cs2dGame->SwitchWeaponSlot(0);
     if (inputManager->IsDigit2Requested()) cs2dGame->SwitchWeaponSlot(1);
     if (inputManager->IsDigit3Requested()) cs2dGame->SwitchWeaponSlot(2);
+    if (inputManager->IsDigit4Requested()) cs2dGame->SwitchWeaponSlot(3);
 
     SDL_ShowCursor(SDL_DISABLE);
 }

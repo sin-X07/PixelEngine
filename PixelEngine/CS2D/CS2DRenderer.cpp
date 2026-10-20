@@ -66,12 +66,12 @@ void CS2DRenderer::Clean() {
     if (ctSheet_.tex)   { SDL_DestroyTexture(ctSheet_.tex);   ctSheet_.tex   = nullptr; }
     if (tSheet_.tex)    { SDL_DestroyTexture(tSheet_.tex);    tSheet_.tex    = nullptr; }
     if (tAltSheet_.tex) { SDL_DestroyTexture(tAltSheet_.tex); tAltSheet_.tex = nullptr; }
-    if (ak47Tex_)   { SDL_DestroyTexture(ak47Tex_);   ak47Tex_   = nullptr; }
-    if (ak47dTex_)  { SDL_DestroyTexture(ak47dTex_);  ak47dTex_  = nullptr; }
-    if (m4a1dTex_)  { SDL_DestroyTexture(m4a1dTex_);  m4a1dTex_  = nullptr; }
-    if (m4a1Tex_)   { SDL_DestroyTexture(m4a1Tex_);   m4a1Tex_   = nullptr; }
-    if (deagleTex_) { SDL_DestroyTexture(deagleTex_); deagleTex_ = nullptr; }
-    if (knifeTex_)  { SDL_DestroyTexture(knifeTex_);  knifeTex_  = nullptr; }
+
+    for (auto*& t : weaponSprites_) { if (t) { SDL_DestroyTexture(t); t = nullptr; } }
+    for (auto*& t : weaponIcons_)   { if (t) { SDL_DestroyTexture(t); t = nullptr; } }
+    weaponSprites_.clear();
+    weaponIcons_.clear();
+
     if (bulletTex_) { SDL_DestroyTexture(bulletTex_); bulletTex_ = nullptr; }
 
     if (visionTex_) { SDL_DestroyTexture(visionTex_); visionTex_ = nullptr; }
@@ -143,22 +143,32 @@ void CS2DRenderer::SetWorld(const CS2DWorld* world) {
     tAltSheet_.tex   = LoadTexture(mapDir_ + "/../sprites/t_player_alt.png");
     tAltSheet_.frameW = 32; tAltSheet_.frameH = 31; tAltSheet_.cols = 2; tAltSheet_.rows = 3;
 
-    ak47Tex_   = LoadTexture(mapDir_ + "/../sprites/ak47.png");
-    ak47dTex_  = LoadTexture("assets/images/weapons/AK47_d.png");
-    m4a1dTex_  = LoadTexture("assets/images/weapons/M4A1_d.png");
-    m4a1Tex_   = LoadTexture(mapDir_ + "/../sprites/m4a1.png");
-    deagleTex_ = LoadTexture(mapDir_ + "/../sprites/deagle.png");
-    knifeTex_  = LoadTexture(mapDir_ + "/../sprites/knife.png");
+    // ---- 武器贴图 / 图标（来自 WeaponDB，索引 = WeaponId）----
+    const int wcount = static_cast<int>(WeaponId::Count);
+    weaponSprites_.assign(wcount, nullptr);
+    weaponIcons_.assign(wcount, nullptr);
+    for (int i = 1; i < wcount; ++i) {
+        const WeaponDef& def = WeaponDB::Get(static_cast<WeaponId>(i));
+        if (def.spritePath) {
+            weaponSprites_[i] = LoadTexture(std::string("assets/") + def.spritePath);
+        }
+        if (def.iconPath) {
+            weaponIcons_[i] = LoadTexture(std::string("assets/") + def.iconPath);
+        }
+    }
+
     bulletTex_ = LoadTexture("assets/images/effects/bullet.png");
 
-    std::cout << "[CS2DRenderer] 精灵加载: CT=" << (ctSheet_.tex ? "OK" : "FAIL")
+    // 武器素材加载汇总
+    int wOk = 0, wFail = 0;
+    for (int i = 1; i < wcount; ++i) {
+        if (weaponSprites_[i]) ++wOk; else ++wFail;
+    }
+    std::cout << "[CS2DRenderer] 角色精灵: CT=" << (ctSheet_.tex ? "OK" : "FAIL")
               << " T=" << (tSheet_.tex ? "OK" : "FAIL")
               << " T_alt=" << (tAltSheet_.tex ? "OK" : "FAIL")
-              << " AK47=" << (ak47Tex_ ? "OK" : "FAIL")
-              << " M4A1=" << (m4a1Tex_ ? "OK" : "FAIL")
-              << " Deagle=" << (deagleTex_ ? "OK" : "FAIL")
-              << " Knife=" << (knifeTex_ ? "OK" : "FAIL")
-              << " Bullet=" << (bulletTex_ ? "OK" : "FAIL") << std::endl;
+              << " | 武器贴图 " << wOk << "/" << (wOk + wFail)
+              << " | Bullet=" << (bulletTex_ ? "OK" : "FAIL") << std::endl;
 
     if (failedLoads_ > 0) {
         std::cerr << "[Asset] 贴图缺失 " << failedLoads_
@@ -392,36 +402,23 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
     // 武器
     if (p.animState != 3) {
         DrawWeaponForCharacter(cx + xOff, cy + yOff, p.size, p.aimAngle,
-                               p.weaponSlot, p.weaponType);
+                               p.weaponSlot, p.weaponId);
     }
 }
 
 void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float aimAngle,
-                                          int weaponSlot, int weaponType) {
-    SDL_Texture* weaponTex = nullptr;
-    float degOffset = 90.0f;   // 多数贴图原生朝上，需要 +90° 使其指向 aimAngle
-    float weaponSz   = 4.0f;   // 世界单位（×zoom 后约 16px）
+                                          int weaponSlot, int weaponId) {
+    if (weaponId <= 0 || weaponId >= static_cast<int>(weaponSprites_.size())) return;
+    SDL_Texture* tex = weaponSprites_[weaponId];
+    if (!tex) return;
 
-    switch (weaponSlot) {
-        case 1:  // 副武器：Deagle（原生朝右，偏移 0°）
-            weaponTex = deagleTex_;
-            degOffset = 0.0f;
-            weaponSz  = 3.0f;
-            break;
-        case 2:  // 近战：Knife（原生朝上）
-            weaponTex = knifeTex_;
-            degOffset = 90.0f;
-            weaponSz  = 4.5f;
-            break;
-        default: // 主武器：AK47 或 M4A1（原生朝上）
-            weaponTex = (weaponType == 0) ? ak47Tex_ : m4a1Tex_;
-            degOffset = 90.0f;
-            weaponSz  = 4.0f;
-            break;
-    }
-    if (!weaponTex) return;
+    const WeaponDef& def = WeaponDB::Get(static_cast<WeaponId>(weaponId));
+    const float degOffset = def.degOffset;
+    const float weaponSz  = (weaponSlot == 1) ? 3.0f
+                          : (weaponSlot == 2) ? 4.5f
+                          : 4.0f;
 
-    // 武器绘制在精灵前方偏移（世界单位，随缩放）
+    // 武器绘制在精灵前方偏移
     const float offset = size * 0.35f * zoom_;
     const float wx = cx + std::cos(aimAngle) * offset;
     const float wy = cy + std::sin(aimAngle) * offset;
@@ -434,7 +431,7 @@ void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float 
     wdst.h = drawSz;
 
     SDL_FPoint wcenter = { drawSz * 0.5f, drawSz * 0.5f };
-    SDL_RenderCopyExF(renderer_, weaponTex, nullptr, &wdst,
+    SDL_RenderCopyExF(renderer_, tex, nullptr, &wdst,
                       aimAngle * 180.0f / 3.14159265f + degOffset,
                       &wcenter, SDL_FLIP_NONE);
 }
@@ -496,7 +493,8 @@ void CS2DRenderer::DrawCrosshair(float cx, float cy,
     }
 }
 
-void CS2DRenderer::DrawWeaponStatus(int weaponSlot, int weaponType, int viewW, int viewH) {
+void CS2DRenderer::DrawWeaponStatus(int weaponId, int ammo, int magazine,
+                                    int viewW, int viewH) {
     // 右下角武器栏视觉 — 相对视口右下角定位
     const int panelW = 160, panelH = 56;
     const int panelX = viewW - panelW - 10;
@@ -508,20 +506,19 @@ void CS2DRenderer::DrawWeaponStatus(int weaponSlot, int weaponType, int viewW, i
     SDL_RenderDrawRect(renderer_, &panel);
     // 底沿金色高亮线
     SDL_SetRenderDrawColor(renderer_, 230, 185, 80, 140);
-    SDL_RenderDrawLine(renderer_, panel.x + 2, panel.y + panel.h - 1, panel.x + panel.w - 2, panel.y + panel.h - 1);
+    SDL_RenderDrawLine(renderer_, panel.x + 2, panel.y + panel.h - 1,
+                       panel.x + panel.w - 2, panel.y + panel.h - 1);
 
-    // 按武器槽选图标：AK47 用 AK47_d.png 专有图
+    // 图标：按 WeaponId 查表；缺失时回退到武器世界贴图
     SDL_Texture* icon = nullptr;
-    switch (weaponSlot) {
-        case 1:  icon = deagleTex_; break;
-        case 2:  icon = knifeTex_;  break;
-        default: icon = (weaponType == 0) ? ak47dTex_ : m4a1dTex_;
-                 if (!icon) icon = (weaponType == 0) ? ak47Tex_ : m4a1Tex_;
-                 break;
+    if (weaponId > 0 && weaponId < static_cast<int>(weaponIcons_.size())) {
+        icon = weaponIcons_[weaponId];
+        if (!icon && weaponId < static_cast<int>(weaponSprites_.size())) {
+            icon = weaponSprites_[weaponId];
+        }
     }
     if (!icon) return;
 
-    // 图标放在面板左侧，文字放在右侧（通过 anchored offset 与 ImGui 文字错开）
     int tw = 0, th = 0;
     SDL_QueryTexture(icon, nullptr, nullptr, &tw, &th);
     const int box = 44;
@@ -534,11 +531,13 @@ void CS2DRenderer::DrawWeaponStatus(int weaponSlot, int weaponType, int viewW, i
             dw = std::max(1, static_cast<int>(std::lround(static_cast<float>(box) * tw / th)));
         }
     }
-    // 图标偏左放置，给右侧文字留空间
     const int iconX = panel.x + 10 + box / 2;
     const int iconY = panel.y + panel.h / 2;
     SDL_Rect iconRect = {iconX - dw / 2, iconY - dh / 2, dw, dh};
     SDL_RenderCopy(renderer_, icon, nullptr, &iconRect);
+
+    (void)ammo;
+    (void)magazine;
 }
 
 // ============================================================================
@@ -612,6 +611,36 @@ float CS2DRenderer::ComputeVisibility(float playerX, float playerY, float aimAng
     if (!HasLineOfSight(playerX, playerY, targetX, targetY)) return 0.0f;
 
     return std::min(distFactor, coneFactor);
+}
+
+// 烟雾云：用同心圆近似柔和边缘
+void CS2DRenderer::DrawSmokeCloud(float worldX, float worldY, float worldRadius, Uint8 alpha) {
+    if (!renderer_) return;
+    const float cx = (worldX - cameraX_) * zoom_;
+    const float cy = (worldY - cameraY_) * zoom_;
+    const float r  = worldRadius * zoom_;
+    if (r < 1.0f) return;
+
+    constexpr int kRings = 8;
+    for (int i = kRings; i >= 1; --i) {
+        const float t = static_cast<float>(i) / kRings;
+        const float rr = r * t;
+        const Uint8 a = static_cast<Uint8>(alpha * (1.0f - t * 0.75f));
+        SDL_SetRenderDrawColor(renderer_, 205, 208, 212, a);
+        // 用水平线填充圆，避免依赖 SDL 的圆绘制
+        const int span = static_cast<int>(rr);
+        for (int dy = -span; dy <= span; ++dy) {
+            const float half = std::sqrt(std::max(0.0f, rr * rr - static_cast<float>(dy * dy)));
+            SDL_RenderDrawLineF(renderer_, cx - half, cy + dy, cx + half, cy + dy);
+        }
+    }
+}
+
+void CS2DRenderer::DrawFlashOverlay(Uint8 alpha) {
+    if (!renderer_ || alpha == 0) return;
+    SDL_SetRenderDrawColor(renderer_, 255, 255, 255, alpha);
+    SDL_Rect full = { 0, 0, viewW_, viewH_ };
+    SDL_RenderFillRect(renderer_, &full);
 }
 
 void CS2DRenderer::DrawVisionFog(float playerX, float playerY, float aimAngle) {

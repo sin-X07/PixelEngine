@@ -1,5 +1,6 @@
 #pragma once
 #include "CS2DWorld.hpp"
+#include "Weapons/WeaponDef.hpp"
 #include <SDL2/SDL.h>
 #include <SDL_image.h>
 #include <vector>
@@ -17,8 +18,9 @@ struct SpriteDrawParams {
     float size    = 6.0f;       // 仅作命中盒参考，视觉尺寸由 SPRITE_VISUAL_SIZE 决定
     float aimAngle = 0.0f;
     int   spriteKey  = 0;   // 0=CT头盔, 1=T无头盔, 2=T备选
-    int   weaponType = 0;   // 0=AK47, 1=M4A1（主武器外观）
-    int   weaponSlot = 0;   // 0=主武器, 1=副武器, 2=近战（决定切片帧与手中武器）
+    int   weaponId   = 0;   // WeaponId（决定手持武器贴图）
+    int   weaponType = 0;   // 兼容保留
+    int   weaponSlot = 0;   // 0=主武器, 1=副武器, 2=近战, 3=投掷物（决定姿态帧）
     int   animState  = 0;   // 0=Idle, 1=Walk, 2=Shoot, 3=Dead
     float animTimer  = 0.0f;
     float deathTimer = 0.0f;
@@ -76,11 +78,16 @@ public:
     // 计分板（屏幕顶端正中）
     void DrawScoreboard(int total, int kills, int deaths, int viewW = 800, int viewH = 600);
 
-    // 右下角武器栏（复刻模式一 DrawWeaponStatus）
-    void DrawWeaponStatus(int weaponSlot, int weaponType, int viewW = 800, int viewH = 600);
+    // 右下角武器栏
+    void DrawWeaponStatus(int weaponId, int ammo, int magazine,
+                          int viewW = 800, int viewH = 600);
 
     // 视野遮罩
     void DrawVisionFog(float playerX, float playerY, float aimAngle);
+
+    // 烟雾云 / 闪光致盲整屏覆盖
+    void DrawSmokeCloud(float worldX, float worldY, float worldRadius, Uint8 alpha);
+    void DrawFlashOverlay(Uint8 alpha);
 
     // 视线检查（供 CS2DGame 使用）
     bool HasLineOfSight(float fromX, float fromY, float toX, float toY) const;
@@ -140,16 +147,15 @@ private:
     SpriteSheetDef ctSheet_   {};   // soldier_with_helmet    64×96 → 32×32/frame
     SpriteSheetDef tSheet_    {};   // soldier_no_helmet      64×96 → 32×32/frame
     SpriteSheetDef tAltSheet_ {};   // soldier_by_risingXD   64×94 → 32×31/frame
-    SDL_Texture* ak47Tex_   = nullptr;
-    SDL_Texture* ak47dTex_  = nullptr;   // AK47_d.png（武器栏用）
-    SDL_Texture* m4a1dTex_  = nullptr;   // M4A1_d.png（武器栏用）
-    SDL_Texture* m4a1Tex_   = nullptr;
-    SDL_Texture* deagleTex_ = nullptr;
-    SDL_Texture* knifeTex_  = nullptr;
+
+    // 武器贴图 / 图标（索引 = WeaponId）
+    std::vector<SDL_Texture*> weaponSprites_;
+    std::vector<SDL_Texture*> weaponIcons_;
+
     SDL_Texture* bulletTex_ = nullptr;
 
     void DrawWeaponForCharacter(float cx, float cy, float size, float aimAngle,
-                                int weaponSlot, int weaponType);
+                                int weaponSlot, int weaponId);
 
     // ========= 视野遮罩 =========
     static constexpr int   VISION_MASK_SCALE = 4;

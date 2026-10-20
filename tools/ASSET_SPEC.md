@@ -75,6 +75,9 @@
 | `grenade_flash_d.png` | 闪光弹 |
 | `grenade_smoke_d.png` | 烟雾弹 |
 
+> 说明：`Deagle` / `Knife` 的 HUD 图标直接复用 `Deagle.png` / `Knife.png`（大图自动缩放），
+> 不需要单独的 `_d` 版本。
+
 ---
 
 ## 4. Tileset

@@ -108,10 +108,16 @@ void CS2DGame::SpawnPlayer() {
     player_.deathTimer = 0.0f;
     player_.shootAnimTimer = 0.0f;
     player_.spriteKey  = 0;            // CT 头盔
-    player_.weaponType = 1;            // M4A1
+    player_.weapons[0] = WeaponId::M4A1;
+    player_.weapons[1] = WeaponId::Glock;
+    player_.weapons[2] = WeaponId::Knife;
+    player_.weapons[3] = WeaponId::GrenadeHE;
+    player_.grenadeCount = 1;
     player_.weaponSlot = 0;
-    player_.ammo       = 30;
-    player_.maxAmmo    = 30;
+
+    const WeaponDef& w = WeaponDB::Get(player_.weapons[0]);
+    player_.ammo    = w.magazine;
+    player_.maxAmmo = w.magazine;
     player_.reloading  = false;
     player_.reloadTimer = 0.0f;
     player_.stealth    = false;
@@ -145,15 +151,23 @@ void CS2DGame::SpawnBOT(Player& bot, Team team) {
     bot.stealth    = false;
     bot.llmIntent.Reset();
 
-    // 外观：CT 用头盔，T 用两种无头盔外观
+    // 外观与武器：CT 用 M4A1，T 用 AK47；副武器 Glock，近战 Knife
     if (team == Team::CT) {
         bot.spriteKey = 0;
-        bot.weaponType = 1;            // M4A1
+        bot.weapons[0] = WeaponId::M4A1;
     } else {
         bot.spriteKey = 1 + static_cast<int>(rng_() % 2);
-        bot.weaponType = 0;            // AK47
+        bot.weapons[0] = WeaponId::AK47;
     }
+    bot.weapons[1] = WeaponId::Glock;
+    bot.weapons[2] = WeaponId::Knife;
+    bot.weapons[3] = WeaponId::GrenadeHE;
+    bot.grenadeCount = 1;
     bot.weaponSlot = 0;
+
+    const WeaponDef& bw = WeaponDB::Get(bot.weapons[0]);
+    bot.ammo    = bw.magazine;
+    bot.maxAmmo = bw.magazine;
     bot.aimAngle = angleDist_(rng_);
 
     for (int attempt = 0; attempt < 20; ++attempt) {
@@ -171,16 +185,18 @@ void CS2DGame::RespawnBOT(Player& bot) {
 // ============================================================================
 
 void CS2DGame::SwitchWeaponSlot(int slot) {
-    if (slot < 0 || slot > 2) return;
-    if (mode_ == MatchMode::TeamElimination && round_.IsFrozen()) return;  // 冻结期禁切换
+    if (slot < 0 || slot > 3) return;
+    if (mode_ == MatchMode::TeamElimination && round_.IsFrozen()) return;
+    if (player_.weapons[slot] == WeaponId::None) return;   // 空槽位
 
     const int oldSlot = player_.weaponSlot;
-    if (oldSlot == 0 || oldSlot == 1) {
+    if (oldSlot >= 0 && oldSlot <= 1) {
         slotAmmo_[oldSlot]    = player_.ammo;
         slotMaxAmmo_[oldSlot] = player_.maxAmmo;
     }
     player_.weaponSlot = slot;
-    if (slot == 0 || slot == 1) {
+
+    if (slot <= 1) {
         player_.ammo    = slotAmmo_[slot];
         player_.maxAmmo = slotMaxAmmo_[slot];
     } else {
@@ -192,12 +208,7 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
 }
 
 std::string CS2DGame::GetWeaponName() const {
-    switch (player_.weaponSlot) {
-        case 0: return (player_.weaponType == 0) ? "AK-47" : "M4A1";
-        case 1: return "Deagle";
-        case 2: return "Knife";
-        default: return "Rifle";
-    }
+    return WeaponDB::Get(player_.CurrentWeapon().id).name;
 }
 
 // ============================================================================
@@ -246,6 +257,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     }
 
     UpdateBullets(dt, audio);
+    UpdateGrenades(dt, audio);
     CheckWinConditions(audio);
 
     // ---- 动画状态机 ----
@@ -427,73 +439,82 @@ void CS2DGame::MoveWithCollision(Player& entity, float dt) {
     entity.y = std::clamp(entity.y, 0.0f, world_->GetMapPixelH() - 1.0f);
 }
 
-// 武器槽参数（Phase 3 将替换为数据驱动表）
-static WeaponSlotParams GetSlotParams(int slot) {
-    switch (slot) {
-        case 1:  return { 35.0f, 0.40f, 700.0f, 700.0f };
-        case 2:  return { 50.0f, 0.50f, 900.0f, 45.0f  };
-        default: return { 25.0f, 0.12f, 600.0f, 800.0f };
-    }
-}
-
 void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, float worldMY,
                                     AudioManager* audio) {
     if (!player_.alive) return;
 
     player_.aimAngle = std::atan2(worldMY - player_.y, worldMX - player_.x);
 
+    const WeaponDef& def = player_.CurrentWeapon();
+
+    // 投掷物
+    if (def.cls == WeaponClass::Grenade) {
+        if (!mouseDown || player_.shootCooldown > 0.0f) return;
+        if (player_.grenadeCount <= 0) return;
+        ThrowGrenade(player_, player_.aimAngle);
+        player_.shootCooldown = def.cooldown;
+        player_.shootAnimTimer = 0.12f;
+        return;
+    }
+
     if (player_.reloading) return;
     if (player_.shootCooldown > 0.0f) player_.shootCooldown -= dt;
 
     const bool mouseEdge = mouseDown && !prevMouseDown_;
-    if (player_.weaponSlot == 1) {
+    if (!def.automatic) {
         if (!mouseEdge || player_.shootCooldown > 0.0f) return;
     } else {
         if (!mouseDown || player_.shootCooldown > 0.0f) return;
     }
 
-    const WeaponSlotParams wp = GetSlotParams(player_.weaponSlot);
-
-    // 近战
-    if (player_.weaponSlot == 2) {
+    // ---- 近战 ----
+    if (def.cls == WeaponClass::Melee) {
         for (auto& bot : bots_) {
             if (!bot.alive || bot.team == player_.team) continue;
             const float bdx = bot.x - player_.x;
             const float bdy = bot.y - player_.y;
-            if (std::sqrt(bdx * bdx + bdy * bdy) < wp.range) {
-                bot.health -= static_cast<int>(wp.damage);
+            if (std::sqrt(bdx * bdx + bdy * bdy) < def.range) {
+                bot.health -= static_cast<int>(def.damage);
                 if (bot.health <= 0) OnCombatantKilled(bot, audio);
             }
         }
-        player_.shootCooldown = wp.cooldown;
+        player_.shootCooldown = def.cooldown;
         player_.shootAnimTimer = 0.12f;
         if (audio) audio->PlaySound(SoundEffect::KATANA_SWING);
         return;
     }
 
+    // ---- 枪械 ----
     if (player_.ammo <= 0) { StartReload(player_); return; }
 
-    FireBullet(player_.x, player_.y, player_.aimAngle, wp, -1, player_.team);
+    // 散布 + 多弹丸（霰弹）
+    std::uniform_real_distribution<float> spreadDist(-def.spreadBase, def.spreadBase);
+    for (int p = 0; p < std::max(1, def.pellets); ++p) {
+        const float angle = player_.aimAngle + spreadDist(rng_);
+        FireBullet(player_.x, player_.y, angle, def, -1, player_.team);
+    }
+
     player_.ammo--;
-    player_.shootCooldown = wp.cooldown;
+    player_.shootCooldown = def.cooldown;
     player_.shootAnimTimer = 0.12f;
 
     if (audio) {
-        if (player_.weaponSlot == 0) audio->PlaySound(SoundEffect::AK47_FIRE);
-        else                         audio->PlaySound(SoundEffect::SHOOT);
+        if (def.cls == WeaponClass::Rifle) audio->PlaySound(SoundEffect::AK47_FIRE);
+        else                               audio->PlaySound(SoundEffect::SHOOT);
     }
 }
 
-void CS2DGame::FireBullet(float x, float y, float angle, const WeaponSlotParams& wp,
+// 由 WeaponDef 直接发射子弹
+void CS2DGame::FireBullet(float x, float y, float angle, const WeaponDef& def,
                           int ownerIdx, Team ownerTeam) {
     Bullet b;
     b.x = x;
     b.y = y;
-    b.vx = std::cos(angle) * wp.speed;
-    b.vy = std::sin(angle) * wp.speed;
+    b.vx = std::cos(angle) * def.bulletSpeed;
+    b.vy = std::sin(angle) * def.bulletSpeed;
     b.traveled = 0.0f;
-    b.maxDist  = wp.range;
-    b.damage   = static_cast<int>(wp.damage);
+    b.maxDist  = def.range;
+    b.damage   = static_cast<int>(def.damage);
     b.ownerIdx = ownerIdx;
     b.ownerTeam = ownerTeam;
     b.active   = true;
@@ -515,6 +536,8 @@ bool CS2DGame::BotCanSeePlayer(const Player& bot) const {
 
 bool CS2DGame::PlayerCanSeeBot(const Player& bot) const {
     if (!bot.alive) return false;
+    // 烟雾遮挡
+    if (SegmentBlockedBySmoke(player_.x, player_.y, bot.x, bot.y)) return false;
     if (!renderer_) return true;
     return renderer_->IsVisibleToPlayer(player_.x, player_.y, player_.aimAngle,
                                         bot.x, bot.y);
@@ -558,9 +581,10 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         const Player* target = FindNearestEnemy(bot, player_, bots_, targetDist);
         if (!target) continue;
 
-        // 视线判定（距离 + LOS）
+        // 视线判定（距离 + 烟雾 + LOS）
         bool canSee = false;
-        if (targetDist <= BOT_VIEW_RADIUS) {
+        if (targetDist <= BOT_VIEW_RADIUS &&
+            !SegmentBlockedBySmoke(bot.x, bot.y, target->x, target->y)) {
             canSee = !renderer_ || renderer_->HasLineOfSight(bot.x, bot.y, target->x, target->y);
         }
 
@@ -580,47 +604,50 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
         if (canSee) bot.aimAngle = out.aimAngle;
 
-        if (out.shouldShoot && canSee && bot.weaponSlot < 2) {
+        const WeaponDef& def = bot.CurrentWeapon();
+
+        // 枪械 / 霰弹
+        if (out.shouldShoot && canSee && def.cls != WeaponClass::Melee &&
+            def.cls != WeaponClass::Grenade) {
             if (bot.shootCooldown > 0.0f) bot.shootCooldown -= dt;
 
             if (bot.shootCooldown <= 0.0f) {
-                const WeaponSlotParams wp = GetSlotParams(bot.weaponSlot);
-                if (targetDist < wp.range + 200.0f) {
+                if (targetDist < def.range + 200.0f) {
                     if (bot.ammo <= 0) { StartReload(bot); continue; }
 
-                    float spreadAngle = 0.0f;
+                    // 命中倾向：30% 精确（小抖动），70% 打偏（大散布）
                     std::uniform_real_distribution<float> hitRoll(0.0f, 1.0f);
-                    if (hitRoll(rng_) < 0.30f) {
-                        std::uniform_real_distribution<float> jitter(-0.08f * out.spreadMul,
-                                                                      0.08f * out.spreadMul);
-                        spreadAngle = jitter(rng_);
-                    } else {
-                        std::uniform_real_distribution<float> missSpread(-0.8f * out.spreadMul,
-                                                                          0.8f * out.spreadMul);
-                        spreadAngle = missSpread(rng_);
-                    }
+                    const bool precise = hitRoll(rng_) < 0.30f;
+                    const float base = precise ? 0.08f : 0.8f;
+                    std::uniform_real_distribution<float> spreadDist(
+                        -base * out.spreadMul, base * out.spreadMul);
 
-                    const float aim = std::atan2(target->y - bot.y, target->x - bot.x) + spreadAngle;
-                    FireBullet(bot.x, bot.y, aim, wp, static_cast<int>(i), bot.team);
+                    const float aimBase = std::atan2(target->y - bot.y, target->x - bot.x);
+                    const int pellets = std::max(1, def.pellets);
+                    for (int p = 0; p < pellets; ++p) {
+                        FireBullet(bot.x, bot.y, aimBase + spreadDist(rng_), def,
+                                   static_cast<int>(i), bot.team);
+                    }
                     bot.ammo--;
-                    bot.shootCooldown = wp.cooldown * 1.8f * out.shootCooldownMul;
+                    bot.shootCooldown = def.cooldown * 1.8f * out.shootCooldownMul;
                     bot.shootAnimTimer = 0.12f;
 
-                    if (audio && bot.weaponSlot == 0) {
+                    if (audio && def.cls == WeaponClass::Rifle) {
                         audio->PlaySoundAt(SoundEffect::AK47_FIRE, bot.x, bot.y,
                                            player_.x, player_.y, player_.aimAngle);
                     }
                 }
             }
-        } else if (bot.weaponSlot == 2 && canSee && targetDist < 20.0f && target->alive) {
-            const WeaponSlotParams wp = GetSlotParams(2);
+        }
+        // 近战
+        else if (def.cls == WeaponClass::Melee && canSee && targetDist < 20.0f && target->alive) {
             if (bot.shootCooldown > 0.0f) bot.shootCooldown -= dt;
             if (bot.shootCooldown <= 0.0f) {
                 if (target == &player_) {
-                    player_.health -= static_cast<int>(wp.damage * 0.33f);
+                    player_.health -= static_cast<int>(def.damage * 0.33f);
                     if (player_.health <= 0) OnCombatantKilled(player_, audio);
                 }
-                bot.shootCooldown = wp.cooldown * 1.5f * out.shootCooldownMul;
+                bot.shootCooldown = def.cooldown * 1.5f * out.shootCooldownMul;
                 bot.shootAnimTimer = 0.12f;
             }
         }
@@ -701,6 +728,144 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
 }
 
 // ============================================================================
+// 手雷
+// ============================================================================
+
+void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle) {
+    if (thrower.grenadeCount <= 0) return;
+
+    const WeaponId type = thrower.weapons[3];
+    const WeaponDef& def = WeaponDB::Get(type);
+    if (def.cls != WeaponClass::Grenade) return;
+
+    Grenade g;
+    g.x = thrower.x;
+    g.y = thrower.y;
+    g.vx = std::cos(aimAngle) * 260.0f;
+    g.vy = std::sin(aimAngle) * 260.0f;
+    g.fuse = 1.4f;
+    g.type = type;
+    g.team = thrower.team;
+    g.active = true;
+    grenades_.push_back(g);
+
+    --thrower.grenadeCount;
+}
+
+void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
+    // 投掷物飞行 + 引信
+    for (auto& g : grenades_) {
+        if (!g.active) continue;
+
+        g.fuse -= dt;
+        g.x += g.vx * dt;
+        g.y += g.vy * dt;
+
+        // 地面摩擦
+        g.vx -= g.vx * 3.0f * dt;
+        g.vy -= g.vy * 3.0f * dt;
+
+        // 撞墙停下
+        int row = 0, col = 0;
+        world_->WorldToTile(g.x, g.y, row, col);
+        if (world_->IsBlockingBullet(row, col)) {
+            g.vx = g.vy = 0.0f;
+        }
+        g.x = std::clamp(g.x, 0.0f, world_->GetMapPixelW() - 1.0f);
+        g.y = std::clamp(g.y, 0.0f, world_->GetMapPixelH() - 1.0f);
+
+        if (g.fuse <= 0.0f) {
+            ExplodeGrenade(g, audio);
+            g.active = false;
+        }
+    }
+    grenades_.erase(std::remove_if(grenades_.begin(), grenades_.end(),
+                                   [](const Grenade& g) { return !g.active; }),
+                    grenades_.end());
+
+    // 烟雾云寿命
+    for (auto& s : smokes_) s.life -= dt;
+    smokes_.erase(std::remove_if(smokes_.begin(), smokes_.end(),
+                                 [](const SmokeCloud& s) { return s.life <= 0.0f; }),
+                  smokes_.end());
+
+    // 闪光致盲衰减
+    if (flashTimer_ > 0.0f) flashTimer_ -= dt;
+}
+
+void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
+    switch (g.type) {
+        case WeaponId::GrenadeHE: {
+            constexpr float RADIUS = 95.0f;
+            constexpr float MAX_DMG = 98.0f;
+
+            auto damageAt = [&](Player& p) {
+                if (!p.alive || p.team == g.team) return;   // 无友伤
+                const float dx = p.x - g.x;
+                const float dy = p.y - g.y;
+                const float d = std::sqrt(dx * dx + dy * dy);
+                if (d > RADIUS) return;
+                const float falloff = 1.0f - d / RADIUS;
+                p.health -= static_cast<int>(MAX_DMG * falloff);
+                if (p.health <= 0) OnCombatantKilled(p, audio);
+            };
+
+            damageAt(player_);
+            for (auto& b : bots_) damageAt(b);
+
+            if (audio) audio->PlaySound(SoundEffect::OBSTACLE_BREAK);
+            break;
+        }
+        case WeaponId::GrenadeFlash: {
+            // 玩家致盲：距离 + 视线
+            if (player_.alive && player_.team != g.team) {
+                const float dx = player_.x - g.x;
+                const float dy = player_.y - g.y;
+                if (std::sqrt(dx * dx + dy * dy) < 220.0f) {
+                    flashTimer_ = 2.5f;
+                }
+            }
+            if (audio) audio->PlaySound(SoundEffect::HIT);
+            break;
+        }
+        case WeaponId::GrenadeSmoke: {
+            SmokeCloud s;
+            s.x = g.x;
+            s.y = g.y;
+            s.radius = 70.0f;
+            s.life = 12.0f;
+            smokes_.push_back(s);
+            if (audio) audio->PlaySound(SoundEffect::PICKUP);
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+// 线段是否被任一烟雾云遮挡（用于视野判定）
+bool CS2DGame::SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) const {
+    if (smokes_.empty()) return false;
+
+    const float dx = x2 - x1;
+    const float dy = y2 - y1;
+    const float len2 = dx * dx + dy * dy;
+    if (len2 < 0.0001f) return false;
+
+    for (const auto& s : smokes_) {
+        // 点到线段最短距离，与烟雾半径比较
+        float t = ((s.x - x1) * dx + (s.y - y1) * dy) / len2;
+        t = std::clamp(t, 0.0f, 1.0f);
+        const float px = x1 + dx * t;
+        const float py = y1 + dy * t;
+        const float ddx = s.x - px;
+        const float ddy = s.y - py;
+        if (ddx * ddx + ddy * ddy <= s.radius * s.radius) return true;
+    }
+    return false;
+}
+
+// ============================================================================
 // 死亡处理
 // ============================================================================
 
@@ -770,7 +935,7 @@ void CS2DGame::Render(int viewW, int viewH) {
         sp.size       = p.size;
         sp.aimAngle   = p.aimAngle;
         sp.spriteKey  = p.spriteKey;
-        sp.weaponType = p.weaponType;
+        sp.weaponId   = static_cast<int>(p.CurrentWeapon().id);
         sp.weaponSlot = p.weaponSlot;
         sp.animState  = static_cast<int>(p.animState);
         sp.animTimer  = p.animTimer;
@@ -800,10 +965,34 @@ void CS2DGame::Render(int viewW, int viewH) {
         renderer_->DrawBullet(b.x, b.y, b.vx, b.vy);
     }
 
+    // 投掷物
+    for (const auto& g : grenades_) {
+        if (!g.active) continue;
+        renderer_->DrawBullet(g.x, g.y, g.vx, g.vy);
+    }
+
+    // 烟雾云（在遮罩之前绘制，仍受视野影响但视觉上覆盖战场）
+    for (const auto& s : smokes_) {
+        const float t = std::clamp(s.life / 12.0f, 0.0f, 1.0f);
+        renderer_->DrawSmokeCloud(s.x, s.y, s.radius,
+                                  static_cast<Uint8>(200.0f * std::min(1.0f, t * 3.0f)));
+    }
+
     if (player_.alive) {
         renderer_->DrawVisionFog(player_.x, player_.y, player_.aimAngle);
     }
 
     renderer_->DrawOverlay();
-    renderer_->DrawWeaponStatus(player_.weaponSlot, player_.weaponType, viewW, viewH);
+
+    // 闪光致盲（最上层）
+    if (flashTimer_ > 0.0f) {
+        const float k = std::clamp(flashTimer_ / 2.5f, 0.0f, 1.0f);
+        renderer_->DrawFlashOverlay(static_cast<Uint8>(230.0f * k));
+    }
+
+    const WeaponDef& pw = player_.CurrentWeapon();
+    renderer_->DrawWeaponStatus(static_cast<int>(pw.id), player_.ammo,
+                                (pw.cls == WeaponClass::Grenade || pw.cls == WeaponClass::Melee)
+                                    ? 0 : pw.magazine,
+                                viewW, viewH);
 }

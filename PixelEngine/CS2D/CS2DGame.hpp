@@ -3,6 +3,7 @@
 #include "CS2DRenderer.hpp"
 #include "Teams/TeamManager.hpp"
 #include "Rounds/RoundManager.hpp"
+#include "Weapons/WeaponDef.hpp"
 #include "../Core/Types.hpp"
 #include "../LLM/BotIntent.hpp"
 #include "../LLM/BotBehaviorExecutor.hpp"
@@ -52,13 +53,16 @@ public:
         // 精灵
         AnimState animState = AnimState::Idle;
         float     animTimer = 0.0f;
-        int       weaponSlot = 0;
-        int       weaponType = 0;
+        int       weaponSlot = 0;          // 活动槽位 0=主 1=副 2=近战 3=投掷
         int       spriteKey  = 0;
         float     deathTimer = 0.0f;
         float     shootAnimTimer = 0.0f;
 
-        // 弹药
+        // 武器（按槽位）
+        WeaponId  weapons[4] = { WeaponId::M4A1, WeaponId::Glock, WeaponId::Knife, WeaponId::None };
+        int       grenadeCount = 0;        // 当前投掷物数量
+
+        // 弹药（活动槽位）
         int       ammo      = 30;
         int       maxAmmo   = 30;
         bool      reloading = false;
@@ -74,6 +78,12 @@ public:
 
         // LLM 战略意图
         BotIntent llmIntent;
+
+        // 当前活动武器定义
+        const WeaponDef& CurrentWeapon() const {
+            const int s = (weaponSlot < 0 || weaponSlot > 3) ? 0 : weaponSlot;
+            return WeaponDB::Get(weapons[s]);
+        }
     };
 
     struct Bullet {
@@ -87,6 +97,23 @@ public:
         int   ownerIdx  = -1;        // -1=玩家, >=0=BOT索引
         Team  ownerTeam = Team::None;
         bool  active   = true;
+    };
+
+    // 投掷物
+    struct Grenade {
+        float    x = 0.0f, y = 0.0f;
+        float    vx = 0.0f, vy = 0.0f;
+        float    fuse = 1.5f;
+        WeaponId type = WeaponId::GrenadeHE;
+        Team     team = Team::None;
+        bool     active = true;
+    };
+
+    // 烟雾云（遮挡视线）
+    struct SmokeCloud {
+        float x = 0.0f, y = 0.0f;
+        float radius = 70.0f;
+        float life = 12.0f;
     };
 
     CS2DGame();
@@ -113,6 +140,11 @@ public:
     std::vector<Player>&       GetBOTs()       { return bots_; }
     const std::vector<Player>& GetBOTs() const { return bots_; }
     const std::vector<Bullet>& GetBullets() const { return bullets_; }
+    const std::vector<Grenade>& GetGrenades() const { return grenades_; }
+    const std::vector<SmokeCloud>& GetSmokes() const { return smokes_; }
+
+    // 玩家是否处于闪光致盲中（0..1 强度）
+    float GetFlashAmount() const { return (flashTimer_ > 0.0f) ? 1.0f : 0.0f; }
 
     int GetPlayerKills()  const { return playerKills_; }
     int GetPlayerDeaths() const { return playerDeaths_; }
@@ -167,6 +199,9 @@ private:
     Player player_;
     std::vector<Player> bots_;
     std::vector<Bullet> bullets_;
+    std::vector<Grenade> grenades_;
+    std::vector<SmokeCloud> smokes_;
+    float flashTimer_ = 0.0f;      // 玩家闪光致盲剩余秒数
 
     int playerKills_  = 0;
     int playerDeaths_ = 0;
@@ -200,10 +235,14 @@ private:
     void UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, float worldMY, class AudioManager* audio);
     void UpdateBOTs(float dt, class AudioManager* audio);
     void UpdateBullets(float dt, class AudioManager* audio);
+    void UpdateGrenades(float dt, class AudioManager* audio);
+    void ThrowGrenade(Player& thrower, float aimAngle);
+    void ExplodeGrenade(const Grenade& g, class AudioManager* audio);
+    bool SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) const;
     void RespawnBOT(Player& bot);
 
     void MoveWithCollision(Player& entity, float dt);
-    void FireBullet(float x, float y, float angle, const WeaponSlotParams& wp,
+    void FireBullet(float x, float y, float angle, const WeaponDef& def,
                     int ownerIdx, Team ownerTeam);
 
     bool BotCanSeePlayer(const Player& bot) const;

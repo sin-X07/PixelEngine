@@ -88,13 +88,7 @@ void BotDecisionScheduler::DispatchOne(CS2DGame& game) {
     const float maxHp  = static_cast<float>(targetBot.maxHealth);
     const float armor  = 0.0f;   // 护甲系统尚未实现
 
-    std::string weaponName;
-    if (targetBot.weaponSlot == 0)
-        weaponName = (targetBot.weaponType == 0) ? "AK47" : "M4A1";
-    else if (targetBot.weaponSlot == 1)
-        weaponName = "手枪";
-    else
-        weaponName = "近战";
+    const std::string weaponName = WeaponDB::Get(targetBot.CurrentWeapon().id).name;
 
     const int ammo    = targetBot.ammo;
     const int maxAmmo = targetBot.maxAmmo;
