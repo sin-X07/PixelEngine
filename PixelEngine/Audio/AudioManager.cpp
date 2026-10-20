@@ -17,11 +17,13 @@ bool AudioManager::Initialize() {
 
     audioInitialized = true;
 
-    auto loadChunk = [](const std::string& relPath, const char* name) -> Mix_Chunk* {
+    int failedAudio = 0;
+    auto loadChunk = [&failedAudio](const std::string& relPath, const char* name) -> Mix_Chunk* {
         const std::string fullPath = PathUtils::ResolveProjectFile(relPath);
         Mix_Chunk* chunk = Mix_LoadWAV(fullPath.c_str());
         if (!chunk) {
-            std::cerr << name << " 音效加载失败: " << Mix_GetError() << std::endl;
+            ++failedAudio;
+            std::cerr << "  [Audio] 缺失: " << relPath << " (" << name << ")" << std::endl;
         }
         return chunk;
     };
@@ -37,6 +39,11 @@ bool AudioManager::Initialize() {
     ak47Sound = loadChunk("assets/audio/ak47.wav", "AK47 射击");
     deagleSound = loadChunk("assets/audio/deagle.mp3", "沙漠之鹰射击");
     katanaSound = loadChunk("assets/audio/katana.mp3", "武士刀挥砍");
+
+    if (failedAudio > 0) {
+        std::cerr << "[Asset] 音效缺失 " << failedAudio
+                  << " 项，请参照 tools/ASSET_SPEC.md 补齐" << std::endl;
+    }
 
     UpdateVolumes();
     return true;

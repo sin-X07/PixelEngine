@@ -130,6 +130,7 @@ private:
 
     bool FindTileSrc(int gid, SDL_Texture*& outTex, SDL_Rect& outSrc) const;
     SDL_Texture* LoadTexture(const std::string& filename);
+    int  failedLoads_ = 0;   // 本次 SetWorld 期间加载失败的贴图数（启动期素材审计用）
     void DrawTileLayer(const std::vector<int>& data, int layerWidth, int layerHeight);
     void DrawImageBackground();
     void DrawTileFallback(int gid, const SDL_Rect& dst) const;

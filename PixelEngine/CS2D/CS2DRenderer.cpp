@@ -87,6 +87,7 @@ void CS2DRenderer::Clean() {
 void CS2DRenderer::SetWorld(const CS2DWorld* world) {
     Clean();
     world_ = world;
+    failedLoads_ = 0;
     if (!world_) return;
 
     // ---- 加载背景图片 ----
@@ -159,6 +160,11 @@ void CS2DRenderer::SetWorld(const CS2DWorld* world) {
               << " Knife=" << (knifeTex_ ? "OK" : "FAIL")
               << " Bullet=" << (bulletTex_ ? "OK" : "FAIL") << std::endl;
 
+    if (failedLoads_ > 0) {
+        std::cerr << "[Asset] 贴图缺失 " << failedLoads_
+                  << " 项，请参照 tools/ASSET_SPEC.md 补齐" << std::endl;
+    }
+
     // Clean() 已销毁视野纹理，此处重建（修复视野雾失效 bug）
     CreateVisionTexture();
 }
@@ -167,8 +173,8 @@ SDL_Texture* CS2DRenderer::LoadTexture(const std::string& filename) {
     const std::string resolved = PathUtils::ResolveAppPath(filename);
     SDL_Texture* tex = IMG_LoadTexture(renderer_, resolved.c_str());
     if (!tex) {
-        std::cerr << "[CS2DRenderer] 加载图片失败: " << filename
-                  << " (" << IMG_GetError() << ")" << std::endl;
+        ++failedLoads_;
+        std::cerr << "  [Sprite] 缺失: " << filename << std::endl;
     } else {
         SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
     }
