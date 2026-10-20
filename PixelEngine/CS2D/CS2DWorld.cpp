@@ -108,10 +108,20 @@ bool CS2DWorld::Build(const CS2DMapData& data) {
         }
     }
 
+    int spawnT = 0, spawnCT = 0, spawnGeneric = 0;
+    for (const auto& sp : spawnPoints_) {
+        if (!sp.teamSpecific) ++spawnGeneric;
+        else if (sp.isCT)     ++spawnCT;
+        else                  ++spawnT;
+    }
+
     std::cout << "[CS2DWorld] 构建完成: " << mapWidth_ << "x" << mapHeight_
               << " (" << (mapWidth_ * tileWidth_) << "x" << (mapHeight_ * tileHeight_) << " px)"
               << ", 背景图 " << (HasBackgroundImage() ? backgroundImagePath_ : "无")
-              << ", " << spawnPoints_.size() << " 个出生点"
+              << ", 出生点 " << spawnPoints_.size() << " (T" << spawnT
+              << "/CT" << spawnCT
+              << (spawnGeneric > 0 ? "/通用" + std::to_string(spawnGeneric) : "")
+              << ")"
               << ", " << bombSites_.size() << " 个包点"
               << ", " << hostages_.size() << " 名人质"
               << ", " << buyZones_.size() << " 个购买区" << std::endl;

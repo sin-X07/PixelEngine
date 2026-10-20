@@ -174,7 +174,23 @@
 
 `Collisions` 层中**所有矩形对象**一律视为完全阻挡，不区分 `type`。
 
-### 6.3 示例（最小可用 Entities 层）
+### 6.3 出生点拆分工具
+
+若地图只有通用 `SpawnPoint`，双方会从同一批点出生。用脚本按空间位置自动拆分：
+
+```powershell
+python tools/split_spawns.py assets/cs2d/maps/cs_office.tmj --dry-run  # 预览
+python tools/split_spawns.py assets/cs2d/maps/cs_office.tmj            # 写回
+python tools/split_spawns.py <map.tmj> --axis y                        # 指定切分轴
+```
+
+默认按较长轴对半切分：左半 → `spawn_t`，右半 → `spawn_ct`（y 轴同理）。
+启动日志会显示每张图的阵营出生点数量，例如 `出生点 12 (T6/CT6)`。
+
+> `buy_zone` 缺失时视为全图可购买；建议在双方出生点附近各放一个，
+> 用属性 `team = t / ct` 限定阵营。
+
+### 6.4 示例（最小可用 Entities 层）
 
 ```json
 {

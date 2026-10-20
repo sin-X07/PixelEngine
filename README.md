@@ -22,6 +22,8 @@ C++17 / SDL2 的俯视角 2D 战术射击游戏，玩法对标 Steam 的 **CS2D*
 - **武器库**：Glock / Deagle / Galil / AK-47 / M4A1 / SMG / 霰弹枪 / AWP / 匕首 + 三种手雷
   （高爆、闪光、烟雾）。主/副/近战/投掷四个槽位。
 - **手雷**：高爆范围伤害、闪光致盲、烟雾遮挡双方视线。
+- **护甲**：护甲吸收 50% 伤害（配头盔 60%），护甲按吸收量消耗，耗尽后头盔失效。
+  在买枪菜单「护甲」分组购买（$650 / $1000）。
 - **目标物**：C4 下包/拆包、人质营救，按住 `E` 交互。
 - **视野**：150px + 120° 扇形 + 墙体遮挡，与遮罩严格一致；队友始终可见。
 - **LLM BOT**：BOT 由本地 `llama-server` 驱动，决策上下文包含阵营、回合阶段、比分、金钱、
@@ -101,6 +103,7 @@ kill_on_exit=1         ; 退出时关闭本程序拉起的 server 以释放显�
 ```powershell
 python tools/gen_placeholders.py         # 补齐缺失的图片/音效占位
 python tools/gen_placeholder_map.py      # 生成爆破/人质占位地图
+python tools/split_spawns.py <map.tmj>   # 通用出生点拆成 spawn_t / spawn_ct
 ```
 
 **真实素材到位后，直接覆盖同名同路径文件即可，无需改代码。**
