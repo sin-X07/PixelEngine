@@ -39,6 +39,15 @@ public:
     // 是否成功读到了文件内容
     bool IsLoaded() const { return loaded_; }
 
+    // ---- 写入支持（用于保存配置）----
+    void Set     (const std::string& section, const std::string& key, const std::string& value);
+    void SetInt  (const std::string& section, const std::string& key, int value);
+    void SetFloat(const std::string& section, const std::string& key, float value);
+    void SetBool (const std::string& section, const std::string& key, bool value);
+
+    // 落盘。section 与键均按字母序输出，保证稳定可 diff。
+    bool Save(const std::string& path) const;
+
 private:
     Data data_;
     bool loaded_ = false;

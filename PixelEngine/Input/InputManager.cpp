@@ -7,25 +7,21 @@
 #endif
 
 void InputManager::ResetPerFrameActions() {
-    attackRequested = false;
     pauseToggleRequested = false;
     fullscreenToggleRequested = false;
     muteToggleRequested = false;
-    enterOrSpaceRequested = false;
     digit1Requested = false;
     digit2Requested = false;
     digit3Requested = false;
     digit4Requested = false;
-    fRequested = false;
-    tweakerToggleRequested = false;
     mouseLeftClicked = false;
     mouseLeftReleased = false;
 }
 
-void InputManager::ProcessEvents(SDL_Renderer* renderer, GameState currentState) {
+void InputManager::ProcessEvents(SDL_Renderer* renderer) {
     ResetPerFrameActions();
 
-    // 更新鼠标逻辑坐标（物理→逻辑，供 UpdateAimAngle 等使用）
+    // 更新鼠标逻辑坐标（物理像素 → 逻辑视口坐标）
     int rawMouseX = 0;
     int rawMouseY = 0;
     SDL_GetMouseState(&rawMouseX, &rawMouseY);
@@ -59,55 +55,14 @@ void InputManager::ProcessEvents(SDL_Renderer* renderer, GameState currentState)
 
         if (event.type == SDL_KEYDOWN && event.key.repeat == 0) {
             switch (event.key.keysym.sym) {
-                case SDLK_F11: fullscreenToggleRequested = true; break;
-                case SDLK_F1: muteToggleRequested = true; break;
-                case SDLK_F2: tweakerToggleRequested = true; break;
+                case SDLK_F11:    fullscreenToggleRequested = true; break;
+                case SDLK_F1:     muteToggleRequested = true; break;
                 case SDLK_ESCAPE: pauseToggleRequested = true; break;
                 case SDLK_1: case SDLK_KP_1: digit1Requested = true; break;
                 case SDLK_2: case SDLK_KP_2: digit2Requested = true; break;
                 case SDLK_3: case SDLK_KP_3: digit3Requested = true; break;
                 case SDLK_4: case SDLK_KP_4: digit4Requested = true; break;
-                case SDLK_f: fRequested = true; break;
-                case SDLK_RETURN: case SDLK_SPACE: enterOrSpaceRequested = true; break;
-
-                case SDLK_UP:    if (currentState == PLAYING) { upPressed = true; playerDir = DIR_UP; } break;
-                case SDLK_DOWN:  if (currentState == PLAYING) { downPressed = true; playerDir = DIR_DOWN; } break;
-                case SDLK_LEFT:  if (currentState == PLAYING) { leftPressed = true; playerDir = DIR_LEFT; } break;
-                case SDLK_RIGHT: if (currentState == PLAYING) { rightPressed = true; playerDir = DIR_RIGHT; } break;
-            }
-
-            switch (event.key.keysym.scancode) {
-                case SDL_SCANCODE_W: if (currentState == PLAYING) { upPressed = true; playerDir = DIR_UP; } break;
-                case SDL_SCANCODE_S: if (currentState == PLAYING) { downPressed = true; playerDir = DIR_DOWN; } break;
-                case SDL_SCANCODE_A: if (currentState == PLAYING) { leftPressed = true; playerDir = DIR_LEFT; } break;
-                case SDL_SCANCODE_D: if (currentState == PLAYING) { rightPressed = true; playerDir = DIR_RIGHT; } break;
-                case SDL_SCANCODE_SPACE: if (currentState == PLAYING) { attackRequested = true; } break;
                 default: break;
-            }
-        }
-
-        if (event.type == SDL_KEYUP) {
-            switch (event.key.keysym.sym) {
-                case SDLK_UP:    upPressed = false; break;
-                case SDLK_DOWN:  downPressed = false; break;
-                case SDLK_LEFT:  leftPressed = false; break;
-                case SDLK_RIGHT: rightPressed = false; break;
-                default: break;
-            }
-
-            switch (event.key.keysym.scancode) {
-                case SDL_SCANCODE_W: upPressed = false; break;
-                case SDL_SCANCODE_S: downPressed = false; break;
-                case SDL_SCANCODE_A: leftPressed = false; break;
-                case SDL_SCANCODE_D: rightPressed = false; break;
-                default: break;
-            }
-
-            if (currentState == PLAYING) {
-                if (upPressed) playerDir = DIR_UP;
-                else if (downPressed) playerDir = DIR_DOWN;
-                else if (leftPressed) playerDir = DIR_LEFT;
-                else if (rightPressed) playerDir = DIR_RIGHT;
             }
         }
     }

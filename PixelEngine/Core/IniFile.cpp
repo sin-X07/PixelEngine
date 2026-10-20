@@ -2,6 +2,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 
 namespace {
 
@@ -113,4 +114,40 @@ bool IniFile::GetBool(const std::string& section, const std::string& key, bool d
     if (low == "1" || low == "true"  || low == "yes" || low == "on")  return true;
     if (low == "0" || low == "false" || low == "no"  || low == "off") return false;
     return def;
+}
+
+// ---- 写入 ----
+
+void IniFile::Set(const std::string& section, const std::string& key,
+                  const std::string& value) {
+    data_[section][key] = value;
+}
+
+void IniFile::SetInt(const std::string& section, const std::string& key, int value) {
+    data_[section][key] = std::to_string(value);
+}
+
+void IniFile::SetFloat(const std::string& section, const std::string& key, float value) {
+    // 用 "%.6g" 避免 0.100000 之类的冗长尾巴
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.6g", static_cast<double>(value));
+    data_[section][key] = buf;
+}
+
+void IniFile::SetBool(const std::string& section, const std::string& key, bool value) {
+    data_[section][key] = value ? "1" : "0";
+}
+
+bool IniFile::Save(const std::string& path) const {
+    std::ofstream f(path);
+    if (!f.is_open()) return false;
+
+    f << "; 由 PixelEngine 自动生成\n";
+    for (const auto& [section, kvs] : data_) {
+        f << "\n[" << section << "]\n";
+        for (const auto& [key, value] : kvs) {
+            f << key << "=" << value << "\n";
+        }
+    }
+    return true;
 }

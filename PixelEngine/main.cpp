@@ -1,11 +1,8 @@
-#include<ctime>
-#include<cstdlib>
+#include <ctime>
+#include <cstdlib>
 #include <windows.h>
-#include <io.h>
-#include <fcntl.h>
 #include <filesystem>
 #include "Engine.hpp"
-#include "MazeGenerator.hpp"
 #include "Core/PathUtils.hpp"
 
 int main(int argc, char* argv[]) {
@@ -25,8 +22,13 @@ int main(int argc, char* argv[]) {
     srand(static_cast<unsigned int>(time(nullptr)));
     Engine engine;
 
-    // 尝试初始化一个 800x600 的复古像素视窗
-    if (engine.Initialize("Pixel Engine", 800, 600)) {
+    // --autostart：跳过菜单直接进入对局（调试 / 回归验证用）
+    bool autostart = false;
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i] && std::string(argv[i]) == "--autostart") autostart = true;
+    }
+
+    if (engine.Initialize("CS2D Pixel", 800, 600, autostart)) {
         engine.Run();
     }
 

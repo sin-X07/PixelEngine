@@ -1,167 +1,87 @@
 #include "SaveManager.hpp"
+#include "../Core/IniFile.hpp"
 #include "../Core/PathUtils.hpp"
-#include "../Core/Roles.hpp"
-#include <fstream>
-#include <sstream>
 #include <iostream>
-#include <algorithm>
 
-void SaveManager::LoadAll() {
-    LoadScoreHistory();
-    LoadTimeHistory();
-    LoadRoleIndex();
-    historyLoaded = true;
+namespace {
+constexpr const char* kSaveFile = "cs2d_save.ini";
 }
 
-void SaveManager::SaveAll() {
-    if (historyLoaded) {
-        SaveScoreHistory();
-        SaveTimeHistory();
-        SaveRoleIndex();
-    }
-}
-
-void SaveManager::SaveScoreHistory() {
-    const std::string savePath = PathUtils::ResolveWritablePath("score_saves.txt");
-    std::ofstream outFile(savePath);
-
-    if (!outFile) {
-        std::cerr << "分数存档文件打开失败!" << std::endl;
+void SaveManager::Load() {
+    const std::string path = PathUtils::ResolveWritablePath(kSaveFile);
+    IniFile ini = IniFile::Load(path);
+    if (!ini.IsLoaded()) {
+        std::cout << "[Save] 未找到存档，使用默认设置" << std::endl;
+        loaded_ = true;
         return;
     }
 
-    for (const auto& record : scoreHistory) {
-        outFile << record.score << " " << (record.success ? 1 : 0) << "\n";
-    }
+    // ---- 战绩 ----
+    stats_.kills      = ini.GetInt("stats", "kills", 0);
+    stats_.deaths     = ini.GetInt("stats", "deaths", 0);
+    stats_.roundsWon  = ini.GetInt("stats", "rounds_won", 0);
+    stats_.roundsLost = ini.GetInt("stats", "rounds_lost", 0);
 
-    outFile.close();
-    std::cout << "分数存档文件保存成功!" << std::endl;
+    // ---- 通用设置 ----
+    settings_.mouseSensitivity = ini.GetFloat("settings", "sensitivity", 1.0f);
+    settings_.resIdx           = ini.GetInt  ("settings", "res_idx", 0);
+    settings_.fullscreen       = ini.GetBool ("settings", "fullscreen", false);
+    settings_.targetFPS        = ini.GetInt  ("settings", "target_fps", 60);
+
+    // ---- 准星 ----
+    settings_.crossR         = ini.GetInt  ("crosshair", "r", 255);
+    settings_.crossG         = ini.GetInt  ("crosshair", "g", 255);
+    settings_.crossB         = ini.GetInt  ("crosshair", "b", 255);
+    settings_.crossA         = ini.GetInt  ("crosshair", "a", 200);
+    settings_.crossThickness = ini.GetFloat("crosshair", "thickness", 1.5f);
+    settings_.crossLength    = ini.GetFloat("crosshair", "length", 12.0f);
+    settings_.crossGap       = ini.GetFloat("crosshair", "gap", 3.0f);
+    settings_.crossCenterDot = ini.GetBool ("crosshair", "center_dot", true);
+
+    // ---- 雷达 ----
+    settings_.radarPlayerCentered   = ini.GetBool ("radar", "player_centered", true);
+    settings_.radarRotateWithPlayer = ini.GetBool ("radar", "rotate_with_player", false);
+    settings_.radarBlendBg          = ini.GetBool ("radar", "blend_bg", false);
+    settings_.radarBgAlpha          = ini.GetInt  ("radar", "bg_alpha", 160);
+    settings_.radarHudSize          = ini.GetInt  ("radar", "hud_size", 120);
+    settings_.radarMapZoom          = ini.GetFloat("radar", "map_zoom", 0.005f);
+
+    loaded_ = true;
+    std::cout << "[Save] 已读取存档: K/D "
+              << stats_.kills << "/" << stats_.deaths << std::endl;
 }
 
-void SaveManager::SaveTimeHistory() {
-    const std::string savePath = PathUtils::ResolveWritablePath("time_saves.txt");
-    std::ofstream outFile(savePath);
+void SaveManager::Save() {
+    IniFile ini;
 
-    if (!outFile) {
-        std::cerr << "时间存档文件打开失败!" << std::endl;
-        return;
+    ini.SetInt("stats", "kills",       stats_.kills);
+    ini.SetInt("stats", "deaths",      stats_.deaths);
+    ini.SetInt("stats", "rounds_won",  stats_.roundsWon);
+    ini.SetInt("stats", "rounds_lost", stats_.roundsLost);
+
+    ini.SetFloat("settings", "sensitivity", settings_.mouseSensitivity);
+    ini.SetInt  ("settings", "res_idx",     settings_.resIdx);
+    ini.SetBool ("settings", "fullscreen",  settings_.fullscreen);
+    ini.SetInt  ("settings", "target_fps",  settings_.targetFPS);
+
+    ini.SetInt  ("crosshair", "r",          settings_.crossR);
+    ini.SetInt  ("crosshair", "g",          settings_.crossG);
+    ini.SetInt  ("crosshair", "b",          settings_.crossB);
+    ini.SetInt  ("crosshair", "a",          settings_.crossA);
+    ini.SetFloat("crosshair", "thickness",  settings_.crossThickness);
+    ini.SetFloat("crosshair", "length",     settings_.crossLength);
+    ini.SetFloat("crosshair", "gap",        settings_.crossGap);
+    ini.SetBool ("crosshair", "center_dot", settings_.crossCenterDot);
+
+    ini.SetBool ("radar", "player_centered",    settings_.radarPlayerCentered);
+    ini.SetBool ("radar", "rotate_with_player", settings_.radarRotateWithPlayer);
+    ini.SetBool ("radar", "blend_bg",           settings_.radarBlendBg);
+    ini.SetInt  ("radar", "bg_alpha",           settings_.radarBgAlpha);
+    ini.SetInt  ("radar", "hud_size",           settings_.radarHudSize);
+    ini.SetFloat("radar", "map_zoom",           settings_.radarMapZoom);
+
+    const std::string path = PathUtils::ResolveWritablePath(kSaveFile);
+    if (!ini.Save(path)) {
+        std::cerr << "[Save] 写入失败: " << path << std::endl;
     }
-
-    for (float hTime : timeHistory) {
-        outFile << hTime << "\n";
-    }
-
-    outFile.close();
-    std::cout << "时间存档文件保存成功!" << std::endl;
-}
-
-void SaveManager::LoadScoreHistory() {
-    const std::string savePath = PathUtils::ResolveAppPath("score_saves.txt");
-    std::ifstream inFile(savePath);
-
-    if (!inFile) {
-        std::cout << "创建新分数档案。" << std::endl;
-    }
-
-    scoreHistory.clear();
-    std::string line;
-    while (std::getline(inFile, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line.empty()) continue;
-
-        std::istringstream iss(line);
-        int hScore = 0;
-        int flag = 1; // 默认标记为成功（向下兼容旧存档）
-        if (iss >> hScore) {
-            if (!(iss >> flag)) {
-                flag = 1;
-            }
-            scoreHistory.push_back({hScore, flag != 0});
-        }
-    }
-
-    inFile.close();
-
-    if (scoreHistory.size() > MAX_HISTORY_COUNT) {
-        scoreHistory.resize(MAX_HISTORY_COUNT);
-    }
-
-    std::cout << "成功读取 " << scoreHistory.size() << " 局历史分数!" << std::endl;
-}
-
-void SaveManager::LoadTimeHistory() {
-    const std::string savePath = PathUtils::ResolveAppPath("time_saves.txt");
-    std::ifstream inFile(savePath);
-
-    if (!inFile) {
-        std::cout << "创建新时间档案。" << std::endl;
-    }
-
-    timeHistory.clear();
-    float hTime = 0.0f;
-
-    while (inFile >> hTime) {
-        timeHistory.push_back(hTime);
-    }
-
-    inFile.close();
-
-    if (timeHistory.size() > MAX_HISTORY_COUNT) {
-        timeHistory.resize(MAX_HISTORY_COUNT);
-    }
-
-    std::cout << "成功读取 " << timeHistory.size() << " 局历史时间!" << std::endl;
-}
-
-void SaveManager::AddScoreRecord(int score, bool success) {
-    scoreHistory.insert(scoreHistory.begin(), {score, success});
-    if (scoreHistory.size() > MAX_HISTORY_COUNT) {
-        scoreHistory.pop_back();
-    }
-}
-
-void SaveManager::AddTimeRecord(float time) {
-    timeHistory.insert(timeHistory.begin(), time);
-    if (timeHistory.size() > MAX_HISTORY_COUNT) {
-        timeHistory.pop_back();
-    }
-}
-
-void SaveManager::LoadRoleIndex() {
-    const std::string savePath = PathUtils::ResolveAppPath("role_saves.txt");
-    std::ifstream inFile(savePath);
-
-    selectedRole = 0; // 默认角色：豆丁
-    if (inFile) {
-        int roleIndex = 0;
-        if (inFile >> roleIndex) {
-            if (roleIndex >= 0 && roleIndex < ROLE_COUNT) {
-                selectedRole = roleIndex;
-            } else {
-                std::cout << "角色存档索引越界: " << roleIndex << "，回退默认角色。" << std::endl;
-            }
-        }
-        inFile.close();
-        std::cout << "成功读取角色存档: " << GetRoles()[selectedRole].name << std::endl;
-    } else {
-        std::cout << "未找到角色存档，使用默认角色。" << std::endl;
-    }
-}
-
-void SaveManager::SaveRoleIndex() {
-    const std::string savePath = PathUtils::ResolveWritablePath("role_saves.txt");
-    std::ofstream outFile(savePath);
-
-    if (!outFile) {
-        std::cerr << "角色存档文件打开失败!" << std::endl;
-        return;
-    }
-
-    outFile << selectedRole << "\n";
-    outFile.close();
-    std::cout << "角色存档文件保存成功!" << std::endl;
-}
-
-void SaveManager::SetSelectedRole(int index) {
-    selectedRole = std::clamp(index, 0, ROLE_COUNT - 1);
 }

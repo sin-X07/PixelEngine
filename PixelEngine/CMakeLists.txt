@@ -81,28 +81,15 @@ set(SOURCES
     main.cpp
     Engine.cpp
     Engine.hpp
-    MazeGenerator.hpp
-    MazeGenerator.cpp
     Core/Types.hpp
     Core/PathUtils.hpp
-    Core/Roles.hpp
+    Core/UiTextChars.hpp
+    Core/IniFile.hpp
     Core/IniFile.cpp
     Audio/AudioManager.cpp
     Input/InputManager.cpp
-    World/WorldMap.cpp
-    World/PhysicsSystem.cpp
-    World/Monster.cpp
-    World/Weapon.cpp
-    World/Player.cpp
-    World/CombatSystem.cpp
-    World/EnemyManager.cpp
-    Graphics/ParticleSystem.cpp
-    Graphics/RenderSystem.cpp
-    Graphics/UIRenderer.cpp
     Graphics/ImGuiUI.cpp
     Graphics/GameUI.cpp
-    Graphics/TextConfig.cpp
-    Graphics/TextTweakerUI.cpp
     Storage/SaveManager.cpp
     CS2D/CS2DTypes.hpp
     CS2D/MiniJSON.hpp
