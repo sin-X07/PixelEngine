@@ -31,6 +31,37 @@ bool CS2DGame::PlayerCanSeeBot(const Player& bot) const {
 // 已废弃：BOT 不再全图感知，改用 FindVisibleEnemy + 团队情报。
 
 // ============================================================================
+// 受击撤退：找掩体
+// ============================================================================
+
+bool CS2DGame::FindCoverPoint(const Player& bot, float threatX, float threatY,
+                              float& outX, float& outY) const {
+    if (!pathFinder_.IsBuilt()) return false;
+
+    const float radii[3] = { 55.0f, 95.0f, 135.0f };
+    float bestD2 = 1e18f;
+    bool  found  = false;
+
+    for (int r = 0; r < 3; ++r) {
+        for (int a = 0; a < 16; ++a) {
+            const float ang = static_cast<float>(a) * 6.28318531f / 16.0f;
+            const float px = bot.x + std::cos(ang) * radii[r];
+            const float py = bot.y + std::sin(ang) * radii[r];
+
+            if (!pathFinder_.IsWalkableWorld(px, py)) continue;
+            // 掩体要求：从该点看不见威胁位置
+            if (pathFinder_.HasLineOfSight(px, py, threatX, threatY)) continue;
+
+            const float dx = px - bot.x;
+            const float dy = py - bot.y;
+            const float d2 = dx * dx + dy * dy;
+            if (d2 < bestD2) { bestD2 = d2; outX = px; outY = py; found = true; }
+        }
+    }
+    return found;
+}
+
+// ============================================================================
 // 团队情报共享（探点）
 // ============================================================================
 
@@ -409,6 +440,17 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // 分工指令
         SquadOrder order;
         if (i < squad_.size()) order = squad_[i];
+
+        // ---- 受击撤退：低血时优先找掩体，交火次之 ----
+        if (bot.retreatTimer > 0.0f) bot.retreatTimer -= dt;
+        if (bot.retreatTimer > 0.0f && bot.health <= 45) {
+            float covX = 0.0f, covY = 0.0f;
+            if (FindCoverPoint(bot, bot.threatX, bot.threatY, covX, covY)) {
+                bot.llmIntent.Tick(dt);
+                if (bot.ammo <= 0 && !bot.reloading) StartReload(bot);
+                if (FollowPathTo(bot, covX, covY, dt, 1.0f)) continue;
+            }
+        }
 
         // ---- 目标选择：只用「看得见」的敌人 + 团队情报 ----
         float targetDist = 0.0f;

@@ -299,6 +299,8 @@ void CS2DGame::SpawnBOT(Player& bot, Team team) {
     bot.pathIdx     = 0;
     bot.repathTimer = 0.0f;
     bot.goalX = bot.goalY = 0.0f;
+    bot.retreatTimer = 0.0f;
+    bot.threatX = bot.threatY = 0.0f;
 
     // 外观与武器：CT 用 M4A1，T 用 AK47；副武器 Glock，近战 Knife
     if (team == Team::CT) {

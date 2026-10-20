@@ -109,6 +109,11 @@ public:
         float goalX       = 0.0f;
         float goalY       = 0.0f;
 
+        // 受击撤退
+        float retreatTimer = 0.0f;
+        float threatX      = 0.0f;
+        float threatY      = 0.0f;
+
         // 当前活动武器定义
         const WeaponDef& CurrentWeapon() const {
             const int s = (weaponSlot < 0 || weaponSlot > 3) ? 0 : weaponSlot;
@@ -359,6 +364,10 @@ private:
     void UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bool stealth);
     void UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, float worldMY, class AudioManager* audio);
     void UpdateBOTs(float dt, class AudioManager* audio);
+    // 找一个能挡住威胁点视线的掩体位置（就近优先）
+    bool FindCoverPoint(const Player& bot, float threatX, float threatY,
+                        float& outX, float& outY) const;
+
     // 找到武器对应的枪声（供玩家与 BOT 共用）
     static SoundEffect FireSoundFor(WeaponId id);
 
@@ -405,6 +414,7 @@ private:
     void UpdateRoundFlow(float dt, class AudioManager* audio);
     void BeginNewRound(class AudioManager* audio = nullptr);
     void RespawnAllForRound();
+    void BotBuyLoadout(Player& bot);   // BOT 按经济买枪与护甲
     void CheckWinConditions(class AudioManager* audio);
     void ApplyRoundResult(Team winner, class AudioManager* audio = nullptr);
     // 统一伤害入口：先扣护甲再扣血。返回 true 表示本次伤害致死。

@@ -200,6 +200,12 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                 } else {
                     PushKillFeed(std::string("BOT#") + std::to_string(bullet.ownerIdx)
                                  + "  ▸  击杀 " + TeamName(bot.team) + " BOT");
+                    // BOT 击杀奖励
+                    if (bullet.ownerIdx >= 0 &&
+                        bullet.ownerIdx < static_cast<int>(bots_.size())) {
+                        bots_[bullet.ownerIdx].money += economy_.GrantKill();
+                        economy_.Clamp(bots_[bullet.ownerIdx].money);
+                    }
                 }
 
                 if (audio) audio->PlaySoundAt(SoundEffect::KILL, bot.x, bot.y,
@@ -207,6 +213,19 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             } else if (audio) {
                 audio->PlaySoundAt(SoundEffect::HIT, bot.x, bot.y,
                                    player_.x, player_.y);
+            }
+
+            // 受击反应：记录威胁来源，血量低则触发撤退
+            if (bot.health <= 45) {
+                bot.retreatTimer = 3.0f;
+                if (bullet.ownerIdx == -1) {
+                    bot.threatX = player_.x;
+                    bot.threatY = player_.y;
+                } else if (bullet.ownerIdx >= 0 &&
+                           bullet.ownerIdx < static_cast<int>(bots_.size())) {
+                    bot.threatX = bots_[bullet.ownerIdx].x;
+                    bot.threatY = bots_[bullet.ownerIdx].y;
+                }
             }
             break;
         }
@@ -224,6 +243,12 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                 if (ApplyDamage(player_, bullet.damage)) {
                     PushKillFeed(std::string("BOT#") + std::to_string(bullet.ownerIdx) + "  ▸  击杀 你");
                     OnCombatantKilled(player_, audio);
+                    // BOT 击杀玩家奖励
+                    if (bullet.ownerIdx >= 0 &&
+                        bullet.ownerIdx < static_cast<int>(bots_.size())) {
+                        bots_[bullet.ownerIdx].money += economy_.GrantKill();
+                        economy_.Clamp(bots_[bullet.ownerIdx].money);
+                    }
                 }
             }
         }

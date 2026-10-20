@@ -50,8 +50,52 @@ void CS2DGame::RespawnAllForRound() {
     // BOT
     for (auto& bot : bots_) {
         SpawnBOT(bot, bot.team);
+        BotBuyLoadout(bot);   // 按经济买枪 + 护甲
     }
     bullets_.clear();
+}
+
+// BOT 经济：按余额买武器与护甲（与玩家同一套价格）
+void CS2DGame::BotBuyLoadout(Player& bot) {
+    // 先买护甲（性价比最高），保留一点钱买枪
+    if (bot.money >= 1000) {
+        bot.armor = 100;
+        bot.helmet = true;
+        bot.money -= 1000;
+    } else if (bot.money >= 650) {
+        bot.armor = 100;
+        bot.helmet = false;
+        bot.money -= 650;
+    }
+
+    // 主武器选择：钱多买强枪，钱少保留原配
+    WeaponId pick = bot.weapons[0];
+    const bool isT = (bot.team == Team::T);
+
+    if (bot.money >= 4750) {
+        pick = WeaponId::AWP;                     // 富余时出狙击枪
+        bot.money -= 4750;
+    } else if (bot.money >= 3100) {
+        pick = isT ? WeaponId::AK47 : WeaponId::M4A1;
+        bot.money -= 3100;
+    } else if (bot.money >= 2000) {
+        pick = WeaponId::Galil;
+        bot.money -= 1800;
+    } else if (bot.money >= 1500) {
+        pick = WeaponId::SMG;
+        bot.money -= 1250;
+    } else if (bot.money >= 1200) {
+        pick = WeaponId::Shotgun;
+        bot.money -= 1200;
+    }
+
+    bot.weapons[0] = pick;
+    bot.weaponSlot = 0;
+
+    const WeaponDef& w = WeaponDB::Get(pick);
+    bot.ammo = w.magazine;
+    bot.maxAmmo = w.magazine;
+    economy_.Clamp(bot.money);
 }
 
 void CS2DGame::CheckWinConditions(AudioManager* audio) {
@@ -134,6 +178,12 @@ void CS2DGame::GrantRoundEndMoney(Team winner) {
     // 玩家（CT）
     player_.money += economy_.GrantRoundEnd(winner, player_.team);
     economy_.Clamp(player_.money);
+
+    // BOT 同样参与经济（否则永远只有初始余额）
+    for (auto& bot : bots_) {
+        bot.money += economy_.GrantRoundEnd(winner, bot.team);
+        economy_.Clamp(bot.money);
+    }
 
     std::cout << "[Economy] 回合结算 → 玩家 $" << player_.money << std::endl;
 }
