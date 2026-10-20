@@ -54,6 +54,66 @@ static const CS2DGame::Player* FindNearestEnemy(const CS2DGame::Player& self,
 }
 
 // ============================================================================
+// 局部避障（分离力）
+// ============================================================================
+
+namespace {
+constexpr float SEP_RADIUS   = 26.0f;   // 排斥半径（约 4 倍命中盒）
+constexpr float SEP_MAX_SPEED = 60.0f;  // 与 BOT 移动上限一致
+}
+
+void CS2DGame::AccumulateSeparation(const Player& self, float& outX, float& outY) const {
+    outX = 0.0f;
+    outY = 0.0f;
+
+    auto consider = [&](const Player& other) {
+        if (&other == &self || !other.alive) return;
+
+        const float dx = self.x - other.x;
+        const float dy = self.y - other.y;
+        const float d2 = dx * dx + dy * dy;
+        if (d2 >= SEP_RADIUS * SEP_RADIUS) return;
+
+        // 完全重叠时给一个确定性的偏移，避免除零与抖动
+        if (d2 < 0.01f) {
+            outX += (self.team == Team::T) ? 1.0f : -1.0f;
+            outY += 1.0f;
+            return;
+        }
+
+        const float d = std::sqrt(d2);
+        // 线性衰减权重：越近越强
+        const float w = 1.0f - d / SEP_RADIUS;
+        outX += dx / d * w;
+        outY += dy / d * w;
+    };
+
+    consider(player_);
+    for (const auto& b : bots_) consider(b);
+
+    // 归一化到 0..1，避免人多时力叠加爆表
+    const float len = std::sqrt(outX * outX + outY * outY);
+    if (len > 1.0f) {
+        outX /= len;
+        outY /= len;
+    }
+}
+
+void CS2DGame::ApplyAvoidance(float& vx, float& vy, float sepX, float sepY) const {
+    // 分离力强度：与当前速度同量级，保证能推开但不至于完全抵消前进
+    constexpr float SEP_STRENGTH = 48.0f;
+
+    vx += sepX * SEP_STRENGTH;
+    vy += sepY * SEP_STRENGTH;
+
+    const float spd = std::sqrt(vx * vx + vy * vy);
+    if (spd > SEP_MAX_SPEED) {
+        vx = vx / spd * SEP_MAX_SPEED;
+        vy = vy / spd * SEP_MAX_SPEED;
+    }
+}
+
+// ============================================================================
 // A* 路径跟随
 // ============================================================================
 
@@ -102,6 +162,25 @@ bool CS2DGame::FollowPathTo(Player& bot, float destX, float destY, float dt) {
 
     bot.vx = dx / d * 60.0f;
     bot.vy = dy / d * 60.0f;
+
+    // 局部避障：防止多人挤在同一路线上互相卡住
+    {
+        float sepX = 0.0f, sepY = 0.0f;
+        AccumulateSeparation(bot, sepX, sepY);
+        ApplyAvoidance(bot.vx, bot.vy, sepX, sepY);
+        // 前进分量被分离力淹没时，保底给一点朝向目标的推力
+        const float dot = bot.vx * (dx / d) + bot.vy * (dy / d);
+        if (dot < 12.0f) {
+            bot.vx += dx / d * 20.0f;
+            bot.vy += dy / d * 20.0f;
+            const float s2 = std::sqrt(bot.vx * bot.vx + bot.vy * bot.vy);
+            if (s2 > 60.0f) {
+                bot.vx = bot.vx / s2 * 60.0f;
+                bot.vy = bot.vy / s2 * 60.0f;
+            }
+        }
+    }
+
     MoveWithCollision(bot, dt);
     bot.aimAngle = std::atan2(dy, dx);
 
@@ -193,6 +272,14 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
         bot.vx = out.vx;
         bot.vy = out.vy;
+
+        // 局部避障（战斗中同样避免叠人）
+        {
+            float sepX = 0.0f, sepY = 0.0f;
+            AccumulateSeparation(bot, sepX, sepY);
+            ApplyAvoidance(bot.vx, bot.vy, sepX, sepY);
+        }
+
         MoveWithCollision(bot, dt);
 
         if (canSee) bot.aimAngle = out.aimAngle;

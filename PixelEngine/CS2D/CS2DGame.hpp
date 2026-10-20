@@ -310,6 +310,10 @@ private:
     void UpdateBOTs(float dt, class AudioManager* audio);
     // 沿 A* 路径移动；返回 true 表示本帧移动已由寻路接管
     bool FollowPathTo(Player& bot, float destX, float destY, float dt);
+    // 局部避障：累加附近单位的排斥向量（outX/outY 已归一化到 0..1 量级）
+    void AccumulateSeparation(const Player& self, float& outX, float& outY) const;
+    // 把期望速度与分离向量合成，并按最大速度钳制
+    void ApplyAvoidance(float& vx, float& vy, float sepX, float sepY) const;
     void UpdateBullets(float dt, class AudioManager* audio);
     void UpdateGrenades(float dt, class AudioManager* audio);
     void ThrowGrenade(Player& thrower, float aimAngle);
@@ -327,7 +331,8 @@ private:
     void StartReload(Player& p);
     void UpdateReload(Player& p, float dt);
 
-    bool IsEnemyNearby(float x, float y, float safeRadius) const;
+    // 半径内是否存在「敌对阵营」的存活单位（队友不计入）
+    bool IsEnemyNearby(float x, float y, float safeRadius, Team myTeam) const;
 
     // 回合流程
     void UpdateRoundFlow(float dt, class AudioManager* audio);

@@ -403,13 +403,16 @@ void CS2DGame::UpdateReload(Player& p, float dt) {
     }
 }
 
-bool CS2DGame::IsEnemyNearby(float x, float y, float safeRadius) const {
-    for (const auto& bot : bots_) {
-        if (!bot.alive) continue;
-        const float dx = bot.x - x;
-        const float dy = bot.y - y;
-        if (dx * dx + dy * dy < safeRadius * safeRadius) return true;
-    }
+bool CS2DGame::IsEnemyNearby(float x, float y, float safeRadius, Team myTeam) const {
+    auto near = [&](const Player& u) {
+        if (!u.alive || u.team == myTeam) return false;
+        const float dx = u.x - x;
+        const float dy = u.y - y;
+        return dx * dx + dy * dy < safeRadius * safeRadius;
+    };
+
+    if (near(player_)) return true;
+    for (const auto& bot : bots_) if (near(bot)) return true;
     return false;
 }
 

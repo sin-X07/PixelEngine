@@ -162,7 +162,36 @@ bool CS2DGame::PickSpawnForTeam(Team team, float& outX, float& outY) {
     }
 
     constexpr float HITBOX = 6.0f;
+    // 与已存在单位的期望最小间距：避免 5 人叠在同一个出生点
+    constexpr float SPAWN_SEPARATION = 16.0f;
+
+    auto occupied = [&](float x, float y) {
+        auto near = [&](const Player& u) {
+            if (!u.alive) return false;
+            const float dx = u.x - x;
+            const float dy = u.y - y;
+            return dx * dx + dy * dy < SPAWN_SEPARATION * SPAWN_SEPARATION;
+        };
+        if (near(player_)) return true;
+        for (const auto& b : bots_) if (near(b)) return true;
+        return false;
+    };
+
+    // 第一轮：既要能站下、又要与他人保持间距
     std::uniform_int_distribution<size_t> pick(0, candidates.size() - 1);
+    for (int attempt = 0; attempt < 24; ++attempt) {
+        const auto* sp = candidates[pick(rng_)];
+        if (world_->CheckRectCollision(sp->x - HITBOX * 0.5f, sp->y - HITBOX * 0.5f,
+                                       HITBOX, HITBOX)) {
+            continue;
+        }
+        if (occupied(sp->x, sp->y)) continue;
+        outX = sp->x;
+        outY = sp->y;
+        return true;
+    }
+
+    // 第二轮：只要求能站下（出生点拥挤时降级）
     for (int attempt = 0; attempt < 12; ++attempt) {
         const auto* sp = candidates[pick(rng_)];
         if (!world_->CheckRectCollision(sp->x - HITBOX * 0.5f, sp->y - HITBOX * 0.5f,
@@ -172,6 +201,7 @@ bool CS2DGame::PickSpawnForTeam(Team team, float& outX, float& outY) {
             return true;
         }
     }
+
     outX = candidates[0]->x;
     outY = candidates[0]->y;
     return true;
@@ -210,7 +240,7 @@ void CS2DGame::SpawnPlayer() {
 
     for (int attempt = 0; attempt < 20; ++attempt) {
         PickSpawnForTeam(Team::CT, player_.x, player_.y);
-        if (!IsEnemyNearby(player_.x, player_.y, 120.0f)) break;
+        if (!IsEnemyNearby(player_.x, player_.y, 120.0f, Team::CT)) break;
     }
 }
 
@@ -257,7 +287,7 @@ void CS2DGame::SpawnBOT(Player& bot, Team team) {
 
     for (int attempt = 0; attempt < 20; ++attempt) {
         PickSpawnForTeam(team, bot.x, bot.y);
-        if (!IsEnemyNearby(bot.x, bot.y, 40.0f)) break;
+        if (!IsEnemyNearby(bot.x, bot.y, 60.0f, team)) break;
     }
 }
 
