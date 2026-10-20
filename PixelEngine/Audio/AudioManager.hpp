@@ -14,7 +14,28 @@ enum class SoundEffect {
     KILL,         // 击杀
     AK47_FIRE,    // AK47 连发枪声
     DEAGLE_FIRE,  // 沙漠之鹰单发枪声（备用）
-    KATANA_SWING  // 武士刀挥砍
+    KATANA_SWING, // 武士刀挥砍
+
+    // ---- 战局事件 ----
+    GRENADE_EXPLODE,
+    FLASHBANG,
+    SMOKE,
+    BOMB_PLANT,
+    BOMB_DEFUSE,
+    BOMB_BEEP,
+    ROUND_START,
+    ROUND_WIN,
+    ROUND_LOSE,
+    FOOTSTEP,
+    ARMOR_HIT,
+
+    // ---- 分武器枪声 ----
+    GLOCK_FIRE,
+    M4A1_FIRE,
+    AWP_FIRE,
+    SHOTGUN_FIRE,
+    SMG_FIRE,
+    GALIL_FIRE
 };
 
 // 专用音频通道（避免连发射击音效相互抢占导致无声）
@@ -35,6 +56,30 @@ private:
     Mix_Chunk* ak47Sound = nullptr;
     Mix_Chunk* deagleSound = nullptr;
     Mix_Chunk* katanaSound = nullptr;
+
+    // 战局事件音效
+    Mix_Chunk* grenadeExplodeSound = nullptr;
+    Mix_Chunk* flashbangSound = nullptr;
+    Mix_Chunk* smokeSound = nullptr;
+    Mix_Chunk* bombPlantSound = nullptr;
+    Mix_Chunk* bombDefuseSound = nullptr;
+    Mix_Chunk* bombBeepSound = nullptr;
+    Mix_Chunk* roundStartSound = nullptr;
+    Mix_Chunk* roundWinSound = nullptr;
+    Mix_Chunk* roundLoseSound = nullptr;
+    Mix_Chunk* footstepSound = nullptr;
+    Mix_Chunk* armorHitSound = nullptr;
+
+    // 分武器枪声
+    Mix_Chunk* glockFireSound   = nullptr;
+    Mix_Chunk* m4a1FireSound    = nullptr;
+    Mix_Chunk* awpFireSound     = nullptr;
+    Mix_Chunk* shotgunFireSound = nullptr;
+    Mix_Chunk* smgFireSound     = nullptr;
+    Mix_Chunk* galilFireSound   = nullptr;
+
+    // 效果 → 音频块（两个播放入口共用，避免 switch 重复）
+    Mix_Chunk* ChunkFor(SoundEffect effect) const;
 
     int masterVolume = 100;
     int musicVolume = 40;

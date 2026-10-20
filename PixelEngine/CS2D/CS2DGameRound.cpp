@@ -9,7 +9,7 @@
 // 回合流程
 // ============================================================================
 
-void CS2DGame::UpdateRoundFlow(float dt, AudioManager* /*audio*/) {
+void CS2DGame::UpdateRoundFlow(float dt, AudioManager* audio) {
     if (mode_ == MatchMode::DeathMatch) return;   // 死斗无回合
 
     const RoundPhase before = round_.Phase();
@@ -18,16 +18,18 @@ void CS2DGame::UpdateRoundFlow(float dt, AudioManager* /*audio*/) {
 
     // 结算结束 → 开新回合
     if (before == RoundPhase::RoundEnd && after == RoundPhase::Freeze) {
-        BeginNewRound();
+        BeginNewRound(audio);
     }
     prevPhase_ = after;
 }
 
-void CS2DGame::BeginNewRound() {
+void CS2DGame::BeginNewRound(AudioManager* audio) {
     if (teams_.MatchOver()) return;
     RespawnAllForRound();
     SetupObjective();   // 每回合重置包点 / 人质
     AssignSquadRoles(); // 每回合按新的相对位置重新分工
+    bombBeepTimer_ = 0.0f;
+    if (audio) audio->PlaySound(SoundEffect::ROUND_START);
     std::cout << "[CS2D] 第 " << round_.RoundNumber() << " 回合开始 ("
               << teams_.ScoreT() << ":" << teams_.ScoreCT() << ")" << std::endl;
 }
@@ -101,15 +103,21 @@ void CS2DGame::CheckWinConditions(AudioManager* audio) {
 
     if (!decided) return;
 
-    ApplyRoundResult(winner);
+    ApplyRoundResult(winner, audio);
     round_.EndRound(winner);
 }
 
-void CS2DGame::ApplyRoundResult(Team winner) {
+void CS2DGame::ApplyRoundResult(Team winner, AudioManager* audio) {
     if (round_.IsRoundEnd()) return;   // 防重复结算（目标物与歼灭可能同帧触发）
 
     if (winner != Team::None) {
         teams_.AddScore(winner);
+    }
+
+    // 回合胜负音效（以玩家阵营视角）
+    if (audio && winner != Team::None) {
+        audio->PlaySound(winner == player_.team ? SoundEffect::ROUND_WIN
+                                                : SoundEffect::ROUND_LOSE);
     }
 
     GrantRoundEndMoney(winner);

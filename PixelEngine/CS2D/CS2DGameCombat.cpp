@@ -116,9 +116,21 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     player_.shootCooldown = def.cooldown;
     player_.shootAnimTimer = 0.12f;
 
-    if (audio) {
-        if (def.cls == WeaponClass::Rifle) audio->PlaySound(SoundEffect::AK47_FIRE);
-        else                               audio->PlaySound(SoundEffect::SHOOT);
+    if (audio) audio->PlaySound(FireSoundFor(def.id));
+}
+
+// 武器 → 枪声（近战/投掷物回退到通用音）
+SoundEffect CS2DGame::FireSoundFor(WeaponId id) {
+    switch (id) {
+        case WeaponId::Glock:   return SoundEffect::GLOCK_FIRE;
+        case WeaponId::Deagle:  return SoundEffect::DEAGLE_FIRE;
+        case WeaponId::Galil:   return SoundEffect::GALIL_FIRE;
+        case WeaponId::AK47:    return SoundEffect::AK47_FIRE;
+        case WeaponId::M4A1:    return SoundEffect::M4A1_FIRE;
+        case WeaponId::SMG:     return SoundEffect::SMG_FIRE;
+        case WeaponId::Shotgun: return SoundEffect::SHOTGUN_FIRE;
+        case WeaponId::AWP:     return SoundEffect::AWP_FIRE;
+        default:                return SoundEffect::SHOOT;
     }
 }
 
@@ -207,7 +219,8 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             if (dx * dx + dy * dy < hitR * hitR) {
                 bullet.active = false;
                 damageFlashTimer_ = 0.30f;   // 玩家受伤反馈
-                if (audio) audio->PlaySound(SoundEffect::HIT);
+                if (audio) audio->PlaySound(player_.armor > 0 ? SoundEffect::ARMOR_HIT
+                                                              : SoundEffect::HIT);
                 if (ApplyDamage(player_, bullet.damage)) {
                     PushKillFeed(std::string("BOT#") + std::to_string(bullet.ownerIdx) + "  ▸  击杀 你");
                     OnCombatantKilled(player_, audio);
@@ -310,10 +323,11 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
             damageAt(player_);
             for (auto& b : bots_) damageAt(b);
 
-            if (audio) audio->PlaySound(SoundEffect::OBSTACLE_BREAK);
+            if (audio) audio->PlaySound(SoundEffect::GRENADE_EXPLODE);
             break;
         }
         case WeaponId::GrenadeFlash: {
+            if (audio) audio->PlaySound(SoundEffect::FLASHBANG);
             // 玩家致盲：距离 + 视线
             if (player_.alive && player_.team != g.team) {
                 const float dx = player_.x - g.x;
@@ -332,7 +346,7 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
             s.radius = 70.0f;
             s.life = 12.0f;
             smokes_.push_back(s);
-            if (audio) audio->PlaySound(SoundEffect::PICKUP);
+            if (audio) audio->PlaySound(SoundEffect::SMOKE);
             break;
         }
         default:

@@ -132,6 +132,20 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
         } else {
             // 倒计时
             bombTimer_ -= dt;
+
+            // C4 滴答：越接近爆炸越急促（2s → 0.25s）
+            if (audio) {
+                bombBeepTimer_ -= dt;
+                const float interval = (bombTimer_ > 10.0f) ? 1.0f
+                                     : (bombTimer_ > 4.0f)  ? 0.5f
+                                     : 0.25f;
+                if (bombBeepTimer_ <= 0.0f) {
+                    bombBeepTimer_ = interval;
+                    audio->PlaySoundAt(SoundEffect::BOMB_BEEP, bombX_, bombY_,
+                                       player_.x, player_.y);
+                }
+            }
+
             if (bombTimer_ <= 0.0f) {
                 DetonateBomb(audio);
                 return;
@@ -152,7 +166,8 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
                     bombPlanted_ = false;
                     bombTimer_ = 0.0f;
                     defuseProgress_ = 0.0f;
-                    ApplyRoundResult(Team::CT);
+                    if (audio) audio->PlaySound(SoundEffect::BOMB_DEFUSE);
+                    ApplyRoundResult(Team::CT, audio);
                     round_.EndRound(Team::CT);
                 }
             } else {
@@ -192,7 +207,7 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
 
                 if (GetHostagesRescued() >= GetHostagesTotal()) {
                     std::cout << "[CS2D] 全部人质获救!" << std::endl;
-                    ApplyRoundResult(Team::CT);
+                    ApplyRoundResult(Team::CT, audio);
                     round_.EndRound(Team::CT);
                 }
             }
@@ -207,9 +222,10 @@ void CS2DGame::PlantBomb(float x, float y, AudioManager* audio) {
     bombX_ = x;
     bombY_ = y;
     bombTimer_ = BOMB_FUSE;
+    bombBeepTimer_ = 0.0f;
     defuseProgress_ = 0.0f;
     std::cout << "[CS2D] C4 已安装! " << static_cast<int>(BOMB_FUSE) << " 秒后爆炸" << std::endl;
-    if (audio) audio->PlaySound(SoundEffect::OBSTACLE_BREAK);
+    if (audio) audio->PlaySound(SoundEffect::BOMB_PLANT);
 }
 
 void CS2DGame::DetonateBomb(AudioManager* audio) {
@@ -233,8 +249,8 @@ void CS2DGame::DetonateBomb(AudioManager* audio) {
     damageAt(player_);
     for (auto& b : bots_) damageAt(b);
 
-    if (audio) audio->PlaySound(SoundEffect::OBSTACLE_BREAK);
+    if (audio) audio->PlaySound(SoundEffect::GRENADE_EXPLODE);
 
-    ApplyRoundResult(Team::T);
+    ApplyRoundResult(Team::T, audio);
     round_.EndRound(Team::T);
 }

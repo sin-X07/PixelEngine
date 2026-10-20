@@ -456,6 +456,16 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     // 命中 / 受伤反馈衰减
     if (hitMarkerTimer_ > 0.0f)   hitMarkerTimer_   = std::max(0.0f, hitMarkerTimer_ - dt);
     if (damageFlashTimer_ > 0.0f) damageFlashTimer_ = std::max(0.0f, damageFlashTimer_ - dt);
+
+    // 玩家脚步声（潜行时不出声）
+    if (audio && player_.alive && !player_.stealth) {
+        footstepTimer_ -= dt;
+        const float spd = std::sqrt(player_.vx * player_.vx + player_.vy * player_.vy);
+        if (spd > 5.0f && footstepTimer_ <= 0.0f) {
+            footstepTimer_ = 0.32f;
+            audio->PlaySound(SoundEffect::FOOTSTEP);
+        }
+    }
 }
 
 // ============================================================================

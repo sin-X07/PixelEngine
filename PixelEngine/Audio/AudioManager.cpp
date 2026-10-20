@@ -40,6 +40,27 @@ bool AudioManager::Initialize() {
     deagleSound = loadChunk("assets/audio/deagle.mp3", "沙漠之鹰射击");
     katanaSound = loadChunk("assets/audio/katana.mp3", "武士刀挥砍");
 
+    // 战局事件
+    grenadeExplodeSound = loadChunk("assets/audio/grenade_explode.wav", "手雷爆炸");
+    flashbangSound      = loadChunk("assets/audio/flashbang.wav", "闪光弹");
+    smokeSound          = loadChunk("assets/audio/smoke.wav", "烟雾弹");
+    bombPlantSound      = loadChunk("assets/audio/bomb_plant.wav", "下包");
+    bombDefuseSound     = loadChunk("assets/audio/bomb_defuse.wav", "拆包");
+    bombBeepSound       = loadChunk("assets/audio/bomb_beep.wav", "C4 滴答");
+    roundStartSound     = loadChunk("assets/audio/round_start.wav", "回合开始");
+    roundWinSound       = loadChunk("assets/audio/round_win.wav", "回合胜利");
+    roundLoseSound      = loadChunk("assets/audio/round_lose.wav", "回合失败");
+    footstepSound       = loadChunk("assets/audio/footstep.wav", "脚步");
+    armorHitSound       = loadChunk("assets/audio/armor_hit.wav", "护甲受击");
+
+    // 分武器枪声
+    glockFireSound   = loadChunk("assets/audio/glock.wav", "Glock 射击");
+    m4a1FireSound    = loadChunk("assets/audio/m4a1.mp3", "M4A1 射击");
+    awpFireSound     = loadChunk("assets/audio/awp.wav", "AWP 射击");
+    shotgunFireSound = loadChunk("assets/audio/shotgun.wav", "霰弹枪射击");
+    smgFireSound     = loadChunk("assets/audio/smg.wav", "SMG 射击");
+    galilFireSound   = loadChunk("assets/audio/galir.wav", "Galil 射击");
+
     if (failedAudio > 0) {
         std::cerr << "[Asset] 音效缺失 " << failedAudio
                   << " 项，请参照 tools/ASSET_SPEC.md 补齐" << std::endl;
@@ -67,6 +88,27 @@ void AudioManager::Clean() {
     if (ak47Sound) { Mix_FreeChunk(ak47Sound); ak47Sound = nullptr; }
     if (deagleSound) { Mix_FreeChunk(deagleSound); deagleSound = nullptr; }
     if (katanaSound) { Mix_FreeChunk(katanaSound); katanaSound = nullptr; }
+
+    // 战局事件
+    if (grenadeExplodeSound) { Mix_FreeChunk(grenadeExplodeSound); grenadeExplodeSound = nullptr; }
+    if (flashbangSound)      { Mix_FreeChunk(flashbangSound);      flashbangSound = nullptr; }
+    if (smokeSound)          { Mix_FreeChunk(smokeSound);          smokeSound = nullptr; }
+    if (bombPlantSound)      { Mix_FreeChunk(bombPlantSound);      bombPlantSound = nullptr; }
+    if (bombDefuseSound)     { Mix_FreeChunk(bombDefuseSound);     bombDefuseSound = nullptr; }
+    if (bombBeepSound)       { Mix_FreeChunk(bombBeepSound);       bombBeepSound = nullptr; }
+    if (roundStartSound)     { Mix_FreeChunk(roundStartSound);     roundStartSound = nullptr; }
+    if (roundWinSound)       { Mix_FreeChunk(roundWinSound);       roundWinSound = nullptr; }
+    if (roundLoseSound)      { Mix_FreeChunk(roundLoseSound);      roundLoseSound = nullptr; }
+    if (footstepSound)       { Mix_FreeChunk(footstepSound);       footstepSound = nullptr; }
+    if (armorHitSound)       { Mix_FreeChunk(armorHitSound);       armorHitSound = nullptr; }
+
+    // 分武器枪声
+    if (glockFireSound)   { Mix_FreeChunk(glockFireSound);   glockFireSound = nullptr; }
+    if (m4a1FireSound)    { Mix_FreeChunk(m4a1FireSound);    m4a1FireSound = nullptr; }
+    if (awpFireSound)     { Mix_FreeChunk(awpFireSound);     awpFireSound = nullptr; }
+    if (shotgunFireSound) { Mix_FreeChunk(shotgunFireSound); shotgunFireSound = nullptr; }
+    if (smgFireSound)     { Mix_FreeChunk(smgFireSound);     smgFireSound = nullptr; }
+    if (galilFireSound)   { Mix_FreeChunk(galilFireSound);   galilFireSound = nullptr; }
 
     Mix_CloseAudio();
     SDL_QuitSubSystem(SDL_INIT_AUDIO);
@@ -104,27 +146,54 @@ void AudioManager::StopMusic() {
     if (audioInitialized) Mix_HaltMusic();
 }
 
+// 效果 → 音频块（播放入口共用，避免 switch 重复）
+Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
+    switch (effect) {
+        case SoundEffect::PICKUP:           return pickupSound;
+        case SoundEffect::BUTTON_HOVER:     return buttonHoverSound;
+        case SoundEffect::CLICK:            return clickSound;
+        case SoundEffect::DAGGER_FIRE:      return daggerSound;
+        case SoundEffect::OBSTACLE_BREAK:   return breakSound;
+        case SoundEffect::SHOOT:            return shootSound;
+        case SoundEffect::HIT:              return hitSound;
+        case SoundEffect::KILL:             return killSound;
+        case SoundEffect::AK47_FIRE:        return ak47Sound;
+        case SoundEffect::DEAGLE_FIRE:      return deagleSound;
+        case SoundEffect::KATANA_SWING:     return katanaSound;
+
+        case SoundEffect::GRENADE_EXPLODE:  return grenadeExplodeSound;
+        case SoundEffect::FLASHBANG:        return flashbangSound;
+        case SoundEffect::SMOKE:            return smokeSound;
+        case SoundEffect::BOMB_PLANT:       return bombPlantSound;
+        case SoundEffect::BOMB_DEFUSE:      return bombDefuseSound;
+        case SoundEffect::BOMB_BEEP:        return bombBeepSound;
+        case SoundEffect::ROUND_START:      return roundStartSound;
+        case SoundEffect::ROUND_WIN:        return roundWinSound;
+        case SoundEffect::ROUND_LOSE:       return roundLoseSound;
+        case SoundEffect::FOOTSTEP:         return footstepSound;
+        case SoundEffect::ARMOR_HIT:        return armorHitSound;
+
+        case SoundEffect::GLOCK_FIRE:       return glockFireSound;
+        case SoundEffect::M4A1_FIRE:        return m4a1FireSound;
+        case SoundEffect::AWP_FIRE:         return awpFireSound;
+        case SoundEffect::SHOTGUN_FIRE:     return shotgunFireSound;
+        case SoundEffect::SMG_FIRE:         return smgFireSound;
+        case SoundEffect::GALIL_FIRE:       return galilFireSound;
+    }
+    return nullptr;
+}
+
 void AudioManager::PlaySound(SoundEffect effect) {
     if (!audioInitialized) return;
 
-    Mix_Chunk* targetChunk = nullptr;
-    switch (effect) {
-        case SoundEffect::PICKUP: targetChunk = pickupSound; break;
-        case SoundEffect::BUTTON_HOVER: targetChunk = buttonHoverSound; break;
-        case SoundEffect::CLICK: targetChunk = clickSound; break;
-        case SoundEffect::DAGGER_FIRE: targetChunk = daggerSound; break;
-        case SoundEffect::OBSTACLE_BREAK: targetChunk = breakSound; break;
-        case SoundEffect::SHOOT: targetChunk = shootSound; break;
-        case SoundEffect::HIT: targetChunk = hitSound; break;
-        case SoundEffect::KILL: targetChunk = killSound; break;
-        case SoundEffect::AK47_FIRE: targetChunk = ak47Sound; break;
-        case SoundEffect::DEAGLE_FIRE: targetChunk = deagleSound; break;
-        case SoundEffect::KATANA_SWING: targetChunk = katanaSound; break;
-    }
-
+    Mix_Chunk* targetChunk = ChunkFor(effect);
     if (targetChunk) {
-        // AK47 连发使用专用通道，新枪声直接覆盖旧枪声，避免通道耗尽后失声
-        const int chan = (effect == SoundEffect::AK47_FIRE) ? CHANNEL_AK47_FIRE : -1;
+        // 自动武器共用专用通道：新枪声覆盖旧枪声，避免通道耗尽后失声
+        const bool autoWeapon = (effect == SoundEffect::AK47_FIRE ||
+                                 effect == SoundEffect::M4A1_FIRE ||
+                                 effect == SoundEffect::GALIL_FIRE ||
+                                 effect == SoundEffect::SMG_FIRE);
+        const int chan = autoWeapon ? CHANNEL_AK47_FIRE : -1;
         Mix_PlayChannel(chan, targetChunk, 0);
     }
 }
@@ -133,25 +202,10 @@ void AudioManager::PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
                                 float listenerX, float listenerY) {
     if (!audioInitialized) return;
 
-    Mix_Chunk* targetChunk = nullptr;
-    int reservedChan = -1;
-    switch (effect) {
-        case SoundEffect::PICKUP:       targetChunk = pickupSound;      break;
-        case SoundEffect::BUTTON_HOVER: targetChunk = buttonHoverSound; break;
-        case SoundEffect::CLICK:        targetChunk = clickSound;       break;
-        case SoundEffect::DAGGER_FIRE: targetChunk = daggerSound;      break;
-        case SoundEffect::OBSTACLE_BREAK: targetChunk = breakSound;     break;
-        case SoundEffect::SHOOT:        targetChunk = shootSound;       break;
-        case SoundEffect::HIT:          targetChunk = hitSound;         break;
-        case SoundEffect::KILL:         targetChunk = killSound;        break;
-        case SoundEffect::AK47_FIRE:    targetChunk = ak47Sound;        break;
-        case SoundEffect::DEAGLE_FIRE:  targetChunk = deagleSound;      break;
-        case SoundEffect::KATANA_SWING: targetChunk = katanaSound;      break;
-    }
-
+    Mix_Chunk* targetChunk = ChunkFor(effect);
     if (!targetChunk) return;
 
-    const int chan = Mix_PlayChannel(reservedChan, targetChunk, 0);
+    const int chan = Mix_PlayChannel(-1, targetChunk, 0);
     if (chan < 0) return;
 
     // ---- 声像：由「声源相对玩家的世界位置」决定 ----

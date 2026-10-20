@@ -25,6 +25,9 @@ enum class MatchMode {
     HostageRescue      // 人质：CT 营救全部人质
 };
 
+// 武器 → 枪声（近战/投掷物回退到通用音）
+enum class SoundEffect;
+
 // 武器槽参数表（slot: 0=主武器, 1=副武器, 2=近战）
 struct WeaponSlotParams {
     float damage;
@@ -296,6 +299,7 @@ private:
     std::vector<Grenade> grenades_;
     std::vector<SmokeCloud> smokes_;
     float flashTimer_ = 0.0f;      // 玩家闪光致盲剩余秒数
+    float footstepTimer_ = 0.0f;   // 玩家脚步声节奏
     float hitMarkerTimer_ = 0.0f;   // 命中敌人反馈
     float damageFlashTimer_ = 0.0f; // 玩家受伤反馈
 
@@ -304,6 +308,7 @@ private:
     bool  bombPlanted_   = false;
     float bombX_ = 0.0f, bombY_ = 0.0f;
     float bombTimer_     = 0.0f;   // 倒计时（<=0 爆炸）
+    float bombBeepTimer_ = 0.0f;   // C4 滴答音节奏
     float defuseProgress_ = 0.0f;  // 0..1
     float rescueProgress_ = 0.0f;  // 0..1（当前人质）
     int   hostageNearIdx_ = -1;    // 玩家当前靠近的人质索引
@@ -354,6 +359,9 @@ private:
     void UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bool stealth);
     void UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, float worldMY, class AudioManager* audio);
     void UpdateBOTs(float dt, class AudioManager* audio);
+    // 找到武器对应的枪声（供玩家与 BOT 共用）
+    static SoundEffect FireSoundFor(WeaponId id);
+
     // ---- 小队协同 ----
     void AssignSquadRoles();            // 回合开始时分配 突破/支援/断后
     void UpdateSquadFocus(float dt);    // 周期性选集火目标（含掩护偏好）
@@ -395,10 +403,10 @@ private:
 
     // 回合流程
     void UpdateRoundFlow(float dt, class AudioManager* audio);
-    void BeginNewRound();
+    void BeginNewRound(class AudioManager* audio = nullptr);
     void RespawnAllForRound();
     void CheckWinConditions(class AudioManager* audio);
-    void ApplyRoundResult(Team winner);
+    void ApplyRoundResult(Team winner, class AudioManager* audio = nullptr);
     // 统一伤害入口：先扣护甲再扣血。返回 true 表示本次伤害致死。
     bool ApplyDamage(Player& victim, int amount);
     void GrantRoundEndMoney(Team winner);   // 发放回合金钱并重置本回合装备

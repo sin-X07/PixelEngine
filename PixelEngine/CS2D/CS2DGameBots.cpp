@@ -597,8 +597,8 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                     bot.shootCooldown = def.cooldown * 1.8f * out.shootCooldownMul;
                     bot.shootAnimTimer = 0.12f;
 
-                    if (audio && def.cls == WeaponClass::Rifle) {
-                        audio->PlaySoundAt(SoundEffect::AK47_FIRE, bot.x, bot.y,
+                    if (audio) {
+                        audio->PlaySoundAt(FireSoundFor(def.id), bot.x, bot.y,
                                            player_.x, player_.y);
                     }
                 }
