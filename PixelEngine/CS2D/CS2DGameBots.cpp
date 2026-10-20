@@ -443,7 +443,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
         // ---- 受击撤退：低血时优先找掩体，交火次之 ----
         if (bot.retreatTimer > 0.0f) bot.retreatTimer -= dt;
-        if (bot.retreatTimer > 0.0f && bot.health <= 45) {
+        if (bot.retreatTimer > 0.0f && bot.health <= 35) {
             float covX = 0.0f, covY = 0.0f;
             if (FindCoverPoint(bot, bot.threatX, bot.threatY, covX, covY)) {
                 bot.llmIntent.Tick(dt);
@@ -555,11 +555,24 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 hasDest = true;
             }
 
-            // 巡逻兜底：无任务、无情报、无可见敌人时随机游走，避免原地发呆
+            // 巡逻兜底：无任务、无情报、无可见敌人时游走，避免原地发呆
+            // 突破/支援位向敌方半区推进，断后位在附近游走守点
             if (!hasDest) {
-                for (int t = 0; t < 8; ++t) {
-                    const float rx = bot.x + static_cast<float>(rng_() % 601) - 300.0f;
-                    const float ry = bot.y + static_cast<float>(rng_() % 601) - 300.0f;
+                const float mapW = world_->GetMapPixelW();
+                const float mapH = world_->GetMapPixelH();
+                const bool pushIntoEnemyHalf = (order.role != BotRole::Anchor);
+
+                for (int t = 0; t < 12; ++t) {
+                    float rx = 0.0f, ry = 0.0f;
+                    if (pushIntoEnemyHalf) {
+                        const float f = static_cast<float>(rng_() % 1000) / 1000.0f;
+                        rx = (bot.team == Team::T) ? (mapW * 0.50f + f * mapW * 0.45f)
+                                                   : (f * mapW * 0.45f);
+                        ry = (static_cast<float>(rng_() % 1000) / 1000.0f) * mapH;
+                    } else {
+                        rx = bot.x + static_cast<float>(rng_() % 601) - 300.0f;
+                        ry = bot.y + static_cast<float>(rng_() % 601) - 300.0f;
+                    }
                     if (pathFinder_.IsWalkableWorld(rx, ry)) {
                         destX = rx;
                         destY = ry;

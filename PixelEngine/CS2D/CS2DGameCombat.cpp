@@ -215,9 +215,9 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                                    player_.x, player_.y);
             }
 
-            // 受击反应：记录威胁来源，血量低则触发撤退
-            if (bot.health <= 45) {
-                bot.retreatTimer = 3.0f;
+            // 受击反应：血量低且当前未在撤退 → 记录威胁来源并撤退一次
+            if (bot.retreatTimer <= 0.0f && bot.health > 0 && bot.health <= 30) {
+                bot.retreatTimer = 2.0f;
                 if (bullet.ownerIdx == -1) {
                     bot.threatX = player_.x;
                     bot.threatY = player_.y;

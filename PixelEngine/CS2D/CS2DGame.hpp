@@ -272,9 +272,10 @@ public:
     std::string GetWeaponName() const;
 
     // BOT 视野半径（发现敌人并交火的距离）
-    static constexpr float BOT_VIEW_RADIUS = 50.0f;
+    // 玩家视野是 150px；BOT 取 120px（略弱于玩家，但不能盲到打不起来）
+    static constexpr float BOT_VIEW_RADIUS = 120.0f;
     // 探点距离：超过交火距离但能「看到并上报」的范围（团队情报来源）
-    static constexpr float BOT_SPOT_RADIUS = 190.0f;
+    static constexpr float BOT_SPOT_RADIUS = 240.0f;
     // 情报保留时长（秒）
     static constexpr float CONTACT_MEMORY  = 6.0f;
 
