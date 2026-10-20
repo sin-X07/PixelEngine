@@ -73,7 +73,8 @@ public:
     Engine();
     ~Engine();
 
-    bool Initialize(const char* title, int width, int height, bool autostart = false);
+    bool Initialize(const char* title, int width, int height, bool autostart = false,
+                    bool fastRound = false);
     void Run();
     void Clean();
     void ToggleFullscreen();

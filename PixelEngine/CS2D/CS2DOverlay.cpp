@@ -39,11 +39,7 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
                             crosshair.thickness, crosshair.centerDot,
                             crosshair.length, crosshair.gap);
 
-    // 计分板
-    const int total   = game->GetBotCount() + 1;
-    const int kills   = game->GetPlayerKills();
-    const int deaths  = game->GetPlayerDeaths();
-    renderer->DrawScoreboard(total, kills, deaths, viewW, viewH);
+    // 顶部计分板已由 GameUI（ImGui）统一绘制，此处不再重复绘制
 
     // 收集 BOT 坐标
     const auto& bots = game->GetBOTs();

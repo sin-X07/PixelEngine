@@ -92,6 +92,16 @@ public:
         int         totalPlayers = 0;
         int         kills = 0;
         int         deaths = 0;
+
+        // 战局
+        int   scoreT = 0;
+        int   scoreCT = 0;
+        int   roundNumber = 0;
+        int   roundRemainingSec = 0;
+        int   aliveT = 0;
+        int   aliveCT = 0;
+        bool  matchOver = false;
+        bool  matchWinnerIsCT = false;
     };
 
     void DrawMenu(const MenuCtx& ctx, const Actions& actions);

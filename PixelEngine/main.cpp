@@ -23,12 +23,17 @@ int main(int argc, char* argv[]) {
     Engine engine;
 
     // --autostart：跳过菜单直接进入对局（调试 / 回归验证用）
+    // --fastround：使用短回合时长（配合 --autostart 验证回合状态机）
     bool autostart = false;
+    bool fastRound = false;
     for (int i = 1; i < argc; ++i) {
-        if (argv[i] && std::string(argv[i]) == "--autostart") autostart = true;
+        if (!argv[i]) continue;
+        const std::string a(argv[i]);
+        if (a == "--autostart") autostart = true;
+        if (a == "--fastround") fastRound = true;
     }
 
-    if (engine.Initialize("CS2D Pixel", 800, 600, autostart)) {
+    if (engine.Initialize("CS2D Pixel", 800, 600, autostart, fastRound)) {
         engine.Run();
     }
 

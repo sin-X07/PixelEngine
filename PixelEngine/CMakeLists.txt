@@ -98,6 +98,9 @@ set(SOURCES
     CS2D/CS2DRenderer.cpp
     CS2D/CS2DGame.cpp
     CS2D/CS2DOverlay.cpp
+    CS2D/Teams/TeamManager.hpp
+    CS2D/Rounds/RoundManager.hpp
+    CS2D/Rounds/RoundManager.cpp
     ThirdParty/imgui/imgui.cpp
     ThirdParty/imgui/imgui_draw.cpp
     ThirdParty/imgui/imgui_tables.cpp

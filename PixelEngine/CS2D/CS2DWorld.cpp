@@ -67,7 +67,7 @@ bool CS2DWorld::Build(const CS2DMapData& data) {
         }
     }
 
-    // ---- 对象层解析（Entities / SpawnPoints）----
+    // ---- 对象层解析（Entities / SpawnPoints / 目标物）----
     for (const auto& ol : data.objectLayers) {
         std::string lower;
         lower.reserve(ol.name.size());
@@ -79,12 +79,19 @@ bool CS2DWorld::Build(const CS2DMapData& data) {
             lowerType.reserve(obj.type.size());
             for (char c : obj.type) lowerType += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-            if (lowerType == "spawnpoint" || lowerType == "spawn_t" || lowerType == "spawn_ct") {
+            if (lowerType == "spawnpoint" || lowerType == "spawn" || lowerType == "spawn_t" || lowerType == "spawn_ct") {
                 SpawnPoint sp;
                 sp.x = obj.x;
                 sp.y = obj.y;
                 sp.isCT = (lowerType == "spawn_ct");
+                sp.teamSpecific = (lowerType == "spawn_t" || lowerType == "spawn_ct");
                 spawnPoints_.push_back(sp);
+            } else if (lowerType == "bomb_site" || lowerType == "bombsites") {
+                bombSites_.push_back(obj);
+            } else if (lowerType == "hostage") {
+                hostages_.push_back(obj);
+            } else if (lowerType == "buy_zone" || lowerType == "buyzone") {
+                buyZones_.push_back(obj);
             }
         }
     }
@@ -104,8 +111,26 @@ bool CS2DWorld::Build(const CS2DMapData& data) {
     std::cout << "[CS2DWorld] 构建完成: " << mapWidth_ << "x" << mapHeight_
               << " (" << (mapWidth_ * tileWidth_) << "x" << (mapHeight_ * tileHeight_) << " px)"
               << ", 背景图 " << (HasBackgroundImage() ? backgroundImagePath_ : "无")
-              << ", " << spawnPoints_.size() << " 个出生点" << std::endl;
+              << ", " << spawnPoints_.size() << " 个出生点"
+              << ", " << bombSites_.size() << " 个包点"
+              << ", " << hostages_.size() << " 名人质"
+              << ", " << buyZones_.size() << " 个购买区" << std::endl;
     return true;
+}
+
+// 指定阵营的出生点；无专属点时回退到全部出生点
+std::vector<const CS2DWorld::SpawnPoint*> CS2DWorld::SpawnsForTeam(bool isCT) const {
+    std::vector<const SpawnPoint*> specific;
+    for (const auto& sp : spawnPoints_) {
+        if (sp.teamSpecific && sp.isCT == isCT) specific.push_back(&sp);
+    }
+    if (!specific.empty()) return specific;
+
+    // 回退：使用全部出生点
+    std::vector<const SpawnPoint*> all;
+    all.reserve(spawnPoints_.size());
+    for (const auto& sp : spawnPoints_) all.push_back(&sp);
+    return all;
 }
 
 // ========= 碰撞查询 =========

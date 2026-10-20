@@ -100,23 +100,46 @@ void BotDecisionScheduler::DispatchOne(CS2DGame& game) {
     const int maxAmmo = targetBot.maxAmmo;
     const std::string area = "CS2D地图";
 
-    // ---- 敌人（玩家）----
+    // ---- 敌人：最近的异阵营存活单位（玩家或 BOT）----
     bool enemyVisible = false;
     float enemyDist   = 0.0f;
     std::string enemyDir = "前方";
     const bool enemyFiring = false;
+    {
+        float bestD2 = 1e18f;
+        float ex = 0.0f, ey = 0.0f;
+        bool found = false;
 
-    if (playerData.alive) {
-        const float dx = playerData.x - targetBot.x;
-        const float dy = playerData.y - targetBot.y;
-        enemyDist = std::sqrt(dx * dx + dy * dy);
+        auto consider = [&](const CS2DGame::Player& other) {
+            if (!other.alive || other.team == targetBot.team) return;
+            const float dx = other.x - targetBot.x;
+            const float dy = other.y - targetBot.y;
+            const float d2 = dx * dx + dy * dy;
+            if (d2 < bestD2) {
+                bestD2 = d2;
+                ex = other.x;
+                ey = other.y;
+                found = true;
+            }
+        };
 
-        if (enemyDist < CS2DGame::BOT_VIEW_RADIUS) {
-            enemyVisible = true;
-            if (std::abs(dx) > std::abs(dy))
-                enemyDir = (dx > 0) ? "右前方" : "左前方";
-            else
-                enemyDir = (dy > 0) ? "前方" : "后退";
+        consider(playerData);
+        for (const auto& b : bots) {
+            if (&b == &targetBot) continue;
+            consider(b);
+        }
+
+        if (found) {
+            enemyDist = std::sqrt(bestD2);
+            if (enemyDist < CS2DGame::BOT_VIEW_RADIUS) {
+                enemyVisible = true;
+                const float dx = ex - targetBot.x;
+                const float dy = ey - targetBot.y;
+                if (std::abs(dx) > std::abs(dy))
+                    enemyDir = (dx > 0) ? "右前方" : "左前方";
+                else
+                    enemyDir = (dy > 0) ? "前方" : "后退";
+            }
         }
     }
 
@@ -130,6 +153,7 @@ void BotDecisionScheduler::DispatchOne(CS2DGame& game) {
 
     for (const auto& b : bots) {
         if (&b == &targetBot || !b.alive) continue;
+        if (b.team != targetBot.team) continue;   // 只统计同阵营队友
         ++aliveCount;
 
         const float dx = b.x - targetBot.x;
@@ -146,12 +170,34 @@ void BotDecisionScheduler::DispatchOne(CS2DGame& game) {
     }
 
     // ---- 组装请求 ----
-    const std::string userMsg = PromptBuilder::BuildUserMessage(
+    std::string userMsg = PromptBuilder::BuildUserMessage(
         hp, maxHp, armor, weaponName, ammo, maxAmmo,
         targetBot.x, targetBot.y, area,
         enemyVisible, enemyDist, enemyDir, enemyFiring,
         teammateAlive, teammateDist, teammateDir,
         targetBot.reloading);
+
+    // ---- 战局上下文（阵营 / 回合 / 比分）----
+    {
+        const char* phaseName = "交战";
+        switch (game.GetRoundPhase()) {
+            case RoundPhase::Freeze:   phaseName = "冻结"; break;
+            case RoundPhase::Buy:      phaseName = "购买"; break;
+            case RoundPhase::Live:     phaseName = "交战"; break;
+            case RoundPhase::RoundEnd: phaseName = "结算"; break;
+            default:                   phaseName = "-";    break;
+        }
+        char ctx[256];
+        std::snprintf(ctx, sizeof(ctx),
+                      "\n【战局】你是%s阵营，第%d回合，阶段:%s，剩余%d秒，比分 T%d:%d CT，本阵营存活%d人。",
+                      TeamName(targetBot.team),
+                      game.GetRoundNumber(),
+                      phaseName,
+                      static_cast<int>(game.GetRoundRemaining()),
+                      game.GetScoreT(), game.GetScoreCT(),
+                      game.AliveCount(targetBot.team));
+        userMsg += ctx;
+    }
 
     const std::string requestBody = PromptBuilder::BuildRequestBody(userMsg);
 
@@ -189,7 +235,8 @@ void BotDecisionScheduler::DispatchOne(CS2DGame& game) {
 
     // 每次请求打印一行，便于观察轮询节奏
     std::cout << "[LLM] 请求 " << tag
-              << " (HP " << static_cast<int>(hp)
+              << " (" << TeamName(targetBot.team)
+              << ", HP " << static_cast<int>(hp)
               << ", " << weaponName
-              << ", 存活 " << (aliveCount + 1) << ")" << std::endl;
+              << ", 阵营存活 " << game.AliveCount(targetBot.team) << ")" << std::endl;
 }

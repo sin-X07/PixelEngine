@@ -1,6 +1,9 @@
 #pragma once
 #include "CS2DWorld.hpp"
 #include "CS2DRenderer.hpp"
+#include "Teams/TeamManager.hpp"
+#include "Rounds/RoundManager.hpp"
+#include "../Core/Types.hpp"
 #include "../LLM/BotIntent.hpp"
 #include "../LLM/BotBehaviorExecutor.hpp"
 #include <SDL2/SDL.h>
@@ -11,12 +14,13 @@
 
 class AudioManager;
 
-// ============================================================================
-// CS2DGame —— CS2D 模式游戏逻辑（俯视角射击对抗）
-//   首版：单机 BOT 对战，自由击杀模式
-// ============================================================================
+// 对局模式（Phase 2：死斗 / 团队歼灭；Phase 5 追加爆破与人质）
+enum class MatchMode {
+    DeathMatch,        // 自由击杀，即时重生，无回合
+    TeamElimination    // 回合制，T/CT 歼灭，先到 N 分获胜
+};
 
-// 武器槽参数表（slot: 0=主武器, 1=副武器(Deagle), 2=近战(Knife)）
+// 武器槽参数表（slot: 0=主武器, 1=副武器, 2=近战）
 struct WeaponSlotParams {
     float damage;
     float cooldown;
@@ -24,45 +28,54 @@ struct WeaponSlotParams {
     float range;
 };
 
+// ============================================================================
+// CS2DGame — CS2D 对局逻辑
+// ============================================================================
 class CS2DGame {
 public:
-    // ---- 动画状态 ----
     enum class AnimState { Idle, Walk, Shoot, Dead };
 
-    // ---- 玩家/BOT 实体 ----
+    // ---- 战斗单位（玩家与 BOT 共用）----
     struct Player {
         float x       = 0.0f;
         float y       = 0.0f;
         float vx      = 0.0f;
         float vy      = 0.0f;
-        float size    = 6.0f;       // 命中盒边长（视觉尺寸与命中盒解耦，见渲染器 SPRITE_VISUAL_SIZE）
-        float aimAngle = 0.0f;       // 瞄准方向（弧度）
+        float size    = 6.0f;
+        float aimAngle = 0.0f;
         int   health  = 100;
         int   maxHealth = 100;
-        bool  isCT    = false;
+        Team  team    = Team::CT;
         bool  alive   = true;
         float shootCooldown = 0.0f;
-        // 精灵系统
+
+        // 精灵
         AnimState animState = AnimState::Idle;
         float     animTimer = 0.0f;
-        int       weaponSlot = 0;    // 0=主武器, 1=副武器, 2=近战（决定精灵切片帧）
-        int       weaponType = 0;    // 0=AK47, 1=M4A1（主武器外观）
-        int       spriteKey  = 0;    // 0=CT头盔, 1=T无头盔, 2=T备选
+        int       weaponSlot = 0;
+        int       weaponType = 0;
+        int       spriteKey  = 0;
         float     deathTimer = 0.0f;
-        float     shootAnimTimer = 0.0f;  // 射击动画计时（>0 表示射击状态）
-        // 换弹系统（仅主武器）
-        int       ammo      = 30;    // 当前弹夹子弹数
-        int       maxAmmo   = 30;    // 弹夹容量
+        float     shootAnimTimer = 0.0f;
+
+        // 弹药
+        int       ammo      = 30;
+        int       maxAmmo   = 30;
         bool      reloading = false;
         float     reloadTimer = 0.0f;
-        static constexpr float RELOAD_TIME = 2.0f;  // 换弹耗时（秒）
-        // 潜行
+        static constexpr float RELOAD_TIME = 2.0f;
+
         bool      stealth   = false;
-        // LLM 战略意图 (由 Engine 异步写入, 由 UpdateBOTs 消费)
+
+        // 战局数据
+        int       money  = 800;
+        int       kills  = 0;
+        int       deaths = 0;
+
+        // LLM 战略意图
         BotIntent llmIntent;
     };
 
-    // ---- 子弹 ----
     struct Bullet {
         float x  = 0.0f;
         float y  = 0.0f;
@@ -72,28 +85,24 @@ public:
         float maxDist  = 800.0f;
         int   damage   = 25;
         int   ownerIdx  = -1;        // -1=玩家, >=0=BOT索引
+        Team  ownerTeam = Team::None;
         bool  active   = true;
     };
 
     CS2DGame();
     ~CS2DGame() = default;
 
-    // 初始化：加载 TMJ → 构建 CS2DWorld → 设置 CS2DRenderer
     bool LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* renderer);
-
-    // 重置游戏状态
     void Reset();
 
-    // 每帧更新
     void Update(float dt, bool mouseLeftDown, float mouseWorldX, float mouseWorldY,
                 bool wPressed, bool aPressed, bool sPressed, bool dPressed,
                 bool shiftPressed, bool rPressed,
                 class AudioManager* audio = nullptr);
 
-    // 渲染
     void Render(int viewW = 800, int viewH = 600);
 
-    // 访问器
+    // ---- 访问器 ----
     CS2DWorld&       GetWorld()       { return *world_; }
     const CS2DWorld& GetWorld() const { return *world_; }
     CS2DRenderer*    GetRenderer()    { return renderer_; }
@@ -101,30 +110,55 @@ public:
     Player&          GetPlayer()      { return player_; }
     const Player&    GetPlayer() const { return player_; }
 
-    std::vector<Player>& GetBOTs() { return bots_; }
-    const std::vector<Player>& GetBOTs()  const { return bots_; }
+    std::vector<Player>&       GetBOTs()       { return bots_; }
+    const std::vector<Player>& GetBOTs() const { return bots_; }
     const std::vector<Bullet>& GetBullets() const { return bullets_; }
 
     int GetPlayerKills()  const { return playerKills_; }
     int GetPlayerDeaths() const { return playerDeaths_; }
     int GetBotCount()     const { return static_cast<int>(bots_.size()); }
+    float GetAimAngle()   const { return player_.aimAngle; }
 
-    float GetAimAngle() const { return player_.aimAngle; }
+    // ---- 阵营 / 回合 ----
+    MatchMode  GetMatchMode()   const { return mode_; }
+    void       SetMatchMode(MatchMode m) { mode_ = m; }
 
-    // 武器槽切换：0=主武器, 1=副武器, 2=近战
+    int  GetScoreT()      const { return teams_.ScoreT(); }
+    int  GetScoreCT()     const { return teams_.ScoreCT(); }
+    int  GetScoreToWin()  const { return teams_.ScoreToWin(); }
+
+    RoundPhase GetRoundPhase()      const { return round_.Phase(); }
+    float      GetRoundRemaining()  const { return round_.PhaseRemaining(); }
+    int        GetRoundNumber()     const { return round_.RoundNumber(); }
+    Team       GetLastRoundWinner() const { return round_.LastWinner(); }
+    bool       IsFrozen()           const { return round_.IsFrozen(); }
+
+    // 覆盖回合时长配置（调试 / 测试用；同时重置回合计时）
+    void SetRoundConfig(const RoundConfig& cfg) {
+        round_.Reset(cfg);
+        prevPhase_ = round_.Phase();
+    }
+
+    bool IsMatchOver()   const { return teams_.MatchOver(); }
+    Team GetMatchWinner() const { return teams_.MatchWinner(); }
+
+    // 各阵营存活人数
+    int AliveCount(Team t) const;
+
+    // ---- 武器 ----
     void SwitchWeaponSlot(int slot);
-
-    // 武器名称（按 slot 返回）
     std::string GetWeaponName() const;
 
-    // BOT 视野半径（供 BOT AI 与 LLM 状态采样器使用）
-    // 注意：玩家视野几何（半径 150px + 120° 扇形 + 遮挡）统一由
-    //       CS2DRenderer::ComputeVisibility() 提供，不在此重复定义。
-    static constexpr float BOT_VIEW_RADIUS    = 50.0f;
+    // BOT 视野半径（LLM 状态采样用）
+    static constexpr float BOT_VIEW_RADIUS = 50.0f;
 
-    // 鼠标灵敏度（默认 1.0f）
+    // 鼠标灵敏度
     float GetMouseSensitivity() const { return mouseSensitivity_; }
     void  SetMouseSensitivity(float s) { mouseSensitivity_ = std::clamp(s, 0.1f, 5.0f); }
+
+    // 每队人数（含玩家）
+    static constexpr int TEAM_SIZE  = 5;
+    static constexpr int TOTAL_BOTS = TEAM_SIZE * 2 - 1;   // 玩家占 CT 一席 → 9 BOT
 
 private:
     std::unique_ptr<CS2DWorld> world_;
@@ -137,51 +171,54 @@ private:
     int playerKills_  = 0;
     int playerDeaths_ = 0;
 
-    // BOT AI 分层架构
-    std::vector<BotBehaviorExecutor> botExecutors_;  // 每个 BOT 一个战术层实例
+    MatchMode  mode_ = MatchMode::TeamElimination;
+    TeamManager teams_;
+    RoundManager round_;
+    RoundPhase  prevPhase_ = RoundPhase::Freeze;
+    bool        matchOverAnnounced_ = false;
 
-    // BOT 计时
+    std::vector<BotBehaviorExecutor> botExecutors_;
+
     float botRespawnTimer_  = 0.0f;
     static constexpr float BOT_RESPAWN_DELAY = 3.0f;
-    static constexpr int   MAX_BOTS          = 8;
-    static constexpr int   ACTIVE_BOTS       = 8;
 
     std::mt19937 rng_;
     std::uniform_real_distribution<float> angleDist_{0.0f, 6.283185f};
 
-    float mouseSensitivity_ = 1.0f;   // 鼠标灵敏度倍率
-    bool  prevMouseDown_    = false;  // 上一帧鼠标状态（用于半自动武器边沿检测）
+    float mouseSensitivity_ = 1.0f;
+    bool  prevMouseDown_    = false;
 
-    // 每个武器槽独立的弹药（避免切换武器时自动补满）
-    int   slotAmmo_[2]    = {30, 7};   // [0]=主武器, [1]=副武器
+    int   slotAmmo_[2]    = {30, 7};
     int   slotMaxAmmo_[2] = {30, 7};
 
     // 内部方法
+    void ResetToNewMatch();          // 清空比分与统计并重建所有战斗单位
     void SpawnPlayer();
-    void SpawnBOT(Player& bot, bool isCT);
-    bool PickRandomSpawn(float& outX, float& outY);
+    void SpawnBOT(Player& bot, Team team);
+    bool PickSpawnForTeam(Team team, float& outX, float& outY);
     void UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bool stealth);
     void UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, float worldMY, class AudioManager* audio);
     void UpdateBOTs(float dt, class AudioManager* audio);
     void UpdateBullets(float dt, class AudioManager* audio);
     void RespawnBOT(Player& bot);
 
-    // 碰撞移动（分离轴推挤）
     void MoveWithCollision(Player& entity, float dt);
+    void FireBullet(float x, float y, float angle, const WeaponSlotParams& wp,
+                    int ownerIdx, Team ownerTeam);
 
-    // 发射子弹（按武器槽参数）
-    void FireBullet(float x, float y, float angle, const WeaponSlotParams& wp, int ownerIdx);
-
-    // BOT 是否能看见玩家（距离+视野半径+LOS 检查）
     bool BotCanSeePlayer(const Player& bot) const;
-
-    // 玩家是否能看见 BOT（同理）
     bool PlayerCanSeeBot(const Player& bot) const;
 
-    // 换弹逻辑（仅主武器）
     void StartReload(Player& p);
     void UpdateReload(Player& p, float dt);
 
-    // 检查是否有敌人过于靠近
     bool IsEnemyNearby(float x, float y, float safeRadius) const;
+
+    // 回合流程
+    void UpdateRoundFlow(float dt, class AudioManager* audio);
+    void BeginNewRound();
+    void RespawnAllForRound();
+    void CheckWinConditions(class AudioManager* audio);
+    void ApplyRoundResult(Team winner);
+    void OnCombatantKilled(Player& victim, class AudioManager* audio);
 };

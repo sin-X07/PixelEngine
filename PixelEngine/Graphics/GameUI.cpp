@@ -270,12 +270,28 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
 
     const float vpW = ImGui::GetIO().DisplaySize.x;
 
-    // 顶部计分板
+    // 顶部计分板：T 比分 : 比分 CT ｜ 回合 ｜ 倒计时
     {
-        char buf[128];
-        snprintf(buf, sizeof(buf), "人数: %d    击杀: %d    阵亡: %d",
-                 ctx.totalPlayers, ctx.kills, ctx.deaths);
-        DrawImGuiTextCentered(imGuiUI, buf, 14.0f, 200, 200, 200, 255, 20);
+        char left[64];
+        char mid[64];
+        snprintf(left, sizeof(left), "T  %d : %d  CT", ctx.scoreT, ctx.scoreCT);
+        snprintf(mid, sizeof(mid), "第 %d 回合   %02d:%02d",
+                 ctx.roundNumber,
+                 ctx.roundRemainingSec / 60, ctx.roundRemainingSec % 60);
+
+        DrawImGuiTextCentered(imGuiUI, left, 12.0f, 235, 235, 235, 255, 22);
+        DrawImGuiTextCentered(imGuiUI, mid, 40.0f, 180, 200, 215, 255, 18);
+
+        char alive[64];
+        snprintf(alive, sizeof(alive), "T 存活 %d   CT 存活 %d", ctx.aliveT, ctx.aliveCT);
+        DrawImGuiTextCentered(imGuiUI, alive, 64.0f, 160, 175, 185, 255, 16);
+    }
+
+    // 比赛结束提示
+    if (ctx.matchOver) {
+        DrawImGuiTextCentered(imGuiUI,
+            ctx.matchWinnerIsCT ? "比赛结束  CT 获胜" : "比赛结束  T 获胜",
+            200.0f, 255, 220, 90, 255, 30);
     }
 
     // 右下角武器状态文字（与 CS2DRenderer 的 160×56 面板对齐）

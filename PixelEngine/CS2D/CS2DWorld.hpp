@@ -25,6 +25,7 @@ public:
         float x = 0.0f;
         float y = 0.0f;
         bool  isCT = false;
+        bool  teamSpecific = false;   // true: spawn_t/spawn_ct 指定；false: 通用 SpawnPoint
     };
 
     CS2DWorld() = default;
@@ -61,6 +62,14 @@ public:
 
     const std::vector<SpawnPoint>&  GetSpawnPoints()  const { return spawnPoints_; }
 
+    // ---- 目标物 / 购买区（来自 Entities 层对象，Phase 4/5 使用）----
+    const std::vector<ObjectDef>& GetBombSites()  const { return bombSites_; }
+    const std::vector<ObjectDef>& GetHostages()   const { return hostages_; }
+    const std::vector<ObjectDef>& GetBuyZones()   const { return buyZones_; }
+
+    // 指定阵营的出生点；无专属点时回退到全部出生点
+    std::vector<const SpawnPoint*> SpawnsForTeam(bool isCT) const;
+
     const CS2DMapData* GetMapData() const { return mapData_; }
 
     // 检查世界坐标矩形是否与任何固体瓦片碰撞
@@ -89,4 +98,9 @@ private:
 
     // 实体出生点
     std::vector<SpawnPoint>  spawnPoints_;
+
+    // 目标物 / 购买区
+    std::vector<ObjectDef>   bombSites_;
+    std::vector<ObjectDef>   hostages_;
+    std::vector<ObjectDef>   buyZones_;
 };

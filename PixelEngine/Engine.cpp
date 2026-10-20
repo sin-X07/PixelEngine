@@ -168,7 +168,7 @@ GameUI::Actions Engine::BuildActions() {
 // 初始化
 // ============================================================================
 
-bool Engine::Initialize(const char* title, int width, int height, bool autostart) {
+bool Engine::Initialize(const char* title, int width, int height, bool autostart, bool fastRound) {
     cleaned = false;
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0) {
@@ -238,6 +238,16 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
 
     // 调试/回归用：跳过菜单直接进入对局
     if (autostart) StartMatch();
+
+    // 快节奏回合（仅测试用，便于快速验证回合状态机）
+    if (fastRound) {
+        RoundConfig fast;
+        fast.freezeTime = 1.0f;
+        fast.buyTime    = 1.0f;
+        fast.roundTime  = 8.0f;
+        fast.endTime    = 1.0f;
+        cs2dGame->SetRoundConfig(fast);
+    }
 
     return true;
 }
@@ -533,6 +543,16 @@ void Engine::Render() {
         ictx.totalPlayers    = cs2dGame->GetBotCount() + 1;
         ictx.kills           = cs2dGame->GetPlayerKills();
         ictx.deaths          = cs2dGame->GetPlayerDeaths();
+
+        ictx.scoreT           = cs2dGame->GetScoreT();
+        ictx.scoreCT          = cs2dGame->GetScoreCT();
+        ictx.roundNumber      = cs2dGame->GetRoundNumber();
+        ictx.roundRemainingSec = static_cast<int>(cs2dGame->GetRoundRemaining());
+        ictx.aliveT           = cs2dGame->AliveCount(Team::T);
+        ictx.aliveCT          = cs2dGame->AliveCount(Team::CT);
+        ictx.matchOver        = cs2dGame->IsMatchOver();
+        ictx.matchWinnerIsCT  = (cs2dGame->GetMatchWinner() == Team::CT);
+
         gameUI->DrawInGame(ictx, imGuiUI.get());
     }
 
