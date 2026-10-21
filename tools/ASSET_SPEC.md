@@ -45,6 +45,8 @@
 | `shotgun.png` | 霰弹枪 | 朝上 | 90° |
 | `smg.png` | SMG | 朝上 | 90° |
 | `deagle.png` | 沙鹰 | **朝右** | **0°** |
+| `glock.png` | Glock（T 起始手枪） | **朝右** | **0°** |
+| `usp.png` | USP（CT 起始手枪） | **朝右** | **0°** |
 | `knife.png` | 匕首 | 朝上 | 90° |
 | `grenade_he.png` | 高爆手雷 | 朝上 | 90° |
 | `grenade_flash.png` | 闪光弹 | 朝上 | 90° |
@@ -67,6 +69,7 @@
 | `AK47_d.png` | AK-47 |
 | `M4A1_d.png` | M4A1 |
 | `glock_d.png` | Glock |
+| `usp_d.png` | USP |
 | `galil_d.png` | Galil |
 | `awp_d.png` | AWP |
 | `shotgun_d.png` | 霰弹枪 |
@@ -104,6 +107,7 @@
 | `awp.wav` | AWP 射击 |
 | `deagle.mp3` | 沙鹰射击 |
 | `glock.wav` | Glock 射击 |
+| `usp.wav` | USP 射击 |
 | `shotgun.wav` | 霰弹枪射击 |
 | `smg.wav` | SMG 射击 |
 | `katana.mp3` | 近战挥砍 |

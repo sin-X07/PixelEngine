@@ -14,6 +14,7 @@
     "assets/audio/shotgun.wav",
     "assets/audio/smg.wav",
     "assets/audio/smoke.wav",
+    "assets/audio/usp.wav",
     "assets/cs2d/sprites/awp.png",
     "assets/cs2d/sprites/c4.png",
     "assets/cs2d/sprites/defuse_kit.png",
@@ -25,6 +26,7 @@
     "assets/cs2d/sprites/hostage.png",
     "assets/cs2d/sprites/shotgun.png",
     "assets/cs2d/sprites/smg.png",
+    "assets/cs2d/sprites/usp.png",
     "assets/cs2d/tilesets/cs_office_tiles.png",
     "assets/images/weapons/awp_d.png",
     "assets/images/weapons/galil_d.png",
@@ -33,6 +35,7 @@
     "assets/images/weapons/grenade_he_d.png",
     "assets/images/weapons/grenade_smoke_d.png",
     "assets/images/weapons/shotgun_d.png",
-    "assets/images/weapons/smg_d.png"
+    "assets/images/weapons/smg_d.png",
+    "assets/images/weapons/usp_d.png"
   ]
 }
