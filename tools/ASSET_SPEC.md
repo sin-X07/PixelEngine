@@ -57,29 +57,16 @@
 
 ---
 
-## 3. HUD 武器图标
+## 3. HUD 武器图标（**已取消，不需要单独制作**）
 
-路径：`assets/images/weapons/<name>_d.png`
+HUD 右下角的武器图标现在**直接复用第 2 节的世界贴图**（`assets/cs2d/sprites/*`），
+绘制时会按宽高比缩放进 44×44 的方框，不会被拉伸。
 
-- 建议 75×64（显示于屏幕右下 160×56 面板左侧，会等比缩放）。
-- 透明背景。
+**所以你只需要维护一套素材：`assets/cs2d/sprites/`。**
 
-| 文件 | 对应武器 |
-|---|---|
-| `AK47_d.png` | AK-47 |
-| `M4A1_d.png` | M4A1 |
-| `glock_d.png` | Glock |
-| `usp_d.png` | USP |
-| `galil_d.png` | Galil |
-| `awp_d.png` | AWP |
-| `shotgun_d.png` | 霰弹枪 |
-| `smg_d.png` | SMG |
-| `grenade_he_d.png` | 高爆手雷 |
-| `grenade_flash_d.png` | 闪光弹 |
-| `grenade_smoke_d.png` | 烟雾弹 |
-
-> 说明：`Deagle` / `Knife` 的 HUD 图标直接复用 `Deagle.png` / `Knife.png`（大图自动缩放），
-> 不需要单独的 `_d` 版本。
+`assets/images/weapons/` 目录里遗留的 `*_d.png` 已不再被引用，可以忽略或删除。
+如果哪天需要单独的高清 HUD 图标，在 `WeaponDef` 的 `iconPath` 字段填上路径即可，
+渲染器会优先用它、缺失时自动回退到世界贴图。
 
 ---
 
