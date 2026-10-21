@@ -671,7 +671,7 @@ bool CS2DRenderer::HasLineOfSight(float fromX, float fromY, float toX, float toY
 }
 
 // ---- 玩家视野可见度：距离 × 120° 扇形 × 墙体遮挡 ----
-float CS2DRenderer::ComputeVisibility(float playerX, float playerY, float /*aimAngle*/,
+float CS2DRenderer::ComputeVisibility(float playerX, float playerY, float aimAngle,
                                      float targetX, float targetY) const {
     if (!world_) return 0.0f;
 
@@ -679,7 +679,7 @@ float CS2DRenderer::ComputeVisibility(float playerX, float playerY, float /*aimA
     const float deltaY = targetY - playerY;
     const float dist = std::sqrt(deltaX * deltaX + deltaY * deltaY);
 
-    // 视野是以玩家为中心的圆：只有距离因子 + 墙体遮挡，与朝向无关
+    // 1) 距离因子：半径内 1.0，边缘 smoothstep → 0.0
     const float fullyLitRadius = VISION_RADIUS - VISION_SOFT_EDGE;
     float distFactor = 0.0f;
     if (dist <= fullyLitRadius) {
@@ -689,12 +689,33 @@ float CS2DRenderer::ComputeVisibility(float playerX, float playerY, float /*aimA
         blend = blend * blend * (3.0f - 2.0f * blend);  // smoothstep
         distFactor = 1.0f - blend;
     }
-    if (distFactor <= 0.0f) return 0.0f;   // 超出半径
+    if (distFactor <= 0.0f) return 0.0f;   // 超出半径，无需再算
 
-    // 视线遮挡：被墙挡则完全不可见
+    // 2) 角度因子：以玩家朝向为中心的 120° 扇形，扇形外完全不可见
+    const float halfConeRad  = (VISION_CONE_DEG * 0.5f - VISION_ANGLE_SOFT * 0.5f)
+                               * 3.14159265f / 180.0f;
+    const float angleSoftRad = VISION_ANGLE_SOFT * 3.14159265f / 180.0f;
+
+    const float targetAngle = std::atan2(deltaY, deltaX);
+    float diff = targetAngle - aimAngle;
+    while (diff > 3.14159265f)  diff -= 6.28318531f;
+    while (diff < -3.14159265f) diff += 6.28318531f;
+    const float absDiff = std::abs(diff);
+
+    float coneFactor = 0.0f;
+    if (absDiff <= halfConeRad) {
+        coneFactor = 1.0f;
+    } else if (absDiff < halfConeRad + angleSoftRad) {
+        float blend = (absDiff - halfConeRad) / angleSoftRad;
+        blend = blend * blend * (3.0f - 2.0f * blend);  // smoothstep
+        coneFactor = 1.0f - blend;
+    }
+    if (coneFactor <= 0.0f) return 0.0f;   // 扇形外，跳过射线检测
+
+    // 3) 视线遮挡：被墙挡则完全不可见
     if (!HasLineOfSight(playerX, playerY, targetX, targetY)) return 0.0f;
 
-    return distFactor;
+    return std::min(distFactor, coneFactor);
 }
 
 // 烟雾云：用同心圆近似柔和边缘

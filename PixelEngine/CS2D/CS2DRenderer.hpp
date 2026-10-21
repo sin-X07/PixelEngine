@@ -166,8 +166,10 @@ private:
 
     // ========= 视野遮罩 =========
     static constexpr int   VISION_MASK_SCALE = 4;
-    static constexpr float VISION_RADIUS     = 120.0f;  // 视野圆半径（世界单位）
+    static constexpr float VISION_RADIUS     = 120.0f;  // 视野扇形半径（世界单位）
     static constexpr float VISION_SOFT_EDGE  = 24.0f;   // 距离软边
+    static constexpr float VISION_CONE_DEG   = 120.0f;  // 扇形总角度（朝向为中心）
+    static constexpr float VISION_ANGLE_SOFT = 14.0f;   // 角度软边（度）
     static constexpr Uint8 VISION_FOG_ALPHA  = 160;     // 不可见区半透明上限
     static constexpr Uint8 VISION_FOG_R      = 200;     // 浅灰遮罩颜色
     static constexpr Uint8 VISION_FOG_G      = 200;
