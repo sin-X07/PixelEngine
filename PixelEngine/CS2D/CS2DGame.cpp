@@ -125,21 +125,24 @@ bool CS2DGame::TryBuy(WeaponId id) {
     switch (def.slot) {
         case WeaponSlotKind::Primary:
             player_.weapons[0] = id;
-            if (player_.weaponSlot == 0) {
-                player_.ammo = def.magazine;
-                player_.maxAmmo = def.magazine;
-                player_.reloading = false;
-                player_.reloadTimer = 0.0f;
-            }
+            slotAmmo_[0]    = def.magazine;
+            slotMaxAmmo_[0] = def.magazine;
+            // 买完自动装备
+            player_.weaponSlot = 0;
+            player_.ammo = def.magazine;
+            player_.maxAmmo = def.magazine;
+            player_.reloading = false;
+            player_.reloadTimer = 0.0f;
             break;
         case WeaponSlotKind::Secondary:
             player_.weapons[1] = id;
-            if (player_.weaponSlot == 1) {
-                player_.ammo = def.magazine;
-                player_.maxAmmo = def.magazine;
-                player_.reloading = false;
-                player_.reloadTimer = 0.0f;
-            }
+            slotAmmo_[1]    = def.magazine;
+            slotMaxAmmo_[1] = def.magazine;
+            player_.weaponSlot = 1;
+            player_.ammo = def.magazine;
+            player_.maxAmmo = def.magazine;
+            player_.reloading = false;
+            player_.reloadTimer = 0.0f;
             break;
         case WeaponSlotKind::Melee:
             player_.weapons[2] = id;
@@ -251,26 +254,27 @@ void CS2DGame::SpawnPlayer() {
     player_.deathTimer = 0.0f;
     player_.shootAnimTimer = 0.0f;
     player_.spriteKey  = 0;            // CT 头盔
-    player_.weapons[0] = WeaponId::M4A1;
-    player_.weapons[1] = WeaponId::Glock;
+    // 开局只有手枪（CT = USP），无护甲无投掷物，其余靠购买
+    player_.weapons[0] = WeaponId::None;
+    player_.weapons[1] = WeaponId::USP;
     player_.weapons[2] = WeaponId::Knife;
     player_.weapons[3] = WeaponId::GrenadeHE;
-    player_.grenadeCount = 1;
-    player_.weaponSlot = 0;
+    player_.grenadeCount = 0;
+    player_.weaponSlot = 1;            // 默认持手枪
     player_.armor  = 0;
     player_.helmet = false;
 
-    const WeaponDef& w = WeaponDB::Get(player_.weapons[0]);
+    const WeaponDef& w = WeaponDB::Get(player_.weapons[1]);
     player_.ammo    = w.magazine;
     player_.maxAmmo = w.magazine;
     player_.reloading  = false;
     player_.reloadTimer = 0.0f;
     player_.stealth    = false;
 
-    slotAmmo_[0]    = 30;
-    slotMaxAmmo_[0] = 30;
-    slotAmmo_[1]    = 7;
-    slotMaxAmmo_[1] = 7;
+    slotAmmo_[0]    = 0;
+    slotMaxAmmo_[0] = 0;
+    slotAmmo_[1]    = w.magazine;
+    slotMaxAmmo_[1] = w.magazine;
 
     for (int attempt = 0; attempt < 20; ++attempt) {
         PickSpawnForTeam(Team::CT, player_.x, player_.y);
@@ -302,24 +306,38 @@ void CS2DGame::SpawnBOT(Player& bot, Team team) {
     bot.retreatTimer = 0.0f;
     bot.threatX = bot.threatY = 0.0f;
 
-    // 外观与武器：CT 用 M4A1，T 用 AK47；副武器 Glock，近战 Knife
+    // 外观与武器：开局只有手枪（CT = USP，T = Glock），无护甲无投掷物
     if (team == Team::CT) {
         bot.spriteKey = 0;
-        bot.weapons[0] = WeaponId::M4A1;
+        bot.weapons[1] = WeaponId::USP;
     } else {
         bot.spriteKey = 1 + static_cast<int>(rng_() % 2);
-        bot.weapons[0] = WeaponId::AK47;
+        bot.weapons[1] = WeaponId::Glock;
     }
-    bot.weapons[1] = WeaponId::Glock;
+    bot.weapons[0] = WeaponId::None;      // 主武器需购买
     bot.weapons[2] = WeaponId::Knife;
-    bot.weapons[3] = WeaponId::GrenadeHE;
-    bot.grenadeCount = 1;
+
+    // 投掷物类型：T 偏进攻（闪光），CT 偏防守（烟雾）
+    {
+        const int r = static_cast<int>(rng_() % 100);
+        if (team == Team::T) {
+            bot.weapons[3] = (r < 50) ? WeaponId::GrenadeHE
+                           : (r < 80) ? WeaponId::GrenadeFlash
+                                      : WeaponId::GrenadeSmoke;
+        } else {
+            bot.weapons[3] = (r < 40) ? WeaponId::GrenadeHE
+                           : (r < 80) ? WeaponId::GrenadeSmoke
+                                      : WeaponId::GrenadeFlash;
+        }
+    }
+    bot.grenadeCount = 0;                 // 需购买
     bot.grenadeCooldown = 0.0f;
-    bot.weaponSlot = 0;
+    bot.blindTimer = 0.0f;
+    bot.weaponSlot = 1;                   // 默认持手枪
     bot.armor  = 0;
     bot.helmet = false;
 
-    const WeaponDef& bw = WeaponDB::Get(bot.weapons[0]);
+    const WeaponDef& bw = WeaponDB::Get(bot.weapons[1]);
     bot.ammo    = bw.magazine;
     bot.maxAmmo = bw.magazine;
     bot.aimAngle = angleDist_(rng_);

@@ -35,17 +35,28 @@ void CS2DGame::BeginNewRound(AudioManager* audio) {
 }
 
 void CS2DGame::RespawnAllForRound() {
-    // 玩家
+    // 玩家：每回合回到「手枪 + 匕首」的初始装备（武器不跨回合保留）
+    const WeaponDef& pistol = WeaponDB::Get(WeaponId::USP);
     player_.health    = player_.maxHealth;
     player_.alive     = true;
     player_.reloading = false;
     player_.reloadTimer = 0.0f;
-    player_.ammo      = player_.maxAmmo;
     player_.deathTimer = 0.0f;
     player_.vx = player_.vy = 0.0f;
     PickSpawnForTeam(Team::CT, player_.x, player_.y);
-    slotAmmo_[0] = 30; slotMaxAmmo_[0] = 30;
-    slotAmmo_[1] = 7;  slotMaxAmmo_[1] = 7;
+
+    player_.weapons[0] = WeaponId::None;
+    player_.weapons[1] = WeaponId::USP;
+    player_.weapons[2] = WeaponId::Knife;
+    player_.weapons[3] = WeaponId::GrenadeHE;
+    player_.grenadeCount = 0;
+    player_.weaponSlot = 1;
+    player_.armor  = 0;
+    player_.helmet = false;
+    player_.ammo    = pistol.magazine;
+    player_.maxAmmo = pistol.magazine;
+    slotAmmo_[0] = 0;               slotMaxAmmo_[0] = 0;
+    slotAmmo_[1] = pistol.magazine; slotMaxAmmo_[1] = pistol.magazine;
 
     // BOT
     for (auto& bot : bots_) {
@@ -56,45 +67,53 @@ void CS2DGame::RespawnAllForRound() {
 }
 
 // BOT 经济：按余额买武器与护甲（与玩家同一套价格）
+// 开局只有手枪、无护甲；这里模拟 BOT 在购买阶段的采购顺序：先枪、再甲、再雷
 void CS2DGame::BotBuyLoadout(Player& bot) {
-    // 先买护甲（性价比最高），保留一点钱买枪
-    if (bot.money >= 1000) {
-        bot.armor = 100;
-        bot.helmet = true;
-        bot.money -= 1000;
-    } else if (bot.money >= 650) {
-        bot.armor = 100;
-        bot.helmet = false;
-        bot.money -= 650;
-    }
-
-    // 主武器选择：钱多买强枪，钱少保留原配
-    WeaponId pick = bot.weapons[0];
     const bool isT = (bot.team == Team::T);
+    WeaponId primary = bot.weapons[0];
 
-    if (bot.money >= 4750) {
-        pick = WeaponId::AWP;                     // 富余时出狙击枪
-        bot.money -= 4750;
-    } else if (bot.money >= 3100) {
-        pick = isT ? WeaponId::AK47 : WeaponId::M4A1;
-        bot.money -= 3100;
-    } else if (bot.money >= 2000) {
-        pick = WeaponId::Galil;
-        bot.money -= 1800;
-    } else if (bot.money >= 1500) {
-        pick = WeaponId::SMG;
-        bot.money -= 1250;
-    } else if (bot.money >= 1200) {
-        pick = WeaponId::Shotgun;
-        bot.money -= 1200;
+    // 1) 主武器
+    if (primary == WeaponId::None) {
+        if (bot.money >= 4750) {
+            primary = WeaponId::AWP;                          bot.money -= 4750;
+        } else if (bot.money >= 3100) {
+            primary = isT ? WeaponId::AK47 : WeaponId::M4A1;  bot.money -= 3100;
+        } else if (bot.money >= 2000) {
+            primary = WeaponId::Galil;                        bot.money -= 1800;
+        } else if (bot.money >= 1500) {
+            primary = WeaponId::SMG;                          bot.money -= 1250;
+        } else if (bot.money >= 1200) {
+            primary = WeaponId::Shotgun;                      bot.money -= 1200;
+        }
     }
 
-    bot.weapons[0] = pick;
-    bot.weaponSlot = 0;
+    // 2) 护甲（买不起就先空着）
+    if (bot.money >= 1000) {
+        bot.armor = 100; bot.helmet = true;  bot.money -= 1000;
+    } else if (bot.money >= 650) {
+        bot.armor = 100; bot.helmet = false; bot.money -= 650;
+    }
 
-    const WeaponDef& w = WeaponDB::Get(pick);
-    bot.ammo = w.magazine;
-    bot.maxAmmo = w.magazine;
+    // 3) 投掷物（价格取自武器表）
+    const int nadePrice = WeaponDB::Get(bot.weapons[3]).price;
+    if (bot.grenadeCount <= 0 && nadePrice > 0 && bot.money >= nadePrice) {
+        bot.grenadeCount = 1;
+        bot.money -= nadePrice;
+    }
+
+    bot.weapons[0] = primary;
+    if (primary != WeaponId::None) {
+        const WeaponDef& w = WeaponDB::Get(primary);
+        bot.weaponSlot = 0;
+        bot.ammo    = w.magazine;
+        bot.maxAmmo = w.magazine;
+    } else {
+        const WeaponDef& p = WeaponDB::Get(bot.weapons[1]);
+        bot.weaponSlot = 1;
+        bot.ammo    = p.magazine;
+        bot.maxAmmo = p.magazine;
+    }
+
     economy_.Clamp(bot.money);
 }
 

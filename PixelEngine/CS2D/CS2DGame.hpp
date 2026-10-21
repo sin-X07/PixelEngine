@@ -79,9 +79,10 @@ public:
         float     shootAnimTimer = 0.0f;
 
         // 武器（按槽位）
-        WeaponId  weapons[4] = { WeaponId::M4A1, WeaponId::Glock, WeaponId::Knife, WeaponId::None };
+        WeaponId  weapons[4] = { WeaponId::None, WeaponId::USP, WeaponId::Knife, WeaponId::GrenadeHE };
         int       grenadeCount = 0;        // 当前投掷物数量
         float     grenadeCooldown = 0.0f;  // 投掷冷却（AI 用）
+        float     blindTimer = 0.0f;       // 闪光致盲剩余秒数（BOT 用）
 
         // 弹药（活动槽位）
         int       ammo      = 30;

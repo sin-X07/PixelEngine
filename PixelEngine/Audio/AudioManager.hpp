@@ -31,6 +31,7 @@ enum class SoundEffect {
 
     // ---- 分武器枪声 ----
     GLOCK_FIRE,
+    USP_FIRE,
     M4A1_FIRE,
     AWP_FIRE,
     SHOTGUN_FIRE,
@@ -72,6 +73,7 @@ private:
 
     // 分武器枪声
     Mix_Chunk* glockFireSound   = nullptr;
+    Mix_Chunk* uspFireSound     = nullptr;
     Mix_Chunk* m4a1FireSound    = nullptr;
     Mix_Chunk* awpFireSound     = nullptr;
     Mix_Chunk* shotgunFireSound = nullptr;

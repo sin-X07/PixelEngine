@@ -55,6 +55,7 @@ bool AudioManager::Initialize() {
 
     // 分武器枪声
     glockFireSound   = loadChunk("assets/audio/glock.wav", "Glock 射击");
+    uspFireSound     = loadChunk("assets/audio/usp.wav", "USP 射击");
     m4a1FireSound    = loadChunk("assets/audio/m4a1.mp3", "M4A1 射击");
     awpFireSound     = loadChunk("assets/audio/awp.wav", "AWP 射击");
     shotgunFireSound = loadChunk("assets/audio/shotgun.wav", "霰弹枪射击");
@@ -104,6 +105,7 @@ void AudioManager::Clean() {
 
     // 分武器枪声
     if (glockFireSound)   { Mix_FreeChunk(glockFireSound);   glockFireSound = nullptr; }
+    if (uspFireSound)     { Mix_FreeChunk(uspFireSound);     uspFireSound = nullptr; }
     if (m4a1FireSound)    { Mix_FreeChunk(m4a1FireSound);    m4a1FireSound = nullptr; }
     if (awpFireSound)     { Mix_FreeChunk(awpFireSound);     awpFireSound = nullptr; }
     if (shotgunFireSound) { Mix_FreeChunk(shotgunFireSound); shotgunFireSound = nullptr; }
@@ -174,6 +176,7 @@ Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
         case SoundEffect::ARMOR_HIT:        return armorHitSound;
 
         case SoundEffect::GLOCK_FIRE:       return glockFireSound;
+        case SoundEffect::USP_FIRE:         return uspFireSound;
         case SoundEffect::M4A1_FIRE:        return m4a1FireSound;
         case SoundEffect::AWP_FIRE:         return awpFireSound;
         case SoundEffect::SHOTGUN_FIRE:     return shotgunFireSound;

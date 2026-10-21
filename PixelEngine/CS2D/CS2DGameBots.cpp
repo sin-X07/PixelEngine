@@ -142,6 +142,9 @@ void CS2DGame::UpdateTeamContacts(float dt) {
 
 // 真实可见敌人（交火距离 + 烟雾 + LOS）
 const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& outDist) const {
+    outDist = 0.0f;
+    if (self.blindTimer > 0.0f) return nullptr;   // 被闪光致盲，看不到任何人
+
     const Player* best = nullptr;
     float bestD2 = 1e18f;
 
@@ -494,6 +497,16 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
         bot.llmIntent.Tick(dt);
 
+        // 闪光致盲倒计时
+        if (bot.blindTimer > 0.0f) bot.blindTimer = std::max(0.0f, bot.blindTimer - dt);
+
+        // ---- 换弹决策 ----
+        // 脱战就补满；交火中只在弹匣见底（<=25%）才打断射击去换弹
+        if (!bot.reloading && bot.ammo < bot.maxAmmo) {
+            const int lowAmmo = bot.maxAmmo / 4;
+            if (!canSee || bot.ammo <= lowAmmo) StartReload(bot);
+        }
+
         // ---- 手雷：有情报但无直接视野时，向情报点投掷 ----
         if (bot.grenadeCooldown > 0.0f) bot.grenadeCooldown -= dt;
         if (!target && intel && bot.grenadeCount > 0 && bot.grenadeCooldown <= 0.0f) {
@@ -626,9 +639,9 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
         const WeaponDef& def = bot.CurrentWeapon();
 
-        // 枪械 / 霰弹（必须真实可见才开火）
-        if (target && out.shouldShoot && canSee && def.cls != WeaponClass::Melee &&
-            def.cls != WeaponClass::Grenade) {
+        // 枪械 / 霰弹（必须真实可见才开火，换弹中不开火）
+        if (target && out.shouldShoot && canSee && !bot.reloading &&
+            def.cls != WeaponClass::Melee && def.cls != WeaponClass::Grenade) {
             if (bot.shootCooldown > 0.0f) bot.shootCooldown -= dt;
 
             if (bot.shootCooldown <= 0.0f) {

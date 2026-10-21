@@ -12,6 +12,7 @@ enum class WeaponId : int {
     None = 0,
     Knife,
     Glock,
+    USP,
     Deagle,
     Galil,
     AK47,
@@ -66,6 +67,8 @@ inline const WeaponDef kWeapons[] = {
     { WeaponId::None,        "-",     WeaponClass::Melee,  WeaponSlotKind::Melee,         0,   0.0f, 0.0f,    0.0f,    0.0f,  1, 0.00f, false,   0, 0.0f,  1.00f, false, 90.0f, nullptr,                        nullptr },
     { WeaponId::Knife,       "匕首",   WeaponClass::Melee,  WeaponSlotKind::Melee,         0,  50.0f, 0.50f,    0.0f,   45.0f,  1, 0.00f, false,   0, 0.0f,  1.00f, false, 90.0f, "cs2d/sprites/knife.png",        "images/weapons/Knife.png" },
     { WeaponId::Glock,       "Glock", WeaponClass::Pistol, WeaponSlotKind::Secondary,   400,  22.0f, 0.18f,  700.0f,  700.0f,  1, 0.030f, false,  20, 1.8f,  1.00f, false,  0.0f, "cs2d/sprites/glock.png",        "images/weapons/glock_d.png" },
+    // USP：CT 起始手枪（素材为占位，替换 assets/cs2d/sprites/usp.png 与 assets/audio/usp.wav 即可）
+    { WeaponId::USP,         "USP",   WeaponClass::Pistol, WeaponSlotKind::Secondary,   200,  24.0f, 0.16f,  720.0f,  700.0f,  1, 0.026f, false,  12, 1.8f,  1.00f, false,  0.0f, "cs2d/sprites/usp.png",          "images/weapons/usp_d.png" },
     { WeaponId::Deagle,      "Deagle",WeaponClass::Pistol, WeaponSlotKind::Secondary,   700,  55.0f, 0.40f,  700.0f,  700.0f,  1, 0.020f, false,   7, 2.2f,  0.95f, false,  0.0f, "cs2d/sprites/deagle.png",       "images/weapons/Deagle.png" },
     { WeaponId::Galil,       "Galil", WeaponClass::Rifle,  WeaponSlotKind::Primary,    2000,  28.0f, 0.11f,  640.0f,  800.0f,  1, 0.045f, true,   35, 2.5f,  0.90f, false, 90.0f, "cs2d/sprites/galil.png",        "images/weapons/galil_d.png" },
     { WeaponId::AK47,        "AK-47", WeaponClass::Rifle,  WeaponSlotKind::Primary,    2700,  36.0f, 0.10f,  620.0f,  800.0f,  1, 0.050f, true,   30, 2.5f,  0.88f, false, 90.0f, "cs2d/sprites/ak47.png",         "images/weapons/AK47_d.png" },

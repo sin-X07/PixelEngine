@@ -123,6 +123,7 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
 SoundEffect CS2DGame::FireSoundFor(WeaponId id) {
     switch (id) {
         case WeaponId::Glock:   return SoundEffect::GLOCK_FIRE;
+        case WeaponId::USP:     return SoundEffect::USP_FIRE;
         case WeaponId::Deagle:  return SoundEffect::DEAGLE_FIRE;
         case WeaponId::Galil:   return SoundEffect::GALIL_FIRE;
         case WeaponId::AK47:    return SoundEffect::AK47_FIRE;
@@ -353,12 +354,20 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
         }
         case WeaponId::GrenadeFlash: {
             if (audio) audio->PlaySound(SoundEffect::FLASHBANG);
-            // 玩家致盲：距离 + 视线
+            // 致盲：距离 + 视线（玩家与 BOT 一致）
             if (player_.alive && player_.team != g.team) {
                 const float dx = player_.x - g.x;
                 const float dy = player_.y - g.y;
                 if (std::sqrt(dx * dx + dy * dy) < 220.0f) {
                     flashTimer_ = 2.5f;
+                }
+            }
+            for (auto& b : bots_) {
+                if (!b.alive || b.team == g.team) continue;
+                const float dx = b.x - g.x;
+                const float dy = b.y - g.y;
+                if (std::sqrt(dx * dx + dy * dy) < 220.0f) {
+                    b.blindTimer = 2.5f;
                 }
             }
             if (audio) audio->PlaySound(SoundEffect::HIT);
