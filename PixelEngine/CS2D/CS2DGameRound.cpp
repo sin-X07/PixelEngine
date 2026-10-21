@@ -90,7 +90,10 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
     }
 
     // BOT：同样的规则
-    for (auto& bot : bots_) {        const bool survived = carryWeapons && bot.alive;
+    EnsureBotAi();
+    for (size_t i = 0; i < bots_.size(); ++i) {
+        auto& bot = bots_[i];
+        const bool survived = carryWeapons && bot.alive;
 
         const WeaponId w0 = bot.weapons[0];
         const WeaponId w1 = bot.weapons[1];
@@ -100,6 +103,7 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
         const bool helmet = bot.helmet;
 
         SpawnBOT(bot, bot.team);   // 先重置为手枪基准
+        ResetBotAi(i);             // AI 运行时状态一并清空
 
         if (survived) {
             bot.weapons[0] = w0;
@@ -119,7 +123,6 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
     }
     bullets_.clear();
     lastDeathTimer_ = 0.0f;
-    for (bool& flag : tradePushed_) flag = false;
 }
 
 // BOT 经济：按余额买武器与护甲（与玩家同一套价格）

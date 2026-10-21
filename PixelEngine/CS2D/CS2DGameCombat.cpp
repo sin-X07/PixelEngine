@@ -217,15 +217,15 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             }
 
             // 受击反应：血量低且当前未在撤退 → 记录威胁来源并撤退一次
-            if (bot.retreatTimer <= 0.0f && bot.health > 0 && bot.health <= 30) {
-                bot.retreatTimer = 2.0f;
+            if (AiAt(i).retreatTimer <= 0.0f && bot.health > 0 && bot.health <= 30) {
+                AiAt(i).retreatTimer = 2.0f;
                 if (bullet.ownerIdx == -1) {
-                    bot.threatX = player_.x;
-                    bot.threatY = player_.y;
+                    AiAt(i).threatX = player_.x;
+                    AiAt(i).threatY = player_.y;
                 } else if (bullet.ownerIdx >= 0 &&
                            bullet.ownerIdx < static_cast<int>(bots_.size())) {
-                    bot.threatX = bots_[bullet.ownerIdx].x;
-                    bot.threatY = bots_[bullet.ownerIdx].y;
+                    AiAt(i).threatX = bots_[bullet.ownerIdx].x;
+                    AiAt(i).threatY = bots_[bullet.ownerIdx].y;
                 }
             }
             break;
@@ -362,12 +362,13 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
                     flashTimer_ = 2.5f;
                 }
             }
-            for (auto& b : bots_) {
+            for (size_t bi = 0; bi < bots_.size(); ++bi) {
+                auto& b = bots_[bi];
                 if (!b.alive || b.team == g.team) continue;
                 const float dx = b.x - g.x;
                 const float dy = b.y - g.y;
                 if (std::sqrt(dx * dx + dy * dy) < 220.0f) {
-                    b.blindTimer = 2.5f;
+                    AiAt(bi).blindTimer = 2.5f;
                 }
             }
             if (audio) audio->PlaySound(SoundEffect::HIT);

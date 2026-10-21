@@ -333,7 +333,7 @@ void BotDecisionScheduler::DispatchOne(CS2DGame& game) {
             if (botIdx < 0 || static_cast<size_t>(botIdx) >= all.size()) return;
 
             // LLMDecision → BotIntent（战略目标）
-            all[botIdx].llmIntent.FromLLMDecision(
+            gamePtr->AiAt(static_cast<size_t>(botIdx)).llmIntent.FromLLMDecision(
                 d.action, d.target, d.shoot,
                 botX, botY, playerX, playerY,
                 mateX, mateY, hasMate,

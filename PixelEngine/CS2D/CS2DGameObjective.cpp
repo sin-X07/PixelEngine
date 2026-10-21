@@ -101,7 +101,7 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
     if (mode_ == MatchMode::BombDefusal) {
         if (!bombPlanted_) {
             // 未下包：清掉所有 BOT 的拆包状态
-            for (auto& b : bots_) b.defusing = false;
+            for (size_t bi = 0; bi < bots_.size(); ++bi) AiAt(bi).defusing = false;
 
             // T 站在包点内累积下包进度
             const auto& sites = world_->GetBombSites();
@@ -164,15 +164,16 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
             }
 
             // BOT 拆包（玩家阵亡后也能赢）
-            for (auto& b : bots_) {
+            for (size_t bi = 0; bi < bots_.size(); ++bi) {
+                auto& b = bots_[bi];
                 if (!b.alive || b.team != Team::CT) continue;
                 const float dx = b.x - bombX_;
                 const float dy = b.y - bombY_;
                 if (std::sqrt(dx * dx + dy * dy) <= INTERACT_RADIUS) {
                     defusing = true;
-                    b.defusing = true;      // 通知 BOT 停下原地拆包
+                    AiAt(bi).defusing = true;      // 通知 BOT 停下原地拆包
                 } else {
-                    b.defusing = false;
+                    AiAt(bi).defusing = false;
                 }
             }
 

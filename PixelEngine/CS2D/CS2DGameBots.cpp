@@ -6,6 +6,40 @@
 #include <random>
 
 // ============================================================================
+// BOT 运行时状态（与 bots_ 同下标）
+// ============================================================================
+
+void CS2DGame::EnsureBotAi() {
+    if (botAi_.size() != bots_.size()) botAi_.resize(bots_.size());
+}
+
+CS2DGame::BotRuntime& CS2DGame::AiAt(size_t i) {
+    EnsureBotAi();
+    if (botAi_.empty()) { static BotRuntime fallback; return fallback; }
+    if (i >= botAi_.size()) i = botAi_.size() - 1;
+    return botAi_[i];
+}
+
+const CS2DGame::BotRuntime& CS2DGame::AiAt(size_t i) const {
+    if (botAi_.empty()) { static const BotRuntime fallback; return fallback; }
+    if (i >= botAi_.size()) i = botAi_.size() - 1;
+    return botAi_[i];
+}
+
+size_t CS2DGame::AiIndexOf(const Player& p) const {
+    if (bots_.empty()) return 0;
+    const Player* base = bots_.data();
+    const Player* ptr  = &p;
+    if (ptr < base || ptr >= base + bots_.size()) return 0;
+    return static_cast<size_t>(ptr - base);
+}
+
+void CS2DGame::ResetBotAi(size_t i) {
+    EnsureBotAi();
+    if (i < botAi_.size()) botAi_[i] = BotRuntime{};
+}
+
+// ============================================================================
 // BOT AI
 // ============================================================================
 
@@ -138,7 +172,7 @@ void CS2DGame::UpdateTeamContacts(float dt) {
     for (size_t i = 0; i < bots_.size(); ++i) {
         const Player& b = bots_[i];
         if (!b.alive) continue;
-        if (b.blindTimer > 0.0f) continue;   // 致盲：看不见任何东西，也无法上报情报
+        if (AiAt(i).blindTimer > 0.0f) continue;   // 致盲：看不见任何东西，也无法上报情报
 
         auto scan = [&](const Player& e, int id) {
             if (!e.alive || e.team == b.team) return;
@@ -163,7 +197,7 @@ void CS2DGame::UpdateTeamContacts(float dt) {
 // 真实可见敌人（交火距离 + 烟雾 + LOS）
 const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& outDist) const {
     outDist = 0.0f;
-    if (self.blindTimer > 0.0f) return nullptr;   // 被闪光致盲，看不到任何人
+    if (AiAt(AiIndexOf(self)).blindTimer > 0.0f) return nullptr;   // 被闪光致盲，看不到任何人
 
     const Player* best = nullptr;
     float bestD2 = 1e18f;
@@ -417,44 +451,45 @@ void CS2DGame::ApplyAvoidance(float& vx, float& vy, float sepX, float sepY) cons
 // A* 路径跟随
 // ============================================================================
 
-bool CS2DGame::FollowPathTo(Player& bot, float destX, float destY, float dt, float speedMul) {
+bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float destY,
+                            float dt, float speedMul) {
     if (!pathFinder_.IsBuilt()) return false;
 
     // 目标明显移动 / 定时 / 路径走完 → 重算
-    const float gdx = destX - bot.goalX;
-    const float gdy = destY - bot.goalY;
+    const float gdx = destX - ai.goalX;
+    const float gdy = destY - ai.goalY;
     const bool goalMoved = (gdx * gdx + gdy * gdy) > 70.0f * 70.0f;
 
-    bot.repathTimer -= dt;
-    const bool exhausted = (bot.pathIdx >= static_cast<int>(bot.path.size()));
-    if (goalMoved || exhausted || bot.repathTimer <= 0.0f) {
-        bot.goalX = destX;
-        bot.goalY = destY;
-        bot.repathTimer = 0.8f;
-        bot.path.clear();
-        bot.pathIdx = 0;
-        if (!pathFinder_.FindPath(bot.x, bot.y, destX, destY, bot.path)) {
-            bot.path.clear();
+    ai.repathTimer -= dt;
+    const bool exhausted = (ai.pathIdx >= static_cast<int>(ai.path.size()));
+    if (goalMoved || exhausted || ai.repathTimer <= 0.0f) {
+        ai.goalX = destX;
+        ai.goalY = destY;
+        ai.repathTimer = 0.8f;
+        ai.path.clear();
+        ai.pathIdx = 0;
+        if (!pathFinder_.FindPath(bot.x, bot.y, destX, destY, ai.path)) {
+            ai.path.clear();
             return false;   // 无路可走 → 由调用方直线兜底
         }
     }
 
-    if (bot.path.empty()) return false;
+    if (ai.path.empty()) return false;
 
     // 跳过已到达的路点
-    while (bot.pathIdx < static_cast<int>(bot.path.size())) {
-        const auto& p = bot.path[bot.pathIdx];
+    while (ai.pathIdx < static_cast<int>(ai.path.size())) {
+        const auto& p = ai.path[ai.pathIdx];
         const float dx = p.first - bot.x;
         const float dy = p.second - bot.y;
-        if (dx * dx + dy * dy <= 8.0f * 8.0f) { ++bot.pathIdx; continue; }
+        if (dx * dx + dy * dy <= 8.0f * 8.0f) { ++ai.pathIdx; continue; }
         break;
     }
-    if (bot.pathIdx >= static_cast<int>(bot.path.size())) {
-        bot.path.clear();
+    if (ai.pathIdx >= static_cast<int>(ai.path.size())) {
+        ai.path.clear();
         return false;
     }
 
-    const auto& p = bot.path[bot.pathIdx];
+    const auto& p = ai.path[ai.pathIdx];
     const float dx = p.first - bot.x;
     const float dy = p.second - bot.y;
     const float d  = std::sqrt(dx * dx + dy * dy);
@@ -487,9 +522,9 @@ bool CS2DGame::FollowPathTo(Player& bot, float destX, float destY, float dt, flo
 
     // 被墙卡住（速度被碰撞清零）→ 立刻失效当前路径，下一帧重算
     if (bot.vx == 0.0f && bot.vy == 0.0f) {
-        bot.path.clear();
-        bot.pathIdx = 0;
-        bot.repathTimer = 0.0f;
+        ai.path.clear();
+        ai.pathIdx = 0;
+        ai.repathTimer = 0.0f;
     }
     return true;
 }
@@ -503,39 +538,40 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
     for (size_t i = 0; i < bots_.size(); ++i) {
         auto& bot = bots_[i];
         if (!bot.alive) continue;
+        auto& ai = AiAt(i);
 
         // 分工指令
         SquadOrder order;
         if (i < squad_.size()) order = squad_[i];
 
         // ---- 正在拆包：原地不动（进度由 UpdateObjective 推进）----
-        if (bot.defusing) {
+        if (ai.defusing) {
             bot.vx = bot.vy = 0.0f;
-            bot.llmIntent.Tick(dt);
+            ai.llmIntent.Tick(dt);
             continue;
         }
 
         // ---- 补枪（trade）：队友刚在附近阵亡 → 冲过去换人 ----
         if (lastDeathTimer_ > 0.0f && lastDeathTeam_ == bot.team &&
-            !tradePushed_[i] && order.role != BotRole::Anchor) {
+            !ai.tradePushed && order.role != BotRole::Anchor) {
             const float dx = lastDeathX_ - bot.x;
             const float dy = lastDeathY_ - bot.y;
             const float d2 = dx * dx + dy * dy;
             if (d2 > 40.0f * 40.0f && d2 < 350.0f * 350.0f) {
-                tradePushed_[i] = true;
-                bot.llmIntent.Tick(dt);
-                if (FollowPathTo(bot, lastDeathX_, lastDeathY_, dt, 1.0f)) continue;
+                ai.tradePushed = true;
+                ai.llmIntent.Tick(dt);
+                if (FollowPathTo(bot, ai, lastDeathX_, lastDeathY_, dt, 1.0f)) continue;
             }
         }
 
         // ---- 受击撤退：低血时优先找掩体，交火次之 ----
-        if (bot.retreatTimer > 0.0f) bot.retreatTimer -= dt;
-        if (bot.retreatTimer > 0.0f && bot.health <= 35) {
+        if (ai.retreatTimer > 0.0f) ai.retreatTimer -= dt;
+        if (ai.retreatTimer > 0.0f && bot.health <= 35) {
             float covX = 0.0f, covY = 0.0f;
-            if (FindCoverPoint(bot, bot.threatX, bot.threatY, covX, covY)) {
-                bot.llmIntent.Tick(dt);
+            if (FindCoverPoint(bot, ai.threatX, ai.threatY, covX, covY)) {
+                ai.llmIntent.Tick(dt);
                 if (bot.ammo <= 0 && !bot.reloading) StartReload(bot);
-                if (FollowPathTo(bot, covX, covY, dt, 1.0f)) continue;
+                if (FollowPathTo(bot, ai, covX, covY, dt, 1.0f)) continue;
             }
         }
 
@@ -579,10 +615,10 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             engageDist = 1e9f;
         }
 
-        bot.llmIntent.Tick(dt);
+        ai.llmIntent.Tick(dt);
 
         // 闪光致盲倒计时
-        if (bot.blindTimer > 0.0f) bot.blindTimer = std::max(0.0f, bot.blindTimer - dt);
+        if (ai.blindTimer > 0.0f) ai.blindTimer = std::max(0.0f, ai.blindTimer - dt);
 
         // ---- 换弹决策 ----
         // 脱战就补满；交火中只在弹匣见底（<=25%）才打断射击去换弹
@@ -592,11 +628,11 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         }
 
         // ---- 手雷：有情报但无直接视野时，向情报点投掷 ----
-        if (bot.grenadeCooldown > 0.0f) bot.grenadeCooldown -= dt;
-        if (!target && intel && bot.grenadeCount > 0 && bot.grenadeCooldown <= 0.0f) {
+        if (ai.grenadeCooldown > 0.0f) ai.grenadeCooldown -= dt;
+        if (!target && intel && bot.grenadeCount > 0 && ai.grenadeCooldown <= 0.0f) {
             if (engageDist > 90.0f && engageDist < 230.0f) {
                 ThrowGrenade(bot, std::atan2(aimY - bot.y, aimX - bot.x));
-                bot.grenadeCooldown = 7.0f;
+                ai.grenadeCooldown = 7.0f;
             }
         }
 
@@ -712,7 +748,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             if (hasDest) {
                 // 近距离且可见 → 交给战术执行器（冲刺/绕侧手感更好）
                 const bool closeCombat = canSee && engageDist < 180.0f;
-                if (!closeCombat && FollowPathTo(bot, destX, destY, dt, roleMul)) {
+                if (!closeCombat && FollowPathTo(bot, ai, destX, destY, dt, roleMul)) {
                     continue;   // 本帧移动已由寻路接管
                 }
             }
@@ -725,7 +761,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         }
 
         BehaviorOutput out = botExecutors_[i].Execute(
-            bot.llmIntent,
+            ai.llmIntent,
             bot.x, bot.y,
             aimX, aimY,
             canSee, engageDist,
@@ -799,9 +835,10 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
     // 死斗模式：BOT 阵亡后自动重生；团队模式由回合开始统一重生
     if (mode_ == MatchMode::DeathMatch) {
-        for (auto& bot : bots_) {
+        for (size_t i = 0; i < bots_.size(); ++i) {
+            auto& bot = bots_[i];
             if (!bot.alive) {
-                bot.llmIntent.Reset();
+                ResetBotAi(i);
                 RespawnBOT(bot);
             }
         }

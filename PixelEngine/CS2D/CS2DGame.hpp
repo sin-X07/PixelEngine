@@ -85,9 +85,6 @@ public:
         // 武器（按槽位）
         WeaponId  weapons[4] = { WeaponId::None, WeaponId::USP, WeaponId::Knife, WeaponId::GrenadeHE };
         int       grenadeCount = 0;        // 当前投掷物数量
-        float     grenadeCooldown = 0.0f;  // 投掷冷却（AI 用）
-        float     blindTimer = 0.0f;       // 闪光致盲剩余秒数（BOT 用）
-        bool      defusing = false;        // 是否正在拆包（BOT 用）
 
         // 弹药（活动槽位）
         int       ammo      = 30;
@@ -105,10 +102,21 @@ public:
         int       armor  = 0;        // 护甲值（0..100）
         bool      helmet = false;    // 头盔：提高吸收比例
 
-        // LLM 战略意图
-        BotIntent llmIntent;
+        // 当前活动武器定义
+        const WeaponDef& CurrentWeapon() const {
+            const int s = (weaponSlot < 0 || weaponSlot > 3) ? 0 : weaponSlot;
+            return WeaponDB::Get(weapons[s]);
+        }
+    };
 
-        // 寻路状态（仅 BOT 使用）
+    // ========================================================================
+    // BOT 运行时状态（与 Player 分离，玩家实体不再背这些字段）
+    // 与 bots_ 按下标一一对应，统一由 EnsureBotAi() 保证长度
+    // ========================================================================
+    struct BotRuntime {
+        BotIntent llmIntent;                       // LLM 战略意图
+
+        // 寻路
         std::vector<std::pair<float, float>> path;
         int   pathIdx     = 0;
         float repathTimer = 0.0f;
@@ -120,11 +128,11 @@ public:
         float threatX      = 0.0f;
         float threatY      = 0.0f;
 
-        // 当前活动武器定义
-        const WeaponDef& CurrentWeapon() const {
-            const int s = (weaponSlot < 0 || weaponSlot > 3) ? 0 : weaponSlot;
-            return WeaponDB::Get(weapons[s]);
-        }
+        // 状态标记
+        float blindTimer     = 0.0f;   // 闪光致盲剩余秒数
+        bool  defusing       = false;  // 正在拆包
+        float grenadeCooldown = 0.0f;  // 投掷冷却
+        bool  tradePushed     = false; // 本回合是否已补过枪
     };
 
     struct Bullet {
@@ -247,6 +255,13 @@ public:
         return true;
     }
 
+    // ---- BOT 运行时状态：与 bots_ 同下标（AI 层与 LLM 回调用） ----
+    void EnsureBotAi();
+    BotRuntime&       AiAt(size_t i);
+    const BotRuntime& AiAt(size_t i) const;
+    size_t AiIndexOf(const Player& p) const;
+    void   ResetBotAi(size_t i);
+
     // ---- 目标物（爆破 / 人质）----
     bool  IsBombPlanted()   const { return bombPlanted_; }
     float GetBombTimer()    const { return bombTimer_; }
@@ -353,7 +368,6 @@ private:
     float lastDeathX_ = 0.0f, lastDeathY_ = 0.0f;
     Team  lastDeathTeam_ = Team::None;
     float lastDeathTimer_ = 0.0f;
-    bool  tradePushed_[16] = {};   // 每个 BOT 本轮是否已执行过补枪
     float defuseProgress_ = 0.0f;  // 0..1
     float rescueProgress_ = 0.0f;  // 0..1（当前人质）
     int   hostageNearIdx_ = -1;    // 玩家当前靠近的人质索引
@@ -375,6 +389,9 @@ private:
     bool        matchOverAnnounced_ = false;
 
     std::vector<BotBehaviorExecutor> botExecutors_;
+
+    // BOT 运行时状态（与 bots_ 同下标）
+    std::vector<BotRuntime> botAi_;
 
     // 小队协同状态（索引与 bots_ 对齐）
     std::vector<SquadOrder> squad_;
@@ -428,7 +445,8 @@ private:
     // 找一个「真实可见」的敌人（距离 + 烟雾 + LOS）
     const Player* FindVisibleEnemy(const Player& self, float& outDist) const;
     // 沿 A* 路径移动；返回 true 表示本帧移动已由寻路接管
-    bool FollowPathTo(Player& bot, float destX, float destY, float dt, float speedMul = 1.0f);
+    bool FollowPathTo(Player& bot, BotRuntime& ai,
+                      float destX, float destY, float dt, float speedMul = 1.0f);
     // 局部避障：累加附近单位的排斥向量（outX/outY 已归一化到 0..1 量级）
     void AccumulateSeparation(const Player& self, float& outX, float& outY) const;
     // 把期望速度与分离向量合成，并按最大速度钳制

@@ -62,12 +62,14 @@ void CS2DGame::ResetToNewMatch() {
     SetupObjective();
 
     // CT 侧：玩家 + (TEAM_SIZE-1) 个 BOT；T 侧：TEAM_SIZE 个 BOT
+    botAi_.clear();
     for (int i = 0; i < TOTAL_BOTS; ++i) {
         const Team t = (i < TEAM_SIZE - 1) ? Team::CT : Team::T;
         Player bot;
         SpawnBOT(bot, t);
         bots_.push_back(bot);
         botExecutors_.emplace_back();
+        botAi_.emplace_back();          // 与 bots_ 同下标
     }
 
     std::cout << "[CS2DGame] 对局开始: " << TEAM_SIZE << "v" << TEAM_SIZE
@@ -298,13 +300,6 @@ void CS2DGame::SpawnBOT(Player& bot, Team team) {
     bot.reloading  = false;
     bot.reloadTimer = 0.0f;
     bot.stealth    = false;
-    bot.llmIntent.Reset();
-    bot.path.clear();
-    bot.pathIdx     = 0;
-    bot.repathTimer = 0.0f;
-    bot.goalX = bot.goalY = 0.0f;
-    bot.retreatTimer = 0.0f;
-    bot.threatX = bot.threatY = 0.0f;
 
     // 外观与武器：开局只有手枪（CT = USP，T = Glock），无护甲无投掷物
     if (team == Team::CT) {
@@ -331,9 +326,6 @@ void CS2DGame::SpawnBOT(Player& bot, Team team) {
         }
     }
     bot.grenadeCount = 0;                 // 需购买
-    bot.grenadeCooldown = 0.0f;
-    bot.blindTimer = 0.0f;
-    bot.defusing = false;
     bot.weaponSlot = 1;                   // 默认持手枪
     bot.armor  = 0;
     bot.helmet = false;
