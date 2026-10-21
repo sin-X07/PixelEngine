@@ -424,6 +424,12 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio) {
     victim.reloading = false;
     ++victim.deaths;
 
+    // 记录阵亡点：队友会尝试「补枪」（trade）
+    lastDeathX_      = victim.x;
+    lastDeathY_      = victim.y;
+    lastDeathTeam_   = victim.team;
+    lastDeathTimer_  = 3.5f;
+
     if (&victim == &player_) {
         ++playerDeaths_;
         if (audio) audio->PlaySound(SoundEffect::KILL);

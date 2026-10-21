@@ -503,8 +503,46 @@ void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float 
 }
 
 // ============================================================================
-// 子弹 / 准星
+// 目标物标记（包点 / C4）
 // ============================================================================
+
+void CS2DRenderer::DrawObjectiveMarkers(float timeSec) {
+    if (!world_ || !renderer_) return;
+
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+
+    // 包点：琥珀色区域 + 呼吸边线
+    const auto& sites = world_->GetBombSites();
+    const float pulse = 0.5f + 0.5f * std::sin(timeSec * 2.2f);
+    for (const auto& s : sites) {
+        SDL_FRect r;
+        r.x = (s.x - cameraX_) * zoom_;
+        r.y = (s.y - cameraY_) * zoom_;
+        r.w = s.width * zoom_;
+        r.h = s.height * zoom_;
+
+        SDL_SetRenderDrawColor(renderer_, 240, 190, 60, 34);
+        SDL_RenderFillRectF(renderer_, &r);
+
+        SDL_SetRenderDrawColor(renderer_, 250, 205, 80,
+                               static_cast<Uint8>(110 + 70 * pulse));
+        SDL_RenderDrawRectF(renderer_, &r);
+
+        // 四角加粗，强调边界
+        const float arm = std::min(r.w, r.h) * 0.22f;
+        SDL_SetRenderDrawColor(renderer_, 255, 225, 120, 200);
+        for (int i = 0; i < 4; ++i) {
+            const float cx = (i % 2 == 0) ? r.x : r.x + r.w;
+            const float cy = (i / 2 == 0) ? r.y : r.y + r.h;
+            const float dx = (i % 2 == 0) ? arm : -arm;
+            const float dy = (i / 2 == 0) ? arm : -arm;
+            SDL_RenderDrawLineF(renderer_, cx, cy, cx + dx, cy);
+            SDL_RenderDrawLineF(renderer_, cx, cy, cx, cy + dy);
+        }
+    }
+}
+
+
 
 void CS2DRenderer::DrawBullet(float x, float y, float vx, float vy) {
     if (!bulletTex_) return;

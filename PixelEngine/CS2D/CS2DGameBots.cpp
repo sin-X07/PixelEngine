@@ -515,6 +515,19 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             continue;
         }
 
+        // ---- 补枪（trade）：队友刚在附近阵亡 → 冲过去换人 ----
+        if (lastDeathTimer_ > 0.0f && lastDeathTeam_ == bot.team &&
+            !tradePushed_[i] && order.role != BotRole::Anchor) {
+            const float dx = lastDeathX_ - bot.x;
+            const float dy = lastDeathY_ - bot.y;
+            const float d2 = dx * dx + dy * dy;
+            if (d2 > 40.0f * 40.0f && d2 < 350.0f * 350.0f) {
+                tradePushed_[i] = true;
+                bot.llmIntent.Tick(dt);
+                if (FollowPathTo(bot, lastDeathX_, lastDeathY_, dt, 1.0f)) continue;
+            }
+        }
+
         // ---- 受击撤退：低血时优先找掩体，交火次之 ----
         if (bot.retreatTimer > 0.0f) bot.retreatTimer -= dt;
         if (bot.retreatTimer > 0.0f && bot.health <= 35) {

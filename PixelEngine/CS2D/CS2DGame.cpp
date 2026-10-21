@@ -394,6 +394,8 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
                       AudioManager* audio) {
     if (!world_) return;
 
+    clockSec_ += dt;
+
     UpdateRoundFlow(dt, audio);
 
     // 团队情报：老化 + 探点上报（冻结期也推进，保证情报会过期）
@@ -477,6 +479,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     // 命中 / 受伤反馈衰减
     if (hitMarkerTimer_ > 0.0f)   hitMarkerTimer_   = std::max(0.0f, hitMarkerTimer_ - dt);
     if (damageFlashTimer_ > 0.0f) damageFlashTimer_ = std::max(0.0f, damageFlashTimer_ - dt);
+    if (lastDeathTimer_ > 0.0f)   lastDeathTimer_   = std::max(0.0f, lastDeathTimer_ - dt);
 
     // 玩家脚步声（潜行时不出声）
     if (audio && player_.alive && !player_.stealth) {
@@ -547,6 +550,9 @@ void CS2DGame::Render(int viewW, int viewH) {
         renderer_->DrawSmokeCloud(s.x, s.y, s.radius,
                                   static_cast<Uint8>(200.0f * std::min(1.0f, t * 3.0f)));
     }
+
+    // 目标物标记（包点范围）：画在角色之下、遮罩之上，保证始终可辨
+    renderer_->DrawObjectiveMarkers(clockSec_);
 
     if (player_.alive) {
         renderer_->DrawVisionFog(player_.x, player_.y, player_.aimAngle);

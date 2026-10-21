@@ -88,8 +88,7 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
     }
 
     // BOT：同样的规则
-    for (auto& bot : bots_) {
-        const bool survived = carryWeapons && bot.alive;
+    for (auto& bot : bots_) {        const bool survived = carryWeapons && bot.alive;
 
         const WeaponId w0 = bot.weapons[0];
         const WeaponId w1 = bot.weapons[1];
@@ -117,6 +116,8 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
         BotBuyLoadout(bot);
     }
     bullets_.clear();
+    lastDeathTimer_ = 0.0f;
+    for (bool& flag : tradePushed_) flag = false;
 }
 
 // BOT 经济：按余额买武器与护甲（与玩家同一套价格）

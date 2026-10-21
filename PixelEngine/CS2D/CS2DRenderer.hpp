@@ -58,6 +58,8 @@ public:
 
     // 子弹 / 准星
     void DrawBullet(float x, float y, float vx, float vy);
+    // 目标物标记：包点区域、已安装的 C4（timeSec 用于呼吸动画）
+    void DrawObjectiveMarkers(float timeSec);
     void DrawCrosshair(float cx, float cy,
                        Uint8 r = 255, Uint8 g = 255, Uint8 b = 255, Uint8 a = 200,
                        float thickness = 1.5f, bool centerDot = true,
@@ -164,10 +166,8 @@ private:
 
     // ========= 视野遮罩 =========
     static constexpr int   VISION_MASK_SCALE = 4;
-    static constexpr float VISION_RADIUS     = 150.0f;  // 扇形远视野半径（世界单位）
-    static constexpr float VISION_SOFT_EDGE  = 28.0f;   // 距离软边
-    static constexpr float VISION_CONE_DEG   = 120.0f;  // 扇形总角度
-    static constexpr float VISION_ANGLE_SOFT = 14.0f;   // 角度软边（度）
+    static constexpr float VISION_RADIUS     = 120.0f;  // 视野圆半径（世界单位）
+    static constexpr float VISION_SOFT_EDGE  = 24.0f;   // 距离软边
     static constexpr Uint8 VISION_FOG_ALPHA  = 160;     // 不可见区半透明上限
     static constexpr Uint8 VISION_FOG_R      = 200;     // 浅灰遮罩颜色
     static constexpr Uint8 VISION_FOG_G      = 200;

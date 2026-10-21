@@ -127,18 +127,28 @@ bool ImGuiUI::Initialize(SDL_Window* win, SDL_Renderer* ren) {
     }
 
     if (!chosen.empty()) {
-        // 用 GlyphRangesBuilder 精确构建字形表：基础 ASCII + 全角标点 + 项目全部汉字。
-        // 比 GetGlyphRangesChineseSimplifiedCommon(2500 常用字) 更稳：不含生僻字缺字，也不浪费图集。
+        // 字形覆盖策略：
+        //   1) ImGui 内置的「2500 最常用简体汉字」范围 —— 覆盖日常文本 99% 以上，
+        //      不再需要遇到生字就往 kUiChineseChars 里补（那是不可维护的）
+        //   2) 仍合并项目自定义字符表，兜住生僻字/符号
+        //   3) 附加 ASCII、中英文标点、全角形式
         ImFontGlyphRangesBuilder builder;
-        ImWchar baseRanges[] = {
+        builder.AddRanges(io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
+
+        ImWchar extraRanges[] = {
             0x0020, 0x00FF, // Basic Latin + Latin-1 Supplement
             0x2000, 0x206F, // General Punctuation
+            0x2190, 0x21FF, // Arrows
+            0x2460, 0x24FF, // Enclosed Alphanumerics
+            0x25A0, 0x25FF, // Geometric Shapes
+            0x2600, 0x26FF, // Misc Symbols
             0x3000, 0x303F, // CJK Symbols and Punctuation
             0xFF00, 0xFFEF, // Halfwidth and Fullwidth Forms
             0,
         };
-        builder.AddRanges(baseRanges);
+        builder.AddRanges(extraRanges);
         builder.AddText(kUiChineseChars);
+
         ImVector<ImWchar> ranges;
         builder.BuildRanges(&ranges);
 

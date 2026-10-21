@@ -66,7 +66,7 @@ public:
         float y       = 0.0f;
         float vx      = 0.0f;
         float vy      = 0.0f;
-        float size    = 6.0f;
+        float size    = 7.0f;
         float aimAngle = 0.0f;
         int   health  = 100;
         int   maxHealth = 100;
@@ -217,6 +217,33 @@ public:
     float GetHitMarkerTimer()   const { return hitMarkerTimer_; }
     float GetDamageFlashTimer() const { return damageFlashTimer_; }
 
+    // 敌人情报（团队共享；id: -1=玩家, >=0=BOT 索引）
+    struct EnemyContact {
+        int   id  = -1;
+        float x   = 0.0f;
+        float y   = 0.0f;
+        float age = 0.0f;
+    };
+
+    // ---- 供 LLM 提示词读取的战术态势 ----
+    const std::vector<SquadOrder>& GetSquadOrders() const { return squad_; }
+    const std::vector<EnemyContact>& GetContactsOfTeam(Team t) const { return ContactsOf(t); }
+    float GetLastDeathX() const { return lastDeathX_; }
+    float GetLastDeathY() const { return lastDeathY_; }
+    float GetLastDeathTimer() const { return lastDeathTimer_; }
+    Team  GetLastDeathTeam() const { return lastDeathTeam_; }
+    int   GetBombSiteCount() const {
+        return world_ ? static_cast<int>(world_->GetBombSites().size()) : 0;
+    }
+    bool  GetBombSiteCenter(int index, float& cx, float& cy) const {
+        if (!world_) return false;
+        const auto& sites = world_->GetBombSites();
+        if (index < 0 || index >= static_cast<int>(sites.size())) return false;
+        cx = sites[index].x + sites[index].width * 0.5f;
+        cy = sites[index].y + sites[index].height * 0.5f;
+        return true;
+    }
+
     // ---- 目标物（爆破 / 人质）----
     bool  IsBombPlanted()   const { return bombPlanted_; }
     float GetBombTimer()    const { return bombTimer_; }
@@ -278,20 +305,12 @@ public:
     std::string GetWeaponName() const;
 
     // BOT 视野半径（发现敌人并交火的距离）
-    // 玩家视野是 150px；BOT 取 120px（略弱于玩家，但不能盲到打不起来）
+    // 玩家视野圆半径 120px；BOT 同样取 120px
     static constexpr float BOT_VIEW_RADIUS = 120.0f;
     // 探点距离：超过交火距离但能「看到并上报」的范围（团队情报来源）
     static constexpr float BOT_SPOT_RADIUS = 240.0f;
     // 情报保留时长（秒）
     static constexpr float CONTACT_MEMORY  = 6.0f;
-
-    // 敌人情报（团队共享；id: -1=玩家, >=0=BOT 索引）
-    struct EnemyContact {
-        int   id  = -1;
-        float x   = 0.0f;
-        float y   = 0.0f;
-        float age = 0.0f;
-    };
 
     // 鼠标灵敏度
     float GetMouseSensitivity() const { return mouseSensitivity_; }
@@ -321,6 +340,13 @@ private:
     float bombX_ = 0.0f, bombY_ = 0.0f;
     float bombTimer_     = 0.0f;   // 倒计时（<=0 爆炸）
     float bombBeepTimer_ = 0.0f;   // C4 滴答音节奏
+    float clockSec_ = 0.0f;        // 累计运行时间（用于呼吸类动画）
+
+    // 最近一次阵亡点（用于队友补枪）
+    float lastDeathX_ = 0.0f, lastDeathY_ = 0.0f;
+    Team  lastDeathTeam_ = Team::None;
+    float lastDeathTimer_ = 0.0f;
+    bool  tradePushed_[16] = {};   // 每个 BOT 本轮是否已执行过补枪
     float defuseProgress_ = 0.0f;  // 0..1
     float rescueProgress_ = 0.0f;  // 0..1（当前人质）
     int   hostageNearIdx_ = -1;    // 玩家当前靠近的人质索引
