@@ -130,6 +130,10 @@ public:
         };
         std::vector<ScoreRowView> scoreRows;
         bool showScoreboard = false;
+
+        // 屏幕中央提示（回合开始 / 胜负）
+        std::string announcement;
+        float announcementAlpha = 0.0f;
     };
 
     void DrawMenu(const MenuCtx& ctx, const Actions& actions);

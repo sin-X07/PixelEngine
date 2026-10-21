@@ -611,6 +611,13 @@ void Engine::Render() {
             ictx.killFeed.push_back(e.text);
         }
 
+        // 屏幕中央提示（回合开始 / 胜负）
+        ictx.announcement = cs2dGame->GetAnnouncement();
+        {
+            const float t = cs2dGame->GetAnnouncementTimer();
+            ictx.announcementAlpha = std::clamp(t / 0.6f, 0.0f, 1.0f);
+        }
+
         // 记分板
         ictx.showScoreboard = showScoreboard_;
         if (showScoreboard_) {

@@ -480,6 +480,10 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     if (hitMarkerTimer_ > 0.0f)   hitMarkerTimer_   = std::max(0.0f, hitMarkerTimer_ - dt);
     if (damageFlashTimer_ > 0.0f) damageFlashTimer_ = std::max(0.0f, damageFlashTimer_ - dt);
     if (lastDeathTimer_ > 0.0f)   lastDeathTimer_   = std::max(0.0f, lastDeathTimer_ - dt);
+    if (announcementTimer_ > 0.0f) {
+        announcementTimer_ = std::max(0.0f, announcementTimer_ - dt);
+        if (announcementTimer_ <= 0.0f) announcement_.clear();
+    }
 
     // 玩家脚步声（潜行时不出声）
     if (audio && player_.alive && !player_.stealth) {

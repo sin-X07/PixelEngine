@@ -356,6 +356,13 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
         DrawImGuiTextCentered(imGuiUI, alive, 64.0f, 160, 175, 185, 255, 16);
     }
 
+    // 屏幕中央提示：回合开始 / 回合胜负（带淡出）
+    if (!ctx.announcement.empty() && ctx.announcementAlpha > 0.0f) {
+        const Uint8 a = static_cast<Uint8>(std::clamp(ctx.announcementAlpha, 0.0f, 1.0f) * 255.0f);
+        DrawImGuiTextCentered(imGuiUI, ctx.announcement.c_str(), 150.0f,
+                              255, 236, 150, a, 34);
+    }
+
     // 比赛结束提示
     if (ctx.matchOver) {
         DrawImGuiTextCentered(imGuiUI,

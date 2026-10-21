@@ -232,6 +232,9 @@ public:
     float GetLastDeathY() const { return lastDeathY_; }
     float GetLastDeathTimer() const { return lastDeathTimer_; }
     Team  GetLastDeathTeam() const { return lastDeathTeam_; }
+    // 屏幕中央提示（空字符串表示不显示）
+    const std::string& GetAnnouncement() const { return announcement_; }
+    float GetAnnouncementTimer() const { return announcementTimer_; }
     int   GetBombSiteCount() const {
         return world_ ? static_cast<int>(world_->GetBombSites().size()) : 0;
     }
@@ -341,6 +344,10 @@ private:
     float bombTimer_     = 0.0f;   // 倒计时（<=0 爆炸）
     float bombBeepTimer_ = 0.0f;   // C4 滴答音节奏
     float clockSec_ = 0.0f;        // 累计运行时间（用于呼吸类动画）
+
+    // 屏幕中央提示（回合开始 / 回合胜负）
+    std::string announcement_;
+    float announcementTimer_ = 0.0f;
 
     // 最近一次阵亡点（用于队友补枪）
     float lastDeathX_ = 0.0f, lastDeathY_ = 0.0f;

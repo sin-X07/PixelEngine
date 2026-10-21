@@ -30,6 +30,8 @@ void CS2DGame::BeginNewRound(AudioManager* audio) {
     AssignSquadRoles(); // 每回合按新的相对位置重新分工
     bombBeepTimer_ = 0.0f;
     if (audio) audio->PlaySound(SoundEffect::ROUND_START);
+    announcement_ = "第 " + std::to_string(round_.RoundNumber()) + " 回合";
+    announcementTimer_ = 2.2f;
     std::cout << "[CS2D] 第 " << round_.RoundNumber() << " 回合开始 ("
               << teams_.ScoreT() << ":" << teams_.ScoreCT() << ")" << std::endl;
 }
@@ -235,6 +237,10 @@ void CS2DGame::ApplyRoundResult(Team winner, AudioManager* audio) {
     if (audio && winner != Team::None) {
         audio->PlaySound(winner == player_.team ? SoundEffect::ROUND_WIN
                                                 : SoundEffect::ROUND_LOSE);
+    }
+    if (winner != Team::None) {
+        announcement_ = (winner == player_.team) ? "回合胜利" : "回合失败";
+        announcementTimer_ = 2.4f;
     }
 
     GrantRoundEndMoney(winner);
