@@ -466,6 +466,9 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
         std::string line = ctx.weaponName;
         if (ctx.magazineSize > 0) {
             line += " " + std::to_string(ctx.ammo) + "/" + std::to_string(ctx.magazineSize);
+        } else if (ctx.grenadeCount > 0) {
+            // 投掷物：显示背包里还剩几个（按 4 切换）
+            line += " (" + std::to_string(ctx.grenadeCount) + ")";
         }
         const float textX = vpW - 160.0f + 50.0f;
         DrawImGuiText(imGuiUI, line.c_str(), textX, 549.0f, 230, 238, 235, 255, 18);

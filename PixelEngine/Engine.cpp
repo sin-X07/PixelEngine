@@ -494,6 +494,8 @@ void Engine::StartMatch(MatchMode mode) {
     cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
 
     std::cout << "CS2D 对局开始: " << mapRel << std::endl;
+
+
 }
 
 // ============================================================================
@@ -589,6 +591,7 @@ void Engine::Render() {
         ictx.aliveCT          = cs2dGame->AliveCount(Team::CT);
         ictx.money            = cs2dGame->GetPlayerMoney();
         ictx.armor            = cs2dGame->GetPlayerArmor();
+        ictx.grenadeCount     = cs2dGame->GetPlayer().grenadeCount;
         ictx.helmet           = cs2dGame->GetPlayerHelmet();
         ictx.matchOver        = cs2dGame->IsMatchOver();
         ictx.matchWinnerIsCT  = (cs2dGame->GetMatchWinner() == Team::CT);
@@ -688,10 +691,17 @@ void Engine::RenderBuyMenu() {
             case WeaponSlotKind::Melee:     it.group = 2; break;
             case WeaponSlotKind::Grenade:   it.group = 3; break;
         }
-        for (int s = 0; s < 4; ++s) {
-            if (static_cast<int>(p.weapons[s]) == i && s == it.group) {
-                it.owned = true;
-                break;
+        if (def.slot == WeaponSlotKind::Grenade) {
+            // 投掷物有数量概念：闪光 2 个，其它 1 个，满了才标记为已拥有
+            const int limit = (def.id == WeaponId::GrenadeFlash) ? 2 : 1;
+            it.owned = (p.CountGrenade(def.id) >= limit ||
+                        p.grenadeCount >= CS2DGame::Player::MAX_GRENADES);
+        } else {
+            for (int s = 0; s < 4; ++s) {
+                if (static_cast<int>(p.weapons[s]) == i && s == it.group) {
+                    it.owned = true;
+                    break;
+                }
             }
         }
         bctx.items.push_back(it);

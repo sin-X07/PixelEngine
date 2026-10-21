@@ -149,10 +149,15 @@ bool CS2DGame::TryBuy(WeaponId id) {
         case WeaponSlotKind::Melee:
             player_.weapons[2] = id;
             break;
-        case WeaponSlotKind::Grenade:
-            player_.weapons[3] = id;
-            player_.grenadeCount = std::min(player_.grenadeCount + 1, 3);
+        case WeaponSlotKind::Grenade: {
+            if (player_.grenadeCount >= Player::MAX_GRENADES) return false;
+            // 闪光最多 2 个，其它每种最多 1 个
+            const int limit = (id == WeaponId::GrenadeFlash) ? 2 : 1;
+            if (player_.CountGrenade(id) >= limit) return false;
+            player_.grenades[player_.grenadeCount++] = id;
+            player_.SyncActiveGrenade();
             break;
+        }
     }
 
     player_.money -= def.price;
@@ -260,8 +265,10 @@ void CS2DGame::SpawnPlayer() {
     player_.weapons[0] = WeaponId::None;
     player_.weapons[1] = WeaponId::USP;
     player_.weapons[2] = WeaponId::Knife;
-    player_.weapons[3] = WeaponId::GrenadeHE;
+    player_.weapons[3] = WeaponId::None;
     player_.grenadeCount = 0;
+    player_.grenadeSlot  = 0;
+    for (int gi = 0; gi < Player::MAX_GRENADES; ++gi) player_.grenades[gi] = WeaponId::None;
     player_.weaponSlot = 1;            // 默认持手枪
     player_.armor  = 0;
     player_.helmet = false;
@@ -326,6 +333,9 @@ void CS2DGame::SpawnBOT(Player& bot, Team team) {
         }
     }
     bot.grenadeCount = 0;                 // 需购买
+    bot.grenadeSlot  = 0;
+    for (int gi = 0; gi < Player::MAX_GRENADES; ++gi) bot.grenades[gi] = WeaponId::None;
+    bot.weapons[3] = WeaponId::None;
     bot.weaponSlot = 1;                   // 默认持手枪
     bot.armor  = 0;
     bot.helmet = false;
@@ -351,7 +361,23 @@ void CS2DGame::RespawnBOT(Player& bot) {
 
 void CS2DGame::SwitchWeaponSlot(int slot) {
     if (slot < 0 || slot > 3) return;
-    if (mode_ != MatchMode::DeathMatch && round_.IsFrozen()) return;
+
+    // 投掷物槽：按 4 在已装备的投掷物之间循环切换
+    if (slot == 3) {
+        if (player_.grenadeCount <= 0) return;
+        if (player_.weaponSlot != 3) {
+            player_.weaponSlot = 3;                 // 先切到投掷物
+        } else {
+            player_.grenadeSlot = (player_.grenadeSlot + 1) % player_.grenadeCount;
+        }
+        player_.SyncActiveGrenade();
+        player_.ammo    = 1;
+        player_.maxAmmo = 1;
+        player_.reloading = false;
+        player_.reloadTimer = 0.0f;
+        return;
+    }
+
     if (player_.weapons[slot] == WeaponId::None) return;   // 空槽位
 
     const int oldSlot = player_.weaponSlot;
@@ -388,6 +414,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 
     clockSec_ += dt;
 
+
     UpdateRoundFlow(dt, audio);
 
     // 团队情报：老化 + 探点上报（冻结期也推进，保证情报会过期）
@@ -410,6 +437,13 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
         UpdatePlayerShooting(dt, mouseLeftDown, mouseWorldX, mouseWorldY, audio);
     } else {
         player_.vx = player_.vy = 0.0f;
+
+        // 准备阶段（冻结）：允许转向瞄准，但不允许移动与开火
+        if (player_.alive && frozen) {
+            player_.aimAngle = std::atan2(mouseWorldY - player_.y,
+                                          mouseWorldX - player_.x);
+            player_.stealth = false;
+        }
 
         // 死斗模式：玩家阵亡后自动重生
         if (mode_ == MatchMode::DeathMatch && !player_.alive) {

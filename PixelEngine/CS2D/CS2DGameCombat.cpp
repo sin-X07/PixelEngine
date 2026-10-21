@@ -278,7 +278,7 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
 void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle) {
     if (thrower.grenadeCount <= 0) return;
 
-    const WeaponId type = thrower.weapons[3];
+    const WeaponId type = thrower.ActiveGrenade();
     const WeaponDef& def = WeaponDB::Get(type);
     if (def.cls != WeaponClass::Grenade) return;
 
@@ -294,7 +294,8 @@ void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle) {
     g.active = true;
     grenades_.push_back(g);
 
-    --thrower.grenadeCount;
+    // 每个投掷物一局只能用一次：用掉就从背包移除
+    thrower.ConsumeActiveGrenade();
 }
 
 void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {

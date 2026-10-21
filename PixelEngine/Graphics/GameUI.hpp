@@ -104,6 +104,7 @@ public:
         int   aliveCT = 0;
         int   money = 0;
         int   armor = 0;
+        int   grenadeCount = 0;
         bool  helmet = false;
         bool  matchOver = false;
         bool  matchWinnerIsCT = false;

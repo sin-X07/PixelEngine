@@ -4,6 +4,7 @@
 #include "Teams/TeamManager.hpp"
 #include "Rounds/RoundManager.hpp"
 #include "Weapons/WeaponDef.hpp"
+#include "Tuning.hpp"
 #include "Economy/EconomySystem.hpp"
 #include "Navigation/PathFinder.hpp"
 #include "../Core/Types.hpp"
@@ -84,7 +85,51 @@ public:
 
         // 武器（按槽位）
         WeaponId  weapons[4] = { WeaponId::None, WeaponId::USP, WeaponId::Knife, WeaponId::GrenadeHE };
-        int       grenadeCount = 0;        // 当前投掷物数量
+
+        // ---- 投掷物背包 ----
+        // 一局最多装备 4 个；闪光可带 2 个，其它每种 1 个；每个只能用一次
+        static constexpr int MAX_GRENADES = 4;
+        WeaponId  grenades[MAX_GRENADES] = { WeaponId::None, WeaponId::None,
+                                             WeaponId::None, WeaponId::None };
+        int       grenadeCount = 0;        // 已装备数量（0..MAX_GRENADES）
+        int       grenadeSlot  = 0;        // 当前选中的投掷物下标
+
+        // ---- 投掷物背包操作 ----
+        WeaponId ActiveGrenade() const {
+            if (grenadeCount <= 0 || grenadeSlot < 0 || grenadeSlot >= MAX_GRENADES) {
+                return WeaponId::None;
+            }
+            return grenades[grenadeSlot];
+        }
+        // 同类型数量（用于购买上限判定）
+        int CountGrenade(WeaponId id) const {
+            int n = 0;
+            for (int i = 0; i < grenadeCount; ++i) if (grenades[i] == id) ++n;
+            return n;
+        }
+        // 把当前选中项同步到 weapons[3]，供渲染与 CurrentWeapon() 使用
+        void SyncActiveGrenade() {
+            if (grenadeCount <= 0) {
+                grenades[0] = WeaponId::None;
+                grenadeCount = 0;
+                grenadeSlot  = 0;
+                weapons[3]   = WeaponId::None;
+                return;
+            }
+            if (grenadeSlot >= grenadeCount) grenadeSlot = grenadeCount - 1;
+            if (grenadeSlot < 0) grenadeSlot = 0;
+            weapons[3] = grenades[grenadeSlot];
+        }
+        // 丢弃当前选中的投掷物（用掉后调用）
+        void ConsumeActiveGrenade() {
+            if (grenadeCount <= 0) { SyncActiveGrenade(); return; }
+            for (int i = grenadeSlot; i < grenadeCount - 1; ++i) {
+                grenades[i] = grenades[i + 1];
+            }
+            grenades[grenadeCount - 1] = WeaponId::None;
+            --grenadeCount;
+            SyncActiveGrenade();
+        }
 
         // 弹药（活动槽位）
         int       ammo      = 30;
@@ -307,10 +352,13 @@ public:
 
     // ---- 经济 / 购买 ----
     int  GetPlayerMoney() const { return player_.money; }
-    bool IsBuyPhase()    const {
-        return mode_ != MatchMode::DeathMatch &&
-               (round_.Phase() == RoundPhase::Freeze || round_.Phase() == RoundPhase::Buy);
+    // 购买窗口：自回合开始起的前 BuyWindowSeconds 秒（覆盖冻结 + 购买 + 交战初期）
+    bool IsBuyPhase() const {
+        if (mode_ == MatchMode::DeathMatch) return false;
+        if (!player_.alive) return false;
+        return round_.Elapsed() <= Tuning::BuyWindowSeconds;
     }
+    float GetRoundElapsed() const { return round_.Elapsed(); }
     // 玩家当前是否处于购买区内（地图未定义购买区时视为全图可买）
     bool IsPlayerInBuyZone() const;
     // 尝试购买；成功返回 true（已扣款并装备）

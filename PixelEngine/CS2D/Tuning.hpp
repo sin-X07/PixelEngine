@@ -20,6 +20,9 @@ constexpr float VisionAngleSoftDeg= 14.0f;   // 角度软边（度）
 constexpr float VisionHalfAngleRad =
     ((VisionConeDeg + VisionAngleSoftDeg) * 0.5f) * 3.14159265f / 180.0f;
 
+// ---------------- 回合 ----------------
+constexpr float BuyWindowSeconds = 15.0f;   // 开局可购买时间（秒，自回合开始计）
+
 // ---------------- 移动 ----------------
 constexpr float BotMoveSpeed      = 60.0f;   // BOT 基础移动速度
 constexpr float SpeedMulEntry     = 1.00f;   // 突破手

@@ -10,6 +10,7 @@ void RoundManager::Reset(const RoundConfig& cfg) {
 
 void RoundManager::EnterPhase(RoundPhase p) {
     phase_ = p;
+    if (p == RoundPhase::Freeze) elapsed_ = 0.0f;   // 新回合开始，购买计时归零
     switch (p) {
         case RoundPhase::Freeze:   phaseTimer_ = cfg_.freezeTime; break;
         case RoundPhase::Buy:      phaseTimer_ = cfg_.buyTime;    break;
@@ -32,6 +33,7 @@ void RoundManager::Update(float dt) {
         return;
     }
 
+    elapsed_ += dt;          // 计入本回合用时（购买窗口按此判定）
     phaseTimer_ -= dt;
     if (phaseTimer_ > 0.0f) return;
 

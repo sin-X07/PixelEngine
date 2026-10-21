@@ -33,6 +33,8 @@ public:
 
     RoundPhase Phase() const        { return phase_; }
     float      PhaseRemaining() const { return phaseTimer_; }
+    // 本回合已进行的时间（含冻结/购买期），购买窗口按它计时
+    float      Elapsed() const      { return elapsed_; }
     int        RoundNumber() const  { return roundNumber_; }
     Team       LastWinner() const   { return lastWinner_; }
 
@@ -58,6 +60,7 @@ private:
     RoundPhase  phase_       = RoundPhase::Freeze;
     float       phaseTimer_  = 0.0f;
     int         roundNumber_ = 1;
+    float       elapsed_     = 0.0f;   // 本回合累计时间
     Team        lastWinner_  = Team::None;
     bool        timeUp_      = false;
 };

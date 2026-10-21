@@ -153,11 +153,25 @@ void CS2DGame::BotBuyLoadout(Player& bot) {
         bot.armor = 100; bot.helmet = false; bot.money -= 650;
     }
 
-    // 3) 投掷物（价格取自武器表）
-    const int nadePrice = WeaponDB::Get(bot.weapons[3]).price;
-    if (bot.grenadeCount <= 0 && nadePrice > 0 && bot.money >= nadePrice) {
-        bot.grenadeCount = 1;
-        bot.money -= nadePrice;
+    // 3) 投掷物：最多 4 个，闪光可 2 个，其它每种 1 个
+    {
+        // 偏好顺序：高爆 → 闪光 → 烟雾（T 更偏闪光，CT 更偏烟雾）
+        const WeaponId order[3] = {
+            WeaponId::GrenadeHE,
+            isT ? WeaponId::GrenadeFlash : WeaponId::GrenadeSmoke,
+            isT ? WeaponId::GrenadeSmoke : WeaponId::GrenadeFlash
+        };
+        for (WeaponId gid : order) {
+            const WeaponDef& gd = WeaponDB::Get(gid);
+            const int limit = (gid == WeaponId::GrenadeFlash) ? 2 : 1;
+            while (bot.grenadeCount < Player::MAX_GRENADES &&
+                   bot.CountGrenade(gid) < limit &&
+                   gd.price > 0 && bot.money >= gd.price) {
+                bot.grenades[bot.grenadeCount++] = gid;
+                bot.money -= gd.price;
+            }
+        }
+        bot.SyncActiveGrenade();
     }
 
     bot.weapons[0] = primary;
