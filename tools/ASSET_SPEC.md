@@ -57,16 +57,32 @@
 
 ---
 
-## 3. HUD 武器图标（**已取消，不需要单独制作**）
+## 3. 状态栏 / 掉落物图标（`_d` 后缀）
 
-HUD 右下角的武器图标现在**直接复用第 2 节的世界贴图**（`assets/cs2d/sprites/*`），
-绘制时会按宽高比缩放进 44×44 的方框，不会被拉伸。
+**命名约定：同一个目录，用后缀区分「用在什么状态」。**
 
-**所以你只需要维护一套素材：`assets/cs2d/sprites/`。**
+| 用途 | 文件 | 字段 | 尺寸建议 |
+|---|---|---|---|
+| 人物手持（世界内） | `assets/cs2d/sprites/<name>.png` | `WeaponDef::spritePath` | 64×64，见第 2 节朝向 |
+| HUD 状态栏 + 掉落武器 | `assets/cs2d/sprites/<name>_d.png` | `WeaponDef::iconPath` | 75×64，透明背景 |
 
-`assets/images/weapons/` 目录里遗留的 `*_d.png` 已不再被引用，可以忽略或删除。
-如果哪天需要单独的高清 HUD 图标，在 `WeaponDef` 的 `iconPath` 字段填上路径即可，
-渲染器会优先用它、缺失时自动回退到世界贴图。
+| `<name>` | 对应武器 |
+|---|---|
+| `knife` | 匕首 |
+| `glock` | Glock |
+| `usp` | USP |
+| `deagle` | Deagle |
+| `galil` | Galil |
+| `ak47` | AK-47 |
+| `m4a1` | M4A1 |
+| `smg` | SMG |
+| `shotgun` | 霰弹枪 |
+| `awp` | AWP |
+| `grenade_he` / `grenade_flash` / `grenade_smoke` | 三种投掷物 |
+
+> `_d` 图标会被等比缩放进 44×44 方框（HUD）和约 9 个世界单位（掉落物），
+> 所以**不要为了适配而预先拉伸**，保持原始比例即可。
+> `iconPath` 留空也能跑：会回退用 `<name>.png`，但两套用途不同建议补齐。
 
 ---
 
@@ -97,7 +113,6 @@ HUD 右下角的武器图标现在**直接复用第 2 节的世界贴图**（`as
 | `usp.wav` | USP 射击 |
 | `shotgun.wav` | 霰弹枪射击 |
 | `smg.wav` | SMG 射击 |
-| `katana.mp3` | 近战挥砍 |
 | `dagger_attack.wav` | 匕首攻击 |
 | `ak47_reload.mp3` | AK-47 换弹 |
 | `m4a1_reload.mp3` | M4A1 换弹 |

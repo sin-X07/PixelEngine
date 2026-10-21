@@ -171,7 +171,7 @@ void CS2DRenderer::SetWorld(const CS2DWorld* world) {
         }
     }
 
-    bulletTex_ = LoadTexture("assets/images/effects/bullet.png");
+    bulletTex_ = LoadTexture("assets/cs2d/sprites/bullet.png");
 
     // 武器素材加载汇总
     int wOk = 0, wFail = 0;
@@ -500,6 +500,48 @@ void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float 
     if (muzzleFlash && def.cls != WeaponClass::Melee && def.cls != WeaponClass::Grenade) {
         DrawMuzzleFlash(wx, wy, size, aimAngle, weaponSlot);   // wx/wy 已是屏幕坐标
     }
+}
+
+// ============================================================================
+// 掉落武器（用 _d 图标，与 HUD 状态栏同一套素材）
+// ============================================================================
+
+void CS2DRenderer::DrawDroppedWeapon(int weaponId, float worldX, float worldY,
+                                     float timeSec) {
+    if (!renderer_ || weaponId <= 0) return;
+
+    // 掉落物属于「状态栏那一类素材」：优先 _d 图标
+    SDL_Texture* tex = nullptr;
+    if (weaponId < static_cast<int>(weaponIcons_.size())) tex = weaponIcons_[weaponId];
+    if (!tex && weaponId < static_cast<int>(weaponSprites_.size())) {
+        tex = weaponSprites_[weaponId];
+    }
+    if (!tex) return;
+
+    int tw = 0, th = 0;
+    SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+    if (tw <= 0 || th <= 0) return;
+
+    // 统一放进约 9 个世界单位的方框，保持宽高比
+    const float box = 9.0f * zoom_;
+    float dw = box, dh = box;
+    if (tw >= th) dh = box * static_cast<float>(th) / static_cast<float>(tw);
+    else          dw = box * static_cast<float>(tw) / static_cast<float>(th);
+
+    const float bob = std::sin(timeSec * 2.2f) * 1.2f * zoom_;
+    SDL_FRect dst;
+    dst.x = (worldX - cameraX_) * zoom_ - dw * 0.5f;
+    dst.y = (worldY - cameraY_) * zoom_ - dh * 0.5f + bob;
+    dst.w = dw;
+    dst.h = dh;
+
+    // 地面投影，避免看着像浮在空中
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 70);
+    SDL_FRect shadow = { dst.x - 1.0f, dst.y + dh - 1.0f, dw + 2.0f, 2.0f * zoom_ };
+    SDL_RenderFillRectF(renderer_, &shadow);
+
+    SDL_RenderCopyF(renderer_, tex, nullptr, &dst);
 }
 
 // ============================================================================

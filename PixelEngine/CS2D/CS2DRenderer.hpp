@@ -59,6 +59,8 @@ public:
 
     // 子弹 / 准星
     void DrawBullet(float x, float y, float vx, float vy);
+    // 掉在地上的武器：用 _d 图标（与 HUD 同一套素材），带轻微上下浮动
+    void DrawDroppedWeapon(int weaponId, float worldX, float worldY, float timeSec);
     // 目标物标记：包点区域、已安装的 C4（timeSec 用于呼吸动画）
     void DrawObjectiveMarkers(float timeSec);
     void DrawCrosshair(float cx, float cy,

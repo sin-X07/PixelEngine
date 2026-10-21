@@ -28,17 +28,11 @@ bool AudioManager::Initialize() {
         return chunk;
     };
 
-    pickupSound = loadChunk("assets/audio/pickup.wav", "金币");
     buttonHoverSound = loadChunk("assets/audio/button.ogg", "按钮悬停");
     clickSound = loadChunk("assets/audio/click.ogg", "按钮点击");
-    daggerSound = loadChunk("assets/audio/dagger_attack.wav", "匕首攻击");
-    breakSound = loadChunk("assets/audio/obstacle_break.wav", "障碍物击碎");
     shootSound = loadChunk("assets/audio/deagle.mp3", "射击");
     hitSound = loadChunk("assets/audio/hit.wav", "命中");
-    killSound = loadChunk("assets/audio/kill.wav", "击杀");
-    ak47Sound = loadChunk("assets/audio/ak47.wav", "AK47 射击");
-    deagleSound = loadChunk("assets/audio/deagle.mp3", "沙漠之鹰射击");
-    katanaSound = loadChunk("assets/audio/katana.mp3", "武士刀挥砍");
+    killSound = loadChunk("assets/audio/kill.mp3", "击杀");
 
     // 战局事件
     grenadeExplodeSound = loadChunk("assets/audio/grenade_explode.wav", "手雷爆炸");
@@ -54,13 +48,16 @@ bool AudioManager::Initialize() {
     armorHitSound       = loadChunk("assets/audio/armor_hit.wav", "护甲受击");
 
     // 分武器枪声
+    ak47Sound = loadChunk("assets/audio/ak47.wav", "AK47 射击");
     glockFireSound   = loadChunk("assets/audio/glock.wav", "Glock 射击");
-    uspFireSound     = loadChunk("assets/audio/usp.wav", "USP 射击");
+    uspFireSound     = loadChunk("assets/audio/usp.mp3", "USP 射击");
+    deagleSound = loadChunk("assets/audio/deagle.mp3", "沙漠之鹰射击");
     m4a1FireSound    = loadChunk("assets/audio/m4a1.mp3", "M4A1 射击");
     awpFireSound     = loadChunk("assets/audio/awp.wav", "AWP 射击");
     shotgunFireSound = loadChunk("assets/audio/shotgun.wav", "霰弹枪射击");
     smgFireSound     = loadChunk("assets/audio/smg.wav", "SMG 射击");
-    galilFireSound   = loadChunk("assets/audio/galir.wav", "Galil 射击");
+    galilFireSound   = loadChunk("assets/audio/galir.mp3", "Galil 射击");
+    daggerSound = loadChunk("assets/audio/dagger_attack.wav", "匕首攻击");
 
     if (failedAudio > 0) {
         std::cerr << "[Asset] 音效缺失 " << failedAudio
@@ -78,17 +75,14 @@ void AudioManager::Clean() {
     Mix_HaltChannel(-1);
 
     if (backgroundMusic) { Mix_FreeMusic(backgroundMusic); backgroundMusic = nullptr; }
-    if (pickupSound) { Mix_FreeChunk(pickupSound); pickupSound = nullptr; }
     if (buttonHoverSound) { Mix_FreeChunk(buttonHoverSound); buttonHoverSound = nullptr; }
     if (clickSound) { Mix_FreeChunk(clickSound); clickSound = nullptr; }
     if (daggerSound) { Mix_FreeChunk(daggerSound); daggerSound = nullptr; }
-    if (breakSound) { Mix_FreeChunk(breakSound); breakSound = nullptr; }
     if (shootSound) { Mix_FreeChunk(shootSound); shootSound = nullptr; }
     if (hitSound) { Mix_FreeChunk(hitSound); hitSound = nullptr; }
     if (killSound) { Mix_FreeChunk(killSound); killSound = nullptr; }
     if (ak47Sound) { Mix_FreeChunk(ak47Sound); ak47Sound = nullptr; }
     if (deagleSound) { Mix_FreeChunk(deagleSound); deagleSound = nullptr; }
-    if (katanaSound) { Mix_FreeChunk(katanaSound); katanaSound = nullptr; }
 
     // 战局事件
     if (grenadeExplodeSound) { Mix_FreeChunk(grenadeExplodeSound); grenadeExplodeSound = nullptr; }
@@ -151,17 +145,14 @@ void AudioManager::StopMusic() {
 // 效果 → 音频块（播放入口共用，避免 switch 重复）
 Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
     switch (effect) {
-        case SoundEffect::PICKUP:           return pickupSound;
         case SoundEffect::BUTTON_HOVER:     return buttonHoverSound;
         case SoundEffect::CLICK:            return clickSound;
         case SoundEffect::DAGGER_FIRE:      return daggerSound;
-        case SoundEffect::OBSTACLE_BREAK:   return breakSound;
         case SoundEffect::SHOOT:            return shootSound;
         case SoundEffect::HIT:              return hitSound;
         case SoundEffect::KILL:             return killSound;
         case SoundEffect::AK47_FIRE:        return ak47Sound;
         case SoundEffect::DEAGLE_FIRE:      return deagleSound;
-        case SoundEffect::KATANA_SWING:     return katanaSound;
 
         case SoundEffect::GRENADE_EXPLODE:  return grenadeExplodeSound;
         case SoundEffect::FLASHBANG:        return flashbangSound;

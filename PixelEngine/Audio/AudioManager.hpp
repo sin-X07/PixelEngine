@@ -46,17 +46,14 @@ class AudioManager {
 private:
     bool audioInitialized = false;
     Mix_Music* backgroundMusic = nullptr;
-    Mix_Chunk* pickupSound = nullptr;
     Mix_Chunk* buttonHoverSound = nullptr;
     Mix_Chunk* clickSound = nullptr;
     Mix_Chunk* daggerSound = nullptr;
-    Mix_Chunk* breakSound = nullptr;
     Mix_Chunk* shootSound = nullptr;
     Mix_Chunk* hitSound = nullptr;
     Mix_Chunk* killSound = nullptr;
     Mix_Chunk* ak47Sound = nullptr;
     Mix_Chunk* deagleSound = nullptr;
-    Mix_Chunk* katanaSound = nullptr;
 
     // 战局事件音效
     Mix_Chunk* grenadeExplodeSound = nullptr;
