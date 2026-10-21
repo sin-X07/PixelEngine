@@ -1,4 +1,4 @@
-# 素材规格契约 (ASSET SPEC)
+﻿# 素材规格契约 (ASSET SPEC)
 
 本文档是 **素材的唯一权威规格**。所有占位素材由 `tools/gen_placeholders.py` 与
 `tools/gen_placeholder_map.py` 按本规格生成；**用户真实素材到位后，直接覆盖同名同路径文件即可，
@@ -197,8 +197,22 @@
 `../../prev_assets/xxx.jpg`），引擎会自动按**文件名**到 `assets/cs2d/tilesets/` 下再找一次。
 因此把地图用到的背景图以同名文件放进 `assets/cs2d/tilesets/` 即可，无需改地图。
 
-### 6.3 出生点拆分工具
+### 6.3 地图缩放工具（地图太大时用）
 
+```powershell
+python tools/scale_map.py assets/cs2d/maps/ancient_ruins.tmj --dry-run   # 预览
+python tools/scale_map.py assets/cs2d/maps/ancient_ruins.tmj             # 默认每条轴 ÷2（面积 ÷4）
+python tools/scale_map.py <map.tmj> --div 4                              # 面积 ÷16
+```
+
+做的事：地图 `width/height`（tile 数）、所有对象的 `x/y/width/height`、
+imagelayer 的 `imagewidth/imageheight` 全部除以 `--div`；`tilewidth/tileheight` 不变。
+
+**背景图不用重新做**——渲染时背景会被拉伸到 imagelayer 声明的尺寸，
+原图保持全分辨率。脚本会额外打印缩放后最薄的墙体，若不足 1 个 tile
+（8px）会提示栅格化吸附风险。
+
+### 6.4 出生点拆分工具
 若地图只有通用 `SpawnPoint`，双方会从同一批点出生。用脚本按空间位置自动拆分：
 
 ```powershell
@@ -213,7 +227,7 @@ python tools/split_spawns.py <map.tmj> --axis y                        # 指定�
 > `buy_zone` 缺失时视为全图可购买；建议在双方出生点附近各放一个，
 > 用属性 `team = t / ct` 限定阵营。
 
-### 6.4 示例（最小可用 Entities 层）
+### 6.5 示例（最小可用 Entities 层）
 
 ```json
 {

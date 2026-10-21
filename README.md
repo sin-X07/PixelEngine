@@ -121,6 +121,7 @@ kill_on_exit=1         ; 退出时关闭本程序拉起的 server 以释放显�
 python tools/gen_placeholders.py         # 补齐缺失的图片/音效占位
 python tools/gen_placeholder_map.py      # 生成爆破/人质占位地图
 python tools/split_spawns.py <map.tmj>   # 通用出生点拆成 spawn_t / spawn_ct
+python tools/scale_map.py <map.tmj> --div 2   # 地图整体缩小（每条轴 ÷2 = 面积 ÷4）
 ```
 
 **真实素材到位后，直接覆盖同名同路径文件即可，无需改代码。**
