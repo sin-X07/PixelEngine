@@ -595,6 +595,7 @@ void Engine::Render() {
         ictx.helmet           = cs2dGame->GetPlayerHelmet();
         ictx.matchOver        = cs2dGame->IsMatchOver();
         ictx.matchWinnerIsCT  = (cs2dGame->GetMatchWinner() == Team::CT);
+        ictx.matchOverReturn  = 8.0f - cs2dGame->GetMatchOverTimer();
 
         // 目标物
         switch (cs2dGame->GetMatchMode()) {

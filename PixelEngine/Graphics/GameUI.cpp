@@ -368,6 +368,12 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
         DrawImGuiTextCentered(imGuiUI,
             ctx.matchWinnerIsCT ? "比赛结束  CT 获胜" : "比赛结束  T 获胜",
             200.0f, 255, 220, 90, 255, 30);
+        if (ctx.matchOverReturn >= 0.0f) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%d 秒后返回主菜单",
+                     static_cast<int>(ctx.matchOverReturn) + 1);
+            DrawImGuiTextCentered(imGuiUI, buf, 240.0f, 200, 210, 220, 255, 20);
+        }
     }
 
     // ---- 目标物状态 ----

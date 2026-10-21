@@ -80,6 +80,9 @@ private:
     // 效果 → 音频块（两个播放入口共用，避免 switch 重复）
     Mix_Chunk* ChunkFor(SoundEffect effect) const;
 
+    // 当前生效的通道音量（0..MIX_MAX_VOLUME），供 3D 音效与单通道重置使用
+    int effectsLevel_ = MIX_MAX_VOLUME;
+
     int masterVolume = 100;
     int musicVolume = 40;
     int effectsVolume = 100;

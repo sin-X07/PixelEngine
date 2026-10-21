@@ -9,6 +9,9 @@ bool AudioManager::Initialize() {
         return false;
     }
 
+    // 默认只有 8 个混音通道，多人混战（10 人 + 脚步 + 命中音）容易抢不到而丢音
+    Mix_AllocateChannels(32);
+
     if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
         std::cerr << "SDL_mixer 音频设备打开失败，游戏将静音运行: " << Mix_GetError() << std::endl;
         SDL_QuitSubSystem(SDL_INIT_AUDIO);
@@ -187,8 +190,13 @@ void AudioManager::PlaySound(SoundEffect effect) {
                                  effect == SoundEffect::M4A1_FIRE ||
                                  effect == SoundEffect::GALIL_FIRE ||
                                  effect == SoundEffect::SMG_FIRE);
-        const int chan = autoWeapon ? CHANNEL_AK47_FIRE : -1;
-        Mix_PlayChannel(chan, targetChunk, 0);
+        const int want = autoWeapon ? CHANNEL_AK47_FIRE : -1;
+        const int chan = Mix_PlayChannel(want, targetChunk, 0);
+        if (chan < 0) return;
+        // 关键修复：通道是复用的，上一个音可能是远处 3D 音效（音量 0、声像偏一侧）。
+        // 不重置的话，玩家自己的枪声会继承那个 0 音量，表现为「时有时无」。
+        Mix_Volume(chan, effectsLevel_);
+        Mix_SetPanning(chan, 255, 255);
     }
 }
 
@@ -222,14 +230,17 @@ void AudioManager::PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
     const int rightVol = static_cast<int>((1.0f + pan) * 0.5f * 255.0f);
     Mix_SetPanning(chan, leftVol, rightVol);
 
-    // 距离衰减：200 单位内正常，超出按线性衰减到 0
-    constexpr float FULL_RANGE = 200.0f;
-    constexpr float MAX_RANGE  = 400.0f;
+    // 距离衰减：FULL_RANGE 内全音量，之后线性衰减，但保留一个可听见的底噪，
+    // 避免「一过 MAX_RANGE 就彻底静音」——那会让远处的枪战听着像时有时无
+    constexpr float FULL_RANGE = 260.0f;
+    constexpr float MAX_RANGE  = 900.0f;
+    constexpr float MIN_FACTOR = 0.12f;   // 最远处仍保留 12% 音量
     float distFactor = 1.0f;
     if (dist > FULL_RANGE) {
-        distFactor = 1.0f - std::min(1.0f, (dist - FULL_RANGE) / (MAX_RANGE - FULL_RANGE));
+        const float t = std::min(1.0f, (dist - FULL_RANGE) / (MAX_RANGE - FULL_RANGE));
+        distFactor = 1.0f - (1.0f - MIN_FACTOR) * t;
     }
-    const int vol = static_cast<int>(distFactor * MIX_MAX_VOLUME);
+    const int vol = static_cast<int>(distFactor * effectsLevel_);
     Mix_Volume(chan, vol);
 }
 
@@ -240,6 +251,7 @@ void AudioManager::UpdateVolumes() {
     const int musicLevel = effectiveMaster * musicVolume * MIX_MAX_VOLUME / 10000;
     const int effectsLevel = effectiveMaster * effectsVolume * MIX_MAX_VOLUME / 10000;
 
+    effectsLevel_ = effectsLevel;
     Mix_VolumeMusic(musicLevel);
     Mix_Volume(-1, effectsLevel);
 }

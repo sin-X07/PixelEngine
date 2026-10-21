@@ -44,6 +44,7 @@ void CS2DGame::ResetToNewMatch() {
     playerKills_ = 0;
     playerDeaths_ = 0;
     matchOverAnnounced_ = false;
+    matchOverTimer_ = 0.0f;
     killFeed_.clear();
     contactsT_.clear();
     contactsCT_.clear();

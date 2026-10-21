@@ -355,10 +355,13 @@ public:
     // 购买窗口：自回合开始起的前 BuyWindowSeconds 秒（覆盖冻结 + 购买 + 交战初期）
     bool IsBuyPhase() const {
         if (mode_ == MatchMode::DeathMatch) return false;
+        if (teams_.MatchOver()) return false;
         if (!player_.alive) return false;
         return round_.Elapsed() <= Tuning::BuyWindowSeconds;
     }
     float GetRoundElapsed() const { return round_.Elapsed(); }
+    // 比赛结束后经过的时间（用于自动返回主菜单）
+    float GetMatchOverTimer() const { return matchOverTimer_; }
     // 玩家当前是否处于购买区内（地图未定义购买区时视为全图可买）
     bool IsPlayerInBuyZone() const;
     // 尝试购买；成功返回 true（已扣款并装备）
@@ -409,6 +412,7 @@ private:
     float bombTimer_     = 0.0f;   // 倒计时（<=0 爆炸）
     float bombBeepTimer_ = 0.0f;   // C4 滴答音节奏
     float clockSec_ = 0.0f;        // 累计运行时间（用于呼吸类动画）
+    float matchOverTimer_ = 0.0f;  // 比赛结束后累计时间
 
     // 屏幕中央提示（回合开始 / 回合胜负）
     std::string announcement_;

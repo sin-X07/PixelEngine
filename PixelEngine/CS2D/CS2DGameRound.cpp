@@ -12,6 +12,14 @@
 void CS2DGame::UpdateRoundFlow(float dt, AudioManager* audio) {
     if (mode_ == MatchMode::DeathMatch) return;   // 死斗无回合
 
+    // 比赛已结束：冻结回合状态机，停在最后一回合的结算画面上。
+    // 之前这里仍会 round_.Update()，导致 RoundEnd→Freeze→…→Live 无限循环，
+    // 而 BeginNewRound 因 MatchOver 提前返回，场上没人复活，比赛永远不结束。
+    if (teams_.MatchOver()) {
+        matchOverTimer_ += dt;
+        return;
+    }
+
     const RoundPhase before = round_.Phase();
     round_.Update(dt);
     const RoundPhase after = round_.Phase();
