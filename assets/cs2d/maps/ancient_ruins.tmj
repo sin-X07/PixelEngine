@@ -4,7 +4,7 @@
  "layers":[
         {
          "id":2,
-         "image":"..\/tilesets\/ancient_ruins_bg_half.jpg",
+         "image":"..\/tilesets\/ancient_ruins.jpg",
          "imageheight":912,
          "imagewidth":976,
          "name":"Map",

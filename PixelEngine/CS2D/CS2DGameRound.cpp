@@ -34,9 +34,18 @@ void CS2DGame::BeginNewRound(AudioManager* audio) {
               << teams_.ScoreT() << ":" << teams_.ScoreCT() << ")" << std::endl;
 }
 
-void CS2DGame::RespawnAllForRound() {
-    // 玩家：每回合回到「手枪 + 匕首」的初始装备（武器不跨回合保留）
+void CS2DGame::RespawnAllForRound(bool carryWeapons) {
+    // 玩家：上回合存活 → 保留原有武器/护甲/投掷物；阵亡 → 回到手枪
     const WeaponDef& pistol = WeaponDB::Get(WeaponId::USP);
+    const bool playerSurvived = carryWeapons && player_.alive;
+
+    const WeaponId keepW0 = player_.weapons[0];
+    const WeaponId keepW1 = player_.weapons[1];
+    const WeaponId keepW3 = player_.weapons[3];
+    const int keepNade  = player_.grenadeCount;
+    const int keepArmor = player_.armor;
+    const bool keepHelmet = player_.helmet;
+
     player_.health    = player_.maxHealth;
     player_.alive     = true;
     player_.reloading = false;
@@ -45,23 +54,67 @@ void CS2DGame::RespawnAllForRound() {
     player_.vx = player_.vy = 0.0f;
     PickSpawnForTeam(Team::CT, player_.x, player_.y);
 
-    player_.weapons[0] = WeaponId::None;
-    player_.weapons[1] = WeaponId::USP;
-    player_.weapons[2] = WeaponId::Knife;
-    player_.weapons[3] = WeaponId::GrenadeHE;
-    player_.grenadeCount = 0;
-    player_.weaponSlot = 1;
-    player_.armor  = 0;
-    player_.helmet = false;
-    player_.ammo    = pistol.magazine;
-    player_.maxAmmo = pistol.magazine;
-    slotAmmo_[0] = 0;               slotMaxAmmo_[0] = 0;
-    slotAmmo_[1] = pistol.magazine; slotMaxAmmo_[1] = pistol.magazine;
+    if (playerSurvived) {
+        player_.weapons[0] = keepW0;
+        player_.weapons[1] = keepW1;
+        player_.weapons[2] = WeaponId::Knife;
+        player_.weapons[3] = keepW3;
+        player_.grenadeCount = keepNade;
+        player_.armor  = keepArmor;
+        player_.helmet = keepHelmet;
+        player_.weaponSlot = (keepW0 != WeaponId::None) ? 0 : 1;
+    } else {
+        player_.weapons[0] = WeaponId::None;
+        player_.weapons[1] = WeaponId::USP;
+        player_.weapons[2] = WeaponId::Knife;
+        player_.weapons[3] = WeaponId::GrenadeHE;
+        player_.grenadeCount = 0;
+        player_.armor  = 0;
+        player_.helmet = false;
+        player_.weaponSlot = 1;
+    }
 
-    // BOT
+    // 弹匣按当前槽位补满
+    {
+        const WeaponId cur = player_.weapons[player_.weaponSlot];
+        const WeaponDef& w = (cur == WeaponId::None) ? pistol : WeaponDB::Get(cur);
+        player_.ammo    = w.magazine;
+        player_.maxAmmo = w.magazine;
+        slotAmmo_[0]    = (player_.weapons[0] == WeaponId::None)
+                            ? 0 : WeaponDB::Get(player_.weapons[0]).magazine;
+        slotMaxAmmo_[0] = slotAmmo_[0];
+        slotAmmo_[1]    = WeaponDB::Get(player_.weapons[1]).magazine;
+        slotMaxAmmo_[1] = slotAmmo_[1];
+    }
+
+    // BOT：同样的规则
     for (auto& bot : bots_) {
-        SpawnBOT(bot, bot.team);
-        BotBuyLoadout(bot);   // 按经济买枪 + 护甲
+        const bool survived = carryWeapons && bot.alive;
+
+        const WeaponId w0 = bot.weapons[0];
+        const WeaponId w1 = bot.weapons[1];
+        const WeaponId w3 = bot.weapons[3];
+        const int nade  = bot.grenadeCount;
+        const int armor = bot.armor;
+        const bool helmet = bot.helmet;
+
+        SpawnBOT(bot, bot.team);   // 先重置为手枪基准
+
+        if (survived) {
+            bot.weapons[0] = w0;
+            bot.weapons[1] = w1;
+            bot.weapons[3] = w3;
+            bot.grenadeCount = nade;
+            bot.armor  = armor;
+            bot.helmet = helmet;
+            bot.weaponSlot = (w0 != WeaponId::None) ? 0 : 1;
+            const WeaponDef& w = WeaponDB::Get(bot.weapons[bot.weaponSlot]);
+            bot.ammo    = w.magazine;
+            bot.maxAmmo = w.magazine;
+        }
+
+        // 幸存者已持有主武器，BotBuyLoadout 只会补护甲/投掷物
+        BotBuyLoadout(bot);
     }
     bullets_.clear();
 }

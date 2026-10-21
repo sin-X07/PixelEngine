@@ -333,6 +333,7 @@ void CS2DGame::SpawnBOT(Player& bot, Team team) {
     bot.grenadeCount = 0;                 // 需购买
     bot.grenadeCooldown = 0.0f;
     bot.blindTimer = 0.0f;
+    bot.defusing = false;
     bot.weaponSlot = 1;                   // 默认持手枪
     bot.armor  = 0;
     bot.helmet = false;
@@ -553,10 +554,10 @@ void CS2DGame::Render(int viewW, int viewH) {
 
     renderer_->DrawOverlay();
 
-    // 闪光致盲（最上层）
+    // 闪光致盲（最上层）：致盲期间完全丧失视野，最后 0.4s 快速淡出
     if (flashTimer_ > 0.0f) {
-        const float k = std::clamp(flashTimer_ / 2.5f, 0.0f, 1.0f);
-        renderer_->DrawFlashOverlay(static_cast<Uint8>(230.0f * k));
+        const float k = std::clamp(flashTimer_ / 0.4f, 0.0f, 1.0f);
+        renderer_->DrawFlashOverlay(static_cast<Uint8>(255.0f * k));
     }
 
     const WeaponDef& pw = player_.CurrentWeapon();

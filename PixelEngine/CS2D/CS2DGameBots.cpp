@@ -138,6 +138,7 @@ void CS2DGame::UpdateTeamContacts(float dt) {
     for (size_t i = 0; i < bots_.size(); ++i) {
         const Player& b = bots_[i];
         if (!b.alive) continue;
+        if (b.blindTimer > 0.0f) continue;   // 致盲：看不见任何东西，也无法上报情报
 
         auto scan = [&](const Player& e, int id) {
             if (!e.alive || e.team == b.team) return;
@@ -196,7 +197,51 @@ const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& ou
 
 void CS2DGame::AssignSquadRoles() {
     squad_.assign(bots_.size(), SquadOrder{});
-    if (bots_.empty()) return;
+    if (bots_.empty() || !world_) return;
+
+    // ---- 爆破图：T 分队进攻 A/B，CT 分兵守 A/B/中路 ----
+    const auto& sites = world_->GetBombSites();
+    const int siteCount = static_cast<int>(sites.size());
+    float midX = 0.0f, midY = 0.0f;
+    if (siteCount >= 2) {
+        float sx = 0.0f, sy = 0.0f;
+        for (const auto& s : sites) {
+            sx += s.x + s.width * 0.5f;
+            sy += s.y + s.height * 0.5f;
+        }
+        midX = sx / siteCount;
+        midY = sy / siteCount;
+    }
+
+    if (mode_ == MatchMode::BombDefusal && siteCount > 0) {
+        int tIdx = 0, ctIdx = 0;
+        for (size_t i = 0; i < bots_.size(); ++i) {            Player& b = bots_[i];
+            if (b.team == Team::T) {
+                // T：轮转分配包点，保证 A/B 都有人去
+                const int site = tIdx % siteCount;
+                ++tIdx;
+                squad_[i].site = site;
+                squad_[i].hasHold = true;
+                squad_[i].holdX = sites[site].x + sites[site].width * 0.5f;
+                squad_[i].holdY = sites[site].y + sites[site].height * 0.5f;
+            } else {
+                // CT：A / B / 中路 三线轮转
+                const int slot = ctIdx % (siteCount + 1);
+                ++ctIdx;
+                if (slot < siteCount) {
+                    squad_[i].site = slot;
+                    squad_[i].hasHold = true;
+                    squad_[i].holdX = sites[slot].x + sites[slot].width * 0.5f;
+                    squad_[i].holdY = sites[slot].y + sites[slot].height * 0.5f;
+                } else {
+                    squad_[i].site = -1;             // 中路
+                    squad_[i].hasHold = true;
+                    squad_[i].holdX = midX;
+                    squad_[i].holdY = midY;
+                }
+            }
+        }
+    }
 
     // 按阵营分别排序：离敌方质心越近 → 越靠前（Entry）
     for (int side = 0; side < 2; ++side) {
@@ -463,6 +508,13 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         SquadOrder order;
         if (i < squad_.size()) order = squad_[i];
 
+        // ---- 正在拆包：原地不动（进度由 UpdateObjective 推进）----
+        if (bot.defusing) {
+            bot.vx = bot.vy = 0.0f;
+            bot.llmIntent.Tick(dt);
+            continue;
+        }
+
         // ---- 受击撤退：低血时优先找掩体，交火次之 ----
         if (bot.retreatTimer > 0.0f) bot.retreatTimer -= dt;
         if (bot.retreatTimer > 0.0f && bot.health <= 35) {
@@ -546,20 +598,41 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             float destX = 0.0f, destY = 0.0f;
 
             if (mode_ == MatchMode::BombDefusal) {
-                if (bot.team == Team::T && !bombPlanted_) {
-                    // 最近的包点中心
-                    const auto& sites = world_->GetBombSites();
-                    float bestD2 = 1e18f;
-                    for (const auto& s : sites) {
-                        const float cx = s.x + s.width * 0.5f;
-                        const float cy = s.y + s.height * 0.5f;
-                        const float dx = cx - bot.x, dy = cy - bot.y;
-                        const float d2 = dx * dx + dy * dy;
-                        if (d2 < bestD2) { bestD2 = d2; destX = cx; destY = cy; hasDest = true; }
+                if (bot.team == Team::T) {
+                    if (!bombPlanted_) {
+                        // 按分队指令进攻指定包点（保证 A/B 都有人去）
+                        if (order.hasHold) {
+                            destX = order.holdX;
+                            destY = order.holdY;
+                            hasDest = true;
+                            destIsObjective = true;
+                        } else {
+                            const auto& sites = world_->GetBombSites();
+                            float bestD2 = 1e18f;
+                            for (const auto& s : sites) {
+                                const float cx = s.x + s.width * 0.5f;
+                                const float cy = s.y + s.height * 0.5f;
+                                const float dx = cx - bot.x, dy = cy - bot.y;
+                                const float d2 = dx * dx + dy * dy;
+                                if (d2 < bestD2) { bestD2 = d2; destX = cx; destY = cy; hasDest = true; }
+                            }
+                            destIsObjective = hasDest;
+                        }
+                    } else {
+                        // 已下包：回到包点附近守包
+                        destX = bombX_;
+                        destY = bombY_;
+                        hasDest = true;
+                        destIsObjective = true;
                     }
-                    destIsObjective = hasDest;
-                } else if (bot.team == Team::CT && bombPlanted_) {
+                } else if (bombPlanted_) {
                     destX = bombX_; destY = bombY_;      // 前往拆包
+                    hasDest = true;
+                    destIsObjective = true;
+                } else if (order.hasHold) {
+                    // 未下包：各守 A / B / 中路
+                    destX = order.holdX;
+                    destY = order.holdY;
                     hasDest = true;
                     destIsObjective = true;
                 }
@@ -590,15 +663,19 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             // 巡逻兜底：无任务、无情报、无可见敌人时游走，避免原地发呆
             // 突破/支援位朝「敌方出生点质心」推进（与地图朝向无关），断后位就近游走
             if (!hasDest) {
+                // 爆破图有固定防守/进攻位：在其附近小范围活动，避免跑离岗位
+                const bool holdPost = (mode_ == MatchMode::BombDefusal && order.hasHold);
                 const bool pushToEnemy = (order.role != BotRole::Anchor);
                 float ecx = 0.0f, ecy = 0.0f;
                 const bool hasEnemyCentroid =
-                    pushToEnemy && EnemySpawnCentroid(bot.team, ecx, ecy);
+                    !holdPost && pushToEnemy && EnemySpawnCentroid(bot.team, ecx, ecy);
 
                 for (int t = 0; t < 12; ++t) {
                     float rx = 0.0f, ry = 0.0f;
-                    if (hasEnemyCentroid) {
-                        // 质心附近 ±260px 随机取点
+                    if (holdPost) {
+                        rx = order.holdX + static_cast<float>(rng_() % 181) - 90.0f;
+                        ry = order.holdY + static_cast<float>(rng_() % 181) - 90.0f;
+                    } else if (hasEnemyCentroid) {
                         rx = ecx + static_cast<float>(rng_() % 521) - 260.0f;
                         ry = ecy + static_cast<float>(rng_() % 521) - 260.0f;
                     } else {

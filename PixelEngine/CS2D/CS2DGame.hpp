@@ -47,6 +47,10 @@ enum class BotRole {
 struct SquadOrder {
     BotRole role  = BotRole::Support;
     int     focus = -2;    // 集火目标：-2=无, -1=玩家, >=0=BOT 索引
+    int     site  = -1;    // 负责的包点索引（-1 = 无 / 中路）
+    bool    hasHold = false;
+    float   holdX = 0.0f;
+    float   holdY = 0.0f;
 };
 
 // ============================================================================
@@ -83,6 +87,7 @@ public:
         int       grenadeCount = 0;        // 当前投掷物数量
         float     grenadeCooldown = 0.0f;  // 投掷冷却（AI 用）
         float     blindTimer = 0.0f;       // 闪光致盲剩余秒数（BOT 用）
+        bool      defusing = false;        // 是否正在拆包（BOT 用）
 
         // 弹药（活动槽位）
         int       ammo      = 30;
@@ -418,7 +423,8 @@ private:
     // 回合流程
     void UpdateRoundFlow(float dt, class AudioManager* audio);
     void BeginNewRound(class AudioManager* audio = nullptr);
-    void RespawnAllForRound();
+    // carryWeapons: 上一回合存活者保留武器（false=全部重置，用于新开一局）
+    void RespawnAllForRound(bool carryWeapons = true);
     void BotBuyLoadout(Player& bot);   // BOT 按经济买枪与护甲
     void CheckWinConditions(class AudioManager* audio);
     void ApplyRoundResult(Team winner, class AudioManager* audio = nullptr);
