@@ -128,11 +128,20 @@ python tools/split_spawns.py <map.tmj>   # 通用出生点拆成 spawn_t / spawn
 
 ### 地图
 
-Tiled 导出的 `.tmj`，放在 `assets/cs2d/maps/`。对象层约定：
+| 模式 | 地图 |
+|---|---|
+| 死斗 | `cs_office.tmj` |
+| 团队歼灭 / 爆破 / 人质 | `ancient_ruins.tmj`（5v5 主战图） |
 
-- `Collisions`：矩形 → 碰撞体
-- `Entities`：`spawn_t` / `spawn_ct`（出生点）、`bomb_site`（`name="A"/"B"`）、
-  `hostage`、`buy_zone`（属性 `team=t/ct/both`）
+Tiled 导出的 `.tmj`，放在 `assets/cs2d/maps/`。对象层支持两种写法（可混用）：
+
+- **写法 A**：一个 `Entities` 层，对象带 `type` =
+  `spawn_t` / `spawn_ct` / `bomb_site` / `hostage` / `buy_zone`
+- **写法 B**：每类一个对象层（`spawn_t` / `spawn_ct` / `bomb_site` / `buy_zone` / `hostage`），
+  对象 `type` 留空。同名图层可以有多层，会累加。
+
+`Collisions` 层的所有矩形一律视为阻挡。背景图若引用了工程外的路径，引擎会按文件名
+到 `assets/cs2d/tilesets/` 下再找一次。详见 [`tools/ASSET_SPEC.md`](tools/ASSET_SPEC.md) §6。
 
 ---
 

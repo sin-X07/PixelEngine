@@ -61,6 +61,25 @@ bool CS2DGame::FindCoverPoint(const Player& bot, float threatX, float threatY,
     return found;
 }
 
+// 敌方出生点质心：与地图朝向无关的推进参考点
+bool CS2DGame::EnemySpawnCentroid(Team myTeam, float& outX, float& outY) const {
+    if (!world_) return false;
+
+    const bool enemyIsCT = (myTeam == Team::T);
+    auto spawns = world_->SpawnsForTeam(enemyIsCT);
+    if (spawns.empty()) return false;
+
+    float sx = 0.0f, sy = 0.0f;
+    for (const auto* sp : spawns) {
+        sx += sp->x;
+        sy += sp->y;
+    }
+    const float n = static_cast<float>(spawns.size());
+    outX = sx / n;
+    outY = sy / n;
+    return true;
+}
+
 // ============================================================================
 // 团队情报共享（探点）
 // ============================================================================
@@ -569,19 +588,19 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             }
 
             // 巡逻兜底：无任务、无情报、无可见敌人时游走，避免原地发呆
-            // 突破/支援位向敌方半区推进，断后位在附近游走守点
+            // 突破/支援位朝「敌方出生点质心」推进（与地图朝向无关），断后位就近游走
             if (!hasDest) {
-                const float mapW = world_->GetMapPixelW();
-                const float mapH = world_->GetMapPixelH();
-                const bool pushIntoEnemyHalf = (order.role != BotRole::Anchor);
+                const bool pushToEnemy = (order.role != BotRole::Anchor);
+                float ecx = 0.0f, ecy = 0.0f;
+                const bool hasEnemyCentroid =
+                    pushToEnemy && EnemySpawnCentroid(bot.team, ecx, ecy);
 
                 for (int t = 0; t < 12; ++t) {
                     float rx = 0.0f, ry = 0.0f;
-                    if (pushIntoEnemyHalf) {
-                        const float f = static_cast<float>(rng_() % 1000) / 1000.0f;
-                        rx = (bot.team == Team::T) ? (mapW * 0.50f + f * mapW * 0.45f)
-                                                   : (f * mapW * 0.45f);
-                        ry = (static_cast<float>(rng_() % 1000) / 1000.0f) * mapH;
+                    if (hasEnemyCentroid) {
+                        // 质心附近 ±260px 随机取点
+                        rx = ecx + static_cast<float>(rng_() % 521) - 260.0f;
+                        ry = ecy + static_cast<float>(rng_() % 521) - 260.0f;
                     } else {
                         rx = bot.x + static_cast<float>(rng_() % 601) - 300.0f;
                         ry = bot.y + static_cast<float>(rng_() % 601) - 300.0f;

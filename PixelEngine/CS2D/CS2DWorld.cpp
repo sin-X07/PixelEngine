@@ -67,30 +67,54 @@ bool CS2DWorld::Build(const CS2DMapData& data) {
         }
     }
 
-    // ---- 对象层解析（Entities / SpawnPoints / 目标物）----
+    // ---- 对象层解析 ----
+    // 语义来源优先级：对象自身的 type > 所在图层名
+    // 这样既支持「一个 Entities 层 + 各类 type」，也支持 Tiled 常见的
+    // 「每类一个对象层」写法（spawn_t / spawn_ct / bomb_site / buy_zone ...）
+    auto toLower = [](const std::string& s) {
+        std::string out;
+        out.reserve(s.size());
+        for (char c : s) out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return out;
+    };
+
+    auto kindFromName = [](const std::string& n) -> std::string {
+        if (n == "spawn_t" || n == "spawnt" || n == "spawn_terrorist") return "spawn_t";
+        if (n == "spawn_ct"  || n == "spawnct")                        return "spawn_ct";
+        if (n == "spawn" || n == "spawns" || n == "spawnpoint" ||
+            n == "spawnpoints" || n == "entities_spawn")               return "spawn";
+        if (n == "bomb_site" || n == "bombsites" || n == "bombsite" ||
+            n == "bomb_sites" || n == "site")                          return "bomb_site";
+        if (n == "hostage" || n == "hostages")                         return "hostage";
+        if (n == "buy_zone" || n == "buyzone" || n == "buy_zones" ||
+            n == "buyzones")                                           return "buy_zone";
+        return "";
+    };
+
     for (const auto& ol : data.objectLayers) {
-        std::string lower;
-        lower.reserve(ol.name.size());
-        for (char c : ol.name) lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (lower != "entities" && lower != "objects") continue;
+        const std::string lowerLayer = toLower(ol.name);
+        if (lowerLayer == "collisions") continue;      // 已在上方处理
+
+        const std::string layerKind = kindFromName(lowerLayer);
 
         for (const auto& obj : ol.objects) {
-            std::string lowerType;
-            lowerType.reserve(obj.type.size());
-            for (char c : obj.type) lowerType += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            std::string kind = toLower(obj.type);
+            if (kind.empty()) kind = layerKind;
+            if (kind.empty()) continue;
 
-            if (lowerType == "spawnpoint" || lowerType == "spawn" || lowerType == "spawn_t" || lowerType == "spawn_ct") {
+            if (kind == "spawnpoint" || kind == "spawn" ||
+                kind == "spawn_t" || kind == "spawn_ct") {
                 SpawnPoint sp;
                 sp.x = obj.x;
                 sp.y = obj.y;
-                sp.isCT = (lowerType == "spawn_ct");
-                sp.teamSpecific = (lowerType == "spawn_t" || lowerType == "spawn_ct");
+                sp.isCT = (kind == "spawn_ct");
+                sp.teamSpecific = (kind == "spawn_t" || kind == "spawn_ct");
                 spawnPoints_.push_back(sp);
-            } else if (lowerType == "bomb_site" || lowerType == "bombsites") {
+            } else if (kind == "bomb_site" || kind == "bombsites" || kind == "bombsite") {
                 bombSites_.push_back(obj);
-            } else if (lowerType == "hostage") {
+            } else if (kind == "hostage" || kind == "hostages") {
                 hostages_.push_back(obj);
-            } else if (lowerType == "buy_zone" || lowerType == "buyzone") {
+            } else if (kind == "buy_zone" || kind == "buyzone") {
                 buyZones_.push_back(obj);
             }
         }

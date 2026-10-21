@@ -16,7 +16,7 @@ const int kResH[] = { 600, 768,  960,  1080, 1440 };
 constexpr int kResCount = static_cast<int>(sizeof(kResW) / sizeof(kResW[0]));
 
 // CS2D 启动地图
-constexpr const char* kStartMap = "assets/cs2d/maps/cs_office.tmj";
+constexpr const char* kStartMap = "assets/cs2d/maps/ancient_ruins.tmj";
 
 } // anonymous namespace
 
@@ -465,11 +465,15 @@ void Engine::StartMatch(MatchMode mode) {
     currentMatchMode_ = mode;
 
     // 模式 → 地图
-    const char* mapRel = "assets/cs2d/maps/cs_office.tmj";
+    //   死斗           → cs_office（老图，节奏快）
+    //   团队歼灭/爆破/人质 → ancient_ruins（5v5 主战图）
+    const char* mapRel = "assets/cs2d/maps/ancient_ruins.tmj";
     switch (mode) {
-        case MatchMode::BombDefusal:   mapRel = "assets/cs2d/maps/de_5v5_placeholder.tmj"; break;
-        case MatchMode::HostageRescue: mapRel = "assets/cs2d/maps/cs_hostage_placeholder.tmj"; break;
-        default:                       mapRel = "assets/cs2d/maps/cs_office.tmj"; break;
+        case MatchMode::DeathMatch:    mapRel = "assets/cs2d/maps/cs_office.tmj"; break;
+        case MatchMode::TeamElimination:
+        case MatchMode::BombDefusal:
+        case MatchMode::HostageRescue: mapRel = "assets/cs2d/maps/ancient_ruins.tmj"; break;
+        default:                       mapRel = "assets/cs2d/maps/ancient_ruins.tmj"; break;
     }
 
     // 模式必须在 LoadMap 之前设定（LoadMap → ResetToNewMatch 依赖 mode_）

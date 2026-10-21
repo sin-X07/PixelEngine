@@ -99,6 +99,20 @@ void CS2DRenderer::SetWorld(const CS2DWorld* world) {
         } else {
             imgPath = mapDir_ + "/" + imgRel;
         }
+
+        // 地图可能引用工程外的图片（例如 ../../prev_assets/x.jpg）：
+        // 主路径不存在时直接走 tilesets 回退，避免误报缺失
+        if (!std::filesystem::exists(PathUtils::ResolveAppPath(imgPath))) {
+            const size_t slash = imgRel.find_last_of("/\\");
+            const std::string base = (slash == std::string::npos) ? imgRel
+                                                                 : imgRel.substr(slash + 1);
+            const std::string alt = mapDir_ + "/../tilesets/" + base;
+            if (std::filesystem::exists(PathUtils::ResolveAppPath(alt))) {
+                imgPath = alt;
+                std::cout << "[CS2DRenderer] 背景图回退到 tilesets/" << base << std::endl;
+            }
+        }
+
         backgroundTex_ = LoadTexture(imgPath);
         if (backgroundTex_) {
             std::cout << "[CS2DRenderer] 背景图加载成功: " << imgRel << std::endl;

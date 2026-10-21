@@ -370,6 +370,9 @@ private:
     bool FindCoverPoint(const Player& bot, float threatX, float threatY,
                         float& outX, float& outY) const;
 
+    // 敌方出生点质心（用于无情报时的推进方向，与地图朝向无关）
+    bool EnemySpawnCentroid(Team myTeam, float& outX, float& outY) const;
+
     // 找到武器对应的枪声（供玩家与 BOT 共用）
     static SoundEffect FireSoundFor(WeaponId id);
 

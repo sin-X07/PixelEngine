@@ -1816,7 +1816,7 @@
         {
          "draworder":"topdown",
          "id":4,
-         "name":"T-Spawn",
+         "name":"spawn_t",
          "objects":[
                 {
                  "height":0,
@@ -1905,7 +1905,7 @@
         {
          "draworder":"topdown",
          "id":5,
-         "name":"CT-Spawn",
+         "name":"spawn_ct",
          "objects":[
                 {
                  "height":0,
@@ -2003,9 +2003,137 @@
          "visible":true,
          "x":0,
          "y":0
+        }, 
+        {
+         "draworder":"topdown",
+         "id":6,
+         "name":"bomb_site",
+         "objects":[
+                {
+                 "height":152,
+                 "id":177,
+                 "name":"",
+                 "opacity":1,
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":192,
+                 "x":480,
+                 "y":400
+                }],
+         "opacity":1,
+         "properties":[
+                {
+                 "name":"name",
+                 "type":"string",
+                 "value":"A"
+                }],
+         "type":"objectgroup",
+         "visible":true,
+         "x":0,
+         "y":0
+        }, 
+        {
+         "draworder":"topdown",
+         "id":10,
+         "name":"buy_zone",
+         "objects":[
+                {
+                 "height":112,
+                 "id":181,
+                 "name":"",
+                 "opacity":1,
+                 "properties":[
+                        {
+                         "name":"team",
+                         "type":"string",
+                         "value":"ct"
+                        }],
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":152,
+                 "x":1000,
+                 "y":64
+                }],
+         "opacity":1,
+         "type":"objectgroup",
+         "visible":true,
+         "x":0,
+         "y":0
+        }, 
+        {
+         "draworder":"topdown",
+         "id":8,
+         "name":"buy_zone",
+         "objects":[
+                {
+                 "height":64,
+                 "id":179,
+                 "name":"",
+                 "opacity":1,
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":128,
+                 "x":880,
+                 "y":1600
+                }, 
+                {
+                 "height":24,
+                 "id":180,
+                 "name":"",
+                 "opacity":1,
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":112,
+                 "x":880,
+                 "y":1664
+                }],
+         "opacity":1,
+         "properties":[
+                {
+                 "name":"team",
+                 "type":"string",
+                 "value":"t"
+                }],
+         "type":"objectgroup",
+         "visible":true,
+         "x":0,
+         "y":0
+        }, 
+        {
+         "draworder":"topdown",
+         "id":7,
+         "name":"bomb_site",
+         "objects":[
+                {
+                 "height":192,
+                 "id":178,
+                 "name":"",
+                 "opacity":1,
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":136,
+                 "x":1504,
+                 "y":768
+                }],
+         "opacity":1,
+         "properties":[
+                {
+                 "name":"name",
+                 "type":"string",
+                 "value":"B"
+                }],
+         "type":"objectgroup",
+         "visible":true,
+         "x":0,
+         "y":0
         }],
- "nextlayerid":6,
- "nextobjectid":177,
+ "nextlayerid":11,
+ "nextobjectid":182,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.12.2",
