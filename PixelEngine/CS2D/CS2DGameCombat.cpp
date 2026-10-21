@@ -229,6 +229,14 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                     AiAt(i).threatX = bots_[bullet.ownerIdx].x;
                     AiAt(i).threatY = bots_[bullet.ownerIdx].y;
                 }
+                // 受击立刻转向威胁：否则扇形视野下会「背后挨枪还在往前走」
+                if (Tuning::BotTurnOnHit > 0.0f) {
+                    const float tdx = AiAt(i).threatX - bot.x;
+                    const float tdy = AiAt(i).threatY - bot.y;
+                    if (tdx * tdx + tdy * tdy > 1.0f) {
+                        bot.aimAngle = std::atan2(tdy, tdx);
+                    }
+                }
             }
             break;
         }

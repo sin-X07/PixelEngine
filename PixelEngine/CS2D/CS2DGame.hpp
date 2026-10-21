@@ -133,6 +133,8 @@ public:
         bool  defusing       = false;  // 正在拆包
         float grenadeCooldown = 0.0f;  // 投掷冷却
         bool  tradePushed     = false; // 本回合是否已补过枪
+        bool  hadTarget       = false; // 上一帧是否看得见敌人（决定是否原地扫描）
+        float scanPhase       = 0.0f;  // 扫视相位（行走时左右小幅摆头）
     };
 
     struct Bullet {
@@ -444,6 +446,9 @@ private:
     const std::vector<EnemyContact>& ContactsOf(Team t) const;
     // 找一个「真实可见」的敌人（距离 + 烟雾 + LOS）
     const Player* FindVisibleEnemy(const Player& self, float& outDist) const;
+    // 目标是否落在以 self 朝向为中心的视野扇形内（玩家/BOT 共用几何）
+    bool InViewCone(float fromX, float fromY, float aim,
+                    float toX, float toY, float maxDist) const;
     // 沿 A* 路径移动；返回 true 表示本帧移动已由寻路接管
     bool FollowPathTo(Player& bot, BotRuntime& ai,
                       float destX, float destY, float dt, float speedMul = 1.0f);

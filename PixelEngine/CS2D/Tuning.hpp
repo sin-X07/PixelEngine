@@ -11,6 +11,15 @@
 
 namespace Tuning {
 
+// ---------------- 视野（玩家与 BOT 共用同一套几何）----------------
+constexpr float VisionRadius      = 120.0f;  // 扇形半径（世界单位）
+constexpr float VisionSoftEdge    = 24.0f;   // 距离软边
+constexpr float VisionConeDeg     = 120.0f;  // 扇形总角度
+constexpr float VisionAngleSoftDeg= 14.0f;   // 角度软边（度）
+// 含软边后的有效半角（玩家实际能看到的边缘）：(120 + 14) / 2 = 67°
+constexpr float VisionHalfAngleRad =
+    ((VisionConeDeg + VisionAngleSoftDeg) * 0.5f) * 3.14159265f / 180.0f;
+
 // ---------------- 移动 ----------------
 constexpr float BotMoveSpeed      = 60.0f;   // BOT 基础移动速度
 constexpr float SpeedMulEntry     = 1.00f;   // 突破手
@@ -55,6 +64,11 @@ constexpr float FocusMaxRange    = 340.0f;   // 集火目标优先半径
 constexpr float LowAmmoFraction  = 0.25f;    // 弹匣低于此比例时脱战也要换弹
 constexpr float PatrolHoldSpread = 90.0f;    // 守点时岗位附近的游走半径
 constexpr float PatrolCentroidSpread = 260.0f; // 推进时敌方出生点质心附近的取点半径
+
+// ---------------- BOT 朝向 ----------------
+constexpr float BotScanSpeed     = 1.0f;   // 无目标时原地扫描的角速度（弧度/秒 ≈ 57°/s）
+constexpr float BotScanAmplitudeRad = 0.45f; // 行进时左右摆头幅度（≈26°）
+constexpr float BotTurnOnHit     = 1.0f;   // 是否在受击时立刻转向威胁
 
 // ---------------- 小队 ----------------
 constexpr float FocusUpdateInterval = 0.5f;  // 集火目标刷新间隔

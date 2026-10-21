@@ -104,7 +104,9 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     }
 
     MoveWithCollision(bot, dt);
-    bot.aimAngle = std::atan2(dy, dx);
+    // 行进方向 + 左右小幅扫视（扇形视野下避免只盯正前方，与真实玩家一致）
+    bot.aimAngle = std::atan2(dy, dx)
+                 + std::sin(ai.scanPhase * 2.2f) * Tuning::BotScanAmplitudeRad;
 
     // 被墙卡住（速度被碰撞清零）→ 立刻失效当前路径，下一帧重算
     if (bot.vx == 0.0f && bot.vy == 0.0f) {
@@ -125,6 +127,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         auto& bot = bots_[i];
         if (!bot.alive) continue;
         auto& ai = AiAt(i);
+        ai.scanPhase += dt;
 
         // 分工指令
         SquadOrder order;
@@ -135,6 +138,14 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             bot.vx = bot.vy = 0.0f;
             ai.llmIntent.Tick(dt);
             continue;
+        }
+
+        // ---- 原地扫描：没有目标时缓慢转身 ----
+        // 视野是 120° 扇形，若不扫描，背对着敌人的 BOT 会永远发现不了对方
+        if (!ai.hadTarget) {
+            bot.aimAngle += Tuning::BotScanSpeed * dt;
+            while (bot.aimAngle >  3.14159265f) bot.aimAngle -= 6.28318531f;
+            while (bot.aimAngle < -3.14159265f) bot.aimAngle += 6.28318531f;
         }
 
         // ---- 补枪（trade）：队友刚在附近阵亡 → 冲过去换人 ----
@@ -184,6 +195,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         }
 
         const bool canSee = (target != nullptr);
+        ai.hadTarget = canSee;
 
         // 交战目标位置（可见用真实位置；仅情报时用情报点）
         float aimX = 0.0f, aimY = 0.0f;

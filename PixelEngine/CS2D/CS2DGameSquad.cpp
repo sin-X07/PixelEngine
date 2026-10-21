@@ -160,6 +160,8 @@ void CS2DGame::UpdateTeamContacts(float dt) {
             const float dx = e.x - b.x;
             const float dy = e.y - b.y;
             if (dx * dx + dy * dy > BOT_SPOT_RADIUS * BOT_SPOT_RADIUS) return;
+            // 上报同样受朝向限制：背后看不到的东西不能报告
+            if (!InViewCone(b.x, b.y, b.aimAngle, e.x, e.y, BOT_SPOT_RADIUS)) return;
             if (SegmentBlockedBySmoke(b.x, b.y, e.x, e.y)) return;
             if (renderer_ && !renderer_->HasLineOfSight(b.x, b.y, e.x, e.y)) return;
 
@@ -176,6 +178,22 @@ void CS2DGame::UpdateTeamContacts(float dt) {
 
 // 真实可见敌人（交火距离 + 烟雾 + LOS）
 
+// 目标是否在以 from 为顶点、aim 为中轴的视野扇形内（含角度软边的有效边界）
+bool CS2DGame::InViewCone(float fromX, float fromY, float aim,
+                          float toX, float toY, float maxDist) const {
+    const float dx = toX - fromX;
+    const float dy = toY - fromY;
+    const float d2 = dx * dx + dy * dy;
+    if (d2 > maxDist * maxDist) return false;
+    if (d2 < 0.0001f) return true;
+
+    float diff = std::atan2(dy, dx) - aim;
+    while (diff >  3.14159265f) diff -= 6.28318531f;
+    while (diff < -3.14159265f) diff += 6.28318531f;
+
+    return std::abs(diff) <= Tuning::VisionHalfAngleRad;
+}
+
 const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& outDist) const {
     outDist = 0.0f;
     if (AiAt(AiIndexOf(self)).blindTimer > 0.0f) return nullptr;   // 被闪光致盲，看不到任何人
@@ -190,6 +208,8 @@ const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& ou
         const float dy = e.y - self.y;
         const float d2 = dx * dx + dy * dy;
         if (d2 > BOT_VIEW_RADIUS * BOT_VIEW_RADIUS) return;
+        // 视野扇形：和玩家同一套几何，背后看不见
+        if (!InViewCone(self.x, self.y, self.aimAngle, e.x, e.y, BOT_VIEW_RADIUS)) return;
         if (SegmentBlockedBySmoke(self.x, self.y, e.x, e.y)) return;
         if (renderer_ && !renderer_->HasLineOfSight(self.x, self.y, e.x, e.y)) return;
 
