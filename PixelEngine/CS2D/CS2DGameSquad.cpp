@@ -1,4 +1,5 @@
 #include "CS2DGame.hpp"
+#include "Tuning.hpp"
 #include "../Audio/AudioManager.hpp"
 #include <iostream>
 #include <cmath>
@@ -48,7 +49,8 @@ bool CS2DGame::FindCoverPoint(const Player& bot, float threatX, float threatY,
                               float& outX, float& outY) const {
     if (!pathFinder_.IsBuilt()) return false;
 
-    const float radii[3] = { 55.0f, 95.0f, 135.0f };
+    const float radii[3] = { Tuning::CoverRadiusNear, Tuning::CoverRadiusMid,
+                             Tuning::CoverRadiusFar };
     float bestD2 = 1e18f;
     bool  found  = false;
 
@@ -308,7 +310,7 @@ void CS2DGame::UpdateSquadFocus(float dt) {
 
     squadFocusTimer_ -= dt;
     if (squadFocusTimer_ > 0.0f) return;
-    squadFocusTimer_ = 0.5f;
+    squadFocusTimer_ = Tuning::FocusUpdateInterval;
 
     for (size_t i = 0; i < bots_.size(); ++i) {
         const Player& bot = bots_[i];
@@ -336,16 +338,19 @@ void CS2DGame::UpdateSquadFocus(float dt) {
             for (const auto& m : bots_) {
                 if (&m == &bot || !m.alive || m.team != bot.team) continue;
                 const float mx = m.x - c.x, my = m.y - c.y;
-                if (mx * mx + my * my < 160.0f * 160.0f) ++mates;
+                if (mx * mx + my * my < Tuning::FocusMateRadius * Tuning::FocusMateRadius) ++mates;
             }
-            score -= static_cast<float>(mates) * 45.0f;
+            score -= static_cast<float>(mates) * Tuning::FocusMateWeight;
 
             // 掩护偏好：正在换弹或低血的队友附近的敌人优先
             for (const auto& m : bots_) {
                 if (&m == &bot || !m.alive || m.team != bot.team) continue;
                 if (!(m.reloading || m.health < 40)) continue;
                 const float mx = m.x - c.x, my = m.y - c.y;
-                if (mx * mx + my * my < 120.0f * 120.0f) { score -= 60.0f; break; }
+                if (mx * mx + my * my < Tuning::FocusCoverRadius * Tuning::FocusCoverRadius) {
+                    score -= Tuning::FocusCoverWeight;
+                    break;
+                }
             }
 
             if (score < bestScore) {
@@ -372,8 +377,8 @@ const CS2DGame::Player* CS2DGame::ResolveFocus(const SquadOrder& order) const {
 // ============================================================================
 
 namespace {
-constexpr float SEP_RADIUS   = 26.0f;   // 排斥半径（约 4 倍命中盒）
-constexpr float SEP_MAX_SPEED = 60.0f;  // 与 BOT 移动上限一致
+constexpr float SEP_RADIUS    = Tuning::SepRadius;    // 排斥半径
+constexpr float SEP_MAX_SPEED = Tuning::SepMaxSpeed;  // 与 BOT 移动上限一致
 }
 
 void CS2DGame::AccumulateSeparation(const Player& self, float& outX, float& outY) const {
@@ -415,7 +420,7 @@ void CS2DGame::AccumulateSeparation(const Player& self, float& outX, float& outY
 
 void CS2DGame::ApplyAvoidance(float& vx, float& vy, float sepX, float sepY) const {
     // 分离力强度：与当前速度同量级，保证能推开但不至于完全抵消前进
-    constexpr float SEP_STRENGTH = 48.0f;
+    constexpr float SEP_STRENGTH = Tuning::SepStrength;
 
     vx += sepX * SEP_STRENGTH;
     vy += sepY * SEP_STRENGTH;

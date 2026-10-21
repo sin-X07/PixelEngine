@@ -1,4 +1,5 @@
 #include "CS2DGame.hpp"
+#include "Tuning.hpp"
 #include "../Audio/AudioManager.hpp"
 #include <iostream>
 #include <cmath>
@@ -217,8 +218,9 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             }
 
             // 受击反应：血量低且当前未在撤退 → 记录威胁来源并撤退一次
-            if (AiAt(i).retreatTimer <= 0.0f && bot.health > 0 && bot.health <= 30) {
-                AiAt(i).retreatTimer = 2.0f;
+            if (AiAt(i).retreatTimer <= 0.0f && bot.health > 0 &&
+                bot.health <= Tuning::RetreatHealth) {
+                AiAt(i).retreatTimer = Tuning::RetreatDuration;
                 if (bullet.ownerIdx == -1) {
                     AiAt(i).threatX = player_.x;
                     AiAt(i).threatY = player_.y;

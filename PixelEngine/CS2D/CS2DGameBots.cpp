@@ -1,4 +1,5 @@
 #include "CS2DGame.hpp"
+#include "Tuning.hpp"
 #include "../Audio/AudioManager.hpp"
 #include <iostream>
 #include <cmath>
@@ -42,14 +43,15 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     // 目标明显移动 / 定时 / 路径走完 → 重算
     const float gdx = destX - ai.goalX;
     const float gdy = destY - ai.goalY;
-    const bool goalMoved = (gdx * gdx + gdy * gdy) > 70.0f * 70.0f;
+    const bool goalMoved = (gdx * gdx + gdy * gdy) >
+                           Tuning::RepathGoalMoved * Tuning::RepathGoalMoved;
 
     ai.repathTimer -= dt;
     const bool exhausted = (ai.pathIdx >= static_cast<int>(ai.path.size()));
     if (goalMoved || exhausted || ai.repathTimer <= 0.0f) {
         ai.goalX = destX;
         ai.goalY = destY;
-        ai.repathTimer = 0.8f;
+        ai.repathTimer = Tuning::RepathInterval;
         ai.path.clear();
         ai.pathIdx = 0;
         if (!pathFinder_.FindPath(bot.x, bot.y, destX, destY, ai.path)) {
@@ -65,7 +67,7 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
         const auto& p = ai.path[ai.pathIdx];
         const float dx = p.first - bot.x;
         const float dy = p.second - bot.y;
-        if (dx * dx + dy * dy <= 8.0f * 8.0f) { ++ai.pathIdx; continue; }
+        if (dx * dx + dy * dy <= Tuning::WaypointReach * Tuning::WaypointReach) { ++ai.pathIdx; continue; }
         break;
     }
     if (ai.pathIdx >= static_cast<int>(ai.path.size())) {
@@ -79,7 +81,7 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     const float d  = std::sqrt(dx * dx + dy * dy);
     if (d < 0.001f) return false;
 
-    const float speed = 60.0f * std::clamp(speedMul, 0.3f, 1.0f);
+    const float speed = Tuning::BotMoveSpeed * std::clamp(speedMul, Tuning::SpeedMulMin, 1.0f);
     bot.vx = dx / d * speed;
     bot.vy = dy / d * speed;
 
@@ -141,7 +143,8 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             const float dx = lastDeathX_ - bot.x;
             const float dy = lastDeathY_ - bot.y;
             const float d2 = dx * dx + dy * dy;
-            if (d2 > 40.0f * 40.0f && d2 < 350.0f * 350.0f) {
+            if (d2 > Tuning::TradeMinDist * Tuning::TradeMinDist &&
+                d2 < Tuning::TradeMaxDist * Tuning::TradeMaxDist) {
                 ai.tradePushed = true;
                 ai.llmIntent.Tick(dt);
                 if (FollowPathTo(bot, ai, lastDeathX_, lastDeathY_, dt, 1.0f)) continue;
@@ -150,7 +153,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
         // ---- 受击撤退：低血时优先找掩体，交火次之 ----
         if (ai.retreatTimer > 0.0f) ai.retreatTimer -= dt;
-        if (ai.retreatTimer > 0.0f && bot.health <= 35) {
+        if (ai.retreatTimer > 0.0f && bot.health <= Tuning::RetreatKeepHealth) {
             float covX = 0.0f, covY = 0.0f;
             if (FindCoverPoint(bot, ai.threatX, ai.threatY, covX, covY)) {
                 ai.llmIntent.Tick(dt);
@@ -207,24 +210,24 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // ---- 换弹决策 ----
         // 脱战就补满；交火中只在弹匣见底（<=25%）才打断射击去换弹
         if (!bot.reloading && bot.ammo < bot.maxAmmo) {
-            const int lowAmmo = bot.maxAmmo / 4;
+            const int lowAmmo = static_cast<int>(static_cast<float>(bot.maxAmmo) * Tuning::LowAmmoFraction);
             if (!canSee || bot.ammo <= lowAmmo) StartReload(bot);
         }
 
         // ---- 手雷：有情报但无直接视野时，向情报点投掷 ----
         if (ai.grenadeCooldown > 0.0f) ai.grenadeCooldown -= dt;
         if (!target && intel && bot.grenadeCount > 0 && ai.grenadeCooldown <= 0.0f) {
-            if (engageDist > 90.0f && engageDist < 230.0f) {
+            if (engageDist > Tuning::NadeThrowMin && engageDist < Tuning::NadeThrowMax) {
                 ThrowGrenade(bot, std::atan2(aimY - bot.y, aimX - bot.x));
-                ai.grenadeCooldown = 7.0f;
+                ai.grenadeCooldown = Tuning::NadeCooldown;
             }
         }
 
         // ---- 目标引导：A* 寻路推进 ----
         // 角色行进速度：突破手全速、支援略慢、断后明显靠后
-        const float roleMul = (order.role == BotRole::Entry)   ? 1.00f
-                            : (order.role == BotRole::Anchor)  ? 0.55f
-                            :                                    0.80f;
+        const float roleMul = (order.role == BotRole::Entry)   ? Tuning::SpeedMulEntry
+                            : (order.role == BotRole::Anchor)  ? Tuning::SpeedMulAnchor
+                            :                                    Tuning::SpeedMulSupport;
         {
             bool hasDest = false;
             bool destIsObjective = false;
@@ -306,8 +309,8 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 for (int t = 0; t < 12; ++t) {
                     float rx = 0.0f, ry = 0.0f;
                     if (holdPost) {
-                        rx = order.holdX + static_cast<float>(rng_() % 181) - 90.0f;
-                        ry = order.holdY + static_cast<float>(rng_() % 181) - 90.0f;
+                        rx = order.holdX + static_cast<float>(rng_() % 181) - Tuning::PatrolHoldSpread;
+                        ry = order.holdY + static_cast<float>(rng_() % 181) - Tuning::PatrolHoldSpread;
                     } else if (hasEnemyCentroid) {
                         rx = ecx + static_cast<float>(rng_() % 521) - 260.0f;
                         ry = ecy + static_cast<float>(rng_() % 521) - 260.0f;
@@ -325,13 +328,14 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             }
 
             // 断后位不主动远距离追击：没有任务目标时守在原地
-            if (!destIsObjective && order.role == BotRole::Anchor && engageDist > 260.0f) {
+            if (!destIsObjective && order.role == BotRole::Anchor &&
+                engageDist > Tuning::AnchorHoldRange) {
                 hasDest = false;
             }
 
             if (hasDest) {
                 // 近距离且可见 → 交给战术执行器（冲刺/绕侧手感更好）
-                const bool closeCombat = canSee && engageDist < 180.0f;
+                const bool closeCombat = canSee && engageDist < Tuning::CloseCombatRange;
                 if (!closeCombat && FollowPathTo(bot, ai, destX, destY, dt, roleMul)) {
                     continue;   // 本帧移动已由寻路接管
                 }
