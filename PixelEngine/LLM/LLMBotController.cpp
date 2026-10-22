@@ -13,30 +13,9 @@
 
 #pragma comment(lib, "winhttp.lib")
 
-// ============================================================================
-// JSON 字符串转义
-// ============================================================================
-namespace {
 
-std::string EscapeJSON(const std::string& s) {
-    std::string out;
-    out.reserve(s.size() + 32);
-    for (char c : s) {
-        switch (c) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n";  break;
-            case '\t': out += "\\t";  break;
-            case '\r': out += "\\r";  break;
-            default:   out += c;
-        }
-    }
-    return out;
-}
 
-} // anonymous namespace
 
-// ---- 公开接口 ----
 LLMConfig LLMConfig::FromFile(const std::string& iniPath) {
     LLMConfig cfg;
     IniFile ini = IniFile::Load(iniPath);
@@ -55,99 +34,30 @@ LLMConfig LLMConfig::FromFile(const std::string& iniPath) {
 }
 
 // ============================================================================
-// LLMDecision
-// ============================================================================
-
-LLMDecision LLMDecision::FromJSON(const std::string& json) {
-    LLMDecision d;
-    MiniJSON::Value root = MiniJSON::parse(json);
-    if (!root.is_object()) return d;
-    d.action = root.value<std::string>("action", "");
-    d.target = root.value<std::string>("target", "");
-    d.shoot  = root.value<std::string>("shoot",  "");
-    d.reason = root.value<std::string>("reason", "");
-    d.valid  = !d.action.empty();
-    return d;
-}
-
-std::string LLMDecision::ToJSON() const {
-    return "{\"action\":\"" + action + "\",\"target\":\"" + target +
-           "\",\"shoot\":\"" + shoot + "\",\"reason\":\"" + reason + "\"}";
-}
-
-// ============================================================================
 // PromptBuilder
 // ============================================================================
 
-std::string PromptBuilder::BuildSystemPrompt() {
-    return
-        "你是一个CS2D俯视角射击游戏的BOT，扮演一支5人小队中的一员。"
-        "你必须直接输出战术决策，不要分析，不要解释。\n"
-        "严格输出JSON格式，不要输出其他任何文字：\n"
-        "{\"action\":\"行动\",\"target\":\"目标\",\"shoot\":\"射击模式\",\"reason\":\"简短理由\"}\n"
-        "\n"
-        "=== 你的角色（按【自身】里的角色执行）===\n"
-        "- 突破(Entry)：第一个进点，负责打开空间。血>60%时主动推进、抢角度；"
-        "即使要死也要让队友能补枪，不要站在开阔地犹豫。\n"
-        "- 支援(Support)：跟在突破身后，负责补枪(trade)和道具。"
-        "突破交火后立刻跟上换人；同时面对两人以上时优先\"掩体移动\"保存自己。\n"
-        "- 断后(Anchor)：守点/殿后。不主动远距离追击，站在掩体后等敌人进射程；"
-        "存活本身就是价值，血量低时优先撤退而不是换命。\n"
-        "\n"
-        "=== 基础战术原则 ===\n"
-        "- 补枪(trade)：队友刚在附近阵亡且敌人应该还在那，优先冲过去换人，不要白白放走。\n"
-        "- 卡位/架枪：有掩体的位置优先\"防守\"；没有掩体不要长时间站桩。\n"
-        "- 交火优势：己方人数多于敌方时才\"进攻\"；人数劣势优先\"撤退\"保存有生力量。\n"
-        "- 交叉火力：队友在另一侧时不要和队友走同一条路线，从另一角度压制。\n"
-        "- 残局：只剩你一人且时间不多时，优先完成任务目标（下包/拆包），不要绕路找人。\n"
-        "\n"
-        "=== 核心规则（必须遵守）===\n"
-        "- 血量<30% → 必须选\"防守\"或\"撤退\"，绝不进攻\n"
-        "- 血量30%-70% → 可\"掩体移动\"或\"防守\"\n"
-        "- 血量>70%且敌人数≤1 → 可\"进攻\"\n"
-        "- 敌人数≥2且无队友 → 必须\"撤退\"\n"
-        "- 使用狙击枪 → shoot必须是\"点射\"，action不能是\"进攻\"\n"
-        "- 使用手枪/近战 → 优先\"掩体移动\"找掩护，不正面交火\n"
-        "- 敌人正对且距离<10米 → 可\"连射\"\n"
-        "- 敌人背对/侧对 → 优先\"点射\"\n"
-        "- 换弹中 → 必须选\"掩体移动\"或\"防守\"，不能\"进攻\"\n"
-        "- 队友在附近 → 可考虑协同\"进攻\"\n"
-        "- 据守有利位置（高地/掩体） → 优先\"防守\"\n"
-        "\n"
-        "可用行动: 进攻, 防守, 撤退, 掩体移动\n"
-        "可用目标(target): 敌人, 前方, 左前方, 右前方, 后退, 掩体, 队友\n"
-        "射击模式: 连射, 点射, 停止射击";
-}
 
-std::string PromptBuilder::BuildUserMessage(
-    float hp, float maxHp, float armor,
-    const std::string& weapon, int ammo, int maxAmmo,
-    float x, float y, const std::string& area,
-    bool enemyVisible, float enemyDist, const std::string& enemyDir,
-    bool enemyFiring, bool teammateAlive, float teammateDist,
-    const std::string& teammateDir, bool isReloading)
-{
-    std::ostringstream oss;
-    int hpPct = static_cast<int>(hp / maxHp * 100.0f);
-    oss << "【自身】血量" << hpPct << "/100，护甲" << static_cast<int>(armor)
-        << "。武器" << weapon << "(弹药" << ammo << "/" << maxAmmo << ")";
-    if (isReloading) oss << "，正在换弹中";
-    oss << "。位置(" << static_cast<int>(x) << "," << static_cast<int>(y) << "," << area << ")。";
 
-    if (enemyVisible) {
-        oss << "【敌人】" << enemyDir << static_cast<int>(enemyDist) << "米有敌人";
-        if (enemyFiring) oss << "正在开火";
-        oss << "。";
-    } else {
-        oss << "【敌人】视野内无敌人。";
+
+
+// JSON 字符串转义（请求体用）
+static std::string EscapeJSON(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 32);
+    for (char c : s) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) out += ' ';
+                else out += c;
+        }
     }
-
-    if (teammateAlive) {
-        oss << "【队友】" << teammateDir << static_cast<int>(teammateDist) << "米有队友存活。";
-    } else {
-        oss << "【队友】队友已阵亡。";
-    }
-    return oss.str();
+    return out;
 }
 
 std::string PromptBuilder::BuildRequestBodyEx(const std::string& systemPrompt,
@@ -171,25 +81,7 @@ std::string PromptBuilder::BuildRequestBodyEx(const std::string& systemPrompt,
     return oss.str();
 }
 
-std::string PromptBuilder::BuildRequestBody(
-    const std::string& userMessage, int maxTokens, float temperature)
-{
-    std::ostringstream oss;
-    oss << "{"
-        << "\"model\":\"gpt-3.5-turbo\","
-        << "\"messages\":["
-        << "{\"role\":\"system\",\"content\":\""
-        << EscapeJSON(BuildSystemPrompt())
-        << "\"},"
-        << "{\"role\":\"user\",\"content\":\""
-        << EscapeJSON(userMessage)
-        << "\"}"
-        << "],"
-        << "\"max_tokens\":" << maxTokens << ","
-        << "\"temperature\":" << temperature
-        << "}";
-    return oss.str();
-}
+
 
 // ============================================================================
 // LLMBotController
@@ -505,26 +397,7 @@ void LLMBotController::KillServer() {
 }
 
 // ---- Decide ----
-void LLMBotController::Decide(const std::string& stateJSON, DecisionCallback callback,
-                              const std::string& tag) {
-    if (!ready_) return;
 
-
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        PendingRequest req;
-        req.body = stateJSON;
-        req.tag  = tag;
-        req.cb   = std::move(callback);
-        queue_.push_back(std::move(req));
-    }
-
-    if (!running_.load()) {
-        running_ = true;
-        if (workerThread_.joinable()) workerThread_.join();
-        workerThread_ = std::thread(&LLMBotController::WorkerLoop, this);
-    }
-}
 
 void LLMBotController::AskRaw(const std::string& systemPrompt, const std::string& userMessage,
                               int maxTokens, RawCallback callback, const std::string& tag) {
@@ -555,8 +428,6 @@ void LLMBotController::WorkerLoop() {
     while (running_.load()) {
         std::string body, tag, system;
         int maxTokens = 260;
-        bool rawMode = false;
-        DecisionCallback cb;
         RawCallback rawCb;
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -565,27 +436,19 @@ void LLMBotController::WorkerLoop() {
             queue_.pop_front();
             body      = std::move(req.body);
             tag       = std::move(req.tag);
-            rawMode   = req.raw;
             system    = std::move(req.system);
             maxTokens = req.maxTokens;
-            cb        = std::move(req.cb);
             rawCb     = std::move(req.rawCb);
         }
 
         busy_ = true;
         std::string raw;
-        LLMDecision result;
-        if (rawMode) {
-            const std::string req =
-                PromptBuilder::BuildRequestBodyEx(system, body, maxTokens, 0.6f);
-            DoHttpRequest(req, tag, &raw);
-        } else {
-            result = DoHttpRequest(body, tag);
-        }
+        const std::string req =
+            PromptBuilder::BuildRequestBodyEx(system, body, maxTokens, 0.6f);
+        DoHttpRequest(req, tag, raw);
         busy_ = false;
 
-        if (rawMode) { if (rawCb) rawCb(raw); }
-        else         { if (cb) cb(result); }
+        if (rawCb) rawCb(raw);
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -595,11 +458,9 @@ void LLMBotController::WorkerLoop() {
 }
 
 // ---- DoHttpRequest (WinHTTP POST) ----
-LLMDecision LLMBotController::DoHttpRequest(const std::string& requestBody,
-                                            const std::string& tag,
-                                            std::string* rawOut) {
-    LLMDecision result;
-    result.valid = false;
+bool LLMBotController::DoHttpRequest(const std::string& requestBody,
+                                    const std::string& tag,
+                                    std::string& rawOut) {
 
     std::string host = "127.0.0.1";
     int port = 9931;
@@ -612,7 +473,7 @@ LLMDecision LLMBotController::DoHttpRequest(const std::string& requestBody,
 
     HINTERNET hSession = WinHttpOpen(L"LLMBotController/1.0",
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!hSession) return result;
+    if (!hSession) return false;
 
     // 设置超时：避免服务端异常时工作线程无限阻塞，从而让 Shutdown() 的 join() 卡死
     WinHttpSetTimeouts(hSession, 3000, 3000, 5000, 10000);
@@ -622,11 +483,11 @@ LLMDecision LLMBotController::DoHttpRequest(const std::string& requestBody,
     MultiByteToWideChar(CP_UTF8, 0, host.c_str(), -1, &wh[0], wlen);
 
     HINTERNET hConnect = WinHttpConnect(hSession, wh.c_str(), port, 0);
-    if (!hConnect) { WinHttpCloseHandle(hSession); return result; }
+    if (!hConnect) { WinHttpCloseHandle(hSession); return false; }
 
     HINTERNET hReq = WinHttpOpenRequest(hConnect, L"POST", L"/v1/chat/completions", nullptr,
         WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, useSSL ? WINHTTP_FLAG_SECURE : 0);
-    if (!hReq) { WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return result; }
+    if (!hReq) { WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return false; }
 
     const wchar_t* headers = L"Content-Type: application/json\r\n";
     WinHttpAddRequestHeaders(hReq, headers, (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
@@ -635,13 +496,13 @@ LLMDecision LLMBotController::DoHttpRequest(const std::string& requestBody,
             (LPVOID)requestBody.c_str(), (DWORD)requestBody.size(), (DWORD)requestBody.size(), 0)) {
         std::cerr << "[LLM] HTTP 发送失败: " << GetLastError() << std::endl;
         WinHttpCloseHandle(hReq); WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession);
-        return result;
+        return false;
     }
 
     if (!WinHttpReceiveResponse(hReq, nullptr)) {
         std::cerr << "[LLM] HTTP 接收失败" << std::endl;
         WinHttpCloseHandle(hReq); WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession);
-        return result;
+        return false;
     }
 
     std::string resp;
@@ -660,30 +521,18 @@ LLMDecision LLMBotController::DoHttpRequest(const std::string& requestBody,
     MiniJSON::Value root = MiniJSON::parse(resp);
     if (!root.is_object() || !root.contains("choices")) {
         std::cerr << "[LLM] 响应异常: " << resp.substr(0, 250) << std::endl;
-        return result;
+        return false;
     }
 
     const MiniJSON::Value& choices = root["choices"];
-    if (!choices.is_array() || choices.size() == 0) return result;
+    if (!choices.is_array() || choices.size() == 0) return false;
 
     std::string content = choices[0]["message"].value<std::string>("content", "");
-    if (content.empty()) return result;
-
-    // 教练模式：直接把原文交回调用方
-    if (rawOut) {
-        *rawOut = content;
-        result.valid = true;
-        return result;
+    if (content.empty()) {
+        std::cerr << "[LLM] 空回复 (" << (tag.empty() ? "-" : tag.c_str()) << ")" << std::endl;
+        return false;
     }
 
-    auto bo = content.find('{');
-    auto bc = content.rfind('}');
-    if (bo != std::string::npos && bc != std::string::npos && bc > bo) {
-        result = LLMDecision::FromJSON(content.substr(bo, bc - bo + 1));
-        std::cout << "[LLM] 决策 " << (tag.empty() ? "-" : tag.c_str())
-                  << ": " << result.ToJSON() << std::endl;
-    } else {
-        std::cerr << "[LLM] content 无有效 JSON: " << content << std::endl;
-    }
-    return result;
+    rawOut = content;      // 教练层自己解析 JSON
+    return true;
 }

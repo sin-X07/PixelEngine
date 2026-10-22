@@ -52,15 +52,12 @@ constexpr float CoverRadiusMid   = 95.0f;
 constexpr float CoverRadiusFar   = 135.0f;
 
 // ---------------- 补枪 (trade) ----------------
-constexpr float TradeWindow      = 3.5f;     // 队友阵亡后多久内可补
 constexpr float TradeMaxDist     = 350.0f;   // 最远补枪距离
 constexpr float TradeMinDist     = 40.0f;    // 太近不必补
-constexpr int   TradeWindowSec   = 3;        // 提示词里显示的窗口秒数
 
 // ---------------- 手雷 ----------------
 constexpr float NadeBlastRadius  = 110.0f;  // 高爆雷爆炸半径（世界单位）
 constexpr float NadeMaxDamage    = 78.0f;   // 中心伤害（边缘按平方衰减到 0）
-constexpr float NadeFuseSeconds  = 1.4f;    // 引信时间
 constexpr float DefuseRadius     = 26.0f;   // 拆包半径：必须贴近包点
 constexpr float BombHoldRing     = 85.0f;   // 下包后 T 守包的环形半径
 constexpr float NadeBlastFxTime  = 0.35f;   // 爆炸特效持续
@@ -71,10 +68,8 @@ constexpr float NadeCooldown     = 7.0f;     // 两次投掷间隔
 // ---------------- 决策 ----------------
 constexpr float CloseCombatRange = 180.0f;   // 低于此距离交给战术执行器（不寻路）
 constexpr float AnchorHoldRange  = 260.0f;   // 断后位超出此距离不主动追击
-constexpr float FocusMaxRange    = 340.0f;   // 集火目标优先半径
 constexpr float LowAmmoFraction  = 0.25f;    // 弹匣低于此比例时脱战也要换弹
 constexpr float PatrolHoldSpread = 90.0f;    // 守点时岗位附近的游走半径
-constexpr float PatrolCentroidSpread = 260.0f; // 推进时敌方出生点质心附近的取点半径
 
 // ---------------- BOT 朝向 ----------------
 constexpr float BotScanSpeed     = 1.0f;   // 无目标时原地扫描的角速度（弧度/秒 ≈ 57°/s）

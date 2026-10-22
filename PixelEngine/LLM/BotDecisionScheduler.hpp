@@ -21,8 +21,6 @@
 #include <memory>
 #include <string>
 
-class CS2DGame;
-
 class BotDecisionScheduler {
 public:
     // 轮询间隔（毫秒）：每 N ms 向一个存活 BOT 发一次决策请求。
@@ -41,23 +39,14 @@ public:
     // LLM 是否就绪（未就绪时 Tick 为空操作）
     bool IsReady() const;
 
-    // 推进调度：内部按 interval 节流，累加到点才发一次请求。
-    // 每帧调用即可，不需要调用方做计时。
-    void Tick(float dt, CS2DGame& game);
 
     // 供教练层直接复用同一个 LLM 客户端
     LLMBotController* Controller() { return controller_.get(); }
 
-    // 调整轮询间隔（毫秒），运行时可变
-    void SetIntervalMs(int ms) { intervalMs_ = (ms > 0) ? ms : DEFAULT_INTERVAL_MS; }
-    int  GetIntervalMs() const { return intervalMs_; }
 
 private:
-    // 为一个存活 BOT 构建状态并发出异步请求
-    void DispatchOne(CS2DGame& game);
 
     std::unique_ptr<LLMBotController> controller_;
-    int   roundRobinIdx_ = 0;      // 下一个待请求的 BOT 索引
-    float cooldownSec_   = 0.0f;   // 距离下次请求的剩余秒数
-    int   intervalMs_    = DEFAULT_INTERVAL_MS;
+
+
 };

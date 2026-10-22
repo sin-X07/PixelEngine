@@ -556,10 +556,7 @@ void Engine::Update(float dt) {
         }
     }
 
-    // LLM 调度：
-    //   coach=llm  → 只让教练层调用模型（per-bot 轮询关闭，避免抢占同一请求通道）
-    //   coach=rule → 保留旧的 per-bot 决策路径，便于对比
-    if (botDriver && !coachLlmEnabled_) botDriver->Tick(dt, *cs2dGame);
+    // LLM 只作为主教练使用（教练层在 CS2DGame::CoachUpdate 里调用），不再逐 BOT 轮询。
 }
 
 void Engine::Render() {

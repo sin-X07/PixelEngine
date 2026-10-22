@@ -5,7 +5,7 @@
 // 职责: 将 BotIntent (战略目标) 转换为每帧的 BehaviorOutput (具体动作)。
 //
 // 分层:
-//   Layer 3: LLM (Engine::RequestLLMDecision) → BotIntent 每 N ms
+//   Layer 3: 主教练（LLM，事件驱动）→ TeamPlan
 //   Layer 2: BotBehaviorExecutor (本类)        → BehaviorOutput 每帧
 //   Layer 1: CS2DGame::UpdateBOTs              → MoveWithCollision + FireBullet
 //

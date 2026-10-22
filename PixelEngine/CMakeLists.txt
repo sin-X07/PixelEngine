@@ -121,7 +121,6 @@ set(SOURCES
     LLM/BotIntent.cpp
     LLM/BotBehaviorExecutor.cpp
     LLM/BotDecisionScheduler.cpp
-    LLM/PromptContext.cpp
 )
 
 add_executable(EngineApp ${SOURCES})

@@ -1,5 +1,4 @@
 #include "BotDecisionScheduler.hpp"
-#include "PromptContext.hpp"
 #include "../CS2D/CS2DGame.hpp"
 #include "../Core/PathUtils.hpp"
 #include <iostream>
@@ -51,19 +50,7 @@ bool BotDecisionScheduler::IsReady() const {
 // 调度
 // ============================================================================
 
-void BotDecisionScheduler::Tick(float dt, CS2DGame& game) {
-    if (!IsReady()) return;
 
-    cooldownSec_ -= dt;
-    if (cooldownSec_ > 0.0f) return;
-
-    cooldownSec_ = static_cast<float>(intervalMs_) / 1000.0f;
-    DispatchOne(game);
-}
 
 // 为一个存活 BOT 采集状态并发出异步请求
-void BotDecisionScheduler::DispatchOne(CS2DGame& game) {
-    // 已停用：LLM 现在只作为「主教练」，不再逐 BOT 出决策。
-    // 决策树（L1）取代了这里的每-BOT 调用，见 CS2DGameCoach.cpp。
-    (void)game;
-}
+

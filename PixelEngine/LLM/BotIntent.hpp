@@ -37,14 +37,7 @@ struct BotIntent {
     bool            fresh        = false;  // 是否有有效 LLM 决策
     float           ageSec       = 0.0f;   // 距离上次 LLM 更新已过秒数
 
-    // 从 LLMDecision JSON 解析 + 目标字符串 → 世界坐标映射
     // teammateX/Y: 最近存活队友坐标 (由调用方提供, hasTeammate=false 时忽略)
-    void FromLLMDecision(const std::string& action, const std::string& target,
-                         const std::string& shoot,
-                         float botX, float botY,
-                         float playerX, float playerY,
-                         float teammateX, float teammateY, bool hasTeammate,
-                         float worldW, float worldH);
 
     // 每帧老化
     void Tick(float dt) {

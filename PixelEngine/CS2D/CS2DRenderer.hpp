@@ -20,7 +20,6 @@ struct SpriteDrawParams {
     float aimAngle = 0.0f;
     int   spriteKey  = 0;   // 0=CT头盔, 1=T无头盔, 2=T备选
     int   weaponId   = 0;   // WeaponId（决定手持武器贴图）
-    int   weaponType = 0;   // 兼容保留
     int   weaponSlot = 0;   // 0=主武器, 1=副武器, 2=近战, 3=投掷物（决定姿态帧）
     int   animState  = 0;   // 0=Idle, 1=Walk, 2=Shoot, 3=Dead
     float animTimer  = 0.0f;

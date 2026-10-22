@@ -1,0 +1,16 @@
+LLMConfig LLMConfig::FromFile(const std::string& iniPath) {
+    LLMConfig cfg;
+    IniFile ini = IniFile::Load(iniPath);
+    if (!ini.IsLoaded()) return cfg;   // 文件缺失 → 全默认
+
+    cfg.serverUrl = ini.GetString("server", "url", cfg.serverUrl);
+
+    cfg.autoLaunch     = ini.GetBool  ("launcher", "auto_launch", cfg.autoLaunch);
+    cfg.serverExePath  = ini.GetString("launcher", "exe",         cfg.serverExePath);
+    cfg.modelPath      = ini.GetString("launcher", "model",       cfg.modelPath);
+    cfg.ngl            = ini.GetInt   ("launcher", "ngl",         cfg.ngl);
+    cfg.startupWaitSec = ini.GetInt   ("launcher", "startup_wait", cfg.startupWaitSec);
+    cfg.killOnExit     = ini.GetBool  ("launcher", "kill_on_exit", cfg.killOnExit);
+
+    return cfg;
+}

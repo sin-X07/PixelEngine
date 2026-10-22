@@ -140,7 +140,6 @@ public:
         int       maxAmmo   = 30;
         bool      reloading = false;
         float     reloadTimer = 0.0f;
-        static constexpr float RELOAD_TIME = 2.0f;
 
         bool      stealth   = false;
 

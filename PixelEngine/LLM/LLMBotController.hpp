@@ -37,46 +37,20 @@ struct LLMConfig {
     static LLMConfig FromFile(const std::string& iniPath);
 };
 
-// ---- LLM 决策结果 ----
-struct LLMDecision {
-    std::string action;   // "进攻" / "防守" / "撤退" / "掩体移动"
-    std::string target;   // 目标描述 (如 "敌人" / "掩体" / "B点")
-    std::string shoot;    // "连射" / "点射" / "停止射击"
-    std::string reason;   // 简短理由
-
-    bool valid = false;   // false 表示 LLM 调用失败, 调用方应回退
-
-    static LLMDecision FromJSON(const std::string& json);
-    std::string ToJSON() const;
-};
 
 // ---- System Prompt 构建器 ----
 class PromptBuilder {
 public:
-    static std::string BuildSystemPrompt();
-    static std::string BuildUserMessage(
-        float hp, float maxHp, float armor,
-        const std::string& weapon, int ammo, int maxAmmo,
-        float x, float y, const std::string& area,
-        bool enemyVisible, float enemyDist, const std::string& enemyDir,
-        bool enemyFiring, bool teammateAlive, float teammateDist,
-        const std::string& teammateDir, bool isReloading);
-    // 用自定义 system prompt 构造请求体（教练层用）
+    // 用 system + user 构造 OpenAI 兼容请求体（教练层使用）
     static std::string BuildRequestBodyEx(const std::string& systemPrompt,
                                           const std::string& userMessage,
                                           int maxTokens = 260,
                                           float temperature = 0.6f);
-    static std::string BuildRequestBody(
-        const std::string& userMessage,
-        int maxTokens = 80,
-        float temperature = 0.7f);
 };
 
 // ---- 异步 LLM 控制器 ----
 class LLMBotController {
 public:
-    using DecisionCallback = std::function<void(const LLMDecision&)>;
-
     LLMBotController();
     ~LLMBotController();
 
@@ -93,10 +67,6 @@ public:
     // 是否自行拉起了 llama-server 子进程
     bool IsOwnProcess() const { return ownProcess_; }
 
-    // 异步请求决策 (立即返回, 在工作线程上调用 callback)
-    // tag: 仅用于日志标识 (如 "BOT#3"), 不影响请求内容
-    void Decide(const std::string& stateJSON, DecisionCallback callback,
-                const std::string& tag = std::string());
 
     // 是否正在等待决策中
     bool IsBusy() const { return busy_.load(); }
@@ -108,8 +78,9 @@ public:
 
 private:
     // HTTP 核心
-    LLMDecision DoHttpRequest(const std::string& requestBody, const std::string& tag,
-                              std::string* rawOut = nullptr);
+    // 发送请求，成功时把模型原文写入 rawOut
+    bool DoHttpRequest(const std::string& requestBody, const std::string& tag,
+                       std::string& rawOut);
 
     // 健康检测: 通过 GET /health 探测 server 是否就绪
     bool HealthCheck(int timeoutMs = 15000);
@@ -149,7 +120,6 @@ private:
         bool        raw = false;
         std::string system;
         int         maxTokens = 260;
-        DecisionCallback cb;
         RawCallback      rawCb;
     };
     std::deque<PendingRequest> queue_;
