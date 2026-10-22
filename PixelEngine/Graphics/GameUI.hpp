@@ -111,6 +111,7 @@ public:
         bool  matchOver = false;
         bool  matchWinnerIsCT = false;
         float matchOverReturn = -1.0f;   // 距返回主菜单的秒数（<0 表示未知）
+        std::string coachReason;          // 教练本回合计划（HUD 展示）
 
         // 目标物
         int   objective = 0;          // 0=无 1=爆破 2=人质

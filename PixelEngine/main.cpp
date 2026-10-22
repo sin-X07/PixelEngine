@@ -28,6 +28,7 @@ int main(int argc, char* argv[]) {
     bool autostart = false;
     bool fastRound = false;
     int  startMode = 1;
+    bool coachLlm = true;   // --coach=rule 关闭 LLM 教练（用于对比）
     for (int i = 1; i < argc; ++i) {
         if (!argv[i]) continue;
         const std::string a(argv[i]);
@@ -36,9 +37,12 @@ int main(int argc, char* argv[]) {
         if (a.rfind("--mode=", 0) == 0) {
             try { startMode = std::stoi(a.substr(7)); } catch (...) {}
         }
+        if (a.rfind("--coach=", 0) == 0) {
+            coachLlm = (a.substr(8) != "rule");
+        }
     }
 
-    if (engine.Initialize("CS2D Pixel", 800, 600, autostart, fastRound, startMode)) {
+    if (engine.Initialize("CS2D Pixel", 800, 600, autostart, fastRound, startMode, coachLlm)) {
         engine.Run();
     }
 

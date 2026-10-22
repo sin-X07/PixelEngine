@@ -60,6 +60,11 @@ public:
         bool enemyVisible, float enemyDist, const std::string& enemyDir,
         bool enemyFiring, bool teammateAlive, float teammateDist,
         const std::string& teammateDir, bool isReloading);
+    // 用自定义 system prompt 构造请求体（教练层用）
+    static std::string BuildRequestBodyEx(const std::string& systemPrompt,
+                                          const std::string& userMessage,
+                                          int maxTokens = 260,
+                                          float temperature = 0.6f);
     static std::string BuildRequestBody(
         const std::string& userMessage,
         int maxTokens = 80,
@@ -95,9 +100,15 @@ public:
     // 是否正在等待决策中
     bool IsBusy() const { return busy_.load(); }
 
+    // 通用请求：自定义 system prompt，回调返回模型原文（教练层用）
+    using RawCallback = std::function<void(const std::string&)>;
+    void AskRaw(const std::string& systemPrompt, const std::string& userMessage,
+                int maxTokens, RawCallback callback, const std::string& tag = std::string());
+
 private:
     // HTTP 核心
-    LLMDecision DoHttpRequest(const std::string& requestBody, const std::string& tag);
+    LLMDecision DoHttpRequest(const std::string& requestBody, const std::string& tag,
+                              std::string* rawOut = nullptr);
 
     // 健康检测: 通过 GET /health 探测 server 是否就绪
     bool HealthCheck(int timeoutMs = 15000);
@@ -132,6 +143,11 @@ private:
     // 待处理请求
     std::string pendingBody_;
     std::string pendingTag_;
+    // 原始模式（教练）：自定义 system + 返回原文
+    bool        pendingRaw_ = false;
+    std::string pendingSystem_;
+    int         pendingMaxTokens_ = 260;
+    RawCallback pendingRawCallback_;
     DecisionCallback pendingCallback_;
     mutable std::mutex mutex_;
 

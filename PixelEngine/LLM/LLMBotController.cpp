@@ -150,6 +150,27 @@ std::string PromptBuilder::BuildUserMessage(
     return oss.str();
 }
 
+std::string PromptBuilder::BuildRequestBodyEx(const std::string& systemPrompt,
+                                              const std::string& userMessage,
+                                              int maxTokens, float temperature)
+{
+    std::ostringstream oss;
+    oss << "{"
+        << "\"model\":\"gpt-3.5-turbo\","
+        << "\"messages\":["
+        << "{\"role\":\"system\",\"content\":\""
+        << EscapeJSON(systemPrompt)
+        << "\"},"
+        << "{\"role\":\"user\",\"content\":\""
+        << EscapeJSON(userMessage)
+        << "\"}"
+        << "],"
+        << "\"max_tokens\":" << maxTokens << ","
+        << "\"temperature\":" << temperature
+        << "}";
+    return oss.str();
+}
+
 std::string PromptBuilder::BuildRequestBody(
     const std::string& userMessage, int maxTokens, float temperature)
 {
@@ -503,24 +524,68 @@ void LLMBotController::Decide(const std::string& stateJSON, DecisionCallback cal
     }
 }
 
+void LLMBotController::AskRaw(const std::string& systemPrompt, const std::string& userMessage,
+                              int maxTokens, RawCallback callback, const std::string& tag) {
+    if (!ready_) {
+        if (callback) callback(std::string());
+        return;
+    }
+    if (busy_.load()) {
+        std::cerr << "[LLM] 通道占用, 丢弃 " << tag << std::endl;
+        if (callback) callback(std::string());   // 立即回报失败，不等超时
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        pendingBody_        = userMessage;      // 原始模式下存 user 消息
+        pendingTag_         = tag;
+        pendingRaw_         = true;
+        pendingSystem_      = systemPrompt;
+        pendingMaxTokens_   = maxTokens;
+        pendingRawCallback_ = std::move(callback);
+        pendingCallback_    = nullptr;
+    }
+    if (!running_.load()) {
+        running_ = true;
+        if (workerThread_.joinable()) workerThread_.join();
+        workerThread_ = std::thread(&LLMBotController::WorkerLoop, this);
+    }
+}
+
 void LLMBotController::WorkerLoop() {
     while (running_.load()) {
-        std::string body;
-        std::string tag;
+        std::string body, tag, system;
+        int maxTokens = 260;
+        bool rawMode = false;
         DecisionCallback cb;
+        RawCallback rawCb;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (pendingBody_.empty()) { running_ = false; break; }
-            body = std::move(pendingBody_);
-            tag  = std::move(pendingTag_);
-            cb   = std::move(pendingCallback_);
+            body      = std::move(pendingBody_);
+            tag       = std::move(pendingTag_);
+            rawMode   = pendingRaw_;
+            system    = std::move(pendingSystem_);
+            maxTokens = pendingMaxTokens_;
+            cb        = std::move(pendingCallback_);
+            rawCb     = std::move(pendingRawCallback_);
+            pendingRaw_ = false;
         }
 
         busy_ = true;
-        LLMDecision result = DoHttpRequest(body, tag);
+        std::string raw;
+        LLMDecision result;
+        if (rawMode) {
+            const std::string req =
+                PromptBuilder::BuildRequestBodyEx(system, body, maxTokens, 0.6f);
+            DoHttpRequest(req, tag, &raw);
+        } else {
+            result = DoHttpRequest(body, tag);
+        }
         busy_ = false;
 
-        if (cb) cb(result);
+        if (rawMode) { if (rawCb) rawCb(raw); }
+        else         { if (cb) cb(result); }
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -531,7 +596,8 @@ void LLMBotController::WorkerLoop() {
 
 // ---- DoHttpRequest (WinHTTP POST) ----
 LLMDecision LLMBotController::DoHttpRequest(const std::string& requestBody,
-                                            const std::string& tag) {
+                                            const std::string& tag,
+                                            std::string* rawOut) {
     LLMDecision result;
     result.valid = false;
 
@@ -602,6 +668,13 @@ LLMDecision LLMBotController::DoHttpRequest(const std::string& requestBody,
 
     std::string content = choices[0]["message"].value<std::string>("content", "");
     if (content.empty()) return result;
+
+    // 教练模式：直接把原文交回调用方
+    if (rawOut) {
+        *rawOut = content;
+        result.valid = true;
+        return result;
+    }
 
     auto bo = content.find('{');
     auto bc = content.rfind('}');

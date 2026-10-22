@@ -40,6 +40,7 @@ private:
     std::unique_ptr<CS2DGame>     cs2dGame;
     CS2DOverlay                   cs2dOverlay;
     std::unique_ptr<BotDecisionScheduler> botDriver;
+    bool coachLlmEnabled_ = true;   // --coach=rule 时关闭（用于对比规则教练）
 
     // 输入状态（HandleInput 采集 → Update 消费）
     bool  cs2dMouseDown = false;
@@ -80,7 +81,7 @@ public:
     ~Engine();
 
     bool Initialize(const char* title, int width, int height, bool autostart = false,
-                    bool fastRound = false, int startMode = 1);
+                    bool fastRound = false, int startMode = 1, bool coachLlm = true);
     void Run();
     void Clean();
     void ToggleFullscreen();

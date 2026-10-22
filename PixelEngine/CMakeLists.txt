@@ -103,6 +103,7 @@ set(SOURCES
     CS2D/CS2DGameSquad.cpp
     CS2D/CS2DGameObjective.cpp
     CS2D/CS2DGameCoach.cpp
+    CS2D/CS2DGameCoachAI.cpp
     CS2D/Coach/CoachTypes.hpp
     CS2D/Navigation/PathFinder.hpp
     CS2D/Navigation/PathFinder.cpp

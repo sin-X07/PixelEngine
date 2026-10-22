@@ -14,6 +14,8 @@
 #include <SDL2/SDL.h>
 #include <vector>
 #include <deque>
+#include <mutex>
+#include <functional>
 #include <random>
 #include <memory>
 #include <algorithm>
@@ -386,6 +388,15 @@ public:
     // ---- 教练层（L3）----
     const TeamPlan&   GetCoachPlan(Team t) const;
     const std::string& GetCoachReason(Team t) const;
+
+    // 教练层 LLM 接入：由 Engine 注入（system, user, maxTokens, 回调原文）
+    using CoachLlmFn = std::function<void(const std::string&, const std::string&, int,
+                                          std::function<void(const std::string&)>)>;
+    void SetCoachLlm(CoachLlmFn fn) { coachLlm_ = std::move(fn); }
+    void SetCoachLlmEnabled(bool on) { coachLlmEnabled_ = on; }
+    bool IsCoachLlmEnabled() const { return coachLlmEnabled_; }
+    void CoachTryLlm(Team t, const CoachEvent& ev);
+    void CoachDrainLlm();
     // 玩家操作：主动拾取（E）/ 丢弃当前武器（G）
     void TryPickupDrops(bool manual);
     void DropCurrentWeapon();
@@ -453,8 +464,20 @@ private:
         std::string firstContactArea;
         bool  timeLowFired = false;
         bool  matchPointFired = false;
+
+        // LLM 请求在途
+        bool  llmPending = false;
+        int   llmGen = 0;
+        float llmAt = 0.0f;
+        int   llmEventType = 0;
     };
     CoachState coachT_, coachCT_;
+
+    CoachLlmFn coachLlm_;
+    bool coachLlmEnabled_ = true;
+    struct CoachLlmResult { Team team; int gen; std::string raw; };
+    std::vector<CoachLlmResult> coachLlmResults_;
+    std::mutex coachLlmMutex_;
     CoachState&       CoachFor(Team t);
     const CoachState& CoachFor(Team t) const;
 

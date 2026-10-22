@@ -120,6 +120,8 @@ void CS2DGame::CoachOnEvent(Team t, CoachEventType type, const std::string& area
 // 每帧推进
 // ---------------------------------------------------------------------------
 void CS2DGame::CoachUpdate(float dt) {
+    CoachDrainLlm();   // 先收 LLM 回包，再处理新事件
+
     for (Team t : {Team::T, Team::CT}) {
         CoachState& st = CoachFor(t);
 
@@ -161,6 +163,9 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
               << " | " << plan.reason << std::endl;
 
     CoachApplyPlan(t);
+
+    // 规则计划先落地（保证零延迟），再异步向 LLM 要一份更好的
+    CoachTryLlm(t, ev);
 }
 
 // ---------------------------------------------------------------------------

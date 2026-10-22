@@ -45,6 +45,9 @@ public:
     // 每帧调用即可，不需要调用方做计时。
     void Tick(float dt, CS2DGame& game);
 
+    // 供教练层直接复用同一个 LLM 客户端
+    LLMBotController* Controller() { return controller_.get(); }
+
     // 调整轮询间隔（毫秒），运行时可变
     void SetIntervalMs(int ms) { intervalMs_ = (ms > 0) ? ms : DEFAULT_INTERVAL_MS; }
     int  GetIntervalMs() const { return intervalMs_; }

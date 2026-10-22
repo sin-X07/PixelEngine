@@ -170,7 +170,8 @@ GameUI::Actions Engine::BuildActions() {
 // ============================================================================
 
 bool Engine::Initialize(const char* title, int width, int height, bool autostart, bool fastRound,
-                        int startMode) {
+                        int startMode, bool coachLlm) {
+    coachLlmEnabled_ = coachLlm;
     cleaned = false;
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0) {
@@ -504,6 +505,18 @@ void Engine::StartMatch(MatchMode mode) {
     cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
     cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
 
+    // 教练层接入 LLM（与 BOT 共用同一个客户端，串行请求）
+    if (botDriver) {
+        if (auto* ctrl = botDriver->Controller()) {
+            cs2dGame->SetCoachLlm([ctrl](const std::string& sys, const std::string& usr,
+                                         int maxTok,
+                                         std::function<void(const std::string&)> cb) {
+                ctrl->AskRaw(sys, usr, maxTok, std::move(cb), "COACH");
+            });
+        }
+    }
+    cs2dGame->SetCoachLlmEnabled(coachLlmEnabled_);
+
     std::cout << "CS2D 对局开始: " << mapRel << std::endl;
 
 
@@ -543,8 +556,10 @@ void Engine::Update(float dt) {
         }
     }
 
-    // LLM BOT 决策调度（轮询 + 节流在调度器内部）
-    if (botDriver) botDriver->Tick(dt, *cs2dGame);
+    // LLM 调度：
+    //   coach=llm  → 只让教练层调用模型（per-bot 轮询关闭，避免抢占同一请求通道）
+    //   coach=rule → 保留旧的 per-bot 决策路径，便于对比
+    if (botDriver && !coachLlmEnabled_) botDriver->Tick(dt, *cs2dGame);
 }
 
 void Engine::Render() {
@@ -627,6 +642,7 @@ void Engine::Render() {
         ictx.matchOver        = cs2dGame->IsMatchOver();
         ictx.matchWinnerIsCT  = (cs2dGame->GetMatchWinner() == Team::CT);
         ictx.matchOverReturn  = 8.0f - cs2dGame->GetMatchOverTimer();
+        ictx.coachReason      = cs2dGame->GetCoachReason(cs2dGame->GetPlayer().team);
 
         // 目标物
         switch (cs2dGame->GetMatchMode()) {
