@@ -387,6 +387,25 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
         snprintf(hp, sizeof(hp), "HP %d / %d", ctx.health, ctx.maxHealth);
         DrawImGuiText(imGuiUI, hp, barX + 6.0f, barY - 20.0f,
                       235, 240, 235, 255, 18);
+
+        // 护甲条（与血条同样式，紧贴其下）
+        const float armorY = barY + barH + 6.0f;
+        const float armorFrac = std::clamp(static_cast<float>(ctx.armor) / 100.0f, 0.0f, 1.0f);
+
+        dl->AddRectFilled(ImVec2(barX - 2, armorY - 2),
+                          ImVec2(barX + barW + 2, armorY + barH + 2),
+                          IM_COL32(10, 14, 18, 210), 4.0f);
+        dl->AddRect(ImVec2(barX - 2, armorY - 2),
+                    ImVec2(barX + barW + 2, armorY + barH + 2),
+                    IM_COL32(110, 170, 220, 200), 4.0f);
+        dl->AddRectFilled(ImVec2(barX, armorY),
+                          ImVec2(barX + barW * armorFrac, armorY + barH),
+                          IM_COL32(90, 160, 225, 235), 3.0f);
+
+        char ar[48];
+        snprintf(ar, sizeof(ar), "护甲 %d%s", ctx.armor, ctx.helmet ? " (盔)" : "");
+        DrawImGuiText(imGuiUI, ar, barX + barW + 12.0f, armorY + 1.0f,
+                      190, 215, 240, 255, 16);
     }
 
     // 屏幕中央提示：回合开始 / 回合胜负（带淡出）

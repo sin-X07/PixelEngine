@@ -168,6 +168,13 @@ private:
 
     SDL_Texture* bulletTex_ = nullptr;
 
+    // 雷达底图：把地图背景（或碰撞网格）一次性烘焙成纹理，避免每帧逐像素采样
+    SDL_Texture* radarMapTex_ = nullptr;
+    int   radarMapW_ = 0, radarMapH_ = 0;       // 底图分辨率
+    float radarImgX_ = 0.0f, radarImgY_ = 0.0f; // 图像在底图内的偏移（letterbox）
+    float radarImgW_ = 0.0f, radarImgH_ = 0.0f;
+    void BuildRadarTexture();
+
     void DrawWeaponForCharacter(float cx, float cy, float size, float aimAngle,
                                 int weaponSlot, int weaponId, bool muzzleFlash);
     void DrawMuzzleFlash(float cx, float cy, float size, float aimAngle, int weaponSlot);

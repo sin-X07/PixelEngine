@@ -433,6 +433,17 @@ void Engine::HandleInput() {
                                  logicalW_, logicalH_,
                                  cs2dWorldMouseX, cs2dWorldMouseY);
         cs2dMouseDown = inputManager->IsMouseLeftDown();
+
+    // G：丢弃当前武器（近战不可丢）。边沿触发，避免按住连丢。
+    {
+        static bool prevG = false;
+        const Uint8* kbG = SDL_GetKeyboardState(nullptr);
+        const bool nowG = kbG[SDL_SCANCODE_G] != 0;
+        if (nowG && !prevG && !buyMenuOpen_) {
+            cs2dGame->DropCurrentWeapon();
+        }
+        prevG = nowG;
+    }
         SDL_ShowCursor(SDL_DISABLE);
     }
 
@@ -514,6 +525,22 @@ void Engine::Update(float dt) {
                      cs2dKeyW, cs2dKeyA, cs2dKeyS, cs2dKeyD,
                      cs2dKeyShift, cs2dKeyR, interactHeld,
                      audioManager.get());
+
+    // ---- 比赛结束：展示 8 秒后自动返回主菜单 ----
+    // 注意：这段必须放在 Update 里（HandleInput 里会被提前 return 掉），
+    // 并且要在 cs2dGame->Update 之后，才能读到本帧刚累加的 matchOverTimer。
+    if (cs2dGame->IsMatchOver()) {
+        constexpr float kReturnDelay = 8.0f;
+        if (cs2dGame->GetMatchOverTimer() >= kReturnDelay) {
+            std::cout << "[CS2D] 比赛结束，返回主菜单" << std::endl;
+            buyMenuOpen_ = false;
+            currentState = MAIN_MENU;
+            SDL_SetRelativeMouseMode(SDL_FALSE);
+            SDL_ShowCursor(SDL_ENABLE);
+            audioManager->PlayMusic("assets/audio/menu.wav");
+            return;
+        }
+    }
 
     // LLM BOT 决策调度（轮询 + 节流在调度器内部）
     if (botDriver) botDriver->Tick(dt, *cs2dGame);

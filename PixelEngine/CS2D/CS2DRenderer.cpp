@@ -173,6 +173,8 @@ void CS2DRenderer::SetWorld(const CS2DWorld* world) {
 
     bulletTex_ = LoadTexture("assets/cs2d/sprites/bullet.png");
 
+    BuildRadarTexture();   // 用地图内容烘焙雷达底图
+
     // 武器素材加载汇总
     int wOk = 0, wFail = 0;
     for (int i = 1; i < wcount; ++i) {
@@ -500,6 +502,89 @@ void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float 
     if (muzzleFlash && def.cls != WeaponClass::Melee && def.cls != WeaponClass::Grenade) {
         DrawMuzzleFlash(wx, wy, size, aimAngle, weaponSlot);   // wx/wy 已是屏幕坐标
     }
+}
+
+// ============================================================================
+// 雷达底图：一次性把地图背景（无背景则用碰撞网格）烘焙成纹理
+// ============================================================================
+
+void CS2DRenderer::BuildRadarTexture() {
+    if (!renderer_ || !world_) return;
+
+    if (radarMapTex_) { SDL_DestroyTexture(radarMapTex_); radarMapTex_ = nullptr; }
+
+    // 底图取 512x512，按地图宽高比内接（letterbox）
+    const int tex = 512;
+    radarMapW_ = tex;
+    radarMapH_ = tex;
+
+    SDL_Texture* target = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA8888,
+                                            SDL_TEXTUREACCESS_TARGET, tex, tex);
+    if (!target) return;
+
+    SDL_SetRenderTarget(renderer_, target);
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer_, 14, 18, 22, 255);
+    SDL_RenderClear(renderer_);
+
+    const float mapW = world_->GetMapPixelW();
+    const float mapH = world_->GetMapPixelH();
+    float iw = static_cast<float>(tex), ih = static_cast<float>(tex);
+    if (mapW > 0.0f && mapH > 0.0f) {
+        const float sFit = std::min(static_cast<float>(tex) / mapW,
+                                    static_cast<float>(tex) / mapH);
+        iw = mapW * sFit;
+        ih = mapH * sFit;
+    }
+    radarImgX_ = (tex - iw) * 0.5f;
+    radarImgY_ = (tex - ih) * 0.5f;
+    radarImgW_ = iw;
+    radarImgH_ = ih;
+
+    if (backgroundTex_) {
+        // 有背景图：直接缩放填进内接矩形
+        SDL_SetTextureBlendMode(backgroundTex_, SDL_BLENDMODE_BLEND);
+        SDL_Rect dst = { static_cast<int>(radarImgX_), static_cast<int>(radarImgY_),
+                         static_cast<int>(iw), static_cast<int>(ih) };
+        SDL_RenderCopy(renderer_, backgroundTex_, nullptr, &dst);
+    } else {
+        // 无背景图：用碰撞网格烘一层地形（只做一次，不再每帧采样）
+        const auto& grid = world_->GetCollisionGrid();
+        const int gw = world_->GetMapWidth();
+        const int gh = world_->GetMapHeight();
+        if (!grid.empty() && gw > 0 && gh > 0) {
+            const float pxPerCellX = iw / static_cast<float>(gw);
+            const float pxPerCellY = ih / static_cast<float>(gh);
+            for (int gy = 0; gy < gh; ++gy) {
+                for (int gx = 0; gx < gw; ++gx) {
+                    const auto cell = grid[gy * gw + gx];
+                    Uint8 cr = 34, cg = 40, cb = 34;
+                    if (cell == CS2DWorld::CellType::Solid)           { cr = 78; cg = 68; cb = 60; }
+                    else if (cell == CS2DWorld::CellType::Penetrable) { cr = 56; cg = 62; cb = 56; }
+                    else if (cell == CS2DWorld::CellType::Damage)     { cr = 96; cg = 38; cb = 26; }
+                    SDL_SetRenderDrawColor(renderer_, cr, cg, cb, 255);
+                    SDL_Rect r;
+                    r.x = static_cast<int>(radarImgX_ + gx * pxPerCellX);
+                    r.y = static_cast<int>(radarImgY_ + gy * pxPerCellY);
+                    r.w = std::max(1, static_cast<int>(std::ceil(pxPerCellX)));
+                    r.h = std::max(1, static_cast<int>(std::ceil(pxPerCellY)));
+                    SDL_RenderFillRect(renderer_, &r);
+                }
+            }
+        }
+    }
+
+    // 统一压暗，保证上面的圆点清晰
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 90);
+    SDL_Rect all = { 0, 0, tex, tex };
+    SDL_RenderFillRect(renderer_, &all);
+
+    SDL_SetRenderTarget(renderer_, nullptr);
+    radarMapTex_ = target;
+
+    std::cout << "[CS2DRenderer] 雷达底图已烘焙 " << tex << "x" << tex
+              << " 图像区 " << static_cast<int>(iw) << "x" << static_cast<int>(ih)
+              << (backgroundTex_ ? "（来自地图背景）" : "（来自碰撞网格）") << std::endl;
 }
 
 // ============================================================================
@@ -968,36 +1053,45 @@ void CS2DRenderer::DrawRadarHUD(float playerX, float playerY, float playerAngle,
     float mapCenterX = playerCentered ? playerX : (mapW * 0.5f);
     float mapCenterY = playerCentered ? playerY : (mapH * 0.5f);
 
-    // ---- 从碰撞网格逐像素采样, 渲染地图地形（替代纯黑背景） ----
-    if (world_) {
-        const auto& grid = world_->GetCollisionGrid();
-        const int gridW = world_->GetMapWidth();
-        const int gridH = world_->GetMapHeight();
-        if (!grid.empty() && gridW > 0 && gridH > 0) {
-            const float invScale = 1.0f / scale;
-            // 每个雷达像素 → 世界坐标 → 碰撞类型 → 着色
-            for (int ry = 0; ry < radarSize; ++ry) {
-                for (int rx = 0; rx < radarSize; ++rx) {
-                    const float radarWorldX = (rx - half) * invScale + mapCenterX;
-                    const float radarWorldY = (ry - half) * invScale + mapCenterY;
-                    if (radarWorldX < 0.0f || radarWorldX >= mapW ||
-                        radarWorldY < 0.0f || radarWorldY >= mapH) continue;
-                    const int gx = static_cast<int>(radarWorldX / world_->GetTileWidth());
-                    const int gy = static_cast<int>(radarWorldY / world_->GetTileHeight());
-                    if (gx < 0 || gx >= gridW || gy < 0 || gy >= gridH) continue;
-                    const auto cell = grid[gy * gridW + gx];
-                    Uint8 cr = 40, cg = 40, cb = 40;
-                    switch (cell) {
-                        case CS2DWorld::CellType::Solid:      cr = 70; cg = 60; cb = 55; break;
-                        case CS2DWorld::CellType::Penetrable: cr = 50; cg = 55; cb = 50; break;
-                        case CS2DWorld::CellType::Damage:     cr = 80; cg = 30; cb = 20; break;
-                        default:                               cr = 30; cg = 35; cb = 30; break;
-                    }
-                    SDL_SetRenderDrawColor(renderer_, cr, cg, cb, 255);
-                    SDL_RenderDrawPoint(renderer_, radarX + rx, radarY + ry);
-                }
-            }
+    // ---- 地图底图：直接贴烘焙好的纹理，按设置做缩放/居中/旋转 ----
+    if (radarMapTex_ && radarImgW_ > 0.0f && radarImgH_ > 0.0f) {
+        // 可见世界范围（由 mapZoom 决定）
+        const float visW = mapW / std::max(0.01f, mapZoom);
+        const float visH = mapH / std::max(0.01f, mapZoom);
+
+        // 视野中心
+        const float cX = playerCentered ? playerX : (mapW * 0.5f);
+        const float cY = playerCentered ? playerY : (mapH * 0.5f);
+
+        // 世界 → 底图纹理坐标
+        const float kx = radarImgW_ / mapW;
+        const float ky = radarImgH_ / mapH;
+
+        SDL_Rect src;
+        src.x = static_cast<int>(radarImgX_ + (cX - visW * 0.5f) * kx);
+        src.y = static_cast<int>(radarImgY_ + (cY - visH * 0.5f) * ky);
+        src.w = std::max(1, static_cast<int>(visW * kx));
+        src.h = std::max(1, static_cast<int>(visH * ky));
+
+        const SDL_Rect dst = { radarX, radarY, radarSize, radarSize };
+
+        Uint8 mod = static_cast<Uint8>(std::clamp(bgAlpha, 0, 255));
+        SDL_SetTextureColorMod(radarMapTex_, mod, mod, mod);
+        SDL_SetTextureAlphaMod(radarMapTex_, 255);
+
+        if (rotateWithPlayer) {
+            const SDL_Point center = { radarSize / 2, radarSize / 2 };
+            SDL_RenderCopyEx(renderer_, radarMapTex_, &src, &dst,
+                             static_cast<double>(playerAngle * 180.0f / 3.14159265f + 90.0f),
+                             &center, SDL_FLIP_NONE);
+        } else {
+            SDL_RenderCopy(renderer_, radarMapTex_, &src, &dst);
         }
+        SDL_SetTextureColorMod(radarMapTex_, 255, 255, 255);
+
+        // 外框重画一次，避免被底图覆盖
+        SDL_SetRenderDrawColor(renderer_, 120, 160, 200, 200);
+        SDL_RenderDrawRect(renderer_, &bgRect);
     }
 
     // 辅助函数：世界坐标→雷达屏幕坐标

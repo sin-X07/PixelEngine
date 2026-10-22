@@ -189,7 +189,10 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
                     round_.EndRound(Team::CT);
                 }
             } else {
-                defuseProgress_ = std::max(0.0f, defuseProgress_ - dt * 0.5f);
+                // 松开拆包键 / 离开包点：进度立刻清零（不给半途而废留余地）
+                defuseProgress_ = 0.0f;
+                // 同时清掉 BOT 的拆包标记，避免它们继续站桩
+                for (auto& b : bots_) AiAt(AiIndexOf(b)).defusing = false;
             }
         }
         return;

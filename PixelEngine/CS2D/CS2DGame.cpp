@@ -424,6 +424,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     const bool frozen  = (mode_ != MatchMode::DeathMatch) && round_.IsFrozen();
     const bool ending  = (mode_ != MatchMode::DeathMatch) && round_.IsRoundEnd();
     const bool canAct  = !frozen && !ending;
+    const bool canMove = !frozen;   // 结算展示期仍可移动/拾取，只是不能开火
 
     player_.stealth = shiftPressed && canAct;
 
@@ -433,9 +434,11 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
         }
     }
 
-    if (player_.alive && canAct) {
+    if (player_.alive && canMove) {
         UpdatePlayerMovement(dt, wPressed, aPressed, sPressed, dPressed, player_.stealth);
-        UpdatePlayerShooting(dt, mouseLeftDown, mouseWorldX, mouseWorldY, audio);
+        if (!ending) {
+            UpdatePlayerShooting(dt, mouseLeftDown, mouseWorldX, mouseWorldY, audio);
+        }
     } else {
         player_.vx = player_.vy = 0.0f;
 
@@ -454,8 +457,8 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     }
     UpdateReload(player_, dt);
 
-    if (canAct) {
-        UpdateBOTs(dt, audio);
+    if (canMove) {
+        UpdateBOTs(dt, audio);   // 结算展示期也允许移动站位，但内部已禁止开火
     } else {
         // 冻结/结算期：BOT 原地待命
         for (auto& bot : bots_) { bot.vx = bot.vy = 0.0f; }
@@ -475,6 +478,14 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
             }
         }
     }
+
+    // E 键：边沿触发主动拾取（拆包/救人时不抢键）
+    if (interactHeld && !prevInteract_ && player_.alive) {
+        const bool busyDefusing = (mode_ == MatchMode::BombDefusal && bombPlanted_ &&
+                                   defuseProgress_ > 0.0f);
+        if (!busyDefusing) TryPickupDrops(true);
+    }
+    prevInteract_ = interactHeld;
 
     UpdateBullets(dt, audio);
     UpdateGrenades(dt, audio);
@@ -512,14 +523,11 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 
     prevMouseDown_ = mouseLeftDown;
 
-    // 掉落物寿命与拾取
-    for (auto& d : drops_) d.life -= dt;
+    // 掉落物：保留到回合结束（不再按时间消失），已拾取的移除
     drops_.erase(std::remove_if(drops_.begin(), drops_.end(),
-                                [](const DroppedItem& d) {
-                                    return d.life <= 0.0f || d.id == WeaponId::None;
-                                }),
+                                [](const DroppedItem& d) { return d.id == WeaponId::None; }),
                  drops_.end());
-    TryPickupDrops();
+    TryPickupDrops(false);
 
     // 爆炸特效寿命
     for (auto& fx : blasts_) fx.life -= dt;
@@ -616,8 +624,6 @@ void CS2DGame::Render(int viewW, int viewH) {
     // 地面掉落物（用 _d 图标）
     for (const auto& d : drops_) {
         if (d.id == WeaponId::None) continue;
-        // 最后 5 秒闪烁提示即将消失
-        if (d.life < 5.0f && std::fmod(clockSec_, 0.5f) < 0.25f) continue;
         renderer_->DrawDroppedWeapon(static_cast<int>(d.id), d.x, d.y, clockSec_);
     }
 

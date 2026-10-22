@@ -402,8 +402,11 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
         const WeaponDef& def = bot.CurrentWeapon();
 
+        // 结算展示期禁止开火（但仍可移动/站位）
+        const bool canFire = !(mode_ != MatchMode::DeathMatch && round_.IsRoundEnd());
+
         // 枪械 / 霰弹（必须真实可见才开火，换弹中不开火）
-        if (target && out.shouldShoot && canSee && !bot.reloading &&
+        if (canFire && target && out.shouldShoot && canSee && !bot.reloading &&
             def.cls != WeaponClass::Melee && def.cls != WeaponClass::Grenade) {
             if (bot.shootCooldown > 0.0f) bot.shootCooldown -= dt;
 

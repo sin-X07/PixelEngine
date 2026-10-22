@@ -376,6 +376,9 @@ public:
     int  GetPlayerArmor()  const { return player_.armor; }
     int  GetPlayerHealth()    const { return player_.health; }
     int  GetPlayerMaxHealth() const { return player_.maxHealth; }
+    // 玩家操作：主动拾取（E）/ 丢弃当前武器（G）
+    void TryPickupDrops(bool manual);
+    void DropCurrentWeapon();
     bool GetPlayerHelmet() const { return player_.helmet; }
 
     // ---- 武器 ----
@@ -424,8 +427,8 @@ private:
         bool  isGrenade = false;
     };
     std::vector<DroppedItem> drops_;
+    bool prevInteract_ = false;   // E 键边沿检测
 
-    void TryPickupDrops();      // 玩家走过即拾取
     void DropEquipmentOnDeath(const Player& victim);
     float flashTimer_ = 0.0f;      // 玩家闪光致盲剩余秒数
     float footstepTimer_ = 0.0f;   // 玩家脚步声节奏

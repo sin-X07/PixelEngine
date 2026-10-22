@@ -65,6 +65,16 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
 
     player_.aimAngle = std::atan2(worldMY - player_.y, worldMX - player_.x);
 
+    // 拆包过程中双手占用：只允许转向，不能开枪/投掷
+    if (mode_ == MatchMode::BombDefusal && bombPlanted_) {
+        const float dxb = player_.x - bombX_;
+        const float dyb = player_.y - bombY_;
+        if (dxb * dxb + dyb * dyb <= Tuning::DefuseRadius * Tuning::DefuseRadius &&
+            defuseProgress_ > 0.0f) {
+            return;
+        }
+    }
+
     const WeaponDef& def = player_.CurrentWeapon();
 
     // 投掷物
@@ -304,19 +314,38 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
         if (!g.active) continue;
 
         g.fuse -= dt;
-        g.x += g.vx * dt;
-        g.y += g.vy * dt;
+
+        // 子步进移动：每步不超过半个 tile，避免高速穿过薄墙
+        const float speed = std::sqrt(g.vx * g.vx + g.vy * g.vy);
+        const float halfTile = static_cast<float>(world_->GetTileWidth()) * 0.5f;
+        int steps = 1;
+        if (speed * dt > halfTile) {
+            steps = static_cast<int>(std::ceil(speed * dt / halfTile));
+        }
+        steps = std::min(steps, 16);
+        const float sub = dt / static_cast<float>(steps);
+
+        bool blocked = false;
+        for (int st = 0; st < steps; ++st) {
+            const float nx = g.x + g.vx * sub;
+            const float ny = g.y + g.vy * sub;
+
+            int row = 0, col = 0;
+            world_->WorldToTile(nx, ny, row, col);
+            if (world_->IsBlockingBullet(row, col)) {
+                blocked = true;   // 到墙就停，不进入墙体
+                break;
+            }
+            g.x = nx;
+            g.y = ny;
+        }
+        if (blocked) {
+            g.vx = g.vy = 0.0f;
+        }
 
         // 地面摩擦（指数衰减；v0/friction ≈ 总投掷距离）
         g.vx -= g.vx * 2.0f * dt;
         g.vy -= g.vy * 2.0f * dt;
-
-        // 撞墙停下
-        int row = 0, col = 0;
-        world_->WorldToTile(g.x, g.y, row, col);
-        if (world_->IsBlockingBullet(row, col)) {
-            g.vx = g.vy = 0.0f;
-        }
         g.x = std::clamp(g.x, 0.0f, world_->GetMapPixelW() - 1.0f);
         g.y = std::clamp(g.y, 0.0f, world_->GetMapPixelH() - 1.0f);
 
@@ -346,7 +375,7 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
             const float MAX_DMG = Tuning::NadeMaxDamage;
 
             auto damageAt = [&](Player& p) {
-                if (!p.alive || p.team == g.team) return;   // 无友伤
+                if (!p.alive) return;   // 道具对所有人（含己方与投掷者）生效
                 const float dx = p.x - g.x;
                 const float dy = p.y - g.y;
                 const float d = std::sqrt(dx * dx + dy * dy);
@@ -372,7 +401,7 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
         case WeaponId::GrenadeFlash: {
             if (audio) audio->PlaySound(SoundEffect::FLASHBANG);
             // 致盲：距离 + 视线（玩家与 BOT 一致）
-            if (player_.alive && player_.team != g.team) {
+            if (player_.alive) {
                 const float dx = player_.x - g.x;
                 const float dy = player_.y - g.y;
                 if (std::sqrt(dx * dx + dy * dy) < 220.0f) {
@@ -381,7 +410,7 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
             }
             for (size_t bi = 0; bi < bots_.size(); ++bi) {
                 auto& b = bots_[bi];
-                if (!b.alive || b.team == g.team) continue;
+                if (!b.alive) continue;
                 const float dx = b.x - g.x;
                 const float dy = b.y - g.y;
                 if (std::sqrt(dx * dx + dy * dy) < 220.0f) {
@@ -588,46 +617,122 @@ void CS2DGame::DropEquipmentOnDeath(const Player& victim) {
               << static_cast<int>(victim.y) << ")" << std::endl;
 }
 
-void CS2DGame::TryPickupDrops() {
+void CS2DGame::TryPickupDrops(bool manual) {
     if (!player_.alive) return;
 
-    for (auto& d : drops_) {
-        if (d.id == WeaponId::None) continue;
-        const float dx = d.x - player_.x;
-        const float dy = d.y - player_.y;
-        if (dx * dx + dy * dy > 16.0f * 16.0f) continue;
+    // 找最近的掉落物
+    int   best = -1;
+    float bestD2 = (manual ? 30.0f * 30.0f : 16.0f * 16.0f);
+    for (size_t i = 0; i < drops_.size(); ++i) {
+        if (drops_[i].id == WeaponId::None) continue;
+        const float dx = drops_[i].x - player_.x;
+        const float dy = drops_[i].y - player_.y;
+        const float d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) { bestD2 = d2; best = static_cast<int>(i); }
+    }
+    if (best < 0) return;
 
-        bool taken = false;
-        if (d.isGrenade) {
-            const int limit = (d.id == WeaponId::GrenadeFlash) ? 2 : 1;
-            if (player_.grenadeCount < Player::MAX_GRENADES &&
-                player_.CountGrenade(d.id) < limit) {
-                player_.grenades[player_.grenadeCount++] = d.id;
-                player_.SyncActiveGrenade();
-                taken = true;
-            }
-        } else if (WeaponDB::Get(d.id).slot == WeaponSlotKind::Primary) {
+    DroppedItem& d = drops_[static_cast<size_t>(best)];
+    const WeaponDef& def = WeaponDB::Get(d.id);
+    bool taken = false;
+
+    if (d.isGrenade) {
+        const int limit = (d.id == WeaponId::GrenadeFlash) ? 2 : 1;
+        if (player_.grenadeCount < Player::MAX_GRENADES &&
+            player_.CountGrenade(d.id) < limit) {
+            player_.grenades[player_.grenadeCount++] = d.id;
+            player_.SyncActiveGrenade();
+            taken = true;
+        }
+    } else if (def.slot == WeaponSlotKind::Primary) {
+        // 自动拾取只在空槽时发生；主动按 E 可以替换
+        if (manual || player_.weapons[0] == WeaponId::None) {
             player_.weapons[0] = d.id;
-            slotAmmo_[0]    = WeaponDB::Get(d.id).magazine;
-            slotMaxAmmo_[0] = slotAmmo_[0];
+            slotAmmo_[0]    = def.magazine;
+            slotMaxAmmo_[0] = def.magazine;
             if (player_.weaponSlot == 0) {
                 player_.ammo = slotAmmo_[0];
                 player_.maxAmmo = slotMaxAmmo_[0];
             }
+            // 注意：任何情况下都不切换当前手持武器
             taken = true;
-        } else if (WeaponDB::Get(d.id).slot == WeaponSlotKind::Secondary) {
+        }
+    } else if (def.slot == WeaponSlotKind::Secondary) {
+        if (manual || player_.weapons[1] == WeaponId::None) {
             player_.weapons[1] = d.id;
-            slotAmmo_[1]    = WeaponDB::Get(d.id).magazine;
-            slotMaxAmmo_[1] = slotAmmo_[1];
+            slotAmmo_[1]    = def.magazine;
+            slotMaxAmmo_[1] = def.magazine;
             if (player_.weaponSlot == 1) {
                 player_.ammo = slotAmmo_[1];
                 player_.maxAmmo = slotMaxAmmo_[1];
             }
             taken = true;
         }
+    }
 
-        if (taken) {
-            d.id = WeaponId::None;   // 标记已拾取
+    if (taken) d.id = WeaponId::None;
+}
+
+// G：丢弃当前武器（近战不可丢弃）
+void CS2DGame::DropCurrentWeapon() {
+    if (!player_.alive) return;
+
+    const int slot = player_.weaponSlot;
+    if (slot == 2) return;                     // 近战不能丢
+
+    WeaponId dropId = WeaponId::None;
+    bool isGrenade = false;
+
+    if (slot == 3) {
+        dropId = player_.ActiveGrenade();
+        if (dropId == WeaponId::None) return;
+        isGrenade = true;
+        player_.ConsumeActiveGrenade();
+        // 背包空了就切回枪/刀，避免停在一个空槽位上
+        if (player_.grenadeCount <= 0) {
+            if (player_.weapons[0] != WeaponId::None) {
+                player_.weaponSlot = 0;
+                player_.ammo = slotAmmo_[0];
+                player_.maxAmmo = slotMaxAmmo_[0];
+            } else if (player_.weapons[1] != WeaponId::None) {
+                player_.weaponSlot = 1;
+                player_.ammo = slotAmmo_[1];
+                player_.maxAmmo = slotMaxAmmo_[1];
+            } else {
+                player_.weaponSlot = 2;
+                player_.ammo = 1; player_.maxAmmo = 1;
+            }
+        }
+    } else {
+        dropId = player_.weapons[slot];
+        if (dropId == WeaponId::None) return;
+        player_.weapons[slot] = WeaponId::None;
+        if (slot == 0) { slotAmmo_[0] = 0; slotMaxAmmo_[0] = 0; }
+        if (slot == 1) { slotAmmo_[1] = 0; slotMaxAmmo_[1] = 0; }
+
+        // 切到还有子弹的槽位：副武器优先，其次近战
+        if (slot == 0) {
+            if (player_.weapons[1] != WeaponId::None) {
+                player_.weaponSlot = 1;
+                player_.ammo = slotAmmo_[1];
+                player_.maxAmmo = slotMaxAmmo_[1];
+            } else {
+                player_.weaponSlot = 2;
+                player_.ammo = 1; player_.maxAmmo = 1;
+            }
+        } else if (slot == 1) {
+            player_.weaponSlot = 2;
+            player_.ammo = 1; player_.maxAmmo = 1;
         }
     }
+
+    DroppedItem it;
+    it.id = dropId;
+    it.x = player_.x;
+    it.y = player_.y;
+    it.isGrenade = isGrenade;
+    drops_.push_back(it);
+
+    std::cout << "[Drop] 玩家丢弃 " << WeaponDB::Get(dropId).name << std::endl;
 }
+

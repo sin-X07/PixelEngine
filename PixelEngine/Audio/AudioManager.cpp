@@ -262,7 +262,7 @@ void AudioManager::PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
     // 距离衰减：FULL_RANGE 内全音量，之后线性衰减，但保留一个可听见的底噪，
     // 避免「一过 MAX_RANGE 就彻底静音」——那会让远处的枪战听着像时有时无
     constexpr float FULL_RANGE = 0.0f;
-    constexpr float MAX_RANGE  = 900.0f;
+    constexpr float MAX_RANGE  = 100.0f;
     constexpr float MIN_FACTOR = 0.0f;   // 最远处仍保留 12% 音量
     float distFactor = 1.0f;
     if (dist > FULL_RANGE) {
