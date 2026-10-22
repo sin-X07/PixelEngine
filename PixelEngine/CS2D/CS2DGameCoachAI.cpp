@@ -33,7 +33,9 @@ const char* kCoachSystemPrompt =
     "  retake_a / retake_b 只能用于 C4 已被敌方安装、我方需要夺回包点的情况\n"
     "  stack_a / stack_b 用于全员集中到一个点（进攻或守包）\n"
     "  save 只能用于经济崩溃、主动放弃本回合\n"
-    "  没下包、正常开局时，只能用 default / rush_* / split_* / fake\n";
+    "  没下包、正常开局时，只能用 default / rush_* / split_* / fake\n"
+    "  rush_* / split_* / fake 是 T（进攻方）的战术；CT（防守方）不要使用\n"
+    "  CT 常用 default / stack_a / stack_b / retake_a / retake_b\n";
 
 const char* IntentToStr(PlanIntent i) {
     switch (i) {
@@ -174,7 +176,7 @@ static std::string BuildCoachUserPrompt(const CS2DGame& game, Team t,
 // 解析并校验 LLM 计划
 // ---------------------------------------------------------------------------
 static bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* world,
-                           bool game_bombPlanted, bool lowEconomy) {
+                           bool game_bombPlanted, bool lowEconomy, bool teamIsCT) {
     const auto bo = raw.find('{');
     const auto bc = raw.rfind('}');
     if (bo == std::string::npos || bc == std::string::npos || bc <= bo) return false;
@@ -235,6 +237,18 @@ static bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorl
     if (plan.intent == PlanIntent::Save && !lowEconomy) {
         plan.intent = PlanIntent::Default;          // 有钱就别保枪
     }
+    // 阵营纠错：CT 不会 rush / 假打；T 不会回防
+    if (teamIsCT) {
+        if (plan.intent == PlanIntent::RushA || plan.intent == PlanIntent::SplitA ||
+            plan.intent == PlanIntent::FakeThenOther) {
+            plan.intent = PlanIntent::StackA;
+        } else if (plan.intent == PlanIntent::RushB || plan.intent == PlanIntent::SplitB) {
+            plan.intent = PlanIntent::StackB;
+        }
+    } else {
+        if (plan.intent == PlanIntent::RetakeA) plan.intent = PlanIntent::Default;
+        if (plan.intent == PlanIntent::RetakeB) plan.intent = PlanIntent::Default;
+    }
 
     out = plan;
     return true;
@@ -292,7 +306,8 @@ void CS2DGame::CoachDrainLlm() {
         }
 
         TeamPlan plan;
-        if (!ParseCoachPlan(r.raw, plan, world_.get(), bombPlanted_, false)) {
+        if (!ParseCoachPlan(r.raw, plan, world_.get(), bombPlanted_, false,
+                                r.team == Team::CT)) {
             std::cout << "[Coach] " << TeamName(r.team) << " LLM 计划非法，沿用规则计划 | "
                       << r.raw.substr(0, 120) << std::endl;
             continue;
@@ -303,6 +318,7 @@ void CS2DGame::CoachDrainLlm() {
         plan.valid     = true;
         st.plan   = plan;
         st.reason = plan.reason;
+        coachPlanChangedAt_ = clockSec_;
 
         std::cout << "[Coach] " << TeamName(r.team) << " LLM("
                   << (clockSec_ - st.llmAt) << "s) -> "

@@ -360,8 +360,13 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
     if (!ctx.coachReason.empty()) {
         char buf[256];
         snprintf(buf, sizeof(buf), "教练: %s", ctx.coachReason.c_str());
-        DrawImGuiText(imGuiUI, buf, 12.0f, ImGui::GetIO().DisplaySize.y - 118.0f,
-                      255, 225, 140, 235, 15);
+        if (ctx.coachFlash) {
+            DrawImGuiText(imGuiUI, buf, 12.0f, ImGui::GetIO().DisplaySize.y - 118.0f,
+                          255, 245, 170, 255, 17);   // 刚变更：更亮更大
+        } else {
+            DrawImGuiText(imGuiUI, buf, 12.0f, ImGui::GetIO().DisplaySize.y - 118.0f,
+                          255, 225, 140, 235, 15);
+        }
     }
 
     // ---- 左下角血量条 ----

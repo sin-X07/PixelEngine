@@ -643,6 +643,7 @@ void Engine::Render() {
         ictx.matchWinnerIsCT  = (cs2dGame->GetMatchWinner() == Team::CT);
         ictx.matchOverReturn  = 8.0f - cs2dGame->GetMatchOverTimer();
         ictx.coachReason      = cs2dGame->GetCoachReason(cs2dGame->GetPlayer().team);
+        ictx.coachFlash       = cs2dGame->GetCoachPlanAge() < 1.5f;
 
         // 目标物
         switch (cs2dGame->GetMatchMode()) {

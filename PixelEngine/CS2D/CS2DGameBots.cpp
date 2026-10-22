@@ -82,7 +82,11 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     if (d < 0.001f) return false;
 
     const float weaponMul = bot.CurrentWeapon().moveSpeedMul;
-    const float speed = Tuning::BotMoveSpeed * weaponMul
+    // 教练节奏：fast 略快、slow 略慢（只影响推进欲望，不影响武器惩罚）
+    const Tempo tempo = GetCoachPlan(bot.team).tempo;
+    const float tempoMul = (tempo == Tempo::Fast) ? 1.08f
+                         : (tempo == Tempo::Slow) ? 0.92f : 1.0f;
+    const float speed = Tuning::BotMoveSpeed * weaponMul * tempoMul
                       * std::clamp(speedMul, Tuning::SpeedMulMin, 1.0f);
     bot.vx = dx / d * speed;
     bot.vy = dy / d * speed;

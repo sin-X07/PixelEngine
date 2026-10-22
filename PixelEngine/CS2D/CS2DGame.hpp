@@ -388,6 +388,8 @@ public:
     // ---- 教练层（L3）----
     const TeamPlan&   GetCoachPlan(Team t) const;
     const std::string& GetCoachReason(Team t) const;
+    // 当前计划已生效多久（秒），用于 HUD 变更高亮
+    float GetCoachPlanAge() const { return clockSec_ - coachPlanChangedAt_; }
 
     // 教练层 LLM 接入：由 Engine 注入（system, user, maxTokens, 回调原文）
     using CoachLlmFn = std::function<void(const std::string&, const std::string&, int,
@@ -475,6 +477,7 @@ private:
 
     CoachLlmFn coachLlm_;
     bool coachLlmEnabled_ = true;
+    float coachPlanChangedAt_ = 0.0f;
     struct CoachLlmResult { Team team; int gen; std::string raw; };
     std::vector<CoachLlmResult> coachLlmResults_;
     std::mutex coachLlmMutex_;

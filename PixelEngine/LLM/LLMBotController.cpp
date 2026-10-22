@@ -388,9 +388,13 @@ bool LLMBotController::LaunchServer(const std::string& exePath, const std::strin
                                      const std::string& host, int port, int ngl) {
     // 构造命令行: "llama-server.exe" -m model.gguf -ngl 99 --host 127.0.0.1 --port 9931
     std::ostringstream cmd;
+    // 教练层要两队并发请求，单槽会互相挤掉：开 2 个并行槽。
+    // 上下文总和 4096，拆成 2×2048，足够装下 ~1000 token 的教练 prompt + 200 输出。
     cmd << "\"" << exePath << "\""
         << " -m \"" << modelPath << "\""
         << " -ngl " << ngl
+        << " -c 4096"
+        << " --parallel 2"
         << " --host " << host
         << " --port " << port;
 
@@ -504,17 +508,15 @@ void LLMBotController::KillServer() {
 void LLMBotController::Decide(const std::string& stateJSON, DecisionCallback callback,
                               const std::string& tag) {
     if (!ready_) return;
-    if (busy_.load()) {
-        std::cerr << "[LLM] 上一次决策仍在进行中, 丢弃本次请求 "
-                  << (tag.empty() ? "" : tag.c_str()) << std::endl;
-        return;
-    }
+
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        pendingBody_ = stateJSON;
-        pendingTag_  = tag;
-        pendingCallback_ = std::move(callback);
+        PendingRequest req;
+        req.body = stateJSON;
+        req.tag  = tag;
+        req.cb   = std::move(callback);
+        queue_.push_back(std::move(req));
     }
 
     if (!running_.load()) {
@@ -530,20 +532,17 @@ void LLMBotController::AskRaw(const std::string& systemPrompt, const std::string
         if (callback) callback(std::string());
         return;
     }
-    if (busy_.load()) {
-        std::cerr << "[LLM] 通道占用, 丢弃 " << tag << std::endl;
-        if (callback) callback(std::string());   // 立即回报失败，不等超时
-        return;
-    }
+
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        pendingBody_        = userMessage;      // 原始模式下存 user 消息
-        pendingTag_         = tag;
-        pendingRaw_         = true;
-        pendingSystem_      = systemPrompt;
-        pendingMaxTokens_   = maxTokens;
-        pendingRawCallback_ = std::move(callback);
-        pendingCallback_    = nullptr;
+        PendingRequest req;
+        req.body      = userMessage;
+        req.tag       = tag;
+        req.raw       = true;
+        req.system    = systemPrompt;
+        req.maxTokens = maxTokens;
+        req.rawCb     = std::move(callback);
+        queue_.push_back(std::move(req));
     }
     if (!running_.load()) {
         running_ = true;
@@ -561,15 +560,16 @@ void LLMBotController::WorkerLoop() {
         RawCallback rawCb;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (pendingBody_.empty()) { running_ = false; break; }
-            body      = std::move(pendingBody_);
-            tag       = std::move(pendingTag_);
-            rawMode   = pendingRaw_;
-            system    = std::move(pendingSystem_);
-            maxTokens = pendingMaxTokens_;
-            cb        = std::move(pendingCallback_);
-            rawCb     = std::move(pendingRawCallback_);
-            pendingRaw_ = false;
+            if (queue_.empty()) { running_ = false; break; }
+            PendingRequest req = std::move(queue_.front());
+            queue_.pop_front();
+            body      = std::move(req.body);
+            tag       = std::move(req.tag);
+            rawMode   = req.raw;
+            system    = std::move(req.system);
+            maxTokens = req.maxTokens;
+            cb        = std::move(req.cb);
+            rawCb     = std::move(req.rawCb);
         }
 
         busy_ = true;
@@ -589,7 +589,7 @@ void LLMBotController::WorkerLoop() {
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (pendingBody_.empty()) running_ = false;
+            if (queue_.empty()) running_ = false;
         }
     }
 }

@@ -155,6 +155,7 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
 
     st.plan   = plan;
     st.reason = plan.reason;
+    coachPlanChangedAt_ = clockSec_;
 
     std::cout << "[Coach] " << TeamName(t) << " 第" << st.callsThisRound << "次"
               << " 事件#" << static_cast<int>(ev.type)

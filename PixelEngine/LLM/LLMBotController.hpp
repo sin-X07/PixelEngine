@@ -18,6 +18,7 @@
 #include <string>
 #include <thread>
 #include <mutex>
+#include <deque>
 #include <atomic>
 #include <functional>
 #include "../CS2D/MiniJSON.hpp"
@@ -141,14 +142,17 @@ private:
     unsigned long ownedPid_ = 0;   // 拥有的 llama-server PID（无句柄时的回退路径）
 
     // 待处理请求
-    std::string pendingBody_;
-    std::string pendingTag_;
-    // 原始模式（教练）：自定义 system + 返回原文
-    bool        pendingRaw_ = false;
-    std::string pendingSystem_;
-    int         pendingMaxTokens_ = 260;
-    RawCallback pendingRawCallback_;
-    DecisionCallback pendingCallback_;
+    // 请求队列：两队可能在同一帧都要计划，单槽会被覆盖 → 排队执行
+    struct PendingRequest {
+        std::string body;          // 非 raw 模式=用户消息原文；raw 模式=user message
+        std::string tag;
+        bool        raw = false;
+        std::string system;
+        int         maxTokens = 260;
+        DecisionCallback cb;
+        RawCallback      rawCb;
+    };
+    std::deque<PendingRequest> queue_;
     mutable std::mutex mutex_;
 
     std::thread workerThread_;
