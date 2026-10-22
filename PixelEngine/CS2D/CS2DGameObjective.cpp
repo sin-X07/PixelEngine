@@ -128,6 +128,8 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
                 if (defuseProgress_ >= PLANT_TIME) {
                     PlantBomb(bombX_, bombY_, audio);
                     defuseProgress_ = 0.0f;
+                CoachOnEvent(Team::T,  CoachEventType::DefuseAborted);
+                CoachOnEvent(Team::CT, CoachEventType::DefuseAborted);
                 }
             } else {
                 defuseProgress_ = 0.0f;
@@ -178,6 +180,12 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
             }
 
             if (defusing) {
+                if (defuseProgress_ <= 0.0f) {
+                    const std::string bArea = world_ ? world_->FindAreaAt(bombX_, bombY_)
+                                                     : std::string();
+                    CoachOnEvent(Team::T,  CoachEventType::DefuseStarted, bArea);
+                    CoachOnEvent(Team::CT, CoachEventType::DefuseStarted, bArea);
+                }
                 defuseProgress_ += dt / DEFUSE_TIME;
                 if (defuseProgress_ >= 1.0f) {
                     std::cout << "[CS2D] C4 已拆除!" << std::endl;
@@ -240,6 +248,8 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
 
 void CS2DGame::PlantBomb(float x, float y, AudioManager* audio) {
     bombPlanted_ = true;
+    CoachOnEvent(Team::T,  CoachEventType::BombPlanted, world_ ? world_->FindAreaAt(bombX_, bombY_) : std::string());
+    CoachOnEvent(Team::CT, CoachEventType::BombPlanted, world_ ? world_->FindAreaAt(bombX_, bombY_) : std::string());
     bombX_ = x;
     bombY_ = y;
     bombTimer_ = BOMB_FUSE;

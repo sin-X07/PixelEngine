@@ -477,6 +477,26 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio) {
     // 阵亡掉落：主武器 → 副武器（仅非标配） → 随机一个投掷物
     DropEquipmentOnDeath(victim);
 
+    // 教练：记录阵亡点 + 双方减员事件
+    {
+        const std::string area = world_ ? world_->FindAreaAt(victim.x, victim.y) : std::string();
+        for (Team t : {Team::T, Team::CT}) {
+            RoundMemo::Death d;
+            d.team  = victim.team;
+            d.area  = area;
+            d.x     = victim.x;
+            d.y     = victim.y;
+            d.atSec = clockSec_;
+            CoachFor(t).deaths.push_back(d);
+            CoachOnEvent(t, victim.team == t ? CoachEventType::AllyDown
+                                             : CoachEventType::EnemyDown, area);
+        }
+        if (&victim == &player_) {
+            CoachOnEvent(player_.team, CoachEventType::HumanDied, area);
+            CoachOnEvent(TeamManager::Opponent(player_.team), CoachEventType::HumanDied, area);
+        }
+    }
+
     // 记录阵亡点：队友会尝试「补枪」（trade）
     lastDeathX_      = victim.x;
     lastDeathY_      = victim.y;

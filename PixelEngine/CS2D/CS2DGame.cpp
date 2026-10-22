@@ -77,6 +77,9 @@ void CS2DGame::ResetToNewMatch() {
               << " (玩家 CT + " << bots_.size() << " BOT)" << std::endl;
 
     AssignSquadRoles();
+    CoachResetRound();
+    CoachOnEvent(Team::T,  CoachEventType::RoundStart);
+    CoachOnEvent(Team::CT, CoachEventType::RoundStart);
     for (size_t i = 0; i < squad_.size(); ++i) {
         std::cout << "  BOT#" << i << " (" << TeamName(bots_[i].team) << ") 角色: "
                   << (squad_[i].role == BotRole::Entry ? "突破"
@@ -486,6 +489,8 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
         if (!busyDefusing) TryPickupDrops(true);
     }
     prevInteract_ = interactHeld;
+
+    CoachUpdate(dt);
 
     UpdateBullets(dt, audio);
     UpdateGrenades(dt, audio);

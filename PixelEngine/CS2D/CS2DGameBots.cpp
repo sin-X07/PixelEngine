@@ -193,6 +193,16 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // ---- 目标选择：只用「看得见」的敌人 + 团队情报 ----
         float targetDist = 0.0f;
         const Player* target = FindVisibleEnemy(bot, targetDist);
+
+        // 教练计划：没有可见敌人时优先去计划的驻守点（有敌人时反应交给决策树）
+        if (!target && ai.hasPlanHold) {
+            const float planMul = (order.role == BotRole::Entry)   ? Tuning::SpeedMulEntry
+                                : (order.role == BotRole::Anchor)  ? Tuning::SpeedMulAnchor
+                                                                   : Tuning::SpeedMulSupport;
+            if (FollowPathTo(bot, ai, ai.planHoldX, ai.planHoldY, dt, planMul)) {
+                continue;
+            }
+        }
         const EnemyContact* intel = target ? nullptr
                                           : FindNearestContact(bot.team, bot.x, bot.y);
 

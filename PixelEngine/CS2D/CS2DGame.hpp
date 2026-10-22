@@ -2,6 +2,7 @@
 #include "CS2DWorld.hpp"
 #include "CS2DRenderer.hpp"
 #include "Teams/TeamManager.hpp"
+#include "Coach/CoachTypes.hpp"
 #include "Rounds/RoundManager.hpp"
 #include "Weapons/WeaponDef.hpp"
 #include "Tuning.hpp"
@@ -12,6 +13,7 @@
 #include "../LLM/BotBehaviorExecutor.hpp"
 #include <SDL2/SDL.h>
 #include <vector>
+#include <deque>
 #include <random>
 #include <memory>
 #include <algorithm>
@@ -185,6 +187,11 @@ public:
         // 卡墙检测
         float lastX = 0.0f, lastY = 0.0f;
         float stuckTimer = 0.0f;
+
+        // 教练计划指定的驻守点（hasPlanHold=true 时优先于默认目标）
+        bool  hasPlanHold = false;
+        float planHoldX = 0.0f, planHoldY = 0.0f;
+        std::string goalArea;
     };
 
     struct Bullet {
@@ -376,6 +383,9 @@ public:
     int  GetPlayerArmor()  const { return player_.armor; }
     int  GetPlayerHealth()    const { return player_.health; }
     int  GetPlayerMaxHealth() const { return player_.maxHealth; }
+    // ---- 教练层（L3）----
+    const TeamPlan&   GetCoachPlan(Team t) const;
+    const std::string& GetCoachReason(Team t) const;
     // 玩家操作：主动拾取（E）/ 丢弃当前武器（G）
     void TryPickupDrops(bool manual);
     void DropCurrentWeapon();
@@ -427,6 +437,36 @@ private:
         bool  isGrenade = false;
     };
     std::vector<DroppedItem> drops_;
+
+    // ---- 教练层状态（每队一份）----
+    struct CoachState {
+        TeamPlan plan;                       // 当前生效计划
+        std::deque<RoundMemo> memory;        // 最近 10 回合
+        std::vector<CoachEvent> pending;     // 待处理事件
+        float mergeWindow = 0.0f;            // 事件合并窗口
+        int   callsThisRound = 0;            // 本回合已调用次数（上限 8）
+        int   gen = 0;                       // 代际号
+        std::string reason;                  // HUD 显示用
+
+        // 本回合统计（回合结束写入 memory）
+        std::vector<RoundMemo::Death> deaths;
+        std::string firstContactArea;
+        bool  timeLowFired = false;
+        bool  matchPointFired = false;
+    };
+    CoachState coachT_, coachCT_;
+    CoachState&       CoachFor(Team t);
+    const CoachState& CoachFor(Team t) const;
+
+    void CoachUpdate(float dt);
+    void CoachOnEvent(Team t, CoachEventType type, const std::string& area = std::string());
+    void CoachThink(Team t, const CoachEvent& ev);
+    TeamPlan RuleCoach(Team t, const CoachEvent& ev);
+    void CoachApplyPlan(Team t);
+    void CoachRecordRound(Team t, bool won);
+    void CoachResetRound();
+    bool AreaCenterByName(const std::string& name, float& ox, float& oy) const;
+    std::string AreaHint(const std::string& intentTarget) const;
     bool prevInteract_ = false;   // E 键边沿检测
 
     void DropEquipmentOnDeath(const Player& victim);

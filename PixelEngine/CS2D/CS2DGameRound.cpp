@@ -28,6 +28,28 @@ void CS2DGame::UpdateRoundFlow(float dt, AudioManager* audio) {
     if (before == RoundPhase::RoundEnd && after == RoundPhase::Freeze) {
         BeginNewRound(audio);
     }
+    // 时间不足提醒（每回合只发一次）
+    if (round_.IsLive()) {
+        const float left = round_.Config().roundTime - round_.Elapsed();
+        if (left <= 30.0f) {
+            for (Team t : {Team::T, Team::CT}) {
+                if (!CoachFor(t).timeLowFired) {
+                    CoachFor(t).timeLowFired = true;
+                    CoachOnEvent(t, CoachEventType::TimeLow);
+                }
+            }
+        }
+        // 赛点
+        if (teams_.ScoreT() == teams_.ScoreToWin() - 1 || teams_.ScoreCT() == teams_.ScoreToWin() - 1) {
+            for (Team t : {Team::T, Team::CT}) {
+                if (!CoachFor(t).matchPointFired) {
+                    CoachFor(t).matchPointFired = true;
+                    CoachOnEvent(t, CoachEventType::MatchPoint);
+                }
+            }
+        }
+    }
+
     prevPhase_ = after;
 }
 
@@ -36,6 +58,9 @@ void CS2DGame::BeginNewRound(AudioManager* audio) {
     RespawnAllForRound();
     SetupObjective();   // 每回合重置包点 / 人质
     AssignSquadRoles(); // 每回合按新的相对位置重新分工
+    CoachResetRound();
+    CoachOnEvent(Team::T,  CoachEventType::RoundStart);
+    CoachOnEvent(Team::CT, CoachEventType::RoundStart);
     bombBeepTimer_ = 0.0f;
     if (audio) audio->PlaySound(SoundEffect::ROUND_START);
     announcement_ = "第 " + std::to_string(round_.RoundNumber()) + " 回合";
@@ -257,6 +282,8 @@ void CS2DGame::ApplyRoundResult(Team winner, AudioManager* audio) {
 
     if (winner != Team::None) {
         teams_.AddScore(winner);
+    CoachRecordRound(Team::T,  winner == Team::T);
+    CoachRecordRound(Team::CT, winner == Team::CT);
     }
 
     // 回合胜负音效（以玩家阵营视角）
