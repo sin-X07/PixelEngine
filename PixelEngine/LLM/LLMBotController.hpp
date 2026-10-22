@@ -125,5 +125,8 @@ private:
     std::deque<PendingRequest> queue_;
     mutable std::mutex mutex_;
 
-    std::thread workerThread_;
+    // 两个工作线程：两队可以真正并发请求（服务端已开 --parallel 2）
+    static constexpr int kWorkers = 2;
+    std::thread workers_[kWorkers];
+    std::atomic<int> activeWorkers_{0};
 };

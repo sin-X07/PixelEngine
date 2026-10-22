@@ -122,6 +122,66 @@ void CS2DGame::CoachOnEvent(Team t, CoachEventType type, const std::string& area
 void CS2DGame::CoachUpdate(float dt) {
     CoachDrainLlm();   // 先收 LLM 回包，再处理新事件
 
+    // 条件分支：到点自动切换战术（时间差打法）
+    for (Team t : {Team::T, Team::CT}) {
+        CoachState& st = CoachFor(t);
+        if (st.plan.valid && st.plan.hasBranch &&
+            clockSec_ - st.plan.createdAt >= st.plan.branchAfterSec) {
+            TeamPlan next = st.plan;
+            next.hasBranch   = false;            // 只触发一次
+            next.intent      = st.plan.branchIntent;
+            next.tempo       = st.plan.branchTempo;
+            if (!st.plan.branchTarget.empty()) next.target = st.plan.branchTarget;
+            next.createdAt   = clockSec_;
+            next.expiresAt   = clockSec_ + 20.0f;
+            st.planExpiresAt = next.expiresAt;
+
+            // 按新意图重新分配区域
+            TeamPlan shaped = RuleCoach(t, CoachEvent{CoachEventType::RoundStart, 0.0f,
+                                                      clockSec_, std::string()});
+            shaped.intent    = next.intent;
+            shaped.target    = next.target;
+            shaped.tempo     = next.tempo;
+            shaped.hasBranch = false;
+            shaped.gen       = next.gen;
+            shaped.createdAt = next.createdAt;
+            shaped.expiresAt = next.expiresAt;
+            shaped.valid     = true;
+            shaped.reason    = "时间差：切换到 " + std::string(IntentName(next.intent));
+
+            st.plan   = shaped;
+            st.reason = shaped.reason;
+            coachPlanChangedAt_ = clockSec_;
+            std::cout << "[Coach] " << TeamName(t) << " 分支触发 -> "
+                      << IntentName(shaped.intent) << std::endl;
+            CoachApplyPlan(t);
+        }
+    }
+
+    // 计划过期：20 秒没有新事件就重新评估，避免守着过时计划
+    for (Team t : {Team::T, Team::CT}) {
+        CoachState& st = CoachFor(t);
+        if (st.plan.valid && st.planExpiresAt > 0.0f && clockSec_ > st.planExpiresAt) {
+            st.planExpiresAt = clockSec_ + 20.0f;
+            CoachEvent ev;
+            ev.type = CoachEventType::RoundStart;
+            ev.priority = 0.0f;
+            ev.atSec = clockSec_;
+            ++st.gen;
+            TeamPlan p = RuleCoach(t, ev);
+            p.gen = st.gen;
+            p.createdAt = clockSec_;
+            p.expiresAt = st.planExpiresAt;
+            p.valid = true;
+            st.plan = p;
+            st.reason = p.reason + "（计划过期，重新评估）";
+            coachPlanChangedAt_ = clockSec_;
+            std::cout << "[Coach] " << TeamName(t) << " 计划过期 -> "
+                      << IntentName(p.intent) << std::endl;
+            CoachApplyPlan(t);
+        }
+    }
+
     for (Team t : {Team::T, Team::CT}) {
         CoachState& st = CoachFor(t);
 
@@ -153,6 +213,8 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
     plan.createdAt = clockSec_;
     plan.valid     = true;
 
+    plan.expiresAt = clockSec_ + 20.0f;   // 20 秒后重新评估
+    st.planExpiresAt = plan.expiresAt;
     st.plan   = plan;
     st.reason = plan.reason;
     coachPlanChangedAt_ = clockSec_;
@@ -242,6 +304,16 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
         assign(aSite, aLong, bSite, bLong, mid);
         return plan;
     }
+    if (ev.type == CoachEventType::EconomyLow) {
+        plan.intent = PlanIntent::Save;
+        plan.tempo  = Tempo::Slow;
+        plan.reason = "经济不足，本回合保枪";
+        const std::string home = AreaHint(isT ? "T_Spawn" : "CT_Spawn");
+        for (auto& sl : plan.slots) {
+            sl = { CoachRole::Anchor, home.empty() ? std::string() : home, false, false };
+        }
+        return plan;
+    }
     if (ev.type == CoachEventType::TimeLow) {
         plan.tempo  = Tempo::Fast;
         plan.intent = isT ? PlanIntent::RushA : PlanIntent::Default;
@@ -258,6 +330,19 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
     }
     const bool avoidA = (aTries >= 2 && aWins == 0);
     const bool avoidB = (bTries >= 2 && bWins == 0);
+
+    // 经济崩溃就别硬打（回合开始时的第一道判断）
+    const bool broke = (ev.type == CoachEventType::RoundStart && LowEconomyAverage(t));
+    if (broke) {
+        plan.intent = PlanIntent::Save;
+        plan.tempo  = Tempo::Slow;
+        plan.reason = "开局平均余额不足，保枪攒钱";
+        const std::string home = AreaHint(isT ? "T_Spawn" : "CT_Spawn");
+        for (auto& sl : plan.slots) {
+            sl = { CoachRole::Anchor, home.empty() ? std::string() : home, false, false };
+        }
+        return plan;
+    }
 
     if (isT) {
         if (avoidA && !avoidB) {
@@ -321,6 +406,8 @@ void CS2DGame::CoachApplyPlan(Team t) {
             ai.planHoldY   = cy;
             ai.goalArea    = so.area;
         }
+        squad_[i].canTrade  = so.canTrade;
+        squad_[i].canRotate = so.canRotate;
         ++slot;
     }
 }
@@ -366,4 +453,49 @@ void CS2DGame::CoachResetRound() {
         st.matchPointFired = false;
     }
     for (size_t i = 0; i < bots_.size(); ++i) AiAt(i).hasPlanHold = false;
+}
+
+
+// ---------------------------------------------------------------------------
+// 回合开始（买枪之前）：立刻用规则教练出计划，保证 save/eco 能拦住购买；
+// 同时把 RoundStart 事件排进队列，稍后由 LLM 覆盖。
+// ---------------------------------------------------------------------------
+void CS2DGame::CoachBeginRound() {
+    for (Team t : {Team::T, Team::CT}) {
+        ++CoachFor(t).gen;
+        CoachEvent ev;
+        ev.type     = CoachEventType::RoundStart;
+        ev.priority = 100.0f;
+        ev.atSec    = clockSec_;
+
+        TeamPlan plan = RuleCoach(t, ev);
+        plan.gen       = CoachFor(t).gen;
+        plan.createdAt = clockSec_;
+        plan.expiresAt = clockSec_ + 20.0f;
+        plan.valid     = true;
+
+        CoachState& st = CoachFor(t);
+        st.plan          = plan;
+        st.reason        = plan.reason;
+        st.planExpiresAt = plan.expiresAt;
+        coachPlanChangedAt_ = clockSec_;
+
+        std::cout << "[Coach] " << TeamName(t) << " 回合计划 -> "
+                  << IntentName(plan.intent)
+                  << " | " << plan.reason << std::endl;
+        CoachApplyPlan(t);
+    }
+}
+
+
+// 队伍平均余额（含玩家）
+bool CS2DGame::LowEconomyAverage(Team t) const {
+    int sum = 0, n = 0;
+    if (player_.team == t) { sum += player_.money; ++n; }
+    for (const auto& b : bots_) {
+        if (b.team == t) { sum += b.money; ++n; }
+    }
+    // 手枪局有自己的节奏，不按 eco 处理；阈值 1800 更接近 CS 的经济线
+    if (round_.RoundNumber() <= 1) return false;
+    return (n > 0 && sum / n < 1800);
 }

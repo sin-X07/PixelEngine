@@ -46,7 +46,24 @@ struct TeamPlan {
     int         gen = 0;           // 代际号：旧回包直接丢弃
     float       createdAt = 0.0f;
     bool        valid = false;
+    float       expiresAt = 0.0f;   // 计划失效时刻（clockSec_ 基准）
+
+    // 条件分支：到点后自动切换（例如「前 20 秒卡点，20 秒后提速转点」）
+    bool        hasBranch = false;
+    float       branchAfterSec = 0.0f;
+    PlanIntent  branchIntent = PlanIntent::Default;
+    std::string branchTarget;
+    Tempo       branchTempo = Tempo::Normal;
 };
+
+// 节奏 → 激进系数（fast 更主动、slow 更保守）
+inline float TempoAggression(Tempo t) {
+    switch (t) {
+        case Tempo::Fast: return 1.25f;
+        case Tempo::Slow: return 0.80f;
+        default:          return 1.00f;
+    }
+}
 
 // 一回合的比赛记忆（保留最近 10 回合）
 struct RoundMemo {

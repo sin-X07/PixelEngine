@@ -56,6 +56,8 @@ struct SquadOrder {
     bool    hasHold = false;
     float   holdX = 0.0f;
     float   holdY = 0.0f;
+    bool    canTrade = true;    // 允许补枪（教练 canTrade）
+    bool    canRotate = false;  // 允许自行换点/游走（lurk）
 };
 
 // ============================================================================
@@ -164,6 +166,7 @@ public:
     struct BotRuntime {
         BotIntent llmIntent;                       // 本帧姿态（由计划+感知推导）
         int       stance = 0;                      // 最近一次姿态（诊断用）
+        float     rotateTimer = 0.0f;               // lurk 换点计时
 
         // 寻路
         std::vector<std::pair<float, float>> path;
@@ -468,6 +471,7 @@ private:
         bool  matchPointFired = false;
 
         // LLM 请求在途
+        float planExpiresAt = 0.0f;   // 计划时效（到期回到默认）
         bool  llmPending = false;
         int   llmGen = 0;
         float llmAt = 0.0f;
@@ -491,6 +495,9 @@ private:
     void CoachApplyPlan(Team t);
     void CoachRecordRound(Team t, bool won);
     void CoachResetRound();
+    // 回合开始、买枪之前先出计划（save/eco 必须在购买前生效）
+    void CoachBeginRound();
+    bool LowEconomyAverage(Team t) const;
     bool AreaCenterByName(const std::string& name, float& ox, float& oy) const;
     std::string AreaHint(const std::string& intentTarget) const;
     bool prevInteract_ = false;   // E 键边沿检测

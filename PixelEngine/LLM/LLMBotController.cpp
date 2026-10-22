@@ -173,9 +173,11 @@ void LLMBotController::Shutdown() {
     running_ = false;
     ready_ = false;
 
-    if (workerThread_.joinable()) {
-        workerThread_.join();   // 工作线程已设置 WinHTTP 超时，不会无限阻塞
+    // 等待所有工作线程退出（已设置 WinHTTP 超时，不会无限阻塞）
+    for (auto& w : workers_) {
+        if (w.joinable()) w.join();
     }
+    activeWorkers_ = 0;
 
     if (killOnExit_) {
         KillServer();
@@ -417,10 +419,15 @@ void LLMBotController::AskRaw(const std::string& systemPrompt, const std::string
         req.rawCb     = std::move(callback);
         queue_.push_back(std::move(req));
     }
-    if (!running_.load()) {
+    if (activeWorkers_.load() == 0) {
         running_ = true;
-        if (workerThread_.joinable()) workerThread_.join();
-        workerThread_ = std::thread(&LLMBotController::WorkerLoop, this);
+        for (int w = 0; w < kWorkers; ++w) {
+            if (workers_[w].joinable()) workers_[w].join();
+        }
+        activeWorkers_ = kWorkers;
+        for (int w = 0; w < kWorkers; ++w) {
+            workers_[w] = std::thread(&LLMBotController::WorkerLoop, this);
+        }
     }
 }
 
@@ -431,7 +438,10 @@ void LLMBotController::WorkerLoop() {
         RawCallback rawCb;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (queue_.empty()) { running_ = false; break; }
+            if (queue_.empty()) {
+                if (--activeWorkers_ <= 0) { activeWorkers_ = 0; running_ = false; }
+                break;
+            }
             PendingRequest req = std::move(queue_.front());
             queue_.pop_front();
             body      = std::move(req.body);
@@ -452,7 +462,10 @@ void LLMBotController::WorkerLoop() {
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (queue_.empty()) running_ = false;
+            if (queue_.empty()) {
+                if (--activeWorkers_ <= 0) { activeWorkers_ = 0; running_ = false; }
+                break;
+            }
         }
     }
 }

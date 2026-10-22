@@ -28,6 +28,8 @@ const char* kCoachSystemPrompt =
     "     每个元素 {role, area}；role 取 entry|support|lurk|anchor|awper；\n"
     "     area 必须是【区域】里出现过的名字，不知道就填空字符串\n"
     "  reason: 一句中文，不超过 20 个字，说明你为什么这么打\n"
+    "  branch: 可选。{\"after_sec\":整数, \"intent\":同上, \"target\":同上, \"tempo\":同上}\n"
+    "     表示「再过 N 秒切换到这个战术」，用于做时间差打法；不需要就省略\n"
     "\n"
     "intent 语义约束（必须遵守）：\n"
     "  retake_a / retake_b 只能用于 C4 已被敌方安装、我方需要夺回包点的情况\n"
@@ -226,6 +228,19 @@ static bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorl
         }
     }
 
+    // 条件分支（可选）
+    if (root.contains("branch") && root["branch"].is_object()) {
+        const auto& br = root["branch"];
+        PlanIntent bi = PlanIntent::Default;
+        if (ParseIntent(LowerCopy(br.value<std::string>("intent", "")), bi)) {
+            plan.hasBranch      = true;
+            plan.branchAfterSec = static_cast<float>(br.value<double>("after_sec", 20.0));
+            plan.branchIntent   = bi;
+            plan.branchTarget   = br.value<std::string>("target", "");
+            ParseTempo(LowerCopy(br.value<std::string>("tempo", "normal")), plan.branchTempo);
+        }
+    }
+
     if (!ok) return false;
 
     // 语义校验：纠正模型最常见的两个误用
@@ -260,6 +275,21 @@ static bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorl
 void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
     if (!coachLlmEnabled_ || !coachLlm_) return;
     if (!world_) return;
+
+    // 只对「战略级」事件开教练会议。
+    // 普通减员每 1~2 秒就发生一次，若每次都调用，代际号会被不断推高，
+    // 而模型回包要 2~7 秒 —— 回包永远是过期的（实测大量「回包过期，丢弃」）。
+    // 战术级反应交给规则教练即可。
+    switch (ev.type) {
+        case CoachEventType::RoundStart:
+        case CoachEventType::BombPlanted:
+        case CoachEventType::DefuseStarted:
+        case CoachEventType::TimeLow:
+        case CoachEventType::MatchPoint:
+            break;
+        default:
+            return;
+    }
 
     CoachState& st = CoachFor(t);
     if (st.llmPending) return;      // 一次只允许一个在途请求
@@ -315,6 +345,8 @@ void CS2DGame::CoachDrainLlm() {
 
         plan.gen       = st.gen;
         plan.createdAt = clockSec_;
+        plan.expiresAt = clockSec_ + 20.0f;
+        st.planExpiresAt = plan.expiresAt;
         plan.valid     = true;
         st.plan   = plan;
         st.reason = plan.reason;

@@ -55,10 +55,22 @@ void CS2DGame::UpdateRoundFlow(float dt, AudioManager* audio) {
 
 void CS2DGame::BeginNewRound(AudioManager* audio) {
     if (teams_.MatchOver()) return;
+    CoachResetRound();
+    CoachBeginRound();      // 必须在买枪之前：save/eco 要拦得住 BotBuyLoadout
     RespawnAllForRound();
     SetupObjective();   // 每回合重置包点 / 人质
     AssignSquadRoles(); // 每回合按新的相对位置重新分工
-    CoachResetRound();
+    // 经济不足：队伍平均余额买不起步枪时提示教练（eco 决策依据）
+    for (Team t : {Team::T, Team::CT}) {
+        int sum = 0, n = 0;
+        if (player_.team == t) { sum += player_.money; ++n; }
+        for (const auto& b : bots_) {
+            if (b.team == t) { sum += b.money; ++n; }
+        }
+        if (n > 0 && sum / n < 1800) {
+            CoachOnEvent(t, CoachEventType::EconomyLow);
+        }
+    }
     CoachOnEvent(Team::T,  CoachEventType::RoundStart);
     CoachOnEvent(Team::CT, CoachEventType::RoundStart);
     bombBeepTimer_ = 0.0f;
@@ -162,6 +174,9 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
 // BOT 经济：按余额买武器与护甲（与玩家同一套价格）
 // 开局只有手枪、无护甲；这里模拟 BOT 在购买阶段的采购顺序：先枪、再甲、再雷
 void CS2DGame::BotBuyLoadout(Player& bot) {
+    // 教练选择保枪：本回合不花钱
+    if (GetCoachPlan(bot.team).intent == PlanIntent::Save) return;
+
     const bool isT = (bot.team == Team::T);
     WeaponId primary = bot.weapons[0];
 

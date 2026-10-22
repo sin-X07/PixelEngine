@@ -171,7 +171,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
         // ---- 补枪（trade）：队友刚在附近阵亡 → 冲过去换人 ----
         if (lastDeathTimer_ > 0.0f && lastDeathTeam_ == bot.team &&
-            !ai.tradePushed && order.role != BotRole::Anchor) {
+            !ai.tradePushed && order.role != BotRole::Anchor && order.canTrade) {
             const float dx = lastDeathX_ - bot.x;
             const float dy = lastDeathY_ - bot.y;
             const float d2 = dx * dx + dy * dy;
@@ -197,6 +197,36 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // ---- 目标选择：只用「看得见」的敌人 + 团队情报 ----
         float targetDist = 0.0f;
         const Player* target = FindVisibleEnemy(bot, targetDist);
+
+        // 首次接火：每队每回合只报一次（教练据此判断主攻方向）
+        if (target && CoachFor(bot.team).firstContactArea.empty()) {
+            const std::string ca = world_ ? world_->FindAreaAt(bot.x, bot.y) : std::string();
+            CoachFor(bot.team).firstContactArea = ca;
+            CoachOnEvent(bot.team, CoachEventType::EnemySpotted, ca);
+        }
+
+        // lurk 换点：允许游走的角色在驻守点附近周期性换位，避免站死
+        if (ai.hasPlanHold && order.canRotate) {
+            ai.rotateTimer -= dt;
+            if (ai.rotateTimer <= 0.0f) {
+                ai.rotateTimer = 6.0f;
+                std::uniform_real_distribution<float> ang(0.0f, 6.2831853f);
+                std::uniform_real_distribution<float> rad(30.0f, 80.0f);
+                for (int tries = 0; tries < 6; ++tries) {
+                    const float a = ang(rng_);
+                    const float r = rad(rng_);
+                    const float nx = ai.planHoldX + std::cos(a) * r;
+                    const float ny = ai.planHoldY + std::sin(a) * r;
+                    const float half = bot.size * 0.5f;
+                    if (world_ && !world_->CheckRectCollision(nx - half, ny - half,
+                                                              bot.size, bot.size)) {
+                        ai.planHoldX = nx;
+                        ai.planHoldY = ny;
+                        break;
+                    }
+                }
+            }
+        }
 
         // 教练计划：没有可见敌人时优先去计划的驻守点（有敌人时反应交给决策树）
         if (!target && ai.hasPlanHold) {
@@ -268,7 +298,8 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
         // ---- 目标引导：A* 寻路推进 ----
         // 角色行进速度：突破手全速、支援略慢、断后明显靠后
-        const float roleMul = (order.role == BotRole::Entry)   ? Tuning::SpeedMulEntry
+        const float aggr = TempoAggression(GetCoachPlan(bot.team).tempo);
+    const float roleMul = (order.role == BotRole::Entry)   ? Tuning::SpeedMulEntry
                             : (order.role == BotRole::Anchor)  ? Tuning::SpeedMulAnchor
                             :                                    Tuning::SpeedMulSupport;
         {
@@ -375,7 +406,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
             // 断后位不主动远距离追击：没有任务目标时守在原地
             if (!destIsObjective && order.role == BotRole::Anchor &&
-                engageDist > Tuning::AnchorHoldRange) {
+                engageDist > Tuning::AnchorHoldRange * aggr) {
                 hasDest = false;
             }
 
@@ -416,8 +447,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                        GetCoachPlan(bot.team).tempo == Tempo::Slow) {
                 it.action = BotIntent::Action::Defensive;
             } else if (ord.role == BotRole::Entry ||
-                       GetCoachPlan(bot.team).tempo == Tempo::Fast ||
-                       engageDist < Tuning::CloseCombatRange * 0.6f) {
+                       engageDist < Tuning::CloseCombatRange * 0.6f * aggr) {
                 it.action = BotIntent::Action::Aggressive;
             } else if (ai.hasPlanHold && engageDist > wdef.range) {
                 it.action = BotIntent::Action::MoveToCover;   // 借掩体接近
