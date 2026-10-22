@@ -13,7 +13,10 @@
 void CS2DGame::UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bool stealth) {
     constexpr float ACCEL    = 600.0f;
     constexpr float FRICTION = 8.0f;
-    const float maxSpeed = stealth ? 25.0f : 60.0f;
+    // 持械移速惩罚：步枪最慢、手枪次之、近战最快（倍率来自武器表）
+    const float weaponMul = player_.CurrentWeapon().moveSpeedMul;
+    const float baseSpeed = stealth ? Tuning::PlayerStealthSpeed : Tuning::PlayerBaseSpeed;
+    const float maxSpeed  = baseSpeed * weaponMul;
 
     const int dx = (d ? 1 : 0) - (a ? 1 : 0);
     const int dy = (s ? 1 : 0) - (w ? 1 : 0);

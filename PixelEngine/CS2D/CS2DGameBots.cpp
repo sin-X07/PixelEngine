@@ -81,7 +81,9 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     const float d  = std::sqrt(dx * dx + dy * dy);
     if (d < 0.001f) return false;
 
-    const float speed = Tuning::BotMoveSpeed * std::clamp(speedMul, Tuning::SpeedMulMin, 1.0f);
+    const float weaponMul = bot.CurrentWeapon().moveSpeedMul;
+    const float speed = Tuning::BotMoveSpeed * weaponMul
+                      * std::clamp(speedMul, Tuning::SpeedMulMin, 1.0f);
     bot.vx = dx / d * speed;
     bot.vy = dy / d * speed;
 
@@ -394,6 +396,16 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             float sepX = 0.0f, sepY = 0.0f;
             AccumulateSeparation(bot, sepX, sepY);
             ApplyAvoidance(bot.vx, bot.vy, sepX, sepY);
+        }
+
+        // 持械移速上限（与玩家同一套武器倍率）
+        {
+            const float cap = Tuning::BotMoveSpeed * bot.CurrentWeapon().moveSpeedMul;
+            const float sp = std::sqrt(bot.vx * bot.vx + bot.vy * bot.vy);
+            if (sp > cap && sp > 0.001f) {
+                bot.vx = bot.vx / sp * cap;
+                bot.vy = bot.vy / sp * cap;
+            }
         }
 
         MoveWithCollision(bot, dt);

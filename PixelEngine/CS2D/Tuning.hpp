@@ -24,6 +24,8 @@ constexpr float VisionHalfAngleRad =
 constexpr float BuyWindowSeconds = 15.0f;   // 开局可购买时间（秒，自回合开始计）
 
 // ---------------- 移动 ----------------
+constexpr float PlayerBaseSpeed    = 60.0f;  // 玩家基础移速（再乘武器倍率）
+constexpr float PlayerStealthSpeed = 25.0f;  // 玩家潜行移速
 constexpr float BotMoveSpeed      = 60.0f;   // BOT 基础移动速度
 constexpr float SpeedMulEntry     = 1.00f;   // 突破手
 constexpr float SpeedMulSupport   = 0.80f;   // 支援
