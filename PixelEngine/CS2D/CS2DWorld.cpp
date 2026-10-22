@@ -120,6 +120,23 @@ bool CS2DWorld::Build(const CS2DMapData& data) {
         }
     }
 
+    // ---- 区域层：组图层里的每个对象层就是一个命名区域 ----
+    // （Tiled 里 site 组下 A_Site / Mid / B_Long ... 各自是一层，里面是可行走矩形）
+    for (const auto& ol : data.objectLayers) {
+        if (ol.group.empty()) continue;      // 只认组里的图层，避免和顶层的实体层混淆
+        AreaDef area;
+        area.name = ol.name;
+        area.rects = ol.objects;
+        if (!area.rects.empty()) areas_.push_back(std::move(area));
+    }
+    if (!areas_.empty()) {
+        std::cout << "[CS2DWorld] 战术区域 " << areas_.size() << " 个: ";
+        for (size_t i = 0; i < areas_.size(); ++i) {
+            std::cout << areas_[i].name << (i + 1 < areas_.size() ? " " : "");
+        }
+        std::cout << std::endl;
+    }
+
     // ---- 可见 tile 层（没有 tile layer 则跳过）----
     for (const auto& layer : data.tileLayers) {
         if (!layer.visible) continue;
@@ -209,4 +226,26 @@ bool CS2DWorld::CheckRectCollision(float x, float y, float w, float h) const {
         }
     }
     return false;
+}
+
+// ============================================================================
+// 战术区域查询
+// ============================================================================
+
+std::string CS2DWorld::FindAreaAt(float x, float y) const {
+    for (const auto& a : areas_) {
+        for (const auto& r : a.rects) {
+            if (x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height) {
+                return a.name;
+            }
+        }
+    }
+    return std::string();
+}
+
+std::vector<std::string> CS2DWorld::AreaNames() const {
+    std::vector<std::string> names;
+    names.reserve(areas_.size());
+    for (const auto& a : areas_) names.push_back(a.name);
+    return names;
 }

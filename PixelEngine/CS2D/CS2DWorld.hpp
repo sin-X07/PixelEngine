@@ -67,6 +67,17 @@ public:
     const std::vector<ObjectDef>& GetHostages()   const { return hostages_; }
     const std::vector<ObjectDef>& GetBuyZones()   const { return buyZones_; }
 
+    // ---- 战术区域（Tiled 组图层 "site" 下的每个对象层 = 一个命名区域）----
+    struct AreaDef {
+        std::string name;
+        std::vector<ObjectDef> rects;
+    };
+    const std::vector<AreaDef>& GetAreas() const { return areas_; }
+    // 返回 (x,y) 所在区域名；未命中返回空串
+    std::string FindAreaAt(float x, float y) const;
+    // 区域名列表（给 LLM prompt 用）
+    std::vector<std::string> AreaNames() const;
+
     // 指定阵营的出生点；无专属点时回退到全部出生点
     std::vector<const SpawnPoint*> SpawnsForTeam(bool isCT) const;
 
@@ -101,6 +112,7 @@ private:
 
     // 目标物 / 购买区
     std::vector<ObjectDef>   bombSites_;
+    std::vector<AreaDef>     areas_;
     std::vector<ObjectDef>   hostages_;
     std::vector<ObjectDef>   buyZones_;
 };

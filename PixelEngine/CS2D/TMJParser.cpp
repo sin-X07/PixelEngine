@@ -1,3 +1,4 @@
+#include <functional>
 #include "TMJParser.hpp"
 #include "MiniJSON.hpp"
 #include "../Core/PathUtils.hpp"
@@ -184,12 +185,14 @@ bool TMJParser::Parse(const std::string& resolvedPath, CS2DMapData& out) {
     }
     std::cout << "[TMJParser] 解析了 " << out.tilesets.size() << " 个 tileset" << std::endl;
 
-    // layers
-    if (root.contains("layers") && root["layers"].is_array()) {
-        const auto& layersArr = root["layers"];
-        for (size_t i = 0; i < layersArr.size(); ++i) {
-            const auto& layer = layersArr[i];
-            std::string layerType = layer["type"].get_str();
+    // layers（递归进入 Tiled 的「组图层」——区域层就放在 site 组里）
+    std::function<void(const MiniJSON::Value&, const std::string&)> parseLayers;
+    parseLayers = [&](const MiniJSON::Value& arr, const std::string& groupName) {
+        if (!arr.is_array()) return;
+        for (size_t i = 0; i < arr.size(); ++i) {
+            const auto& layer = arr[i];
+            const std::string layerType = layer["type"].get_str();
+
             if (layerType == "tilelayer") {
                 TileLayerDef tl;
                 if (ParseTileLayer(layer, tl)) {
@@ -209,12 +212,25 @@ bool TMJParser::Parse(const std::string& resolvedPath, CS2DMapData& out) {
             } else if (layerType == "objectgroup") {
                 ObjectLayerDef ol;
                 if (ParseObjectLayer(layer, ol)) {
-                    std::cout << "[TMJParser]   对象层: '" << ol.name << "' "
-                              << ol.objects.size() << " 个对象" << std::endl;
+                    ol.group = groupName;
+                    std::cout << "[TMJParser]   对象层: '"
+                              << (groupName.empty() ? "" : groupName + "/") << ol.name
+                              << "' " << ol.objects.size() << " 个对象" << std::endl;
                     out.objectLayers.push_back(std::move(ol));
+                }
+            } else if (layerType == "group") {
+                // 组图层：递归处理子图层，把组名带下去
+                if (layer.contains("layers")) {
+                    const std::string childGroup =
+                        groupName.empty() ? layer["name"].get_str()
+                                          : groupName + "/" + layer["name"].get_str();
+                    parseLayers(layer["layers"], childGroup);
                 }
             }
         }
+    };
+    if (root.contains("layers")) {
+        parseLayers(root["layers"], "");
     }
 
     std::cout << "[TMJParser] 共解析 " << out.tileLayers.size() << " 个瓦片层 + "

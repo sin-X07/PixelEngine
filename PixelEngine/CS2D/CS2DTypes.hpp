@@ -63,6 +63,7 @@ struct ImageLayerDef {
 // ---- 对象层数据 ----
 struct ObjectLayerDef {
     std::string name;
+    std::string group;              // 所属组图层名（空=顶层）；区域层放在 "site" 组里
     float       opacity = 1.0f;
     bool        visible = true;
     std::vector<ObjectDef> objects;
