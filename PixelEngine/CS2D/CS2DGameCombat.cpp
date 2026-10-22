@@ -104,7 +104,7 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     }
 
     // ---- 枪械 ----
-    if (player_.ammo <= 0) { StartReload(player_); return; }
+    if (player_.ammo <= 0) { StartReload(player_, audio); return; }
 
     // 散布 + 多弹丸（霰弹）
     std::uniform_real_distribution<float> spreadDist(-def.spreadBase, def.spreadBase);
@@ -342,8 +342,8 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
 void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
     switch (g.type) {
         case WeaponId::GrenadeHE: {
-            constexpr float RADIUS = 95.0f;
-            constexpr float MAX_DMG = 98.0f;
+            const float RADIUS  = Tuning::NadeBlastRadius;
+            const float MAX_DMG = Tuning::NadeMaxDamage;
 
             auto damageAt = [&](Player& p) {
                 if (!p.alive || p.team == g.team) return;   // 无友伤
@@ -351,7 +351,9 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
                 const float dy = p.y - g.y;
                 const float d = std::sqrt(dx * dx + dy * dy);
                 if (d > RADIUS) return;
-                const float falloff = 1.0f - d / RADIUS;
+                // 平方衰减：贴近中心才有高伤害，边缘伤害很低
+                const float t = 1.0f - d / RADIUS;
+                const float falloff = t * t;
                 if (ApplyDamage(p, static_cast<int>(MAX_DMG * falloff))) {
                     OnCombatantKilled(p, audio);
                 }
@@ -359,6 +361,10 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
 
             damageAt(player_);
             for (auto& b : bots_) damageAt(b);
+
+            // 爆炸特效（供 Render 画扩散圆环）
+            blasts_.push_back(BlastFx{ g.x, g.y, Tuning::NadeBlastFxTime,
+                                       Tuning::NadeBlastFxTime });
 
             if (audio) audio->PlaySound(SoundEffect::GRENADE_EXPLODE);
             break;
@@ -436,6 +442,9 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio) {
     victim.reloading = false;
     ++victim.deaths;
 
+    // 阵亡掉落：主武器 → 副武器（仅非标配） → 随机一个投掷物
+    DropEquipmentOnDeath(victim);
+
     // 记录阵亡点：队友会尝试「补枪」（trade）
     lastDeathX_      = victim.x;
     lastDeathY_      = victim.y;
@@ -484,9 +493,33 @@ bool CS2DGame::ApplyDamage(Player& victim, int amount) {
 // 换弹 / 视野 / 安全距离
 // ============================================================================
 
-void CS2DGame::StartReload(Player& p) {
-    p.reloading = true;
-    p.reloadTimer = Player::RELOAD_TIME;
+void CS2DGame::StartReload(Player& p, AudioManager* audio) {
+    if (p.reloading) return;
+
+    const WeaponDef& def = p.CurrentWeapon();
+    if (def.magazine <= 0) return;          // 刀/投掷物不换弹
+
+    p.reloading   = true;
+    p.reloadTimer = def.reloadTime;         // 每把枪不同，取自素材时长
+    if (audio) {
+        audio->PlaySoundAt(ReloadSoundFor(def.id), p.x, p.y, player_.x, player_.y);
+    }
+}
+
+// 武器 → 换弹音效（SMG 无独立素材，复用步枪换弹音）
+SoundEffect CS2DGame::ReloadSoundFor(WeaponId id) {
+    switch (id) {
+        case WeaponId::Glock:   return SoundEffect::RELOAD_GLOCK;
+        case WeaponId::USP:     return SoundEffect::RELOAD_USP;
+        case WeaponId::Deagle:  return SoundEffect::RELOAD_DEAGLE;
+        case WeaponId::Galil:   return SoundEffect::RELOAD_GALIL;
+        case WeaponId::AK47:    return SoundEffect::RELOAD_AK47;
+        case WeaponId::M4A1:    return SoundEffect::RELOAD_M4A1;
+        case WeaponId::Shotgun: return SoundEffect::RELOAD_SHOTGUN;
+        case WeaponId::AWP:     return SoundEffect::RELOAD_AWP;
+        case WeaponId::SMG:     return SoundEffect::RELOAD_GALIL;
+        default:                return SoundEffect::CLICK;
+    }
 }
 
 void CS2DGame::UpdateReload(Player& p, float dt) {
@@ -512,3 +545,89 @@ bool CS2DGame::IsEnemyNearby(float x, float y, float safeRadius, Team myTeam) co
     return false;
 }
 
+
+
+// ============================================================================
+// 掉落武器 / 拾取
+// ============================================================================
+
+void CS2DGame::DropEquipmentOnDeath(const Player& victim) {
+    WeaponId dropId = WeaponId::None;
+    bool isGrenade = false;
+
+    // 优先级 1：主武器
+    if (victim.weapons[0] != WeaponId::None) {
+        dropId = victim.weapons[0];
+    } else {
+        // 优先级 2：副武器（标配手枪不掉落）
+        const WeaponId defaultPistol = (victim.team == Team::CT) ? WeaponId::USP
+                                                                 : WeaponId::Glock;
+        if (victim.weapons[1] != WeaponId::None && victim.weapons[1] != defaultPistol) {
+            dropId = victim.weapons[1];
+        } else if (victim.grenadeCount > 0) {
+            // 优先级 3：随机掉一个投掷物
+            const int idx = static_cast<int>(rng_() % static_cast<unsigned>(victim.grenadeCount));
+            dropId = victim.grenades[idx];
+            isGrenade = true;
+        }
+    }
+
+    if (dropId == WeaponId::None) return;
+
+    DroppedItem it;
+    it.id = dropId;
+    it.x = victim.x;
+    it.y = victim.y;
+    it.life = 30.0f;
+    it.isGrenade = isGrenade;
+    drops_.push_back(it);
+
+    std::cout << "[Drop] " << TeamName(victim.team) << " 掉落 "
+              << WeaponDB::Get(dropId).name
+              << " @(" << static_cast<int>(victim.x) << ","
+              << static_cast<int>(victim.y) << ")" << std::endl;
+}
+
+void CS2DGame::TryPickupDrops() {
+    if (!player_.alive) return;
+
+    for (auto& d : drops_) {
+        if (d.id == WeaponId::None) continue;
+        const float dx = d.x - player_.x;
+        const float dy = d.y - player_.y;
+        if (dx * dx + dy * dy > 16.0f * 16.0f) continue;
+
+        bool taken = false;
+        if (d.isGrenade) {
+            const int limit = (d.id == WeaponId::GrenadeFlash) ? 2 : 1;
+            if (player_.grenadeCount < Player::MAX_GRENADES &&
+                player_.CountGrenade(d.id) < limit) {
+                player_.grenades[player_.grenadeCount++] = d.id;
+                player_.SyncActiveGrenade();
+                taken = true;
+            }
+        } else if (WeaponDB::Get(d.id).slot == WeaponSlotKind::Primary) {
+            player_.weapons[0] = d.id;
+            slotAmmo_[0]    = WeaponDB::Get(d.id).magazine;
+            slotMaxAmmo_[0] = slotAmmo_[0];
+            if (player_.weaponSlot == 0) {
+                player_.ammo = slotAmmo_[0];
+                player_.maxAmmo = slotMaxAmmo_[0];
+            }
+            taken = true;
+        } else if (WeaponDB::Get(d.id).slot == WeaponSlotKind::Secondary) {
+            player_.weapons[1] = d.id;
+            slotAmmo_[1]    = WeaponDB::Get(d.id).magazine;
+            slotMaxAmmo_[1] = slotAmmo_[1];
+            if (player_.weaponSlot == 1) {
+                player_.ammo = slotAmmo_[1];
+                player_.maxAmmo = slotMaxAmmo_[1];
+            }
+            taken = true;
+        }
+
+        if (taken) {
+            d.id = WeaponId::None;   // 标记已拾取
+        }
+    }
+}

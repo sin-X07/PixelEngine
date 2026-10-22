@@ -114,6 +114,20 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
         ai.pathIdx = 0;
         ai.repathTimer = 0.0f;
     }
+
+    // 卡墙脱困：只在「本该沿路径移动」的帧判定，避免站桩/拆包/守点被误挪
+    {
+        const float dxm = bot.x - ai.lastX;
+        const float dym = bot.y - ai.lastY;
+        if (dxm * dxm + dym * dym > 1.0f) {
+            ai.lastX = bot.x;
+            ai.lastY = bot.y;
+            ai.stuckTimer = 0.0f;
+        } else {
+            ai.stuckTimer += dt;
+            if (ai.stuckTimer > 0.7f) NudgeOutOfStuck(bot, ai);
+        }
+    }
     return true;
 }
 
@@ -128,6 +142,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         if (!bot.alive) continue;
         auto& ai = AiAt(i);
         ai.scanPhase += dt;
+
 
         // 分工指令
         SquadOrder order;
@@ -168,7 +183,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             float covX = 0.0f, covY = 0.0f;
             if (FindCoverPoint(bot, ai.threatX, ai.threatY, covX, covY)) {
                 ai.llmIntent.Tick(dt);
-                if (bot.ammo <= 0 && !bot.reloading) StartReload(bot);
+                if (bot.ammo <= 0 && !bot.reloading) StartReload(bot, audio);
                 if (FollowPathTo(bot, ai, covX, covY, dt, 1.0f)) continue;
             }
         }
@@ -223,7 +238,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // 脱战就补满；交火中只在弹匣见底（<=25%）才打断射击去换弹
         if (!bot.reloading && bot.ammo < bot.maxAmmo) {
             const int lowAmmo = static_cast<int>(static_cast<float>(bot.maxAmmo) * Tuning::LowAmmoFraction);
-            if (!canSee || bot.ammo <= lowAmmo) StartReload(bot);
+            if (!canSee || bot.ammo <= lowAmmo) StartReload(bot, audio);
         }
 
         // ---- 手雷：有情报但无直接视野时，向情报点投掷 ----
@@ -267,9 +282,12 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                             destIsObjective = hasDest;
                         }
                     } else {
-                        // 已下包：回到包点附近守包
-                        destX = bombX_;
-                        destY = bombY_;
+                        // 已下包：围绕包点环形站位守包（不再全挤在包上）
+                        static const float kRing[8] = { 0.0f, 0.79f, 1.57f, 2.36f,
+                                                        3.14f, 3.93f, 4.71f, 5.50f };
+                        const float ang = kRing[i % 8];
+                        destX = bombX_ + std::cos(ang) * Tuning::BombHoldRing;
+                        destY = bombY_ + std::sin(ang) * Tuning::BombHoldRing;
                         hasDest = true;
                         destIsObjective = true;
                     }
@@ -391,7 +409,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
             if (bot.shootCooldown <= 0.0f) {
                 if (engageDist < def.range + 200.0f) {
-                    if (bot.ammo <= 0) { StartReload(bot); continue; }
+                    if (bot.ammo <= 0) { StartReload(bot, audio); continue; }
 
                     // 命中倾向：30% 精确（小抖动），70% 打偏（大散布）
                     std::uniform_real_distribution<float> hitRoll(0.0f, 1.0f);

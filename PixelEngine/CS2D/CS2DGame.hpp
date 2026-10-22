@@ -180,6 +180,11 @@ public:
         bool  tradePushed     = false; // 本回合是否已补过枪
         bool  hadTarget       = false; // 上一帧是否看得见敌人（决定是否原地扫描）
         float scanPhase       = 0.0f;  // 扫视相位（行走时左右小幅摆头）
+        float footstepTimer   = 0.0f;  // 脚步音节奏
+
+        // 卡墙检测
+        float lastX = 0.0f, lastY = 0.0f;
+        float stuckTimer = 0.0f;
     };
 
     struct Bullet {
@@ -369,6 +374,8 @@ public:
     // 购买护甲：tier 1=护甲 2=护甲+头盔
     bool TryBuyArmor(int tier);
     int  GetPlayerArmor()  const { return player_.armor; }
+    int  GetPlayerHealth()    const { return player_.health; }
+    int  GetPlayerMaxHealth() const { return player_.maxHealth; }
     bool GetPlayerHelmet() const { return player_.helmet; }
 
     // ---- 武器 ----
@@ -400,6 +407,26 @@ private:
     std::vector<Bullet> bullets_;
     std::vector<Grenade> grenades_;
     std::vector<SmokeCloud> smokes_;
+
+    // 手雷爆炸特效（仅用于渲染扩散圆环）
+    struct BlastFx {
+        float x = 0.0f, y = 0.0f;
+        float life = 0.0f;      // 剩余秒数
+        float total = 1.0f;     // 总时长
+    };
+    std::vector<BlastFx> blasts_;
+
+    // 阵亡掉落的武器/投掷物
+    struct DroppedItem {
+        WeaponId id = WeaponId::None;
+        float x = 0.0f, y = 0.0f;
+        float life = 30.0f;      // 30 秒后消失
+        bool  isGrenade = false;
+    };
+    std::vector<DroppedItem> drops_;
+
+    void TryPickupDrops();      // 玩家走过即拾取
+    void DropEquipmentOnDeath(const Player& victim);
     float flashTimer_ = 0.0f;      // 玩家闪光致盲剩余秒数
     float footstepTimer_ = 0.0f;   // 玩家脚步声节奏
     float hitMarkerTimer_ = 0.0f;   // 命中敌人反馈
@@ -476,6 +503,8 @@ private:
     void UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, float worldMY, class AudioManager* audio);
     void UpdateBOTs(float dt, class AudioManager* audio);
     // 找一个能挡住威胁点视线的掩体位置（就近优先）
+    // 卡墙脱困：尝试在周围找一个可行走点并侧移过去（返回是否成功）
+    bool NudgeOutOfStuck(Player& bot, BotRuntime& ai);
     bool FindCoverPoint(const Player& bot, float threatX, float threatY,
                         float& outX, float& outY) const;
 
@@ -484,6 +513,8 @@ private:
 
     // 找到武器对应的枪声（供玩家与 BOT 共用）
     static SoundEffect FireSoundFor(WeaponId id);
+    // 武器对应的换弹音效（时长与 WeaponDef::reloadTime 对齐）
+    static SoundEffect ReloadSoundFor(WeaponId id);
 
     // ---- 小队协同 ----
     void AssignSquadRoles();            // 回合开始时分配 突破/支援/断后
@@ -522,7 +553,7 @@ private:
     bool BotCanSeePlayer(const Player& bot) const;
     bool PlayerCanSeeBot(const Player& bot) const;
 
-    void StartReload(Player& p);
+    void StartReload(Player& p, class AudioManager* audio = nullptr);
     void UpdateReload(Player& p, float dt);
 
     // 半径内是否存在「敌对阵营」的存活单位（队友不计入）

@@ -39,7 +39,7 @@ constexpr float SepMaxSpeed      = 60.0f;    // 合成后限速
 constexpr float RepathInterval   = 0.8f;     // 重算间隔
 constexpr float RepathGoalMoved  = 70.0f;    // 目标移动多少像素触发重算
 constexpr float WaypointReach    = 8.0f;     // 到达路点判定
-constexpr float PathAgentRadius  = 3.5f;     // 烘焙可行走网格的角色半径
+constexpr float PathAgentRadius  = 4.0f;     // 烘焙可行走网格的角色半径
 
 // ---------------- 受击撤退 ----------------
 constexpr float RetreatHealth    = 30.0f;    // 中弹后血量低于此值触发撤退
@@ -56,6 +56,12 @@ constexpr float TradeMinDist     = 40.0f;    // 太近不必补
 constexpr int   TradeWindowSec   = 3;        // 提示词里显示的窗口秒数
 
 // ---------------- 手雷 ----------------
+constexpr float NadeBlastRadius  = 110.0f;  // 高爆雷爆炸半径（世界单位）
+constexpr float NadeMaxDamage    = 78.0f;   // 中心伤害（边缘按平方衰减到 0）
+constexpr float NadeFuseSeconds  = 1.4f;    // 引信时间
+constexpr float DefuseRadius     = 26.0f;   // 拆包半径：必须贴近包点
+constexpr float BombHoldRing     = 85.0f;   // 下包后 T 守包的环形半径
+constexpr float NadeBlastFxTime  = 0.35f;   // 爆炸特效持续
 constexpr float NadeThrowMin     = 90.0f;    // 投掷最小距离
 constexpr float NadeThrowMax     = 230.0f;   // 投掷最大距离
 constexpr float NadeCooldown     = 7.0f;     // 两次投掷间隔

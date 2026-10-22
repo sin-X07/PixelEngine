@@ -105,6 +105,8 @@ public:
         int   money = 0;
         int   armor = 0;
         int   grenadeCount = 0;
+        int   health = 100;
+        int   maxHealth = 100;
         bool  helmet = false;
         bool  matchOver = false;
         bool  matchWinnerIsCT = false;

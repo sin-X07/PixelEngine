@@ -94,6 +94,48 @@ bool CS2DGame::EnemySpawnCentroid(Team myTeam, float& outX, float& outY) const {
 }
 
 // ============================================================================
+// 卡墙脱困
+// ============================================================================
+
+// BOT 贴着墙/墙角时，寻路给出的方向可能一直把它顶在墙上。
+// 这里按「垂直于去路 → 斜后方 → 后方」的顺序找一个能站下的点，直接挪过去，
+// 并清空当前路径强制重算，避免在同一位置反复撞墙。
+bool CS2DGame::NudgeOutOfStuck(Player& bot, BotRuntime& ai) {
+    if (!world_) return false;
+
+    const float half = bot.size * 0.5f;
+    const float baseAng = std::atan2(ai.goalY - bot.y, ai.goalX - bot.x);
+
+    // 候选方向：先侧移（±90°），再斜后（±135°），最后直退（180°）
+    const float offsets[5] = { 1.5707963f, -1.5707963f, 2.3561945f, -2.3561945f,
+                               3.1415927f };
+    const float steps[3] = { 6.0f, 10.0f, 14.0f };
+
+    for (float off : offsets) {
+        const float ang = baseAng + off;
+        for (float step : steps) {
+            const float nx = bot.x + std::cos(ang) * step;
+            const float ny = bot.y + std::sin(ang) * step;
+            if (world_->CheckRectCollision(nx - half, ny - half, bot.size, bot.size)) {
+                continue;
+            }
+            bot.x = nx;
+            bot.y = ny;
+            bot.vx = bot.vy = 0.0f;
+            // 强制重算路径
+            ai.path.clear();
+            ai.pathIdx = 0;
+            ai.repathTimer = 0.0f;
+            ai.lastX = nx;
+            ai.lastY = ny;
+            ai.stuckTimer = 0.0f;
+            return true;
+        }
+    }
+    return false;
+}
+
+// ============================================================================
 // 团队情报共享（探点）
 // ============================================================================
 
@@ -352,6 +394,13 @@ void CS2DGame::UpdateSquadFocus(float dt) {
             const float dx = c.x - bot.x;
             const float dy = c.y - bot.y;
             float score = std::sqrt(dx * dx + dy * dy);
+
+            // 守包优先：已下包时，靠近包点的敌人（很可能在拆包）最优先
+            if (mode_ == MatchMode::BombDefusal && bombPlanted_ && bot.team == Team::T) {
+                const float bdx = c.x - bombX_;
+                const float bdy = c.y - bombY_;
+                if (bdx * bdx + bdy * bdy < 140.0f * 140.0f) score -= 150.0f;
+            }
 
             // 集火偏好：情报点周围队友越多越优先
             int mates = 0;

@@ -50,6 +50,16 @@ bool AudioManager::Initialize() {
     footstepSound       = loadChunk("assets/audio/footstep.wav", "脚步");
     armorHitSound       = loadChunk("assets/audio/armor_hit.wav", "护甲受击");
 
+    // 换弹音效
+    reloadGlockSound   = loadChunk("assets/audio/glock_reload.mp3",  "Glock 换弹");
+    reloadUspSound     = loadChunk("assets/audio/usp_reload.mp3",    "USP 换弹");
+    reloadDeagleSound  = loadChunk("assets/audio/deagle_reload.mp3", "Deagle 换弹");
+    reloadGalilSound   = loadChunk("assets/audio/galir_reload.mp3",  "Galil 换弹");
+    reloadAk47Sound    = loadChunk("assets/audio/ak47_reload.mp3",   "AK47 换弹");
+    reloadM4a1Sound    = loadChunk("assets/audio/m4a1_reload.mp3",   "M4A1 换弹");
+    reloadShotgunSound = loadChunk("assets/audio/shotgun_load.mp3",  "霰弹枪换弹");
+    reloadAwpSound     = loadChunk("assets/audio/awp_reload.mp3",    "AWP 换弹");
+
     // 分武器枪声
     ak47Sound = loadChunk("assets/audio/ak47.wav", "AK47 射击");
     glockFireSound   = loadChunk("assets/audio/glock.wav", "Glock 射击");
@@ -99,6 +109,16 @@ void AudioManager::Clean() {
     if (roundLoseSound)      { Mix_FreeChunk(roundLoseSound);      roundLoseSound = nullptr; }
     if (footstepSound)       { Mix_FreeChunk(footstepSound);       footstepSound = nullptr; }
     if (armorHitSound)       { Mix_FreeChunk(armorHitSound);       armorHitSound = nullptr; }
+
+    // 换弹音效
+    if (reloadGlockSound)   { Mix_FreeChunk(reloadGlockSound);   reloadGlockSound = nullptr; }
+    if (reloadUspSound)     { Mix_FreeChunk(reloadUspSound);     reloadUspSound = nullptr; }
+    if (reloadDeagleSound)  { Mix_FreeChunk(reloadDeagleSound);  reloadDeagleSound = nullptr; }
+    if (reloadGalilSound)   { Mix_FreeChunk(reloadGalilSound);   reloadGalilSound = nullptr; }
+    if (reloadAk47Sound)    { Mix_FreeChunk(reloadAk47Sound);    reloadAk47Sound = nullptr; }
+    if (reloadM4a1Sound)    { Mix_FreeChunk(reloadM4a1Sound);    reloadM4a1Sound = nullptr; }
+    if (reloadShotgunSound) { Mix_FreeChunk(reloadShotgunSound); reloadShotgunSound = nullptr; }
+    if (reloadAwpSound)     { Mix_FreeChunk(reloadAwpSound);     reloadAwpSound = nullptr; }
 
     // 分武器枪声
     if (glockFireSound)   { Mix_FreeChunk(glockFireSound);   glockFireSound = nullptr; }
@@ -169,6 +189,15 @@ Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
         case SoundEffect::FOOTSTEP:         return footstepSound;
         case SoundEffect::ARMOR_HIT:        return armorHitSound;
 
+        case SoundEffect::RELOAD_GLOCK:      return reloadGlockSound;
+        case SoundEffect::RELOAD_USP:        return reloadUspSound;
+        case SoundEffect::RELOAD_DEAGLE:     return reloadDeagleSound;
+        case SoundEffect::RELOAD_GALIL:      return reloadGalilSound;
+        case SoundEffect::RELOAD_AK47:       return reloadAk47Sound;
+        case SoundEffect::RELOAD_M4A1:       return reloadM4a1Sound;
+        case SoundEffect::RELOAD_SHOTGUN:    return reloadShotgunSound;
+        case SoundEffect::RELOAD_AWP:        return reloadAwpSound;
+
         case SoundEffect::GLOCK_FIRE:       return glockFireSound;
         case SoundEffect::USP_FIRE:         return uspFireSound;
         case SoundEffect::M4A1_FIRE:        return m4a1FireSound;
@@ -232,9 +261,9 @@ void AudioManager::PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
 
     // 距离衰减：FULL_RANGE 内全音量，之后线性衰减，但保留一个可听见的底噪，
     // 避免「一过 MAX_RANGE 就彻底静音」——那会让远处的枪战听着像时有时无
-    constexpr float FULL_RANGE = 260.0f;
+    constexpr float FULL_RANGE = 0.0f;
     constexpr float MAX_RANGE  = 900.0f;
-    constexpr float MIN_FACTOR = 0.12f;   // 最远处仍保留 12% 音量
+    constexpr float MIN_FACTOR = 0.0f;   // 最远处仍保留 12% 音量
     float distFactor = 1.0f;
     if (dist > FULL_RANGE) {
         const float t = std::min(1.0f, (dist - FULL_RANGE) / (MAX_RANGE - FULL_RANGE));

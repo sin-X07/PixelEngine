@@ -503,6 +503,61 @@ void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float 
 }
 
 // ============================================================================
+// 世界坐标圆
+// ============================================================================
+
+void CS2DRenderer::DrawCircleOutline(float worldX, float worldY, float radius,
+                                     Uint8 r, Uint8 g, Uint8 b, Uint8 a, int segments) {
+    if (!renderer_ || segments < 3) return;
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer_, r, g, b, a);
+
+    const float cx = (worldX - cameraX_) * zoom_;
+    const float cy = (worldY - cameraY_) * zoom_;
+    const float rr = radius * zoom_;
+
+    float px = cx + rr, py = cy;
+    for (int i = 1; i <= segments; ++i) {
+        const float ang = 6.28318531f * static_cast<float>(i) / static_cast<float>(segments);
+        const float nx = cx + std::cos(ang) * rr;
+        const float ny = cy + std::sin(ang) * rr;
+        SDL_RenderDrawLineF(renderer_, px, py, nx, ny);
+        px = nx; py = ny;
+    }
+}
+
+void CS2DRenderer::DrawCircleFilled(float worldX, float worldY, float radius,
+                                    Uint8 r, Uint8 g, Uint8 b, Uint8 a, int segments) {
+    if (!renderer_ || segments < 3) return;
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer_, r, g, b, a);
+
+    const float cx = (worldX - cameraX_) * zoom_;
+    const float cy = (worldY - cameraY_) * zoom_;
+    const float rr = radius * zoom_;
+
+    // 三角形扇
+    float px = cx + rr, py = cy;
+    for (int i = 1; i <= segments; ++i) {
+        const float ang = 6.28318531f * static_cast<float>(i) / static_cast<float>(segments);
+        const float nx = cx + std::cos(ang) * rr;
+        const float ny = cy + std::sin(ang) * rr;
+        SDL_Vertex v[3];
+        v[0].position = { cx, cy };
+        v[0].color = { r, g, b, a };
+        v[0].tex_coord = { 0, 0 };
+        v[1].position = { px, py };
+        v[1].color = { r, g, b, a };
+        v[1].tex_coord = { 0, 0 };
+        v[2].position = { nx, ny };
+        v[2].color = { r, g, b, a };
+        v[2].tex_coord = { 0, 0 };
+        SDL_RenderGeometry(renderer_, nullptr, v, 3, nullptr, 0);
+        px = nx; py = ny;
+    }
+}
+
+// ============================================================================
 // 掉落武器（用 _d 图标，与 HUD 状态栏同一套素材）
 // ============================================================================
 

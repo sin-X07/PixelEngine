@@ -29,6 +29,16 @@ enum class SoundEffect {
     FOOTSTEP,
     ARMOR_HIT,
 
+    // ---- 换弹音效（时长与各武器 reloadTime 对齐）----
+    RELOAD_GLOCK,
+    RELOAD_USP,
+    RELOAD_DEAGLE,
+    RELOAD_GALIL,
+    RELOAD_AK47,
+    RELOAD_M4A1,
+    RELOAD_SHOTGUN,
+    RELOAD_AWP,
+
     // ---- 分武器枪声 ----
     GLOCK_FIRE,
     USP_FIRE,
@@ -67,6 +77,16 @@ private:
     Mix_Chunk* roundLoseSound = nullptr;
     Mix_Chunk* footstepSound = nullptr;
     Mix_Chunk* armorHitSound = nullptr;
+
+    // 换弹音效
+    Mix_Chunk* reloadGlockSound   = nullptr;
+    Mix_Chunk* reloadUspSound     = nullptr;
+    Mix_Chunk* reloadDeagleSound  = nullptr;
+    Mix_Chunk* reloadGalilSound   = nullptr;
+    Mix_Chunk* reloadAk47Sound    = nullptr;
+    Mix_Chunk* reloadM4a1Sound    = nullptr;
+    Mix_Chunk* reloadShotgunSound = nullptr;
+    Mix_Chunk* reloadAwpSound     = nullptr;
 
     // 分武器枪声
     Mix_Chunk* glockFireSound   = nullptr;

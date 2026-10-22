@@ -496,6 +496,7 @@ void Engine::StartMatch(MatchMode mode) {
     std::cout << "CS2D 对局开始: " << mapRel << std::endl;
 
 
+
 }
 
 // ============================================================================
@@ -592,6 +593,8 @@ void Engine::Render() {
         ictx.money            = cs2dGame->GetPlayerMoney();
         ictx.armor            = cs2dGame->GetPlayerArmor();
         ictx.grenadeCount     = cs2dGame->GetPlayer().grenadeCount;
+        ictx.health           = cs2dGame->GetPlayerHealth();
+        ictx.maxHealth        = cs2dGame->GetPlayerMaxHealth();
         ictx.helmet           = cs2dGame->GetPlayerHelmet();
         ictx.matchOver        = cs2dGame->IsMatchOver();
         ictx.matchWinnerIsCT  = (cs2dGame->GetMatchWinner() == Team::CT);

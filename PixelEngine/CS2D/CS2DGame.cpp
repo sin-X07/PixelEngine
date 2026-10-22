@@ -28,7 +28,7 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
     if (renderer_) renderer_->SetWorld(world_.get());
 
     // 烘焙寻路网格（角色半径 3.5，略大于命中盒半宽）
-    pathFinder_.Build(*world_, 3.5f);
+    pathFinder_.Build(*world_, Tuning::PathAgentRadius);
     std::cout << "[PathFinder] 网格 " << pathFinder_.Width() << "x" << pathFinder_.Height()
               << " 已构建" << std::endl;
 
@@ -429,7 +429,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 
     if (canAct && rPressed && !player_.reloading) {
         if ((player_.weaponSlot == 0 || player_.weaponSlot == 1) && player_.ammo < player_.maxAmmo) {
-            StartReload(player_);
+            StartReload(player_, audio);
         }
     }
 
@@ -459,6 +459,21 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     } else {
         // 冻结/结算期：BOT 原地待命
         for (auto& bot : bots_) { bot.vx = bot.vy = 0.0f; }
+    }
+
+    // BOT 脚步声：与玩家同一套节奏，按 3D 位置播放（静步的 BOT 不出声）
+    for (size_t i = 0; i < bots_.size(); ++i) {
+        auto& b = bots_[i];
+        auto& bai = AiAt(i);
+        if (!b.alive) { bai.footstepTimer = 0.0f; continue; }
+        bai.footstepTimer -= dt;
+        const float spd = std::sqrt(b.vx * b.vx + b.vy * b.vy);
+        if (spd > 5.0f && bai.footstepTimer <= 0.0f) {
+            bai.footstepTimer = 0.34f + static_cast<float>(i % 5) * 0.02f;
+            if (audio) {
+                audio->PlaySoundAt(SoundEffect::FOOTSTEP, b.x, b.y, player_.x, player_.y);
+            }
+        }
     }
 
     UpdateBullets(dt, audio);
@@ -496,6 +511,21 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     }
 
     prevMouseDown_ = mouseLeftDown;
+
+    // 掉落物寿命与拾取
+    for (auto& d : drops_) d.life -= dt;
+    drops_.erase(std::remove_if(drops_.begin(), drops_.end(),
+                                [](const DroppedItem& d) {
+                                    return d.life <= 0.0f || d.id == WeaponId::None;
+                                }),
+                 drops_.end());
+    TryPickupDrops();
+
+    // 爆炸特效寿命
+    for (auto& fx : blasts_) fx.life -= dt;
+    blasts_.erase(std::remove_if(blasts_.begin(), blasts_.end(),
+                                 [](const BlastFx& b) { return b.life <= 0.0f; }),
+                  blasts_.end());
 
     // 击杀播报寿命
     for (auto& e : killFeed_) e.life -= dt;
@@ -583,6 +613,43 @@ void CS2DGame::Render(int viewW, int viewH) {
     }
 
     // 目标物标记（包点范围）：画在角色之下、遮罩之上，保证始终可辨
+    // 地面掉落物（用 _d 图标）
+    for (const auto& d : drops_) {
+        if (d.id == WeaponId::None) continue;
+        // 最后 5 秒闪烁提示即将消失
+        if (d.life < 5.0f && std::fmod(clockSec_, 0.5f) < 0.25f) continue;
+        renderer_->DrawDroppedWeapon(static_cast<int>(d.id), d.x, d.y, clockSec_);
+    }
+
+    // 已安装的 C4：醒目的红色脉冲标记 + 拆包有效范围
+    if (bombPlanted_) {
+        const float pulse = 0.5f + 0.5f * std::sin(clockSec_ * 6.0f);
+        renderer_->DrawCircleOutline(bombX_, bombY_, 18.0f + 4.0f * pulse,
+                                     255, 70, 60, static_cast<Uint8>(170 + 70 * pulse));
+        renderer_->DrawCircleFilled(bombX_, bombY_, 5.0f + 1.5f * pulse,
+                                    255, 90, 70, 220);
+        // 拆包有效范围（很小）
+        renderer_->DrawCircleOutline(bombX_, bombY_, Tuning::DefuseRadius,
+                                     255, 170, 90, 130);
+    }
+
+    // 手雷：飞行中显示爆炸范围，爆炸后播放扩散圆环
+    for (const auto& g : grenades_) {
+        if (!g.active || g.type != WeaponId::GrenadeHE) continue;
+        const float pulse = 0.5f + 0.5f * std::sin(clockSec_ * 12.0f);
+        renderer_->DrawCircleFilled(g.x, g.y, Tuning::NadeBlastRadius,
+                                    210, 90, 40, static_cast<Uint8>(18 + 16 * pulse));
+        renderer_->DrawCircleOutline(g.x, g.y, Tuning::NadeBlastRadius,
+                                     240, 130, 60, static_cast<Uint8>(120 + 80 * pulse));
+    }
+    for (const auto& fx : blasts_) {
+        const float t = 1.0f - (fx.total > 0.0f ? fx.life / fx.total : 0.0f);  // 0→1
+        const float r = Tuning::NadeBlastRadius * (0.35f + 0.65f * t);
+        const Uint8 a = static_cast<Uint8>(200.0f * (1.0f - t));
+        renderer_->DrawCircleFilled(fx.x, fx.y, r, 255, 190, 90, static_cast<Uint8>(a / 3));
+        renderer_->DrawCircleOutline(fx.x, fx.y, r, 255, 220, 150, a);
+    }
+
     renderer_->DrawObjectiveMarkers(clockSec_);
 
     if (player_.alive) {

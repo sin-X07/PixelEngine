@@ -160,7 +160,7 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
             if (player_.alive && player_.team == Team::CT && interactHeld) {
                 const float dx = player_.x - bombX_;
                 const float dy = player_.y - bombY_;
-                if (std::sqrt(dx * dx + dy * dy) <= INTERACT_RADIUS) defusing = true;
+                if (std::sqrt(dx * dx + dy * dy) <= Tuning::DefuseRadius) defusing = true;
             }
 
             // BOT 拆包（玩家阵亡后也能赢）
@@ -169,7 +169,7 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
                 if (!b.alive || b.team != Team::CT) continue;
                 const float dx = b.x - bombX_;
                 const float dy = b.y - bombY_;
-                if (std::sqrt(dx * dx + dy * dy) <= INTERACT_RADIUS) {
+                if (std::sqrt(dx * dx + dy * dy) <= Tuning::DefuseRadius) {
                     defusing = true;
                     AiAt(bi).defusing = true;      // 通知 BOT 停下原地拆包
                 } else {

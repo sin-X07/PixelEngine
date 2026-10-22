@@ -356,6 +356,39 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
         DrawImGuiTextCentered(imGuiUI, alive, 64.0f, 160, 175, 185, 255, 16);
     }
 
+    // ---- 左下角血量条 ----
+    {
+        const float barX = 16.0f;
+        const float barY = ImGui::GetIO().DisplaySize.y - 52.0f;
+        const float barW = 200.0f;
+        const float barH = 18.0f;
+
+        const float frac = (ctx.maxHealth > 0)
+            ? std::clamp(static_cast<float>(ctx.health) / static_cast<float>(ctx.maxHealth), 0.0f, 1.0f)
+            : 0.0f;
+
+        ImDrawList* dl = ImGui::GetForegroundDrawList();
+        // 底框
+        dl->AddRectFilled(ImVec2(barX - 2, barY - 2),
+                          ImVec2(barX + barW + 2, barY + barH + 2),
+                          IM_COL32(10, 14, 18, 210), 4.0f);
+        dl->AddRect(ImVec2(barX - 2, barY - 2),
+                    ImVec2(barX + barW + 2, barY + barH + 2),
+                    IM_COL32(200, 155, 60, 200), 4.0f);
+
+        // 血量填充：高血量绿、中黄、低红
+        ImU32 fill = (frac > 0.6f) ? IM_COL32(70, 190, 90, 235)
+                   : (frac > 0.3f) ? IM_COL32(225, 180, 60, 235)
+                                   : IM_COL32(215, 65, 60, 235);
+        dl->AddRectFilled(ImVec2(barX, barY),
+                          ImVec2(barX + barW * frac, barY + barH), fill, 3.0f);
+
+        char hp[32];
+        snprintf(hp, sizeof(hp), "HP %d / %d", ctx.health, ctx.maxHealth);
+        DrawImGuiText(imGuiUI, hp, barX + 6.0f, barY - 20.0f,
+                      235, 240, 235, 255, 18);
+    }
+
     // 屏幕中央提示：回合开始 / 回合胜负（带淡出）
     if (!ctx.announcement.empty() && ctx.announcementAlpha > 0.0f) {
         const Uint8 a = static_cast<Uint8>(std::clamp(ctx.announcementAlpha, 0.0f, 1.0f) * 255.0f);
