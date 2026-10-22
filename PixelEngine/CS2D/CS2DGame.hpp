@@ -162,7 +162,8 @@ public:
     // 与 bots_ 按下标一一对应，统一由 EnsureBotAi() 保证长度
     // ========================================================================
     struct BotRuntime {
-        BotIntent llmIntent;                       // LLM 战略意图
+        BotIntent llmIntent;                       // 本帧姿态（由计划+感知推导）
+        int       stance = 0;                      // 最近一次姿态（诊断用）
 
         // 寻路
         std::vector<std::pair<float, float>> path;

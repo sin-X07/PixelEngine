@@ -394,6 +394,50 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             }
         }
 
+        // ---- 决策树姿态推导（取代原来的 per-BOT LLM 输出）----
+        // 这里必然有可见敌人（上面对 !target 已 continue），
+        // 所以姿态只在「强攻 / 固守 / 撤退 / 绕向掩体」之间选择。
+        {
+            BotIntent& it = ai.llmIntent;
+            const WeaponDef& wdef = bot.CurrentWeapon();
+            const SquadOrder& ord = squad_[i];
+
+            const float hpFrac = (bot.maxHealth > 0)
+                ? static_cast<float>(bot.health) / static_cast<float>(bot.maxHealth)
+                : 1.0f;
+
+            const bool mustRetreat = ai.blindTimer > 0.0f ||
+                                     hpFrac * 100.0f < Tuning::RetreatHealth ||
+                                     (bot.ammo <= 0 && !bot.reloading);
+
+            if (mustRetreat) {
+                it.action = BotIntent::Action::Retreat;
+            } else if (ord.role == BotRole::Anchor ||
+                       GetCoachPlan(bot.team).tempo == Tempo::Slow) {
+                it.action = BotIntent::Action::Defensive;
+            } else if (ord.role == BotRole::Entry ||
+                       GetCoachPlan(bot.team).tempo == Tempo::Fast ||
+                       engageDist < Tuning::CloseCombatRange * 0.6f) {
+                it.action = BotIntent::Action::Aggressive;
+            } else if (ai.hasPlanHold && engageDist > wdef.range) {
+                it.action = BotIntent::Action::MoveToCover;   // 借掩体接近
+            } else {
+                it.action = BotIntent::Action::Defensive;
+            }
+
+            // 射击纪律
+            if (bot.reloading || bot.ammo <= 0) it.shootMode = BotIntent::ShootDiscipline::HoldFire;
+            else if (engageDist > wdef.range * 0.8f) it.shootMode = BotIntent::ShootDiscipline::Burst;
+            else it.shootMode = BotIntent::ShootDiscipline::Auto;
+
+            it.targetX = aimX;
+            it.targetY = aimY;
+            it.fresh   = true;
+            it.ageSec  = 0.0f;
+
+            ai.stance = static_cast<int>(it.action);   // 供诊断用
+        }
+
         BehaviorOutput out = botExecutors_[i].Execute(
             ai.llmIntent,
             bot.x, bot.y,
