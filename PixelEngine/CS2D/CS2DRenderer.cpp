@@ -1136,21 +1136,23 @@ void CS2DRenderer::DrawRadarHUD(float playerX, float playerY, float playerAngle,
         fillCircle(rx, ry, dotR, d.r, d.g, d.b);
     }
 
-    // ---- 玩家：箭头 ----
-    auto [px, py] = worldToRadar(playerX, playerY);
-    // 跟随旋转时地图上的「前」已经朝上，箭头固定朝上
-    const float arrowAngle = rotateWithPlayer ? -1.5707963f : playerAngle;
-    const float arrowSize = std::clamp(3.5f + 1.2f * (zoom - 1.0f), 3.5f, 7.0f);
-    SDL_SetRenderDrawColor(renderer_, 90, 200, 255, 255);
-    const float tipX  = px + std::cos(arrowAngle) * arrowSize;
-    const float tipY  = py + std::sin(arrowAngle) * arrowSize;
-    const float leftX = px + std::cos(arrowAngle + 2.5f) * (arrowSize * 0.65f);
-    const float leftY = py + std::sin(arrowAngle + 2.5f) * (arrowSize * 0.65f);
-    const float rightX = px + std::cos(arrowAngle - 2.5f) * (arrowSize * 0.65f);
-    const float rightY = py + std::sin(arrowAngle - 2.5f) * (arrowSize * 0.65f);
-    SDL_RenderDrawLineF(renderer_, tipX, tipY, leftX, leftY);
-    SDL_RenderDrawLineF(renderer_, tipX, tipY, rightX, rightY);
-    SDL_RenderDrawLineF(renderer_, leftX, leftY, rightX, rightY);
+    // ---- 玩家：与 BOT 同样是圆点，用更亮的青色 + 外圈区分自己 ----
+    {
+        auto [px, py] = worldToRadar(playerX, playerY);
+        const float selfR = dotR + 0.9f;
+        fillCircle(px, py, selfR + 1.4f, 10, 12, 16);       // 深色描边
+        fillCircle(px, py, selfR, 110, 215, 255);            // 青色实心
+        // 外圈：只描边，进一步和友军区分
+        SDL_SetRenderDrawColor(renderer_, 225, 245, 255, 235);
+        const int ri = static_cast<int>(std::ceil(selfR + 2.2f));
+        for (int deg = 0; deg < 360; deg += 12) {
+            const float a = static_cast<float>(deg) * 0.0174533f;
+            SDL_RenderDrawPointF(renderer_,
+                                 px + std::cos(a) * (selfR + 2.2f),
+                                 py + std::sin(a) * (selfR + 2.2f));
+        }
+        (void)ri;
+    }
 
     // 外框最后画，压住底图边缘
     SDL_SetRenderDrawColor(renderer_, 120, 160, 200, 220);
