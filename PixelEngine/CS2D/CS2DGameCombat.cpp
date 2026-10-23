@@ -81,6 +81,10 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
 
     player_.aimAngle = std::atan2(worldMY - player_.y, worldMX - player_.x);
 
+    // 射击冷却每帧都要推进（持投掷物 / 换弹期间也一样），
+    // 否则切到投掷物后冷却会「冻住」，表现为怎么点都扔不出去
+    if (player_.shootCooldown > 0.0f) player_.shootCooldown -= dt;
+
     // 拆包过程中双手占用：只允许转向，不能开枪/投掷
     if (mode_ == MatchMode::BombDefusal && bombPlanted_) {
         const float dxb = player_.x - bombX_;
@@ -93,27 +97,17 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
 
     const WeaponDef& def = player_.CurrentWeapon();
 
-    // 投掷物：按住左键蓄力，松开才出手（音效也在出手瞬间播放）
+    // 投掷物：按下即投（音效在出手瞬间播放）
     if (def.cls == WeaponClass::Grenade) {
-        if (player_.grenadeCount <= 0 || player_.shootCooldown > 0.0f) {
-            grenadeCharging_ = false;
-            return;
-        }
-        if (mouseDown) {
-            grenadeCharging_ = true;      // 蓄力中，先不出手
-            return;
-        }
-        if (grenadeCharging_) {           // 松开 → 投出
-            grenadeCharging_ = false;
-            ThrowGrenade(player_, player_.aimAngle, audio);
-            player_.shootCooldown = def.cooldown;
-            player_.shootAnimTimer = 0.12f;
-        }
+        if (!mouseDown || player_.shootCooldown > 0.0f) return;
+        if (player_.grenadeCount <= 0) return;
+        ThrowGrenade(player_, player_.aimAngle, audio);
+        player_.shootCooldown = def.cooldown;
+        player_.shootAnimTimer = 0.12f;
         return;
     }
 
     if (player_.reloading) return;
-    if (player_.shootCooldown > 0.0f) player_.shootCooldown -= dt;
 
     const bool mouseEdge = mouseDown && !prevMouseDown_;
     if (!def.automatic) {

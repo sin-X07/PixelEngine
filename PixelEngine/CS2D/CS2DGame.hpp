@@ -504,7 +504,6 @@ private:
     bool AreaCenterByName(const std::string& name, float& ox, float& oy) const;
     std::string AreaHint(const std::string& intentTarget) const;
     bool prevInteract_ = false;   // E 键边沿检测
-    bool grenadeCharging_ = false;  // 投掷物蓄力中（松开左键才出手）
 
     void DropEquipmentOnDeath(const Player& victim);
     float flashTimer_ = 0.0f;      // 玩家闪光致盲剩余秒数

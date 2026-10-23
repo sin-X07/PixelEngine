@@ -364,7 +364,6 @@ void CS2DGame::RespawnBOT(Player& bot) {
 // ============================================================================
 
 void CS2DGame::SwitchWeaponSlot(int slot) {
-    grenadeCharging_ = false;   // 切枪打断蓄力
     if (slot < 0 || slot > 3) return;
 
     // 投掷物槽：按 4 在已装备的投掷物之间循环切换
@@ -440,9 +439,8 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 
     if (player_.alive && canMove) {
         UpdatePlayerMovement(dt, wPressed, aPressed, sPressed, dPressed, player_.stealth);
-        if (!ending) {
-            UpdatePlayerShooting(dt, mouseLeftDown, mouseWorldX, mouseWorldY, audio);
-        }
+        // 结算展示期与回合中完全一致：可移动、可开枪、可投掷
+        UpdatePlayerShooting(dt, mouseLeftDown, mouseWorldX, mouseWorldY, audio);
     } else {
         player_.vx = player_.vy = 0.0f;
 
