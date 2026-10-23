@@ -1,4 +1,5 @@
 #include "CS2DRenderer.hpp"
+#include "../Graphics/UiScale.hpp"
 #include "../Core/PathUtils.hpp"
 #include <cmath>
 #include <algorithm>
@@ -781,10 +782,13 @@ void CS2DRenderer::DrawCrosshair(float cx, float cy,
 
 void CS2DRenderer::DrawWeaponStatus(int weaponId, int ammo, int magazine,
                                     int viewW, int viewH) {
-    // 右下角武器栏视觉 — 相对视口右下角定位
-    const int panelW = 160, panelH = 56;
-    const int panelX = viewW - panelW - 10;
-    const int panelY = viewH - panelH - 10;
+    // 右下角武器栏视觉 — 相对视口右下角定位（尺寸随 UI 缩放）
+    const float us = g_uiScale;
+    const int panelW = static_cast<int>(std::lround(160.0f * us));
+    const int panelH = static_cast<int>(std::lround(56.0f * us));
+    const int margin = static_cast<int>(std::lround(10.0f * us));
+    const int panelX = viewW - panelW - margin;
+    const int panelY = viewH - panelH - margin;
     SDL_Rect panel = {panelX, panelY, panelW, panelH};
     SDL_SetRenderDrawColor(renderer_, 18, 28, 38, 240);
     SDL_RenderFillRect(renderer_, &panel);
@@ -807,7 +811,7 @@ void CS2DRenderer::DrawWeaponStatus(int weaponId, int ammo, int magazine,
 
     int tw = 0, th = 0;
     SDL_QueryTexture(icon, nullptr, nullptr, &tw, &th);
-    const int box = 44;
+    const int box = static_cast<int>(std::lround(44.0f * us));
     int dw = box;
     int dh = box;
     if (tw > 0 && th > 0) {
@@ -817,7 +821,7 @@ void CS2DRenderer::DrawWeaponStatus(int weaponId, int ammo, int magazine,
             dw = std::max(1, static_cast<int>(std::lround(static_cast<float>(box) * tw / th)));
         }
     }
-    const int iconX = panel.x + 10 + box / 2;
+    const int iconX = panel.x + static_cast<int>(std::lround(10.0f * us)) + box / 2;
     const int iconY = panel.y + panel.h / 2;
     SDL_Rect iconRect = {iconX - dw / 2, iconY - dh / 2, dw, dh};
     SDL_RenderCopy(renderer_, icon, nullptr, &iconRect);

@@ -1,4 +1,5 @@
 #include "Engine.hpp"
+#include <cstdlib>
 #include "Core/Resolutions.hpp"
 #include "Graphics/UiScale.hpp"
 #include "CS2D/MapCatalog.hpp"

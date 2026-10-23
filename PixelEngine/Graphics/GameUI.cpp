@@ -1,4 +1,5 @@
 #include "GameUI.hpp"
+#include <iostream>
 #include "UiScale.hpp"
 #include "../Core/Resolutions.hpp"
 #include "../CS2D/MapCatalog.hpp"
@@ -67,10 +68,27 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 
     // ---------------- 主菜单 ----------------
     if (ctx.state == MAIN_MENU) {
-        DrawImGuiTextCentered(imGuiUI_, "CS2D", 90.0f, 255, 255, 255, 255, 34);
-        DrawImGuiTextCentered(imGuiUI_, "Counter-Strike 2D 单机版", 140.0f, 160, 190, 210, 255, 20);
+        // 整块内容（标题 + 副标题 + 按钮组 + 战绩）垂直居中
+        const float vpH = viewport->WorkSize.y;
+        const float itemSpacing = ImGui::GetStyle().ItemSpacing.y;
+        const int   nBtn = 6;
 
-        ImGui::SetCursorPosY(UI(210.0f));
+        const float titleH = UI(46.0f);
+        const float subH   = UI(30.0f);
+        const float gap1   = UI(26.0f);
+        const float statsH = UI(28.0f);
+        const float gap2   = UI(26.0f);
+        const float blockH = titleH + subH + gap1 + nBtn * buttonH +
+                             (nBtn - 1) * itemSpacing + gap2 + statsH;
+
+        const float yLocal  = std::max(UI(16.0f), (vpH - blockH) * 0.5f);
+        const float yScreen = viewport->WorkPos.y + yLocal;
+
+        DrawImGuiTextCentered(imGuiUI_, "CS2D", yScreen, 255, 255, 255, 255, 34);
+        DrawImGuiTextCentered(imGuiUI_, "Counter-Strike 2D 单机版", yScreen + titleH,
+                              160, 190, 210, 255, 20);
+
+        ImGui::SetCursorPosY(yLocal + titleH + subH + gap1);
         if (bigButton("团队歼灭")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::TeamElimination)); });
         if (bigButton("爆破模式")) doClick([&] { actions.goState(MAP_SELECT); });
         if (bigButton("人质营救")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::HostageRescue)); });
@@ -78,10 +96,11 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         if (bigButton("设置"))     doClick([&] { actions.openSettings(MAIN_MENU); });
         if (bigButton("退出游戏")) doClick([&] { actions.quitToDesktop(); });
 
-        // 累计战绩
+        // 累计战绩（贴在内容块底部）
         char buf[96];
         snprintf(buf, sizeof(buf), "累计击杀 %d   累计阵亡 %d", ctx.statKills, ctx.statDeaths);
-        DrawImGuiTextCentered(imGuiUI_, buf, 470.0f, 150, 170, 185, 255, 18);
+        DrawImGuiTextCentered(imGuiUI_, buf, yScreen + blockH - statsH,
+                              150, 170, 185, 255, 18);
     }
     // ---------------- 暂停 ----------------
     else if (ctx.state == PAUSED) {
@@ -108,22 +127,27 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
     }
     // ---------------- 设置 ----------------
     else if (ctx.state == SETTINGS) {
-        DrawImGuiTextCentered(imGuiUI_, "设置", 28.0f, 255, 255, 255, 255, 26);
+        const float vpH = viewport->WorkSize.y;
+        DrawImGuiTextCentered(imGuiUI_, "设置", viewport->WorkPos.y + UI(18.0f), 255, 255, 255, 255, 26);
 
         int master  = ctx.masterVolume;
         int music   = ctx.musicVolume;
         int effects = ctx.effectsVolume;
 
-        const float labelW = 90.0f;
-        const float sliderW = 360.0f;
+        const float labelW = UI(90.0f);
+        const float sliderW = UI(360.0f);
         const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
         const float startX = (vpW - (labelW + gap + sliderW)) * 0.5f;
 
-        // 可滚动区
-        ImGui::SetCursorPosY(UI(70.0f));
+        // 滚动区高度自适应：占满「标题下方」到「返回按钮上方」之间的空间
+        const float topLocal    = UI(66.0f);
+        const float footerH     = UI(70.0f);
+        const float scrollH     = std::max(UI(160.0f), vpH - topLocal - footerH);
+
+        ImGui::SetCursorPosY(topLocal);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.078f, 0.118f, 0.157f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, ImVec4(0.05f, 0.07f, 0.10f, 0.60f));
-        ImGui::BeginChild("SettingsScroll", ImVec2(vpW, 450.0f), false,
+        ImGui::BeginChild("SettingsScroll", ImVec2(vpW, scrollH), false,
                           ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
         auto sliderRow = [&](const char* label, const char* id, float x) {
@@ -141,8 +165,8 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         sliderRow("音效", "##effects", startX);
         if (ImGui::SliderInt("##effects", &effects, 0, 100)) actions.setEffectsVolume(effects);
 
-        ImGui::SetCursorPosX((vpW - 220.0f) * 0.5f);
-        if (ImGui::Button(ctx.muted ? "已静音（点击取消）" : "切换静音", ImVec2(220.0f, 0.0f))) {
+        ImGui::SetCursorPosX((vpW - UI(220.0f)) * 0.5f);
+        if (ImGui::Button(ctx.muted ? "已静音（点击取消）" : "切换静音", ImVec2(UI(220.0f), 0.0f))) {
             actions.toggleMute();
         }
 
@@ -269,7 +293,8 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         ImGui::EndChild();
         ImGui::PopStyleColor(2);
 
-        ImGui::SetCursorPosY(UI(540.0f));
+        // 返回按钮固定在底部（不再依赖固定 540 坐标，避免被裁掉）
+        ImGui::SetCursorPosY(vpH - footerH + UI(8.0f));
         if (bigButton("返回")) doClick([&] { actions.goState(ctx.settingsReturnState); });
     }
 
@@ -707,8 +732,13 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
             // 投掷物：显示背包里还剩几个（按 4 切换）
             line += " (" + std::to_string(ctx.grenadeCount) + ")";
         }
-        const float textX = vpW - 160.0f + 50.0f;
-        DrawImGuiText(imGuiUI, line.c_str(), textX, 549.0f, 230, 238, 235, 255, 18);
+        // 与 CS2DRenderer 的面板对齐：面板高 56*scale、右下留 10*scale
+        const float vpH = ImGui::GetIO().DisplaySize.y;
+        const float panelH = UI(56.0f);
+        const float margin = UI(10.0f);
+        const float textX = vpW - UI(160.0f) + UI(50.0f);
+        const float textY = vpH - panelH - margin + UI(18.0f);
+        DrawImGuiText(imGuiUI, line.c_str(), textX, textY, 230, 238, 235, 255, 18);
     }
 
     // 提示（换弹等）
