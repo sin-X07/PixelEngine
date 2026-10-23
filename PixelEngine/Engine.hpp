@@ -73,6 +73,8 @@ private:
     int  mapSelectIndex_ = 0;                                            // 地图选择光标
     std::string pendingStartMap_;        // --map=<id> 指定的地图
     bool openMapSelectOnStart_ = false;  // --mapselect
+    void* menuBgTex_ = nullptr;   // 主菜单背景图
+    int   menuBgW_ = 0, menuBgH_ = 0;
     void* mapPreviewTex_[8] = {nullptr, nullptr, nullptr, nullptr,
                              nullptr, nullptr, nullptr, nullptr};  // 地图预览图
     void LoadAudioConfig();

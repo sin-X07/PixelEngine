@@ -84,6 +84,8 @@ public:
         bool  isFullscreen = false;
 
         // 玩家累计战绩（主菜单展示）
+        void* backdropTex = nullptr;   // 主菜单背景图（SDL_Texture*）
+        int   backdropW = 0, backdropH = 0;
         int   statKills = 0;
         int   statDeaths = 0;
     };

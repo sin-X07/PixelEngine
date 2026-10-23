@@ -293,6 +293,18 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
         ToggleFullscreen();
     }
 
+    // 主菜单背景：用一张地图实景（失败不影响运行）
+    {
+        const std::string bgPath = PathUtils::ResolveAppPath("assets/cs2d/tilesets/dust_2.png");
+        menuBgTex_ = IMG_LoadTexture(renderer, bgPath.c_str());
+        if (menuBgTex_) {
+            SDL_QueryTexture(static_cast<SDL_Texture*>(menuBgTex_), nullptr, nullptr,
+                             &menuBgW_, &menuBgH_);
+            std::cout << "[UI] 主菜单背景: dust_2.png (" << menuBgW_ << "x" << menuBgH_ << ")"
+                      << std::endl;
+        }
+    }
+
     audioManager->PlayMusic("assets/audio/menu.wav");
 
     isRunning = true;
@@ -711,6 +723,9 @@ void Engine::Render() {
         ctx.renderScalePct = saveManager->GetSettings().renderScalePct;
         ctx.isFullscreen = isFullscreen;
 
+        ctx.backdropTex = menuBgTex_;
+        ctx.backdropW   = menuBgW_;
+        ctx.backdropH   = menuBgH_;
         ctx.statKills  = saveManager->GetStats().kills;
         ctx.statDeaths = saveManager->GetStats().deaths;
 

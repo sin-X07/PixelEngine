@@ -128,7 +128,36 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         const float yLocal  = std::max(UI(16.0f), (vpH - blockH) * 0.5f);
         const float yScreen = viewport->WorkPos.y + yLocal;
 
-        DrawMenuBackdrop(ImGui::GetWindowDrawList(), viewport->WorkPos, viewport->WorkSize);
+        ImDrawList* mdl = ImGui::GetWindowDrawList();
+        if (ctx.backdropTex && ctx.backdropW > 0 && ctx.backdropH > 0) {
+            // 用一张地图实景做背景：等比裁切铺满，再压暗，保证标题可读
+            const float sw = viewport->WorkSize.x;
+            const float sh = viewport->WorkSize.y;
+            const float texAspect = static_cast<float>(ctx.backdropW) / static_cast<float>(ctx.backdropH);
+            const float scrAspect = sw / sh;
+            ImVec2 uv0(0.0f, 0.0f), uv1(1.0f, 1.0f);
+            if (texAspect > scrAspect) {
+                const float frac = scrAspect / texAspect;
+                uv0.x = (1.0f - frac) * 0.5f;
+                uv1.x = uv0.x + frac;
+            } else {
+                const float frac = texAspect / scrAspect;
+                uv0.y = (1.0f - frac) * 0.5f;
+                uv1.y = uv0.y + frac;
+            }
+            mdl->AddImage(reinterpret_cast<ImTextureID>(ctx.backdropTex),
+                          viewport->WorkPos,
+                          ImVec2(viewport->WorkPos.x + sw, viewport->WorkPos.y + sh),
+                          uv0, uv1);
+            // 压暗 + 上下渐变，让文字浮出来
+            mdl->AddRectFilledMultiColor(
+                viewport->WorkPos, ImVec2(viewport->WorkPos.x + sw, viewport->WorkPos.y + sh),
+                Palette::U32(ImVec4(0.02f, 0.03f, 0.045f, 0.88f)),
+                Palette::U32(ImVec4(0.02f, 0.03f, 0.045f, 0.88f)),
+                Palette::U32(ImVec4(0.03f, 0.045f, 0.06f, 0.94f)),
+                Palette::U32(ImVec4(0.03f, 0.045f, 0.06f, 0.94f)));
+        }
+        DrawMenuBackdrop(mdl, viewport->WorkPos, viewport->WorkSize);
         DrawImGuiTextCentered(imGuiUI_, "CS2D", yScreen, 255, 255, 255, 255, 34);
         DrawTitleAccent(ImGui::GetWindowDrawList(), centerX, yScreen + UI(44.0f), UI(46.0f));
         DrawImGuiTextCentered(imGuiUI_, "Counter-Strike 2D 单机版", yScreen + titleH,
