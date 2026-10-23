@@ -1,5 +1,6 @@
 #include "ImGuiUI.hpp"
 #include "UiScale.hpp"
+#include "Palette.hpp"
 #include <cmath>
 #include "../Core/UiTextChars.hpp"
 #include "../Core/PathUtils.hpp"
@@ -29,7 +30,7 @@ bool ImGuiUI::Initialize(SDL_Window* win, SDL_Renderer* ren) {
     // —— 游戏风格深色主题（暗蓝灰调） ——
     {
         ImGuiStyle& style = ImGui::GetStyle();
-        style.FrameRounding    = 6.0f;
+        style.FrameRounding    = 7.0f;
         style.FrameBorderSize  = 1.0f;
         style.WindowRounding   = 0.0f;
         style.GrabRounding     = 4.0f;
@@ -37,53 +38,55 @@ bool ImGuiUI::Initialize(SDL_Window* win, SDL_Renderer* ren) {
         style.TabRounding      = 5.0f;
         style.ItemSpacing      = ImVec2(10.0f, 8.0f);
         style.ItemInnerSpacing = ImVec2(8.0f, 4.0f);
-        style.FramePadding     = ImVec2(10.0f, 6.0f);
+        style.FramePadding     = ImVec2(12.0f, 7.0f);
 
         ImVec4* colors = style.Colors;
-        // 底色系
-        colors[ImGuiCol_WindowBg]             = ImVec4(0.06f, 0.09f, 0.13f, 0.94f);
-        colors[ImGuiCol_ChildBg]              = ImVec4(0.08f, 0.11f, 0.15f, 1.00f);
-        colors[ImGuiCol_PopupBg]              = ImVec4(0.10f, 0.14f, 0.19f, 0.96f);
-        // 边框
-        colors[ImGuiCol_Border]               = ImVec4(0.25f, 0.30f, 0.38f, 0.60f);
+
+        // 统一走 Palette（深海军蓝 + 沙漠金）
+        colors[ImGuiCol_WindowBg]             = ImVec4(0.043f, 0.059f, 0.078f, 0.97f);
+        colors[ImGuiCol_ChildBg]              = Palette::BgPanel();
+        colors[ImGuiCol_PopupBg]              = ImVec4(0.075f, 0.098f, 0.125f, 0.98f);
+
+        colors[ImGuiCol_Border]               = Palette::Border();
         colors[ImGuiCol_BorderShadow]         = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-        // 标题栏
-        colors[ImGuiCol_TitleBg]              = ImVec4(0.07f, 0.10f, 0.16f, 1.00f);
-        colors[ImGuiCol_TitleBgActive]        = ImVec4(0.09f, 0.13f, 0.21f, 1.00f);
-        colors[ImGuiCol_TitleBgCollapsed]     = ImVec4(0.06f, 0.08f, 0.12f, 0.80f);
-        // 按钮 —— 用暖金色调基底，各页面 PushStyleColor 做语义区分
-        colors[ImGuiCol_Button]               = ImVec4(0.14f, 0.18f, 0.25f, 1.00f);
-        colors[ImGuiCol_ButtonHovered]        = ImVec4(0.22f, 0.28f, 0.38f, 1.00f);
-        colors[ImGuiCol_ButtonActive]         = ImVec4(0.30f, 0.38f, 0.52f, 1.00f);
-        // 滑块
-        colors[ImGuiCol_SliderGrab]           = ImVec4(0.34f, 0.55f, 0.76f, 1.00f);
-        colors[ImGuiCol_SliderGrabActive]     = ImVec4(0.42f, 0.66f, 0.90f, 1.00f);
-        colors[ImGuiCol_FrameBg]              = ImVec4(0.10f, 0.13f, 0.18f, 1.00f);
-        colors[ImGuiCol_FrameBgHovered]       = ImVec4(0.14f, 0.18f, 0.25f, 1.00f);
-        colors[ImGuiCol_FrameBgActive]        = ImVec4(0.18f, 0.24f, 0.34f, 1.00f);
-        // 文本
-        colors[ImGuiCol_Text]                 = ImVec4(0.92f, 0.93f, 0.95f, 1.00f);
-        colors[ImGuiCol_TextDisabled]         = ImVec4(0.45f, 0.48f, 0.53f, 1.00f);
-        // 选择/高亮
-        colors[ImGuiCol_Header]               = ImVec4(0.16f, 0.22f, 0.32f, 1.00f);
-        colors[ImGuiCol_HeaderHovered]        = ImVec4(0.22f, 0.30f, 0.42f, 1.00f);
-        colors[ImGuiCol_HeaderActive]         = ImVec4(0.28f, 0.38f, 0.54f, 1.00f);
-        colors[ImGuiCol_CheckMark]            = ImVec4(0.46f, 0.78f, 0.52f, 1.00f);
-        // Tab
-        colors[ImGuiCol_Tab]                  = ImVec4(0.10f, 0.13f, 0.18f, 1.00f);
-        colors[ImGuiCol_TabHovered]           = ImVec4(0.18f, 0.24f, 0.34f, 1.00f);
-        colors[ImGuiCol_TabActive]            = ImVec4(0.14f, 0.18f, 0.25f, 1.00f);
-        colors[ImGuiCol_TabUnfocused]         = ImVec4(0.08f, 0.10f, 0.14f, 0.97f);
-        colors[ImGuiCol_TabUnfocusedActive]   = ImVec4(0.10f, 0.14f, 0.20f, 1.00f);
-        // 滚动条
-        colors[ImGuiCol_ScrollbarBg]          = ImVec4(0.04f, 0.06f, 0.09f, 0.53f);
-        colors[ImGuiCol_ScrollbarGrab]        = ImVec4(0.18f, 0.24f, 0.34f, 1.00f);
-        colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.26f, 0.34f, 0.48f, 1.00f);
-        colors[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.34f, 0.44f, 0.60f, 1.00f);
-        // Separator
-        colors[ImGuiCol_Separator]            = ImVec4(0.18f, 0.24f, 0.32f, 0.80f);
-        colors[ImGuiCol_SeparatorHovered]     = ImVec4(0.30f, 0.42f, 0.58f, 1.00f);
-        colors[ImGuiCol_SeparatorActive]      = ImVec4(0.38f, 0.52f, 0.72f, 1.00f);
+
+        colors[ImGuiCol_TitleBg]              = Palette::BgDeep();
+        colors[ImGuiCol_TitleBgActive]        = Palette::BgPanel();
+        colors[ImGuiCol_TitleBgCollapsed]     = Palette::BgDeep();
+
+        // 按钮：暗金属底，悬停偏金
+        colors[ImGuiCol_Button]               = ImVec4(0.120f, 0.150f, 0.190f, 1.00f);
+        colors[ImGuiCol_ButtonHovered]        = ImVec4(0.220f, 0.195f, 0.135f, 1.00f);
+        colors[ImGuiCol_ButtonActive]         = ImVec4(0.300f, 0.250f, 0.150f, 1.00f);
+
+        colors[ImGuiCol_SliderGrab]           = Palette::AccentDim();
+        colors[ImGuiCol_SliderGrabActive]     = Palette::Accent();
+        colors[ImGuiCol_FrameBg]              = ImVec4(0.090f, 0.115f, 0.150f, 1.00f);
+        colors[ImGuiCol_FrameBgHovered]       = ImVec4(0.130f, 0.165f, 0.215f, 1.00f);
+        colors[ImGuiCol_FrameBgActive]        = ImVec4(0.170f, 0.215f, 0.280f, 1.00f);
+
+        colors[ImGuiCol_Text]                 = Palette::Text();
+        colors[ImGuiCol_TextDisabled]         = Palette::TextFaint();
+
+        colors[ImGuiCol_Header]               = ImVec4(0.150f, 0.185f, 0.235f, 1.00f);
+        colors[ImGuiCol_HeaderHovered]        = ImVec4(0.210f, 0.250f, 0.310f, 1.00f);
+        colors[ImGuiCol_HeaderActive]         = ImVec4(0.260f, 0.300f, 0.360f, 1.00f);
+        colors[ImGuiCol_CheckMark]            = Palette::Ally();
+
+        colors[ImGuiCol_Tab]                  = Palette::BgPanel();
+        colors[ImGuiCol_TabHovered]           = Palette::BgHover();
+        colors[ImGuiCol_TabActive]            = ImVec4(0.140f, 0.175f, 0.220f, 1.00f);
+        colors[ImGuiCol_TabUnfocused]         = Palette::BgDeep();
+        colors[ImGuiCol_TabUnfocusedActive]   = Palette::BgPanel();
+
+        colors[ImGuiCol_ScrollbarBg]          = ImVec4(0.030f, 0.045f, 0.060f, 0.60f);
+        colors[ImGuiCol_ScrollbarGrab]        = ImVec4(0.180f, 0.220f, 0.280f, 1.00f);
+        colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.250f, 0.300f, 0.370f, 1.00f);
+        colors[ImGuiCol_ScrollbarGrabActive]  = Palette::AccentDim();
+
+        colors[ImGuiCol_Separator]            = ImVec4(0.180f, 0.220f, 0.280f, 0.80f);
+        colors[ImGuiCol_SeparatorHovered]     = Palette::AccentSoft();
+        colors[ImGuiCol_SeparatorActive]      = Palette::Accent();
     }
 
     if (!ImGui_ImplSDL2_InitForSDLRenderer(window, renderer)) {

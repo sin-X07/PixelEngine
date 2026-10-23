@@ -1,4 +1,5 @@
 #include "CS2DOverlay.hpp"
+#include "../Graphics/UiScale.hpp"
 #include "CS2DRenderer.hpp"
 #include "CS2DGame.hpp"
 #include "CS2DWorld.hpp"
@@ -34,10 +35,11 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
     if (!renderer || !game) return;
 
     // 准星
+    // 准星尺寸随 UI 缩放（设置里的数值是 1920x1080 基准）
     renderer->DrawCrosshair(virtCursorX, virtCursorY,
                             crosshair.r, crosshair.g, crosshair.b, crosshair.a,
-                            crosshair.thickness, crosshair.centerDot,
-                            crosshair.length, crosshair.gap);
+                            crosshair.thickness * g_uiScale, crosshair.centerDot,
+                            crosshair.length * g_uiScale, crosshair.gap * g_uiScale);
 
     // 顶部计分板已由 GameUI（ImGui）统一绘制，此处不再重复绘制
 
@@ -46,7 +48,7 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
         const float hm = game->GetHitMarkerTimer();
         if (hm > 0.0f) {
             const float k = std::min(1.0f, hm / 0.18f);
-            renderer->DrawHitMarker(virtCursorX, virtCursorY, 1.0f,
+            renderer->DrawHitMarker(virtCursorX, virtCursorY, g_uiScale,
                                     static_cast<Uint8>(220.0f * k));
         }
     }
@@ -86,7 +88,7 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
         mapPixelW, mapPixelH,
         radar.playerCentered, radar.rotateWithPlayer,
         radar.blendBg, radar.bgAlpha,
-        radar.hudSize, radar.mapZoom,
+        static_cast<int>(std::lround(radar.hudSize * g_uiScale)), radar.mapZoom,
         false, viewW, viewH);
 
     // 中心雷达（Tab 切换）
@@ -98,7 +100,7 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
             mapPixelW, mapPixelH,
             radar.playerCentered, radar.rotateWithPlayer,
             false, 200,
-            320, radar.mapZoom * 1.5f,
+            static_cast<int>(std::lround(320.0f * g_uiScale)), radar.mapZoom * 1.5f,
             true, viewW, viewH);
     }
 }

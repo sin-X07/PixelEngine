@@ -1038,8 +1038,9 @@ void CS2DRenderer::DrawRadarHUD(float playerX, float playerY, float playerAngle,
                                  bool showCenterRadar,
                                  int viewW, int viewH) {
     const int radarSize = showCenterRadar ? 320 : hudSize;
-    const int radarX = showCenterRadar ? (viewW - radarSize) / 2 : 8;
-    const int radarY = showCenterRadar ? (viewH - radarSize) / 2 : 8;
+    const int margin = std::max(4, static_cast<int>(std::lround(8.0f * g_uiScale)));
+    const int radarX = showCenterRadar ? (viewW - radarSize) / 2 : margin;
+    const int radarY = showCenterRadar ? (viewH - radarSize) / 2 : margin;
     if (mapW <= 0.0f || mapH <= 0.0f) return;
 
     // 背景

@@ -1,6 +1,7 @@
 #include "GameUI.hpp"
 #include <iostream>
 #include "UiScale.hpp"
+#include "Palette.hpp"
 #include "../Core/Resolutions.hpp"
 #include "../CS2D/MapCatalog.hpp"
 #include "../ThirdParty/imgui/imgui.h"
@@ -40,6 +41,40 @@ void DrawImGuiTextCentered(ImGuiUI* ui, const char* text, float centerY,
 // 菜单
 // ============================================================================
 
+namespace {
+
+// 菜单背景：上深下浅渐变 + 顶部金线 + 底部暗角，让页面有"产品感"而非纯黑
+void DrawMenuBackdrop(ImDrawList* dl, const ImVec2& pos, const ImVec2& size) {
+    const ImVec2 e(pos.x + size.x, pos.y + size.y);
+    dl->AddRectFilledMultiColor(pos, e,
+        Palette::U32(ImVec4(0.035f, 0.048f, 0.065f, 1.0f)),
+        Palette::U32(ImVec4(0.035f, 0.048f, 0.065f, 1.0f)),
+        Palette::U32(ImVec4(0.078f, 0.100f, 0.128f, 1.0f)),
+        Palette::U32(ImVec4(0.078f, 0.100f, 0.128f, 1.0f)));
+
+    dl->AddRectFilled(pos, ImVec2(e.x, pos.y + std::max(1.0f, UI(2.0f))),
+                      Palette::U32(Palette::Accent()));
+    dl->AddRectFilled(ImVec2(pos.x, pos.y + std::max(2.0f, UI(3.0f))),
+                      ImVec2(e.x, pos.y + std::max(4.0f, UI(6.0f))),
+                      Palette::U32(ImVec4(0.92f, 0.74f, 0.33f, 0.16f)));
+
+    dl->AddRectFilledMultiColor(
+        ImVec2(pos.x, pos.y + size.y * 0.68f), e,
+        Palette::U32(ImVec4(0.0f, 0.0f, 0.0f, 0.0f)),
+        Palette::U32(ImVec4(0.0f, 0.0f, 0.0f, 0.0f)),
+        Palette::U32(ImVec4(0.0f, 0.0f, 0.0f, 0.45f)),
+        Palette::U32(ImVec4(0.0f, 0.0f, 0.0f, 0.45f)));
+}
+
+// 标题下方的短金线
+void DrawTitleAccent(ImDrawList* dl, float centerX, float y, float halfW) {
+    dl->AddRectFilled(ImVec2(centerX - halfW, y),
+                      ImVec2(centerX + halfW, y + std::max(2.0f, UI(3.0f))),
+                      Palette::U32(Palette::Accent()));
+}
+
+} // namespace
+
 void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -59,7 +94,16 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 
     auto bigButton = [&](const char* label) {
         ImGui::SetCursorPosX(centerX - buttonW * 0.5f);
-        return ImGui::Button(label, ImVec2(buttonW, buttonH));
+        const bool pressed = ImGui::Button(label, ImVec2(buttonW, buttonH));
+        if (ImGui::IsItemHovered()) {
+            // 悬停时左侧亮起金色竖条，强化"可点"的反馈
+            const ImVec2 a = ImGui::GetItemRectMin();
+            const ImVec2 b = ImGui::GetItemRectMax();
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImVec2(a.x, a.y + UI(2.0f)), ImVec2(a.x + UI(3.0f), b.y - UI(2.0f)),
+                Palette::U32(Palette::Accent()), UI(2.0f));
+        }
+        return pressed;
     };
     auto doClick = [&](const std::function<void()>& action) {
         if (actions.playClick) actions.playClick();
@@ -84,7 +128,9 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         const float yLocal  = std::max(UI(16.0f), (vpH - blockH) * 0.5f);
         const float yScreen = viewport->WorkPos.y + yLocal;
 
+        DrawMenuBackdrop(ImGui::GetWindowDrawList(), viewport->WorkPos, viewport->WorkSize);
         DrawImGuiTextCentered(imGuiUI_, "CS2D", yScreen, 255, 255, 255, 255, 34);
+        DrawTitleAccent(ImGui::GetWindowDrawList(), centerX, yScreen + UI(44.0f), UI(46.0f));
         DrawImGuiTextCentered(imGuiUI_, "Counter-Strike 2D 单机版", yScreen + titleH,
                               160, 190, 210, 255, 20);
 
@@ -104,9 +150,22 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
     }
     // ---------------- 暂停 ----------------
     else if (ctx.state == PAUSED) {
-        DrawImGuiTextCentered(imGuiUI_, "已暂停", 110.0f, 255, 255, 255, 255, 30);
+        // 标题 + 5 个按钮整块垂直居中
+        const float vpH = viewport->WorkSize.y;
+        const float sp  = ImGui::GetStyle().ItemSpacing.y;
+        const int   nBtn = 5;
+        const float titleH = UI(40.0f);
+        const float gap1   = UI(28.0f);
+        const float blockH = titleH + gap1 + nBtn * buttonH + (nBtn - 1) * sp;
+        const float yLocal = std::max(UI(16.0f), (vpH - blockH) * 0.5f);
 
-        ImGui::SetCursorPosY(UI(190.0f));
+        DrawMenuBackdrop(ImGui::GetWindowDrawList(), viewport->WorkPos, viewport->WorkSize);
+        DrawImGuiTextCentered(imGuiUI_, "已暂停", viewport->WorkPos.y + yLocal,
+                              255, 255, 255, 255, 30);
+        DrawTitleAccent(ImGui::GetWindowDrawList(), centerX,
+                        viewport->WorkPos.y + yLocal + UI(38.0f), UI(40.0f));
+
+        ImGui::SetCursorPosY(yLocal + titleH + gap1);
         if (bigButton("继续游戏")) doClick([&] { actions.resumeGame(); });
         if (bigButton("重新开始")) doClick([&] { actions.startMatch(); });
         if (bigButton("设置"))     doClick([&] { actions.openSettings(PAUSED); });
@@ -115,14 +174,28 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
     }
     // ---------------- 退出确认 ----------------
     else if (ctx.state == EXIT_CONFIRM) {
-        DrawImGuiTextCentered(imGuiUI_, "确认退出", 180.0f, 255, 255, 255, 255, 26);
-        DrawImGuiTextCentered(imGuiUI_, "当前对局进度将不会被保存", 240.0f, 200, 200, 200, 255, 18);
+        const float vpH = viewport->WorkSize.y;
+        const float titleH = UI(38.0f);
+        const float subH   = UI(28.0f);
+        const float gap1   = UI(18.0f);
+        const float gap2   = UI(30.0f);
+        const float blockH = titleH + subH + gap1 + gap2 + buttonH;
+        const float yLocal = std::max(UI(16.0f), (vpH - blockH) * 0.5f);
 
-        ImGui::SetCursorPosY(UI(300.0f));
-        ImGui::SetCursorPosX(centerX - buttonW - 15.0f);
-        if (ImGui::Button("继续游戏", ImVec2(buttonW, buttonH))) doClick([&] { actions.goState(PAUSED); });
-        ImGui::SetCursorPosY(UI(300.0f));
-        ImGui::SetCursorPosX(centerX + 15.0f);
+        DrawMenuBackdrop(ImGui::GetWindowDrawList(), viewport->WorkPos, viewport->WorkSize);
+        DrawImGuiTextCentered(imGuiUI_, "确认退出",
+                              viewport->WorkPos.y + yLocal, 255, 255, 255, 255, 26);
+        DrawTitleAccent(ImGui::GetWindowDrawList(), centerX,
+                        viewport->WorkPos.y + yLocal + UI(34.0f), UI(36.0f));
+        DrawImGuiTextCentered(imGuiUI_, "当前对局进度将会被保存",
+                              viewport->WorkPos.y + yLocal + titleH, 200, 200, 200, 255, 18);
+
+        const float btnY = yLocal + titleH + subH + gap1 + gap2;
+        ImGui::SetCursorPosY(btnY);
+        ImGui::SetCursorPosX(centerX - buttonW - UI(15.0f));
+        if (ImGui::Button("返回游戏", ImVec2(buttonW, buttonH))) doClick([&] { actions.goState(PAUSED); });
+        ImGui::SetCursorPosY(btnY);
+        ImGui::SetCursorPosX(centerX + UI(15.0f));
         if (ImGui::Button("退出", ImVec2(buttonW, buttonH))) doClick([&] { actions.quitApp(); });
     }
     // ---------------- 设置 ----------------
@@ -337,11 +410,11 @@ void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
         IM_COL32(230, 185, 80, 0), IM_COL32(230, 185, 80, 0));
 
     // ---------- 标题 ----------
-    DrawImGuiTextCentered(imGuiUI_, "选择地图", wp.y + 42.0f, 240, 246, 255, 255, 32);
-    DrawImGuiTextCentered(imGuiUI_, "爆破模式 · 选择本局战场", wp.y + 88.0f,
+    DrawImGuiTextCentered(imGuiUI_, "选择地图", wp.y + UI(42.0f), 240, 246, 255, 255, 32);
+    DrawImGuiTextCentered(imGuiUI_, "爆破模式 · 选择本局战场", wp.y + UI(88.0f),
                           150, 178, 200, 255, 18);
-    dl->AddRectFilled(ImVec2(centerX - 70.0f, wp.y + 120.0f),
-                      ImVec2(centerX + 70.0f, wp.y + 123.0f),
+    dl->AddRectFilled(ImVec2(centerX - UI(70.0f), wp.y + UI(120.0f)),
+                      ImVec2(centerX + UI(70.0f), wp.y + UI(123.0f)),
                       IM_COL32(230, 185, 80, 220), 1.5f);
 
     // ---------- 地图卡片 ----------
@@ -350,7 +423,7 @@ void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
     const float gap = UI(30.0f);
     const float totalW = kMapCatalogCount * cardW + (kMapCatalogCount - 1) * gap;
     const float startX = wp.x + (vpW - totalW) * 0.5f;
-    const float cardY = wp.y + 158.0f;
+    const float cardY = wp.y + UI(158.0f);
 
     for (int i = 0; i < kMapCatalogCount; ++i) {
         const MapEntry& m = kMapCatalog[i];
@@ -381,7 +454,7 @@ void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
         // 预览图
         const float pad = UI(12.0f);
         const ImVec2 img0(cp.x + pad, cp.y + pad);
-        const ImVec2 img1(cp2.x - pad, cp.y + 178.0f);
+        const ImVec2 img1(cp2.x - pad, cp.y + UI(178.0f));
         if (ctx.previewTex[i]) {
             dl->AddImage(reinterpret_cast<ImTextureID>(ctx.previewTex[i]), img0, img1);
         } else {
@@ -406,10 +479,10 @@ void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
         // 选中标识
         if (selected) {
             dl->AddRect(cp, cp2, IM_COL32(235, 190, 85, 255), 10.0f, 0, 3.0f);
-            dl->AddRectFilled(ImVec2(cp.x + pad, cp2.y - 34.0f),
-                              ImVec2(cp.x + pad + 58.0f, cp2.y - 14.0f),
+            dl->AddRectFilled(ImVec2(cp.x + pad, cp2.y - UI(34.0f)),
+                              ImVec2(cp.x + pad + UI(58.0f), cp2.y - UI(14.0f)),
                               IM_COL32(235, 190, 85, 235), 4.0f);
-            DrawImGuiText(imGuiUI_, "已选", cp.x + pad + 12.0f, cp2.y - 32.0f,
+            DrawImGuiText(imGuiUI_, "已选", cp.x + pad + UI(12.0f), cp2.y - UI(32.0f),
                           20, 24, 30, 255, 14);
         } else if (hovered) {
             dl->AddRect(cp, cp2, IM_COL32(190, 210, 230, 160), 10.0f, 0, 1.5f);
@@ -419,11 +492,11 @@ void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
     }
 
     // ---------- 底部操作区 ----------
-    const float btnY = cardY + cardH + 34.0f;
+    const float btnY = cardY + cardH + UI(34.0f);
     const float btnW = UI(190.0f);
     const float btnH = UI(44.0f);
 
-    ImGui::SetCursorScreenPos(ImVec2(centerX - btnW - 14.0f, btnY));
+    ImGui::SetCursorScreenPos(ImVec2(centerX - btnW - UI(14.0f), btnY));
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.90f, 0.72f, 0.30f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.00f, 0.82f, 0.42f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.78f, 0.62f, 0.24f, 1.0f));
@@ -434,7 +507,7 @@ void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
     }
     ImGui::PopStyleColor(4);
 
-    ImGui::SetCursorScreenPos(ImVec2(centerX + 14.0f, btnY));
+    ImGui::SetCursorScreenPos(ImVec2(centerX + UI(14.0f), btnY));
     if (ImGui::Button("返回主菜单", ImVec2(btnW, btnH))) {
         if (actions.playClick) actions.playClick();
         if (actions.goState) actions.goState(MAIN_MENU);
@@ -444,7 +517,7 @@ void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
     char hint[128];
     snprintf(hint, sizeof(hint), "← → 切换地图      Enter 开始      Esc 返回      (%d / %d)",
              ctx.selected + 1, kMapCatalogCount);
-    DrawImGuiTextCentered(imGuiUI_, hint, btnY + btnH + 18.0f, 118, 142, 164, 235, 15);
+    DrawImGuiTextCentered(imGuiUI_, hint, btnY + btnH + UI(18.0f), 118, 142, 164, 235, 15);
 
     // ---------- 键盘操作 ----------
     if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && ctx.selected > 0) {
@@ -467,22 +540,23 @@ void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
 
 void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx, const std::function<void(int)>& onBuy) {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    const float w = 600.0f;
-    const float h = 400.0f;
+    const float w = UI(600.0f);
+    // 高度跟着视口走，小窗口也不会被裁掉；内容超出时右侧出现滚动条
+    const float h = std::min(UI(470.0f), viewport->WorkSize.y - UI(48.0f));
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (viewport->WorkSize.x - w) * 0.5f,
                                   viewport->WorkPos.y + (viewport->WorkSize.y - h) * 0.5f),
                             ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.09f, 0.12f, 0.96f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.043f, 0.059f, 0.078f, 0.97f));
     ImGui::Begin("##BuyMenu", nullptr,
                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
-                 ImGuiWindowFlags_NoTitleBar);
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
     ImGui::TextColored(ImVec4(0.95f, 0.82f, 0.35f, 1.0f), "购买菜单");
-    ImGui::SameLine(0.0f, 24.0f);
+    ImGui::SameLine(0.0f, UI(24.0f));
     ImGui::Text("余额: $%d", ctx.money);
-    ImGui::SameLine(0.0f, 24.0f);
+    ImGui::SameLine(0.0f, UI(24.0f));
     ImGui::TextDisabled("[B] 关闭");
 
     if (!ctx.canBuy && !ctx.hint.empty()) {
@@ -510,7 +584,7 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx, const std::function<void(int)>& 
             char label[128];
             snprintf(label, sizeof(label), "%s  $%d%s",
                      it.name.c_str(), it.price, it.owned ? " (已装备)" : "");
-            if (ImGui::Button(label, ImVec2(182.0f, 0.0f))) {
+            if (ImGui::Button(label, ImVec2(UI(182.0f), 0.0f))) {
                 if (onBuy) onBuy(it.weaponId);
             }
             if (!enabled) ImGui::EndDisabled();
@@ -532,6 +606,24 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
     if (ctx.state != PLAYING) return;
 
     const float vpW = ImGui::GetIO().DisplaySize.x;
+    const float vpH = ImGui::GetIO().DisplaySize.y;
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+
+    // 顶部计分条背板：让分数/时间从"漂浮文字"变成一块 HUD 面板
+    {
+        const float pw = UI(430.0f);
+        const float ph = UI(74.0f);
+        const float px = (vpW - pw) * 0.5f;
+        const float py = UI(4.0f);
+        fg->AddRectFilled(ImVec2(px, py), ImVec2(px + pw, py + ph),
+                          IM_COL32(8, 12, 17, 170), UI(6.0f));
+        fg->AddRect(ImVec2(px, py), ImVec2(px + pw, py + ph),
+                    IM_COL32(210, 172, 96, 120), UI(6.0f), 0, std::max(1.0f, UI(1.5f)));
+        // 顶部一条细金线，呼应菜单风格
+        fg->AddRectFilled(ImVec2(px + UI(10.0f), py + UI(1.0f)),
+                          ImVec2(px + pw - UI(10.0f), py + std::max(2.0f, UI(3.0f))),
+                          IM_COL32(230, 185, 90, 150));
+    }
 
     // 顶部计分板：T 比分 : 比分 CT ｜ 回合 ｜ 倒计时
     {
@@ -544,9 +636,9 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
                  ctx.roundNumber,
                  ctx.roundRemainingSec / 60, ctx.roundRemainingSec % 60);
 
-        DrawImGuiTextCentered(imGuiUI, mid, 12.0f, 180, 200, 215, 255, 18);
-        DrawImGuiTextCentered(imGuiUI, left, 40.0f, 235, 235, 235, 255, 22);
-        DrawImGuiTextCentered(imGuiUI, alive, 64.0f, 160, 175, 185, 255, 16);
+        DrawImGuiTextCentered(imGuiUI, mid, UI(12.0f), 180, 200, 215, 255, 18);
+        DrawImGuiTextCentered(imGuiUI, left, UI(40.0f), 235, 235, 235, 255, 22);
+        DrawImGuiTextCentered(imGuiUI, alive, UI(64.0f), 160, 175, 185, 255, 16);
     }
 
     // ---- 左上角雷达下方：教练计划 ----
@@ -554,18 +646,18 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
         char buf[256];
         snprintf(buf, sizeof(buf), "教练: %s", ctx.coachReason.c_str());
         if (ctx.coachFlash) {
-            DrawImGuiText(imGuiUI, buf, 12.0f, ImGui::GetIO().DisplaySize.y - 118.0f,
+            DrawImGuiText(imGuiUI, buf, UI(12.0f), ImGui::GetIO().DisplaySize.y - UI(118.0f),
                           255, 245, 170, 255, 17);   // 刚变更：更亮更大
         } else {
-            DrawImGuiText(imGuiUI, buf, 12.0f, ImGui::GetIO().DisplaySize.y - 118.0f,
+            DrawImGuiText(imGuiUI, buf, UI(12.0f), ImGui::GetIO().DisplaySize.y - UI(118.0f),
                           255, 225, 140, 235, 15);
         }
     }
 
     // ---- 左下角血量条 ----
     {
-        const float barX = 16.0f;
-        const float barY = ImGui::GetIO().DisplaySize.y - 52.0f;
+        const float barX = UI(16.0f);
+        const float barY = ImGui::GetIO().DisplaySize.y - UI(52.0f);
         const float barW = UI(200.0f);
         const float barH = UI(18.0f);
 
@@ -591,11 +683,11 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
 
         char hp[32];
         snprintf(hp, sizeof(hp), "HP %d / %d", ctx.health, ctx.maxHealth);
-        DrawImGuiText(imGuiUI, hp, barX + 6.0f, barY - 20.0f,
+        DrawImGuiText(imGuiUI, hp, barX + UI(6.0f), barY - UI(20.0f),
                       235, 240, 235, 255, 18);
 
         // 护甲条（与血条同样式，紧贴其下）
-        const float armorY = barY + barH + 6.0f;
+        const float armorY = barY + barH + UI(6.0f);
         const float armorFrac = std::clamp(static_cast<float>(ctx.armor) / 100.0f, 0.0f, 1.0f);
 
         dl->AddRectFilled(ImVec2(barX - 2, armorY - 2),
@@ -610,14 +702,14 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
 
         char ar[48];
         snprintf(ar, sizeof(ar), "护甲 %d%s", ctx.armor, ctx.helmet ? " (盔)" : "");
-        DrawImGuiText(imGuiUI, ar, barX + barW + 12.0f, armorY + 1.0f,
+        DrawImGuiText(imGuiUI, ar, barX + barW + UI(12.0f), armorY + 1.0f,
                       190, 215, 240, 255, 16);
     }
 
     // 屏幕中央提示：回合开始 / 回合胜负（带淡出）
     if (!ctx.announcement.empty() && ctx.announcementAlpha > 0.0f) {
         const Uint8 a = static_cast<Uint8>(std::clamp(ctx.announcementAlpha, 0.0f, 1.0f) * 255.0f);
-        DrawImGuiTextCentered(imGuiUI, ctx.announcement.c_str(), 150.0f,
+        DrawImGuiTextCentered(imGuiUI, ctx.announcement.c_str(), ImGui::GetIO().DisplaySize.y * 0.36f,
                               255, 236, 150, a, 34);
     }
 
@@ -625,54 +717,78 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
     if (ctx.matchOver) {
         DrawImGuiTextCentered(imGuiUI,
             ctx.matchWinnerIsCT ? "比赛结束  CT 获胜" : "比赛结束  T 获胜",
-            200.0f, 255, 220, 90, 255, 30);
+            ImGui::GetIO().DisplaySize.y * 0.42f, 255, 220, 90, 255, 30);
         if (ctx.matchOverReturn >= 0.0f) {
             char buf[64];
             snprintf(buf, sizeof(buf), "%d 秒后返回主菜单",
                      static_cast<int>(ctx.matchOverReturn) + 1);
-            DrawImGuiTextCentered(imGuiUI, buf, 240.0f, 200, 210, 220, 255, 20);
+            DrawImGuiTextCentered(imGuiUI, buf, ImGui::GetIO().DisplaySize.y * 0.42f + UI(40.0f), 200, 210, 220, 255, 20);
         }
     }
 
     // ---- 目标物状态 ----
+    // 目标状态背板（没下包时不显示，避免空条）
+    if ((ctx.objective == 1 && ctx.bombPlanted) || ctx.objective == 2) {
+        const float pw = UI(260.0f);
+        const float ph = UI(48.0f);
+        const float px = (vpW - pw) * 0.5f;
+        const float py = UI(84.0f);
+        fg->AddRectFilled(ImVec2(px, py), ImVec2(px + pw, py + ph),
+                          IM_COL32(8, 12, 17, 150), UI(20.0f));
+        fg->AddRect(ImVec2(px, py), ImVec2(px + pw, py + ph),
+                    IM_COL32(220, 80, 70, 140), UI(20.0f), 0, std::max(1.0f, UI(1.5f)));
+    }
+
     if (ctx.objective == 1) {          // 爆破
         if (ctx.bombPlanted) {
             char buf[64];
             snprintf(buf, sizeof(buf), "C4 倒计时 %d 秒", static_cast<int>(ctx.bombTimer));
-            DrawImGuiTextCentered(imGuiUI, buf, 92.0f, 255, 90, 90, 255, 22);
+            DrawImGuiTextCentered(imGuiUI, buf, UI(92.0f), 255, 90, 90, 255, 22);
             if (ctx.defuseProgress > 0.0f) {
                 char db[64];
                 snprintf(db, sizeof(db), "拆包中 %d%%", static_cast<int>(ctx.defuseProgress * 100));
-                DrawImGuiTextCentered(imGuiUI, db, 118.0f, 120, 220, 255, 255, 18);
+                DrawImGuiTextCentered(imGuiUI, db, UI(118.0f), 120, 220, 255, 255, 18);
             }
         }
     } else if (ctx.objective == 2) {   // 人质
         char buf[64];
         snprintf(buf, sizeof(buf), "人质 %d / %d",
                  ctx.hostagesRescued, ctx.hostagesTotal);
-        DrawImGuiTextCentered(imGuiUI, buf, 92.0f, 120, 220, 255, 255, 22);
+        DrawImGuiTextCentered(imGuiUI, buf, UI(92.0f), 120, 220, 255, 255, 22);
         if (ctx.rescueProgress > 0.0f) {
             char rb[64];
             snprintf(rb, sizeof(rb), "营救中 %d%%", static_cast<int>(ctx.rescueProgress * 100));
-            DrawImGuiTextCentered(imGuiUI, rb, 118.0f, 230, 240, 160, 255, 18);
+            DrawImGuiTextCentered(imGuiUI, rb, UI(118.0f), 230, 240, 160, 255, 18);
         }
     }
 
     // ---- 击杀播报（右上角）----
     {
-        const float x = ImGui::GetIO().DisplaySize.x - 320.0f;
-        float y = 96.0f;
+        // 背板：只在有内容时画，避免空面板
+        if (!ctx.killFeed.empty()) {
+            const float rows = static_cast<float>(ctx.killFeed.size());
+            const float pw = UI(320.0f);
+            const float ph = rows * UI(20.0f) + UI(10.0f);
+            const float px = vpW - pw - UI(8.0f);
+            const float py = UI(88.0f);
+            fg->AddRectFilled(ImVec2(px, py), ImVec2(px + pw, py + ph),
+                              IM_COL32(8, 12, 17, 130), UI(5.0f));
+            fg->AddRect(ImVec2(px, py), ImVec2(px + pw, py + ph),
+                        IM_COL32(255, 255, 255, 20), UI(5.0f));
+        }
+        const float x = ImGui::GetIO().DisplaySize.x - UI(320.0f);
+        float y = UI(96.0f);
         for (const auto& line : ctx.killFeed) {
             DrawImGuiText(imGuiUI, line.c_str(), x, y, 235, 235, 235, 235, 16);
-            y += 20.0f;
+            y += UI(20.0f);
         }
     }
 
     // ---- 记分板（Tab 按住）----
     if (ctx.showScoreboard) {
         const ImGuiViewport* vp = ImGui::GetMainViewport();
-        const float w = 560.0f;
-        const float h = 380.0f;
+        const float w = UI(560.0f);
+        const float h = std::min(UI(420.0f), vp->WorkSize.y - UI(48.0f));
         ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + (vp->WorkSize.x - w) * 0.5f,
                                       vp->WorkPos.y + (vp->WorkSize.y - h) * 0.5f),
                                 ImGuiCond_Always);
@@ -681,7 +797,7 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
         ImGui::Begin("##Scoreboard", nullptr,
                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
-                     ImGuiWindowFlags_NoTitleBar);
+                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
         ImGui::TextColored(ImVec4(0.95f, 0.82f, 0.35f, 1.0f),
                            "T %d : %d CT", ctx.scoreT, ctx.scoreCT);
@@ -689,11 +805,11 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
 
         if (ImGui::BeginTable("##score", 5,
                 ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
-            ImGui::TableSetupColumn("阵营", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+            ImGui::TableSetupColumn("阵营", ImGuiTableColumnFlags_WidthFixed, UI(60.0f));
             ImGui::TableSetupColumn("名称", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("K", ImGuiTableColumnFlags_WidthFixed, 50.0f);
-            ImGui::TableSetupColumn("D", ImGuiTableColumnFlags_WidthFixed, 50.0f);
-            ImGui::TableSetupColumn("$", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+            ImGui::TableSetupColumn("K", ImGuiTableColumnFlags_WidthFixed, UI(50.0f));
+            ImGui::TableSetupColumn("D", ImGuiTableColumnFlags_WidthFixed, UI(50.0f));
+            ImGui::TableSetupColumn("$", ImGuiTableColumnFlags_WidthFixed, UI(70.0f));
             ImGui::TableHeadersRow();
 
             for (const auto& r : ctx.scoreRows) {
