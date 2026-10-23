@@ -250,7 +250,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         {
             float zoom = ctx.radarMapZoom;
             sliderRow("地图缩放", "##radarZoom", startX);
-            if (ImGui::SliderFloat("##radarZoom", &zoom, 0.001f, 0.01f, "%.4f")) actions.setRadarMapZoom(zoom);
+            if (ImGui::SliderFloat("##radarZoom", &zoom, 1.0f, 8.0f, "%.2f")) actions.setRadarMapZoom(zoom);
         }
 
         ImGui::EndChild();

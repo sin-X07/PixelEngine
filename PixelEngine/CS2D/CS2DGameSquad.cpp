@@ -216,6 +216,16 @@ void CS2DGame::UpdateTeamContacts(float dt) {
             scan(bots_[j], static_cast<int>(j));
         }
     }
+
+    // 玩家自己的视野同样接入情报网：他看到的人立刻共享给所有队友（雷达/集火都会用）
+    if (player_.alive && flashTimer_ <= 0.0f) {
+        for (size_t j = 0; j < bots_.size(); ++j) {
+            const Player& e = bots_[j];
+            if (!e.alive || e.team == player_.team) continue;
+            if (!PlayerCanSeeBot(e)) continue;      // 距离 + 视野扇形 + 烟雾 + LOS
+            ReportContact(player_.team, static_cast<int>(j), e.x, e.y);
+        }
+    }
 }
 
 // 真实可见敌人（交火距离 + 烟雾 + LOS）

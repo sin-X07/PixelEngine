@@ -1110,27 +1110,37 @@ void CS2DRenderer::DrawRadarHUD(float playerX, float playerY, float playerAngle,
         SDL_SetTextureColorMod(radarMapTex_, 255, 255, 255);
     }
 
+    // 屏幕空间实心圆（半径很小时逐行扫描比多边形更干净）
+    auto fillCircle = [&](float ccx, float ccy, float rad, Uint8 cr, Uint8 cg, Uint8 cb) {
+        SDL_SetRenderDrawColor(renderer_, cr, cg, cb, 255);
+        const int ri = static_cast<int>(std::ceil(rad));
+        for (int dy = -ri; dy <= ri; ++dy) {
+            const float w2 = rad * rad - static_cast<float>(dy * dy);
+            if (w2 <= 0.0f) continue;
+            const float halfW = std::sqrt(w2);
+            SDL_RenderDrawLineF(renderer_, ccx - halfW, ccy + dy, ccx + halfW, ccy + dy);
+        }
+    };
+
+    // 标记半径随缩放变化：铺满全图时很小，放大后变大
+    const float dotR = std::clamp(1.5f + 0.9f * (zoom - 1.0f), 1.5f, 4.5f);
+
     // ---- 点位（友军 / 可见敌人）----
     for (const auto& d : dots) {
         auto [rx, ry] = worldToRadar(d.x, d.y);
         if (rx < radarX + 1 || rx > radarX + radarSize - 1 ||
             ry < radarY + 1 || ry > radarY + radarSize - 1) continue;
 
-        const float r = 3.0f;
-        SDL_FRect dot = {rx - r, ry - r, r * 2.0f, r * 2.0f};
-        // 描一圈深色边，避免和地图底色糊在一起
-        SDL_SetRenderDrawColor(renderer_, 10, 12, 16, 230);
-        SDL_FRect edge = {dot.x - 1.0f, dot.y - 1.0f, dot.w + 2.0f, dot.h + 2.0f};
-        SDL_RenderFillRectF(renderer_, &edge);
-        SDL_SetRenderDrawColor(renderer_, d.r, d.g, d.b, 255);
-        SDL_RenderFillRectF(renderer_, &dot);
+        // 深色描边 + 彩色圆点，避免与地图底色糊在一起
+        fillCircle(rx, ry, dotR + 0.9f, 10, 12, 16);
+        fillCircle(rx, ry, dotR, d.r, d.g, d.b);
     }
 
     // ---- 玩家：箭头 ----
     auto [px, py] = worldToRadar(playerX, playerY);
     // 跟随旋转时地图上的「前」已经朝上，箭头固定朝上
     const float arrowAngle = rotateWithPlayer ? -1.5707963f : playerAngle;
-    const float arrowSize = 6.0f;
+    const float arrowSize = std::clamp(3.5f + 1.2f * (zoom - 1.0f), 3.5f, 7.0f);
     SDL_SetRenderDrawColor(renderer_, 90, 200, 255, 255);
     const float tipX  = px + std::cos(arrowAngle) * arrowSize;
     const float tipY  = py + std::sin(arrowAngle) * arrowSize;
