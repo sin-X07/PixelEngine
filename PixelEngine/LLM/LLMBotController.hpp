@@ -32,6 +32,7 @@ struct LLMConfig {
     int    ngl             = 99;     // GPU 全卸载层数
     int    startupWaitSec  = 20;     // 自动拉起后等待模型加载最长时间
     bool   killOnExit      = true;   // 退出时终止本程序拉起的 llama-server (释放显存)
+    bool   jsonSchema      = true;   // 是否尝试 response_format:json_schema
 
     // 从 INI 文件解析 (失败时保留默认值, 不抛出)
     static LLMConfig FromFile(const std::string& iniPath);
@@ -86,7 +87,7 @@ private:
     // HTTP 核心
     // 发送请求，成功时把模型原文写入 rawOut
     bool DoHttpRequest(const std::string& requestBody, const std::string& tag,
-                       std::string& rawOut);
+                       std::string& rawOut, int* outStatus = nullptr);
 
     // 健康检测: 通过 GET /health 探测 server 是否就绪
     bool HealthCheck(int timeoutMs = 15000);
@@ -137,4 +138,5 @@ private:
     std::thread workers_[kWorkers];
     std::atomic<int> activeWorkers_{0};
     std::atomic<bool> schemaSupported_{true};   // 服务端是否支持 json_schema
+    std::atomic<bool> schemaLogged_{false};
 };

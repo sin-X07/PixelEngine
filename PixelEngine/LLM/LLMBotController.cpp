@@ -29,6 +29,7 @@ LLMConfig LLMConfig::FromFile(const std::string& iniPath) {
     cfg.ngl            = ini.GetInt   ("launcher", "ngl",         cfg.ngl);
     cfg.startupWaitSec = ini.GetInt   ("launcher", "startup_wait", cfg.startupWaitSec);
     cfg.killOnExit     = ini.GetBool  ("launcher", "kill_on_exit", cfg.killOnExit);
+    cfg.jsonSchema     = ini.GetBool  ("launcher", "json_schema", cfg.jsonSchema);
 
     return cfg;
 }
@@ -110,6 +111,7 @@ LLMBotController::~LLMBotController() {
 bool LLMBotController::Initialize(const LLMConfig& config) {
     serverUrl_ = config.serverUrl;
     killOnExit_ = config.killOnExit;
+    schemaSupported_ = config.jsonSchema;
 
     // 0. 若存在上次运行遗留的 PID 文件，先校验是否仍有效
     const unsigned long stalePid = ReadPidFile();
@@ -473,17 +475,22 @@ void LLMBotController::WorkerLoop() {
         std::string req = PromptBuilder::BuildRequestBodyEx(
             system, body, maxTokens, 0.3f, useSchema ? schema : std::string(), true, 0);
 
-        bool ok = DoHttpRequest(req, tag, raw);
-        if (!ok && useSchema) {
-            // 服务端不支持 response_format:json_schema → 永久回退为普通 JSON
+        int status = 0;
+        bool ok = DoHttpRequest(req, tag, raw, &status);
+
+        // 只有「4xx 客户端错误」才说明真的不支持 schema；
+        // 5xx（模型还在加载）或超时不应该永久关掉结构化输出。
+        if (!ok && useSchema && status >= 400 && status < 500) {
             if (schemaSupported_.exchange(false)) {
-                std::cout << "[LLM] 服务端不支持 json_schema，已回退为普通 JSON 输出"
-                          << std::endl;
+                std::cout << "[LLM] 服务端拒绝 json_schema (HTTP " << status
+                          << ")，回退为普通 JSON 输出" << std::endl;
             }
             raw.clear();
             const std::string req2 = PromptBuilder::BuildRequestBodyEx(
                 system, body, maxTokens, 0.3f, std::string(), true, 0);
             DoHttpRequest(req2, tag, raw);
+        } else if (ok && useSchema && !schemaLogged_.exchange(true)) {
+            std::cout << "[LLM] json_schema 结构化输出已生效" << std::endl;
         }
         busy_ = false;
 
@@ -502,7 +509,7 @@ void LLMBotController::WorkerLoop() {
 // ---- DoHttpRequest (WinHTTP POST) ----
 bool LLMBotController::DoHttpRequest(const std::string& requestBody,
                                     const std::string& tag,
-                                    std::string& rawOut) {
+                                    std::string& rawOut, int* outStatus) {
 
     std::string host = "127.0.0.1";
     int port = 9931;
@@ -559,6 +566,17 @@ bool LLMBotController::DoHttpRequest(const std::string& requestBody,
     WinHttpCloseHandle(hReq);
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
+
+    if (outStatus) {
+        DWORD statusCode = 0;
+        DWORD sz = sizeof(statusCode);
+        if (WinHttpQueryHeaders(hReq,
+                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &sz,
+                WINHTTP_NO_HEADER_INDEX)) {
+            *outStatus = static_cast<int>(statusCode);
+        }
+    }
 
     MiniJSON::Value root = MiniJSON::parse(resp);
     if (!root.is_object() || !root.contains("choices")) {
