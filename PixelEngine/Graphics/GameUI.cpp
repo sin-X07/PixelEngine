@@ -1,4 +1,5 @@
 #include "GameUI.hpp"
+#include "../CS2D/MapCatalog.hpp"
 #include "../ThirdParty/imgui/imgui.h"
 #include "ImGuiUI.hpp"
 #include "../CS2D/CS2DGame.hpp"   // MatchMode
@@ -69,7 +70,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 
         ImGui::SetCursorPosY(210.0f);
         if (bigButton("团队歼灭")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::TeamElimination)); });
-        if (bigButton("爆破模式")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::BombDefusal)); });
+        if (bigButton("爆破模式")) doClick([&] { actions.goState(MAP_SELECT); });
         if (bigButton("人质营救")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::HostageRescue)); });
         if (bigButton("死斗模式")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::DeathMatch)); });
         if (bigButton("设置"))     doClick([&] { actions.openSettings(MAIN_MENU); });
@@ -268,6 +269,164 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 // ============================================================================
 // 买枪菜单
 // ============================================================================
+
+void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->WorkPos);
+    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::Begin("MapSelectRoot", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
+                 ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 wp = viewport->WorkPos;
+    const ImVec2 ws = viewport->WorkSize;
+    const float vpW = ws.x;
+    const float centerX = wp.x + vpW * 0.5f;
+
+    // ---------- 背景：上下渐变 + 底部微光 ----------
+    dl->AddRectFilledMultiColor(
+        wp, ImVec2(wp.x + ws.x, wp.y + ws.y),
+        IM_COL32(10, 14, 20, 255), IM_COL32(10, 14, 20, 255),
+        IM_COL32(26, 37, 50, 255), IM_COL32(26, 37, 50, 255));
+    // 顶部装饰光带
+    dl->AddRectFilledMultiColor(
+        ImVec2(wp.x, wp.y), ImVec2(wp.x + ws.x, wp.y + 4.0f),
+        IM_COL32(230, 185, 80, 200), IM_COL32(230, 185, 80, 200),
+        IM_COL32(230, 185, 80, 0), IM_COL32(230, 185, 80, 0));
+
+    // ---------- 标题 ----------
+    DrawImGuiTextCentered(imGuiUI_, "选择地图", wp.y + 42.0f, 240, 246, 255, 255, 32);
+    DrawImGuiTextCentered(imGuiUI_, "爆破模式 · 选择本局战场", wp.y + 88.0f,
+                          150, 178, 200, 255, 18);
+    dl->AddRectFilled(ImVec2(centerX - 70.0f, wp.y + 120.0f),
+                      ImVec2(centerX + 70.0f, wp.y + 123.0f),
+                      IM_COL32(230, 185, 80, 220), 1.5f);
+
+    // ---------- 地图卡片 ----------
+    const float cardW = 340.0f;
+    const float cardH = 372.0f;
+    const float gap = 30.0f;
+    const float totalW = kMapCatalogCount * cardW + (kMapCatalogCount - 1) * gap;
+    const float startX = wp.x + (vpW - totalW) * 0.5f;
+    const float cardY = wp.y + 158.0f;
+
+    for (int i = 0; i < kMapCatalogCount; ++i) {
+        const MapEntry& m = kMapCatalog[i];
+        const ImVec2 cp(startX + i * (cardW + gap), cardY);
+        const ImVec2 cp2(cp.x + cardW, cp.y + cardH);
+        const bool selected = (ctx.selected == i);
+
+        // 交互层：整张卡片一个隐形按钮，避免图像/文字抢焦点
+        ImGui::SetCursorScreenPos(cp);
+        ImGui::PushID(i);
+        ImGui::InvisibleButton("card", ImVec2(cardW, cardH));
+        const bool hovered = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked()) {
+            if (actions.playClick) actions.playClick();
+            if (actions.selectMap) actions.selectMap(i);
+        }
+        ImGui::PopID();
+
+        // 卡片底
+        dl->AddRectFilled(cp, cp2,
+                          selected ? IM_COL32(28, 38, 50, 245) : IM_COL32(18, 24, 32, 235),
+                          10.0f);
+        // 悬停微亮
+        if (hovered && !selected) {
+            dl->AddRectFilled(cp, cp2, IM_COL32(255, 255, 255, 12), 10.0f);
+        }
+
+        // 预览图
+        const float pad = 12.0f;
+        const ImVec2 img0(cp.x + pad, cp.y + pad);
+        const ImVec2 img1(cp2.x - pad, cp.y + 178.0f);
+        if (ctx.previewTex[i]) {
+            dl->AddImage(reinterpret_cast<ImTextureID>(ctx.previewTex[i]), img0, img1);
+        } else {
+            dl->AddRectFilled(img0, img1, IM_COL32(34, 44, 56, 255), 6.0f);
+        }
+        // 预览图暗角 + 描边
+        dl->AddRect(img0, img1, IM_COL32(255, 255, 255, 28), 6.0f, 0, 1.0f);
+
+        // 地图名
+        DrawImGuiText(imGuiUI_, m.name, cp.x + pad + 2.0f, cp.y + 192.0f,
+                      236, 242, 250, 255, 24);
+        // 一句话描述
+        DrawImGuiText(imGuiUI_, m.tagline, cp.x + pad + 2.0f, cp.y + 228.0f,
+                      150, 176, 196, 255, 15);
+
+        // 元信息：包点 / 区域
+        char meta[96];
+        snprintf(meta, sizeof(meta), "包点 %d    战术区域 %d", m.bombSites, m.areas);
+        DrawImGuiText(imGuiUI_, meta, cp.x + pad + 2.0f, cp.y + 258.0f,
+                      130, 160, 185, 255, 14);
+
+        // 选中标识
+        if (selected) {
+            dl->AddRect(cp, cp2, IM_COL32(235, 190, 85, 255), 10.0f, 0, 3.0f);
+            dl->AddRectFilled(ImVec2(cp.x + pad, cp2.y - 34.0f),
+                              ImVec2(cp.x + pad + 58.0f, cp2.y - 14.0f),
+                              IM_COL32(235, 190, 85, 235), 4.0f);
+            DrawImGuiText(imGuiUI_, "已选", cp.x + pad + 12.0f, cp2.y - 32.0f,
+                          20, 24, 30, 255, 14);
+        } else if (hovered) {
+            dl->AddRect(cp, cp2, IM_COL32(190, 210, 230, 160), 10.0f, 0, 1.5f);
+        } else {
+            dl->AddRect(cp, cp2, IM_COL32(255, 255, 255, 26), 10.0f, 0, 1.0f);
+        }
+    }
+
+    // ---------- 底部操作区 ----------
+    const float btnY = cardY + cardH + 34.0f;
+    const float btnW = 190.0f;
+    const float btnH = 44.0f;
+
+    ImGui::SetCursorScreenPos(ImVec2(centerX - btnW - 14.0f, btnY));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.90f, 0.72f, 0.30f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.00f, 0.82f, 0.42f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.78f, 0.62f, 0.24f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.08f, 0.09f, 0.11f, 1.0f));
+    if (ImGui::Button("开始对局", ImVec2(btnW, btnH))) {
+        if (actions.playClick) actions.playClick();
+        if (actions.startMatchOnMap) actions.startMatchOnMap(ctx.selected);
+    }
+    ImGui::PopStyleColor(4);
+
+    ImGui::SetCursorScreenPos(ImVec2(centerX + 14.0f, btnY));
+    if (ImGui::Button("返回主菜单", ImVec2(btnW, btnH))) {
+        if (actions.playClick) actions.playClick();
+        if (actions.goState) actions.goState(MAIN_MENU);
+    }
+
+    // ---------- 快捷键提示 ----------
+    char hint[128];
+    snprintf(hint, sizeof(hint), "← → 切换地图      Enter 开始      Esc 返回      (%d / %d)",
+             ctx.selected + 1, kMapCatalogCount);
+    DrawImGuiTextCentered(imGuiUI_, hint, btnY + btnH + 18.0f, 118, 142, 164, 235, 15);
+
+    // ---------- 键盘操作 ----------
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && ctx.selected > 0) {
+        if (actions.selectMap) actions.selectMap(ctx.selected - 1);
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) && ctx.selected < kMapCatalogCount - 1) {
+        if (actions.selectMap) actions.selectMap(ctx.selected + 1);
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+        if (actions.startMatchOnMap) actions.startMatchOnMap(ctx.selected);
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        if (actions.goState) actions.goState(MAIN_MENU);
+    }
+
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+}
 
 void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx, const std::function<void(int)>& onBuy) {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();

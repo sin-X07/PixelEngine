@@ -9,6 +9,7 @@
 // 游戏状态机
 enum GameState {
     MAIN_MENU,      // 主菜单
+    MAP_SELECT,     // 选择地图（爆破模式）
     SETTINGS,       // 设置
     PLAYING,        // 对局中
     PAUSED,         // 暂停

@@ -1,4 +1,5 @@
 #include "Engine.hpp"
+#include "CS2D/MapCatalog.hpp"
 #include "Core/PathUtils.hpp"
 #include "Core/IniFile.hpp"
 #include "ThirdParty/imgui/imgui.h"
@@ -45,14 +46,45 @@ Engine::~Engine() {
 // 菜单动作绑定
 // ============================================================================
 
+// 加载地图预览图（只做一次）
+static void LoadMapPreviews(SDL_Renderer* renderer, void** outTex, int count) {
+    int loaded = 0;
+    for (int i = 0; i < count; ++i) {
+        if (outTex[i]) { ++loaded; continue; }
+        if (outTex[i]) continue;
+        const std::string path = PathUtils::ResolveAppPath(kMapCatalog[i].preview);
+        SDL_Texture* tex = IMG_LoadTexture(renderer, path.c_str());
+        if (!tex) {
+            std::cerr << "[MapSelect] 预览图加载失败: " << path << std::endl;
+            continue;
+        }
+        outTex[i] = tex;
+        ++loaded;
+    }
+    std::cout << "[MapSelect] 地图 " << count << " 张，预览图 " << loaded << " 张就绪"
+              << std::endl;
+}
+
 GameUI::Actions Engine::BuildActions() {
     GameUI::Actions a;
 
     a.playClick = [this] { audioManager->PlaySound(SoundEffect::CLICK); };
-    a.goState   = [this](GameState s) { currentState = s; };
+    a.goState   = [this](GameState s) {
+        if (s == MAP_SELECT) {
+            LoadMapPreviews(renderer, mapPreviewTex_, kMapCatalogCount);
+        }
+        currentState = s;
+    };
     a.openSettings = [this](GameState ret) { settingsReturnState = ret; currentState = SETTINGS; };
     a.startMatch     = [this] { StartMatch(currentMatchMode_); };
     a.startMatchMode = [this](int m) { StartMatch(static_cast<MatchMode>(m)); };
+    a.startMatchOnMap = [this](int idx) {
+        if (idx < 0 || idx >= kMapCatalogCount) return;
+        StartMatchWithMap(MatchMode::BombDefusal, kMapCatalog[idx].tmj);
+    };
+    a.selectMap = [this](int idx) {
+        if (idx >= 0 && idx < kMapCatalogCount) mapSelectIndex_ = idx;
+    };
     a.resumeGame   = [this] {
         currentState = PLAYING;
         SDL_SetRelativeMouseMode(SDL_TRUE);
@@ -170,7 +202,10 @@ GameUI::Actions Engine::BuildActions() {
 // ============================================================================
 
 bool Engine::Initialize(const char* title, int width, int height, bool autostart, bool fastRound,
-                        int startMode, bool coachLlm) {
+                        int startMode, bool coachLlm, const std::string& startMap, bool openMapSelect) {
+    pendingStartMap_ = startMap;
+    openMapSelectOnStart_ = openMapSelect;
+
     coachLlmEnabled_ = coachLlm;
     cleaned = false;
 
@@ -240,9 +275,25 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
     isRunning = true;
 
     // 调试/回归用：跳过菜单直接进入对局
-    if (autostart) {
+    if (openMapSelectOnStart_) {
+        LoadMapPreviews(renderer, mapPreviewTex_, kMapCatalogCount);
+        currentState = MAP_SELECT;
+    } else if (autostart) {
         const int m = (startMode >= 0 && startMode <= 3) ? startMode : 1;
-        StartMatch(static_cast<MatchMode>(m));
+        if (!pendingStartMap_.empty()) {
+            // --map=<id>：按 id 在目录里找地图
+            const char* chosen = nullptr;
+            for (int i = 0; i < kMapCatalogCount; ++i) {
+                if (pendingStartMap_ == kMapCatalog[i].id) { chosen = kMapCatalog[i].tmj; break; }
+            }
+            if (chosen) StartMatchWithMap(static_cast<MatchMode>(m), chosen);
+            else {
+                std::cerr << "[CS2D] 未知地图 id: " << pendingStartMap_ << std::endl;
+                StartMatch(static_cast<MatchMode>(m));
+            }
+        } else {
+            StartMatch(static_cast<MatchMode>(m));
+        }
     }
 
     // 快节奏回合（仅测试用，便于快速验证回合状态机）
@@ -403,6 +454,8 @@ void Engine::HandleInput() {
             currentState = settingsReturnState;
         } else if (currentState == EXIT_CONFIRM) {
             currentState = PAUSED;
+        } else if (currentState == MAP_SELECT) {
+            currentState = MAIN_MENU;
         } else {
             isRunning = false;
         }
@@ -473,20 +526,25 @@ void Engine::HandleInput() {
 // ============================================================================
 
 void Engine::StartMatch(MatchMode mode) {
+    // 模式 → 默认地图（爆破模式可由地图选择界面指定）
+    //   死斗               → cs_office（老图，节奏快）
+    //   团队歼灭/爆破/人质  → ancient_ruins（5v5 主战图）
+    const char* mapRel = "assets/cs2d/maps/ancient_ruins.tmj";
+    switch (mode) {
+        case MatchMode::DeathMatch:      mapRel = "assets/cs2d/maps/cs_office.tmj"; break;
+        case MatchMode::TeamElimination:
+        case MatchMode::BombDefusal:
+        case MatchMode::HostageRescue:   mapRel = "assets/cs2d/maps/ancient_ruins.tmj"; break;
+        default:                         mapRel = "assets/cs2d/maps/ancient_ruins.tmj"; break;
+    }
+    StartMatchWithMap(mode, mapRel);
+}
+
+void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile) {
     audioManager->StopMusic();
     currentMatchMode_ = mode;
 
-    // 模式 → 地图
-    //   死斗           → cs_office（老图，节奏快）
-    //   团队歼灭/爆破/人质 → ancient_ruins（5v5 主战图）
-    const char* mapRel = "assets/cs2d/maps/ancient_ruins.tmj";
-    switch (mode) {
-        case MatchMode::DeathMatch:    mapRel = "assets/cs2d/maps/cs_office.tmj"; break;
-        case MatchMode::TeamElimination:
-        case MatchMode::BombDefusal:
-        case MatchMode::HostageRescue: mapRel = "assets/cs2d/maps/ancient_ruins.tmj"; break;
-        default:                       mapRel = "assets/cs2d/maps/ancient_ruins.tmj"; break;
-    }
+    const std::string mapRel = mapFile;
 
     // 模式必须在 LoadMap 之前设定（LoadMap → ResetToNewMatch 依赖 mode_）
     cs2dGame->SetMatchMode(mode);
@@ -573,7 +631,14 @@ void Engine::Render() {
 
     imGuiUI->BeginFrame();
 
-    if (currentState == MAIN_MENU || currentState == SETTINGS ||
+    if (currentState == MAP_SELECT) {
+        GameUI::MapSelectCtx mctx;
+        mctx.selected = mapSelectIndex_;
+        for (int i = 0; i < kMapCatalogCount && i < 8; ++i) {
+            mctx.previewTex[i] = mapPreviewTex_[i];
+        }
+        gameUI->DrawMapSelect(mctx, BuildActions());
+    } else if (currentState == MAIN_MENU || currentState == SETTINGS ||
         currentState == PAUSED    || currentState == EXIT_CONFIRM) {
         GameUI::MenuCtx ctx;
         ctx.state              = currentState;

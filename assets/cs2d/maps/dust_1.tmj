@@ -1,0 +1,28 @@
+{ "compressionlevel":-1,
+ "height":160,
+ "infinite":false,
+ "layers":[
+        {
+         "id":2,
+         "image":"..\/tilesets\/dust_2.png",
+         "imageheight":1280,
+         "imagewidth":1280,
+         "name":"\u56fe\u50cf\u56fe\u5c42 1",
+         "opacity":1,
+         "type":"imagelayer",
+         "visible":true,
+         "x":0,
+         "y":0
+        }],
+ "nextlayerid":3,
+ "nextobjectid":1,
+ "orientation":"orthogonal",
+ "renderorder":"right-down",
+ "tiledversion":"1.12.2",
+ "tileheight":8,
+ "tilesets":[],
+ "tilewidth":8,
+ "type":"map",
+ "version":"1.10",
+ "width":160
+}

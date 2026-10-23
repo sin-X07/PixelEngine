@@ -40,7 +40,7 @@ bool AudioManager::Initialize() {
     // 战局事件
     grenadeExplodeSound = loadChunk("assets/audio/grenade_explode.wav", "手雷爆炸");
     flashbangSound      = loadChunk("assets/audio/flashbang.wav", "闪光弹");
-    smokeSound          = loadChunk("assets/audio/smoke.wav", "烟雾弹");
+    smokeSound          = loadChunk("assets/audio/smoke.mp3", "烟雾弹");
     bombPlantSound      = loadChunk("assets/audio/bomb_plant.wav", "下包");
     bombDefuseSound     = loadChunk("assets/audio/bomb_defuse.wav", "拆包");
     bombBeepSound       = loadChunk("assets/audio/bomb_beep.wav", "C4 滴答");

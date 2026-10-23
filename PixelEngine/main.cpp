@@ -29,6 +29,8 @@ int main(int argc, char* argv[]) {
     bool fastRound = false;
     int  startMode = 1;
     bool coachLlm = true;   // --coach=rule 关闭 LLM 教练（用于对比）
+    std::string startMap;   // --map=<id> 指定地图（kMapCatalog 的 id）
+    bool openMapSelect = false;  // --mapselect 直接打开地图选择界面（调试）
     for (int i = 1; i < argc; ++i) {
         if (!argv[i]) continue;
         const std::string a(argv[i]);
@@ -40,9 +42,11 @@ int main(int argc, char* argv[]) {
         if (a.rfind("--coach=", 0) == 0) {
             coachLlm = (a.substr(8) != "rule");
         }
+        if (a.rfind("--map=", 0) == 0) startMap = a.substr(6);
+        if (a == "--mapselect") openMapSelect = true;
     }
 
-    if (engine.Initialize("CS2D Pixel", 800, 600, autostart, fastRound, startMode, coachLlm)) {
+    if (engine.Initialize("CS2D Pixel", 800, 600, autostart, fastRound, startMode, coachLlm, startMap, openMapSelect)) {
         engine.Run();
     }
 

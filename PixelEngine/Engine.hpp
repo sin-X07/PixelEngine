@@ -69,6 +69,12 @@ private:
     void HandleInput();
     GameUI::Actions BuildActions();
     void StartMatch(MatchMode mode);   // 按模式加载对应地图并开局
+    void StartMatchWithMap(MatchMode mode, const std::string& mapRel);  // 指定地图开局
+    int  mapSelectIndex_ = 0;                                            // 地图选择光标
+    std::string pendingStartMap_;        // --map=<id> 指定的地图
+    bool openMapSelectOnStart_ = false;  // --mapselect
+    void* mapPreviewTex_[8] = {nullptr, nullptr, nullptr, nullptr,
+                             nullptr, nullptr, nullptr, nullptr};  // 地图预览图
     void LoadAudioConfig();
     void InitLLMBot();
     void ApplySavedSettings();   // 把保存的设置应用到运行时对象
@@ -81,7 +87,9 @@ public:
     ~Engine();
 
     bool Initialize(const char* title, int width, int height, bool autostart = false,
-                    bool fastRound = false, int startMode = 1, bool coachLlm = true);
+                    bool fastRound = false, int startMode = 1, bool coachLlm = true,
+                    const std::string& startMap = std::string(),
+                    bool openMapSelect = false);
     void Run();
     void Clean();
     void ToggleFullscreen();

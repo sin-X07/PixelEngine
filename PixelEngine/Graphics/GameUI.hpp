@@ -19,6 +19,8 @@ public:
         std::function<void(GameState)>     openSettings;      // 进设置（记录返回态）
         std::function<void()>              startMatch;        // 重新开始（沿用上一模式）
         std::function<void(int)>           startMatchMode;    // 按模式开始 (MatchMode 枚举值)
+        std::function<void(int)>           startMatchOnMap;    // 指定地图开局（kMapCatalog 索引）
+        std::function<void(int)>           selectMap;          // 地图选择光标移动
         std::function<void()>              resumeGame;        // 暂停页继续
         std::function<void(bool)>          confirmExit;       // 退出游戏(false) / 退出桌面(true)
         std::function<void()>              quitApp;           // 确认框"退出"
@@ -143,6 +145,13 @@ public:
     };
 
     void DrawMenu(const MenuCtx& ctx, const Actions& actions);
+
+    // 地图选择界面（爆破模式）
+    struct MapSelectCtx {
+        int  selected = 0;                    // 当前选中索引
+        void* previewTex[8] = {nullptr};      // 预览图（SDL_Texture*）
+    };
+    void DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions);
     void DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI);
 
     // ---- 买枪菜单 ----
