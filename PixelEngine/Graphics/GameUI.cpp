@@ -1,4 +1,5 @@
 #include "GameUI.hpp"
+#include "UiScale.hpp"
 #include "../Core/Resolutions.hpp"
 #include "../CS2D/MapCatalog.hpp"
 #include "../ThirdParty/imgui/imgui.h"
@@ -52,8 +53,8 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 
     const float vpW = viewport->WorkSize.x;
     const float centerX = vpW * 0.5f;
-    const float buttonW = 300.0f;
-    const float buttonH = 46.0f;
+    const float buttonW = UI(300.0f);
+    const float buttonH = UI(46.0f);
 
     auto bigButton = [&](const char* label) {
         ImGui::SetCursorPosX(centerX - buttonW * 0.5f);
@@ -69,7 +70,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         DrawImGuiTextCentered(imGuiUI_, "CS2D", 90.0f, 255, 255, 255, 255, 34);
         DrawImGuiTextCentered(imGuiUI_, "Counter-Strike 2D 单机版", 140.0f, 160, 190, 210, 255, 20);
 
-        ImGui::SetCursorPosY(210.0f);
+        ImGui::SetCursorPosY(UI(210.0f));
         if (bigButton("团队歼灭")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::TeamElimination)); });
         if (bigButton("爆破模式")) doClick([&] { actions.goState(MAP_SELECT); });
         if (bigButton("人质营救")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::HostageRescue)); });
@@ -86,7 +87,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
     else if (ctx.state == PAUSED) {
         DrawImGuiTextCentered(imGuiUI_, "已暂停", 110.0f, 255, 255, 255, 255, 30);
 
-        ImGui::SetCursorPosY(190.0f);
+        ImGui::SetCursorPosY(UI(190.0f));
         if (bigButton("继续游戏")) doClick([&] { actions.resumeGame(); });
         if (bigButton("重新开始")) doClick([&] { actions.startMatch(); });
         if (bigButton("设置"))     doClick([&] { actions.openSettings(PAUSED); });
@@ -98,10 +99,10 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         DrawImGuiTextCentered(imGuiUI_, "确认退出", 180.0f, 255, 255, 255, 255, 26);
         DrawImGuiTextCentered(imGuiUI_, "当前对局进度将不会被保存", 240.0f, 200, 200, 200, 255, 18);
 
-        ImGui::SetCursorPosY(300.0f);
+        ImGui::SetCursorPosY(UI(300.0f));
         ImGui::SetCursorPosX(centerX - buttonW - 15.0f);
         if (ImGui::Button("继续游戏", ImVec2(buttonW, buttonH))) doClick([&] { actions.goState(PAUSED); });
-        ImGui::SetCursorPosY(300.0f);
+        ImGui::SetCursorPosY(UI(300.0f));
         ImGui::SetCursorPosX(centerX + 15.0f);
         if (ImGui::Button("退出", ImVec2(buttonW, buttonH))) doClick([&] { actions.quitApp(); });
     }
@@ -119,7 +120,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         const float startX = (vpW - (labelW + gap + sliderW)) * 0.5f;
 
         // 可滚动区
-        ImGui::SetCursorPosY(70.0f);
+        ImGui::SetCursorPosY(UI(70.0f));
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.078f, 0.118f, 0.157f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, ImVec4(0.05f, 0.07f, 0.10f, 0.60f));
         ImGui::BeginChild("SettingsScroll", ImVec2(vpW, 450.0f), false,
@@ -179,6 +180,14 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
             ImGui::SetCursorPosX(startX);
             bool fs = ctx.isFullscreen;
             if (ImGui::Checkbox("全屏 (F11)", &fs)) actions.setFullscreen(fs);
+        }
+        {
+            sliderRow("渲染缩放", "##rscale", startX);
+            const char* scaleLabels[] = { "50%  (省性能)", "75%", "100% (最清晰)" };
+            int idx = (ctx.renderScalePct >= 100) ? 2 : (ctx.renderScalePct >= 75) ? 1 : 0;
+            if (ImGui::Combo("##rscale", &idx, scaleLabels, 3)) {
+                actions.setRenderScale(idx == 2 ? 100 : idx == 1 ? 75 : 50);
+            }
         }
 
         ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
@@ -260,7 +269,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         ImGui::EndChild();
         ImGui::PopStyleColor(2);
 
-        ImGui::SetCursorPosY(540.0f);
+        ImGui::SetCursorPosY(UI(540.0f));
         if (bigButton("返回")) doClick([&] { actions.goState(ctx.settingsReturnState); });
     }
 
@@ -311,9 +320,9 @@ void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
                       IM_COL32(230, 185, 80, 220), 1.5f);
 
     // ---------- 地图卡片 ----------
-    const float cardW = 340.0f;
-    const float cardH = 372.0f;
-    const float gap = 30.0f;
+    const float cardW = UI(340.0f);
+    const float cardH = UI(372.0f);
+    const float gap = UI(30.0f);
     const float totalW = kMapCatalogCount * cardW + (kMapCatalogCount - 1) * gap;
     const float startX = wp.x + (vpW - totalW) * 0.5f;
     const float cardY = wp.y + 158.0f;
@@ -345,7 +354,7 @@ void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
         }
 
         // 预览图
-        const float pad = 12.0f;
+        const float pad = UI(12.0f);
         const ImVec2 img0(cp.x + pad, cp.y + pad);
         const ImVec2 img1(cp2.x - pad, cp.y + 178.0f);
         if (ctx.previewTex[i]) {
@@ -386,8 +395,8 @@ void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
 
     // ---------- 底部操作区 ----------
     const float btnY = cardY + cardH + 34.0f;
-    const float btnW = 190.0f;
-    const float btnH = 44.0f;
+    const float btnW = UI(190.0f);
+    const float btnH = UI(44.0f);
 
     ImGui::SetCursorScreenPos(ImVec2(centerX - btnW - 14.0f, btnY));
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.90f, 0.72f, 0.30f, 1.0f));
@@ -532,8 +541,8 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
     {
         const float barX = 16.0f;
         const float barY = ImGui::GetIO().DisplaySize.y - 52.0f;
-        const float barW = 200.0f;
-        const float barH = 18.0f;
+        const float barW = UI(200.0f);
+        const float barH = UI(18.0f);
 
         const float frac = (ctx.maxHealth > 0)
             ? std::clamp(static_cast<float>(ctx.health) / static_cast<float>(ctx.maxHealth), 0.0f, 1.0f)

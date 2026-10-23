@@ -46,6 +46,7 @@ public:
         std::function<void(float)>  setRadarMapZoom;
         // 显示
         std::function<void(int,int,int)> setResolution;
+        std::function<void(int)>           setRenderScale;    // 内部渲染缩放(%)
         std::function<void(bool)>        setFullscreen;
     };
 
@@ -79,6 +80,7 @@ public:
         // 显示
         int   resW = 800, resH = 600;
         int   resIdx = 0;
+        int   renderScalePct = 100;
         bool  isFullscreen = false;
 
         // 玩家累计战绩（主菜单展示）

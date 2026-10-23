@@ -30,6 +30,7 @@ struct GameSettings {
     int   resIdx           = 0;
     bool  fullscreen       = false;
     int   targetFPS        = 60;
+    int   renderScalePct   = 100;   // 内部渲染缩放（100 / 75 / 50），与窗口大小解耦
 
     // 准星
     int   crossR = 255, crossG = 255, crossB = 255, crossA = 200;

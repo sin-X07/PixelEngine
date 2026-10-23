@@ -27,6 +27,7 @@ void SaveManager::Load() {
     settings_.resIdx           = ini.GetInt  ("settings", "res_idx", 0);
     settings_.fullscreen       = ini.GetBool ("settings", "fullscreen", false);
     settings_.targetFPS        = ini.GetInt  ("settings", "target_fps", 60);
+    settings_.renderScalePct   = ini.GetInt  ("settings", "render_scale", 100);
 
     // ---- 准星 ----
     settings_.crossR         = ini.GetInt  ("crosshair", "r", 255);
@@ -63,6 +64,7 @@ void SaveManager::Save() {
     ini.SetInt  ("settings", "res_idx",     settings_.resIdx);
     ini.SetBool ("settings", "fullscreen",  settings_.fullscreen);
     ini.SetInt  ("settings", "target_fps",  settings_.targetFPS);
+    ini.SetInt  ("settings", "render_scale", settings_.renderScalePct);
 
     ini.SetInt  ("crosshair", "r",          settings_.crossR);
     ini.SetInt  ("crosshair", "g",          settings_.crossG);

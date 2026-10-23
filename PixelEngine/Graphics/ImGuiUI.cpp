@@ -1,4 +1,6 @@
 #include "ImGuiUI.hpp"
+#include "UiScale.hpp"
+#include <cmath>
 #include "../Core/UiTextChars.hpp"
 #include "../Core/PathUtils.hpp"
 #include "../ThirdParty/imgui/imgui.h"
@@ -169,6 +171,13 @@ bool ImGuiUI::Initialize(SDL_Window* win, SDL_Renderer* ren) {
 
     initialized = true;
     return true;
+
+    baseStyle_ = ImGui::GetStyle();
+    styleReady_ = true;
+    uiScaleApplied_ = 0.0f;
+    const float pendingScale = g_uiScale;
+    g_uiScale = 1.0f;
+    if (pendingScale > 0.0f) SetUiScale(pendingScale);
 }
 
 void ImGuiUI::Shutdown() {
@@ -237,4 +246,27 @@ void ImGuiUI::EndFrame() {
     if (!initialized) return;
     ImGui::Render();
     ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+}
+
+
+// ---------------------------------------------------------------------------
+// 全局 UI 缩放：字体与控件尺寸一起缩放
+// ---------------------------------------------------------------------------
+void ImGuiUI::SetUiScale(float scale) {
+    if (scale < 0.2f) scale = 0.2f;
+    if (scale > 4.0f) scale = 4.0f;
+
+    // ImGui 上下文还没创建时只记下缩放值，等 Initialize 之后由这里补上
+    if (!styleReady_) { g_uiScale = scale; uiScaleApplied_ = 0.0f; return; }
+    if (std::abs(scale - g_uiScale) < 0.001f && uiScaleApplied_ > 0.0f) return;
+
+    g_uiScale = scale;
+    uiScaleApplied_ = scale;
+
+    // 每次从基准样式重新缩放，避免反复乘算累积
+    ImGui::GetStyle() = baseStyle_;
+    ImGui::GetStyle().ScaleAllSizes(scale);
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.FontGlobalScale = scale;
 }

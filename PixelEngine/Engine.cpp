@@ -1,5 +1,6 @@
 #include "Engine.hpp"
 #include "Core/Resolutions.hpp"
+#include "Graphics/UiScale.hpp"
 #include "CS2D/MapCatalog.hpp"
 #include "Core/PathUtils.hpp"
 #include "Core/IniFile.hpp"
@@ -188,8 +189,23 @@ GameUI::Actions Engine::BuildActions() {
             SDL_SetWindowSize(window, cw, ch);
             SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
         }
-        // 逻辑尺寸始终等于所选分辨率（窗口更小时由 SDL 缩放，必要时 letterbox）
-        ResizeLogicalViewport(w, h);
+        // 内部画布由「窗口实际尺寸 + 渲染缩放」推导（分辨率只决定窗口大小）
+        if (isFullscreen) {
+            int ow = w, oh = h;
+            if (renderer) SDL_GetRendererOutputSize(renderer, &ow, &oh);
+            ResizeLogicalViewport(ow, oh);
+        } else if (window) {
+            int ww = w, wh = h;
+            SDL_GetWindowSize(window, &ww, &wh);
+            ResizeLogicalViewport(ww, wh);
+        }
+    };
+    a.setRenderScale = [this](int pct) {
+        saveManager->MutableSettings().renderScalePct = pct;
+        int ww = currentResW_, wh = currentResH_;
+        if (isFullscreen && renderer) SDL_GetRendererOutputSize(renderer, &ww, &wh);
+        else if (window) SDL_GetWindowSize(window, &ww, &wh);
+        ResizeLogicalViewport(ww, wh);
     };
     a.setFullscreen = [this](bool v) {
         if (v != isFullscreen) ToggleFullscreen();
@@ -243,7 +259,11 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
     }
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-    ResizeLogicalViewport(currentResW_, currentResH_);
+    {
+        int ww = currentResW_, wh = currentResH_;
+        SDL_GetWindowSize(window, &ww, &wh);
+        ResizeLogicalViewport(ww, wh);
+    }
 
     if (!imGuiUI->Initialize(window, renderer)) return false;
 
@@ -340,11 +360,28 @@ void Engine::ApplySavedSettings() {
     currentResIdx_ = std::clamp(s.resIdx, 0, kResCount - 1);
 }
 
-void Engine::ResizeLogicalViewport(int w, int h) {
-    logicalW_ = w;
-    logicalH_ = h;
+// 按「窗口像素尺寸 + 渲染缩放」推导内部画布：高度锚定 1080，宽度按比例
+// 效果：任何窗口比例都居中铺满、无黑边、无内容丢失；UI 按 1920x1080 基准等比缩放
+void Engine::ResizeLogicalViewport(int winW, int winH) {
+    if (winW <= 0 || winH <= 0) return;
+
+    const int pct = std::clamp(saveManager ? saveManager->GetSettings().renderScalePct : 100,
+                               25, 100);
+    const float rs = static_cast<float>(pct) / 100.0f;
+    const float aspect = static_cast<float>(winW) / static_cast<float>(winH);
+
+    logicalH_ = std::max(270, static_cast<int>(std::lround(1080.0f * rs)));
+    logicalW_ = std::max(360, static_cast<int>(std::lround(static_cast<float>(logicalH_) * aspect)));
+
+    // UI 缩放 = 逻辑画布相对 1920x1080 的等比系数
+    g_uiScale = std::clamp(std::min(static_cast<float>(logicalW_) / kDesignW,
+                                    static_cast<float>(logicalH_) / kDesignH),
+                           0.35f, 4.0f);
+
     if (renderer) SDL_RenderSetLogicalSize(renderer, logicalW_, logicalH_);
     if (cs2dRenderer) cs2dRenderer->SetViewportSize(logicalW_, logicalH_);
+    if (imGuiUI) imGuiUI->SetUiScale(g_uiScale);
+
     cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
     cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
 }
@@ -413,13 +450,15 @@ void Engine::ToggleFullscreen() {
         const int ch = std::min(currentResH_, usable.h);
         SDL_SetWindowSize(window, cw, ch);
         SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-        ResizeLogicalViewport(currentResW_, currentResH_);   // 逻辑尺寸仍为分辨率
+        { int ww = 0, wh = 0; SDL_GetWindowSize(window, &ww, &wh);
+          ResizeLogicalViewport(ww, wh); }
         isFullscreen = false;
     } else {
         // 进入全屏：桌面全屏（不切显示模式，避免闪屏/重排）
         // 逻辑尺寸仍按所选分辨率，多余区域由 SDL 自动 letterbox
         SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
-        ResizeLogicalViewport(currentResW_, currentResH_);
+        { int ow = 0, oh = 0; SDL_GetRendererOutputSize(renderer, &ow, &oh);
+          ResizeLogicalViewport(ow, oh); }
         isFullscreen = true;
     }
 
@@ -668,6 +707,7 @@ void Engine::Render() {
         ctx.resW         = currentResW_;
         ctx.resH         = currentResH_;
         ctx.resIdx       = currentResIdx_;
+        ctx.renderScalePct = saveManager->GetSettings().renderScalePct;
         ctx.isFullscreen = isFullscreen;
 
         ctx.statKills  = saveManager->GetStats().kills;
