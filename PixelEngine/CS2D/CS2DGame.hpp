@@ -504,6 +504,7 @@ private:
     bool AreaCenterByName(const std::string& name, float& ox, float& oy) const;
     std::string AreaHint(const std::string& intentTarget) const;
     bool prevInteract_ = false;   // E 键边沿检测
+    bool grenadeCharging_ = false;  // 投掷物蓄力中（松开左键才出手）
 
     void DropEquipmentOnDeath(const Player& victim);
     float flashTimer_ = 0.0f;      // 玩家闪光致盲剩余秒数
@@ -621,7 +622,7 @@ private:
     void ApplyAvoidance(float& vx, float& vy, float sepX, float sepY) const;
     void UpdateBullets(float dt, class AudioManager* audio);
     void UpdateGrenades(float dt, class AudioManager* audio);
-    void ThrowGrenade(Player& thrower, float aimAngle);
+    void ThrowGrenade(Player& thrower, float aimAngle, class AudioManager* audio = nullptr);
     void ExplodeGrenade(const Grenade& g, class AudioManager* audio);
     bool SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) const;
     void RespawnBOT(Player& bot);

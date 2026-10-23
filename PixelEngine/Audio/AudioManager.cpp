@@ -39,6 +39,7 @@ bool AudioManager::Initialize() {
 
     // 战局事件
     grenadeExplodeSound = loadChunk("assets/audio/grenade_explode.wav", "手雷爆炸");
+    grenadeThrowSound   = loadChunk("assets/audio/dagger_out.mp3", "投掷出手");
     flashbangSound      = loadChunk("assets/audio/flashbang.wav", "闪光弹");
     smokeSound          = loadChunk("assets/audio/smoke.mp3", "烟雾弹");
     bombPlantSound      = loadChunk("assets/audio/bomb_plant.wav", "下包");
@@ -99,6 +100,7 @@ void AudioManager::Clean() {
 
     // 战局事件
     if (grenadeExplodeSound) { Mix_FreeChunk(grenadeExplodeSound); grenadeExplodeSound = nullptr; }
+    if (grenadeThrowSound)   { Mix_FreeChunk(grenadeThrowSound);   grenadeThrowSound = nullptr; }
     if (flashbangSound)      { Mix_FreeChunk(flashbangSound);      flashbangSound = nullptr; }
     if (smokeSound)          { Mix_FreeChunk(smokeSound);          smokeSound = nullptr; }
     if (bombPlantSound)      { Mix_FreeChunk(bombPlantSound);      bombPlantSound = nullptr; }
@@ -177,6 +179,7 @@ Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
         case SoundEffect::AK47_FIRE:        return ak47Sound;
         case SoundEffect::DEAGLE_FIRE:      return deagleSound;
 
+        case SoundEffect::GRENADE_THROW:   return grenadeThrowSound;
         case SoundEffect::GRENADE_EXPLODE:  return grenadeExplodeSound;
         case SoundEffect::FLASHBANG:        return flashbangSound;
         case SoundEffect::SMOKE:            return smokeSound;

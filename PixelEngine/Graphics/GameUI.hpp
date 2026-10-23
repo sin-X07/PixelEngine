@@ -1,5 +1,6 @@
 #pragma once
 #include "../Core/Types.hpp"
+#include "../Storage/MatchHistory.hpp"
 #include <functional>
 #include <string>
 #include <vector>
@@ -156,6 +157,12 @@ public:
         void* previewTex[8] = {nullptr};      // 预览图（SDL_Texture*）
     };
     void DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions);
+
+    // 历史记录界面
+    struct HistoryCtx {
+        const std::vector<MatchRecord>* records = nullptr;
+    };
+    void DrawHistory(const HistoryCtx& ctx, const Actions& actions);
     void DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI);
 
     // ---- 买枪菜单 ----

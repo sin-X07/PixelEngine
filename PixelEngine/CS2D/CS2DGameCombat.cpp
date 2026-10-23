@@ -93,13 +93,22 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
 
     const WeaponDef& def = player_.CurrentWeapon();
 
-    // 投掷物
+    // 投掷物：按住左键蓄力，松开才出手（音效也在出手瞬间播放）
     if (def.cls == WeaponClass::Grenade) {
-        if (!mouseDown || player_.shootCooldown > 0.0f) return;
-        if (player_.grenadeCount <= 0) return;
-        ThrowGrenade(player_, player_.aimAngle);
-        player_.shootCooldown = def.cooldown;
-        player_.shootAnimTimer = 0.12f;
+        if (player_.grenadeCount <= 0 || player_.shootCooldown > 0.0f) {
+            grenadeCharging_ = false;
+            return;
+        }
+        if (mouseDown) {
+            grenadeCharging_ = true;      // 蓄力中，先不出手
+            return;
+        }
+        if (grenadeCharging_) {           // 松开 → 投出
+            grenadeCharging_ = false;
+            ThrowGrenade(player_, player_.aimAngle, audio);
+            player_.shootCooldown = def.cooldown;
+            player_.shootAnimTimer = 0.12f;
+        }
         return;
     }
 
@@ -301,7 +310,7 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
 // 手雷
 // ============================================================================
 
-void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle) {
+void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle, AudioManager* audio) {
     if (thrower.grenadeCount <= 0) return;
 
     const WeaponId type = thrower.ActiveGrenade();
@@ -322,6 +331,12 @@ void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle) {
 
     // 每个投掷物一局只能用一次：用掉就从背包移除
     thrower.ConsumeActiveGrenade();
+
+    // 音效在「出手瞬间」播放（与投掷动作同一帧）
+    if (audio) {
+        audio->PlaySoundAt(SoundEffect::GRENADE_THROW, thrower.x, thrower.y,
+                           player_.x, player_.y);
+    }
 }
 
 void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {

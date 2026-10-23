@@ -364,6 +364,7 @@ void CS2DGame::RespawnBOT(Player& bot) {
 // ============================================================================
 
 void CS2DGame::SwitchWeaponSlot(int slot) {
+    grenadeCharging_ = false;   // 切枪打断蓄力
     if (slot < 0 || slot > 3) return;
 
     // 投掷物槽：按 4 在已装备的投掷物之间循环切换

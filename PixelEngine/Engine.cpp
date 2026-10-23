@@ -1,5 +1,7 @@
 #include "Engine.hpp"
 #include <cstdlib>
+#include <ctime>
+#include <chrono>
 #include "Core/Resolutions.hpp"
 #include "Graphics/UiScale.hpp"
 #include "CS2D/MapCatalog.hpp"
@@ -220,7 +222,7 @@ GameUI::Actions Engine::BuildActions() {
 // ============================================================================
 
 bool Engine::Initialize(const char* title, int width, int height, bool autostart, bool fastRound,
-                        int startMode, bool coachLlm, const std::string& startMap, bool openMapSelect) {
+                        int startMode, bool coachLlm, const std::string& startMap, bool openMapSelect, bool openHistory) {
     pendingStartMap_ = startMap;
     openMapSelectOnStart_ = openMapSelect;
 
@@ -305,12 +307,18 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
         }
     }
 
+    // 历史记录（本地文本，最多 50 场）
+    historyPath_ = PathUtils::ResolveWritablePath(MatchHistory::kFileName);
+    history_ = MatchHistory::Load(historyPath_);
+
     audioManager->PlayMusic("assets/audio/menu.wav");
 
     isRunning = true;
 
     // 调试/回归用：跳过菜单直接进入对局
-    if (openMapSelectOnStart_) {
+    if (openHistory) {
+        currentState = HISTORY;
+    } else if (openMapSelectOnStart_) {
         LoadMapPreviews(renderer, mapPreviewTex_, kMapCatalogCount);
         currentState = MAP_SELECT;
     } else if (autostart) {
@@ -504,7 +512,7 @@ void Engine::HandleInput() {
             currentState = settingsReturnState;
         } else if (currentState == EXIT_CONFIRM) {
             currentState = PAUSED;
-        } else if (currentState == MAP_SELECT) {
+        } else if (currentState == MAP_SELECT || currentState == HISTORY) {
             currentState = MAIN_MENU;
         } else {
             isRunning = false;
@@ -607,6 +615,12 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile) {
 
     inputManager->SwitchToEnglishKeyboardLayout();
 
+    // 记录本场地图 id 与开始时间（历史记录用）
+    currentMapId_ = "ancient_ruins";
+    if (mapRel.find("dust_2") != std::string::npos)        currentMapId_ = "dust_2";
+    else if (mapRel.find("cs_office") != std::string::npos) currentMapId_ = "cs_office";
+    matchStartMs_ = static_cast<long long>(SDL_GetTicks64());
+
     currentState = PLAYING;
     SDL_SetRelativeMouseMode(SDL_TRUE);
     SDL_ShowCursor(SDL_DISABLE);
@@ -654,6 +668,7 @@ void Engine::Update(float dt) {
     if (cs2dGame->IsMatchOver()) {
         constexpr float kReturnDelay = 8.0f;
         if (cs2dGame->GetMatchOverTimer() >= kReturnDelay) {
+            RecordMatchHistory(false);
             std::cout << "[CS2D] 比赛结束，返回主菜单" << std::endl;
             buyMenuOpen_ = false;
             currentState = MAIN_MENU;
@@ -681,7 +696,11 @@ void Engine::Render() {
 
     imGuiUI->BeginFrame();
 
-    if (currentState == MAP_SELECT) {
+    if (currentState == HISTORY) {
+        GameUI::HistoryCtx hctx;
+        hctx.records = &history_;
+        gameUI->DrawHistory(hctx, BuildActions());
+    } else if (currentState == MAP_SELECT) {
         GameUI::MapSelectCtx mctx;
         mctx.selected = mapSelectIndex_;
         for (int i = 0; i < kMapCatalogCount && i < 8; ++i) {
@@ -904,4 +923,62 @@ void Engine::InitLLMBot() {
 
     botDriver = std::make_unique<BotDecisionScheduler>();
     botDriver->Initialize(cfgPath);   // 失败时内部打印提示, BOT 回退传统行为树
+}
+
+
+// ============================================================================
+// 对局历史
+// ============================================================================
+
+void Engine::RecordMatchHistory(bool abandoned) {
+    if (!cs2dGame) return;
+
+    MatchRecord r;
+    // 时间戳
+    const std::time_t now = std::time(nullptr);
+    std::tm tmv{};
+#if defined(_WIN32)
+    localtime_s(&tmv, &now);
+#else
+    tmv = *std::localtime(&now);
+#endif
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d",
+                  tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+                  tmv.tm_hour, tmv.tm_min);
+    r.time = buf;
+
+    switch (cs2dGame->GetMatchMode()) {
+        case MatchMode::BombDefusal:    r.modeId = "bomb";    break;
+        case MatchMode::TeamElimination: r.modeId = "elim";    break;
+        case MatchMode::HostageRescue:  r.modeId = "hostage"; break;
+        case MatchMode::DeathMatch:     r.modeId = "dm";      break;
+        default:                        r.modeId = "bomb";    break;
+    }
+
+    r.mapId   = currentMapId_;
+    r.scoreT  = cs2dGame->GetScoreT();
+    r.scoreCT  = cs2dGame->GetScoreCT();
+    r.kills   = cs2dGame->GetPlayerKills();
+    r.deaths  = cs2dGame->GetPlayerDeaths();
+    r.rounds  = cs2dGame->GetRoundNumber();
+
+    const long long nowMs = static_cast<long long>(SDL_GetTicks64());
+    r.durationSec = (matchStartMs_ > 0 && nowMs > matchStartMs_)
+                    ? static_cast<int>((nowMs - matchStartMs_) / 1000) : 0;
+
+    if (abandoned) {
+        r.result = "draw";
+    } else {
+        const Team winner = cs2dGame->GetMatchWinner();
+        const Team mine   = cs2dGame->GetPlayer().team;
+        r.result = (winner == Team::None) ? "draw" : (winner == mine ? "win" : "lose");
+    }
+
+    MatchHistory::Append(historyPath_, r);
+    history_ = MatchHistory::Load(historyPath_);
+
+    std::cout << "[History] 已记录: " << r.time << " " << r.modeId << " "
+              << r.mapId << " " << r.scoreT << ":" << r.scoreCT
+              << " " << r.result << " 共 " << history_.size() << " 场" << std::endl;
 }

@@ -167,6 +167,7 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
         BotBuyLoadout(bot);
     }
     bullets_.clear();
+    grenadeCharging_ = false;
     drops_.clear();          // 掉落物只保留到本回合结束
     lastDeathTimer_ = 0.0f;
 }

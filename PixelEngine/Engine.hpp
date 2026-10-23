@@ -11,6 +11,7 @@
 #include "LLM/BotDecisionScheduler.hpp"
 #include <SDL2/SDL.h>
 #include <memory>
+#include "Storage/MatchHistory.hpp"
 
 // ============================================================================
 // Engine — 应用外壳
@@ -70,6 +71,12 @@ private:
     GameUI::Actions BuildActions();
     void StartMatch(MatchMode mode);   // 按模式加载对应地图并开局
     void StartMatchWithMap(MatchMode mode, const std::string& mapRel);  // 指定地图开局
+    // 对局历史
+    std::vector<MatchRecord> history_;
+    std::string historyPath_;
+    std::string currentMapId_;
+    long long   matchStartMs_ = 0;
+    void RecordMatchHistory(bool abandoned);
     int  mapSelectIndex_ = 0;                                            // 地图选择光标
     std::string pendingStartMap_;        // --map=<id> 指定的地图
     bool openMapSelectOnStart_ = false;  // --mapselect
@@ -91,7 +98,7 @@ public:
     bool Initialize(const char* title, int width, int height, bool autostart = false,
                     bool fastRound = false, int startMode = 1, bool coachLlm = true,
                     const std::string& startMap = std::string(),
-                    bool openMapSelect = false);
+                    bool openMapSelect = false, bool openHistory = false);
     void Run();
     void Clean();
     void ToggleFullscreen();

@@ -291,7 +291,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         if (ai.grenadeCooldown > 0.0f) ai.grenadeCooldown -= dt;
         if (!target && intel && bot.grenadeCount > 0 && ai.grenadeCooldown <= 0.0f) {
             if (engageDist > Tuning::NadeThrowMin && engageDist < Tuning::NadeThrowMax) {
-                ThrowGrenade(bot, std::atan2(aimY - bot.y, aimX - bot.x));
+                ThrowGrenade(bot, std::atan2(aimY - bot.y, aimX - bot.x), audio);
                 ai.grenadeCooldown = Tuning::NadeCooldown;
             }
         }

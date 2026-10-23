@@ -91,6 +91,8 @@ set(SOURCES
     Graphics/ImGuiUI.cpp
     Graphics/GameUI.cpp
     Storage/SaveManager.cpp
+    Storage/MatchHistory.hpp
+    Storage/MatchHistory.cpp
     CS2D/CS2DTypes.hpp
     CS2D/MiniJSON.hpp
     CS2D/TMJParser.cpp

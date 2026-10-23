@@ -115,7 +115,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         // 整块内容（标题 + 副标题 + 按钮组 + 战绩）垂直居中
         const float vpH = viewport->WorkSize.y;
         const float itemSpacing = ImGui::GetStyle().ItemSpacing.y;
-        const int   nBtn = 6;
+        const int   nBtn = 7;
 
         const float titleH = UI(46.0f);
         const float subH   = UI(30.0f);
@@ -168,6 +168,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         if (bigButton("爆破模式")) doClick([&] { actions.goState(MAP_SELECT); });
         if (bigButton("人质营救")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::HostageRescue)); });
         if (bigButton("死斗模式")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::DeathMatch)); });
+        if (bigButton("历史记录")) doClick([&] { actions.goState(HISTORY); });
         if (bigButton("设置"))     doClick([&] { actions.openSettings(MAIN_MENU); });
         if (bigButton("退出游戏")) doClick([&] { actions.quitToDesktop(); });
 
@@ -558,6 +559,126 @@ void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
     if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
         if (actions.startMatchOnMap) actions.startMatchOnMap(ctx.selected);
     }
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        if (actions.goState) actions.goState(MAIN_MENU);
+    }
+
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+}
+
+void GameUI::DrawHistory(const HistoryCtx& ctx, const Actions& actions) {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->WorkPos);
+    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::Begin("HistoryRoot", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
+                 ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 wp = viewport->WorkPos;
+    const ImVec2 ws = viewport->WorkSize;
+    const float centerX = wp.x + ws.x * 0.5f;
+    const float vpH = ws.y;
+
+    DrawMenuBackdrop(dl, wp, ws);
+
+    DrawImGuiTextCentered(imGuiUI_, "历史记录", wp.y + UI(34.0f), 240, 246, 255, 255, 32);
+    DrawTitleAccent(dl, centerX, wp.y + UI(80.0f), UI(50.0f));
+
+    const int count = ctx.records ? static_cast<int>(ctx.records->size()) : 0;
+    char sub[96];
+    snprintf(sub, sizeof(sub), "最近 %d 场对局（最多保留 50 场）", count);
+    DrawImGuiTextCentered(imGuiUI_, sub, wp.y + UI(92.0f), 150, 178, 200, 255, 16);
+
+    // 内容区：占满标题下方到页脚上方
+    const float topLocal = UI(126.0f);
+    const float footerH  = UI(70.0f);
+    const float listH    = std::max(UI(160.0f), vpH - topLocal - footerH);
+    const float panelW   = std::min(UI(980.0f), ws.x - UI(80.0f));
+
+    ImGui::SetCursorPos(ImVec2((ws.x - panelW) * 0.5f, topLocal));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.055f, 0.075f, 0.100f, 0.92f));
+    ImGui::BeginChild("##historyList", ImVec2(panelW, listH), true,
+                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+    if (count == 0) {
+        ImGui::SetCursorPosY(listH * 0.35f);
+        DrawImGuiTextCentered(imGuiUI_, "还没有对局记录", wp.y + topLocal + listH * 0.35f,
+                              150, 170, 190, 255, 20);
+        DrawImGuiTextCentered(imGuiUI_, "完成一场比赛后就会出现在这里",
+                              wp.y + topLocal + listH * 0.35f + UI(30.0f),
+                              120, 140, 160, 255, 16);
+    } else if (ImGui::BeginTable("##history", 8,
+                   ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                   ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX)) {
+        ImGui::TableSetupColumn("时间",   ImGuiTableColumnFlags_WidthFixed, UI(150.0f));
+        ImGui::TableSetupColumn("模式",   ImGuiTableColumnFlags_WidthFixed, UI(110.0f));
+        ImGui::TableSetupColumn("地图",   ImGuiTableColumnFlags_WidthFixed, UI(110.0f));
+        ImGui::TableSetupColumn("比分",   ImGuiTableColumnFlags_WidthFixed, UI(80.0f));
+        ImGui::TableSetupColumn("结果",   ImGuiTableColumnFlags_WidthFixed, UI(80.0f));
+        ImGui::TableSetupColumn("K / D",  ImGuiTableColumnFlags_WidthFixed, UI(90.0f));
+        ImGui::TableSetupColumn("回合",   ImGuiTableColumnFlags_WidthFixed, UI(70.0f));
+        ImGui::TableSetupColumn("时长",   ImGuiTableColumnFlags_WidthFixed, UI(90.0f));
+        ImGui::TableHeadersRow();
+
+        // 最新在上
+        for (int i = count - 1; i >= 0; --i) {
+            const MatchRecord& r = (*ctx.records)[static_cast<size_t>(i)];
+            ImGui::TableNextRow();
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(r.time.c_str());
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(MatchHistory::ModeLabel(r.modeId));
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(MatchHistory::MapLabel(r.mapId));
+
+            ImGui::TableNextColumn();
+            ImGui::Text("%d : %d", r.scoreT, r.scoreCT);
+
+            ImGui::TableNextColumn();
+            if (r.result == "win") {
+                ImGui::TextColored(Palette::Ally(), "%s", MatchHistory::ResultLabel(r.result));
+            } else if (r.result == "lose") {
+                ImGui::TextColored(Palette::Danger(), "%s", MatchHistory::ResultLabel(r.result));
+            } else {
+                ImGui::TextColored(Palette::TextDim(), "%s", MatchHistory::ResultLabel(r.result));
+            }
+
+            ImGui::TableNextColumn();
+            ImGui::Text("%d / %d", r.kills, r.deaths);
+
+            ImGui::TableNextColumn();
+            ImGui::Text("%d", r.rounds);
+
+            ImGui::TableNextColumn();
+            ImGui::Text("%02d:%02d", r.durationSec / 60, r.durationSec % 60);
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+
+    // 页脚
+    ImGui::SetCursorPosY(vpH - footerH + UI(8.0f));
+    ImGui::SetCursorPosX(centerX - wp.x - UI(110.0f));
+    if (ImGui::Button("返回主菜单", ImVec2(UI(220.0f), UI(46.0f)))) {
+        if (actions.playClick) actions.playClick();
+        if (actions.goState) actions.goState(MAIN_MENU);
+    }
+
+    DrawImGuiTextCentered(imGuiUI_, "Esc 返回", vpH - footerH + UI(60.0f),
+                          118, 142, 164, 235, 15);
+
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         if (actions.goState) actions.goState(MAIN_MENU);
     }
