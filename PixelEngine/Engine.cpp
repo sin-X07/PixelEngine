@@ -1,4 +1,5 @@
 #include "Engine.hpp"
+#include "Core/Resolutions.hpp"
 #include "CS2D/MapCatalog.hpp"
 #include "Core/PathUtils.hpp"
 #include "Core/IniFile.hpp"
@@ -12,9 +13,6 @@
 namespace {
 
 // 分辨率档位表（与 GameUI 设置页下拉一致）
-const int kResW[] = { 800, 1024, 1280, 1920, 2560 };
-const int kResH[] = { 600, 768,  960,  1080, 1440 };
-constexpr int kResCount = static_cast<int>(sizeof(kResW) / sizeof(kResW[0]));
 
 // CS2D 启动地图
 constexpr const char* kStartMap = "assets/cs2d/maps/ancient_ruins.tmj";
@@ -179,6 +177,8 @@ GameUI::Actions Engine::BuildActions() {
         currentResH_ = h;
         currentResIdx_ = idx;
         saveManager->MutableSettings().resIdx = idx;
+
+        // 方案 B：分辨率 = 内部渲染分辨率，窗口/全屏都生效
         if (!isFullscreen && window) {
             SDL_Rect usable;
             SDL_GetDisplayUsableBounds(0, &usable);
@@ -187,8 +187,9 @@ GameUI::Actions Engine::BuildActions() {
             const int ch = std::min(h, usable.h);
             SDL_SetWindowSize(window, cw, ch);
             SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-            ResizeLogicalViewport(cw, ch);
         }
+        // 逻辑尺寸始终等于所选分辨率（窗口更小时由 SDL 缩放，必要时 letterbox）
+        ResizeLogicalViewport(w, h);
     };
     a.setFullscreen = [this](bool v) {
         if (v != isFullscreen) ToggleFullscreen();
@@ -223,8 +224,9 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
     ApplySavedSettings();
 
     // 窗口
-    currentResW_ = (currentResIdx_ >= 0 && currentResIdx_ < kResCount) ? kResW[currentResIdx_] : width;
-    currentResH_ = (currentResIdx_ >= 0 && currentResIdx_ < kResCount) ? kResH[currentResIdx_] : height;
+    currentResIdx_ = std::clamp(currentResIdx_, 0, kResolutionCount - 1);
+    currentResW_ = kResolutions[currentResIdx_].w;
+    currentResH_ = kResolutions[currentResIdx_].h;
 
     window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                               currentResW_, currentResH_, SDL_WINDOW_SHOWN);
@@ -411,17 +413,13 @@ void Engine::ToggleFullscreen() {
         const int ch = std::min(currentResH_, usable.h);
         SDL_SetWindowSize(window, cw, ch);
         SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-        ResizeLogicalViewport(cw, ch);
+        ResizeLogicalViewport(currentResW_, currentResH_);   // 逻辑尺寸仍为分辨率
         isFullscreen = false;
     } else {
-        // 进入全屏：以高度为基准按屏幕比例扩展逻辑视口（动态 FOV）
+        // 进入全屏：桌面全屏（不切显示模式，避免闪屏/重排）
+        // 逻辑尺寸仍按所选分辨率，多余区域由 SDL 自动 letterbox
         SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
-        int sw = 0, sh = 0;
-        SDL_GetRendererOutputSize(renderer, &sw, &sh);
-        const float aspect = (sh > 0) ? static_cast<float>(sw) / static_cast<float>(sh) : (4.0f / 3.0f);
-        const int h = 600;
-        const int w = static_cast<int>(600.0f * aspect);
-        ResizeLogicalViewport(w, h);
+        ResizeLogicalViewport(currentResW_, currentResH_);
         isFullscreen = true;
     }
 

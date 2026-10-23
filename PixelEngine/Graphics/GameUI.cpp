@@ -1,4 +1,5 @@
 #include "GameUI.hpp"
+#include "../Core/Resolutions.hpp"
 #include "../CS2D/MapCatalog.hpp"
 #include "../ThirdParty/imgui/imgui.h"
 #include "ImGuiUI.hpp"
@@ -164,12 +165,14 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         }
         {
             sliderRow("分辨率", "##res", startX);
-            const char* resLabels[] = { "800x600", "1024x768", "1280x960", "1920x1080", "2560x1440" };
-            int resIdx = ctx.resIdx;
-            if (ImGui::Combo("##res", &resIdx, resLabels, 5)) {
-                const int rw[] = { 800, 1024, 1280, 1920, 2560 };
-                const int rh[] = { 600, 768, 960, 1080, 1440 };
-                actions.setResolution(rw[resIdx], rh[resIdx], resIdx);
+            const char* resLabels[kResolutionCount];
+            for (int i = 0; i < kResolutionCount; ++i) {
+                resLabels[i] = kResolutions[i].label;
+            }
+            int resIdx = std::clamp(ctx.resIdx, 0, kResolutionCount - 1);
+            if (ImGui::Combo("##res", &resIdx, resLabels, kResolutionCount)) {
+                actions.setResolution(kResolutions[resIdx].w,
+                                      kResolutions[resIdx].h, resIdx);
             }
         }
         {
