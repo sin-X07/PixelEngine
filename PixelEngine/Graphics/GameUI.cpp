@@ -341,18 +341,15 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
     {
         char left[64];
         char mid[64];
+        char alive[64];
         snprintf(left, sizeof(left), "T  %d : %d  CT", ctx.scoreT, ctx.scoreCT);
+        snprintf(alive, sizeof(alive), "%d vs %d  ", ctx.aliveT, ctx.aliveCT);
         snprintf(mid, sizeof(mid), "第 %d 回合   %02d:%02d",
                  ctx.roundNumber,
                  ctx.roundRemainingSec / 60, ctx.roundRemainingSec % 60);
 
-        DrawImGuiTextCentered(imGuiUI, left, 12.0f, 235, 235, 235, 255, 22);
-        DrawImGuiTextCentered(imGuiUI, mid, 40.0f, 180, 200, 215, 255, 18);
-
-        char alive[64];
-        snprintf(alive, sizeof(alive), "T 存活 %d   CT 存活 %d   $%d   甲 %d%s",
-                 ctx.aliveT, ctx.aliveCT, ctx.money, ctx.armor,
-                 ctx.helmet ? "(盔)" : "");
+        DrawImGuiTextCentered(imGuiUI, mid, 12.0f, 180, 200, 215, 255, 18);
+        DrawImGuiTextCentered(imGuiUI, left, 40.0f, 235, 235, 235, 255, 22);
         DrawImGuiTextCentered(imGuiUI, alive, 64.0f, 160, 175, 185, 255, 16);
     }
 
@@ -452,8 +449,6 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
                 snprintf(db, sizeof(db), "拆包中 %d%%", static_cast<int>(ctx.defuseProgress * 100));
                 DrawImGuiTextCentered(imGuiUI, db, 118.0f, 120, 220, 255, 255, 18);
             }
-        } else {
-            DrawImGuiTextCentered(imGuiUI, "配合队友防守包点", 92.0f, 200, 210, 220, 255, 18);
         }
     } else if (ctx.objective == 2) {   // 人质
         char buf[64];

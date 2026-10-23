@@ -70,7 +70,7 @@ SOUNDS = [
     ("assets/audio/round_start.wav",    600,  0.25),
     ("assets/audio/round_win.wav",      780,  0.40),
     ("assets/audio/round_lose.wav",     260,  0.40),
-    ("assets/audio/footstep.wav",       200,  0.05),
+    ("assets/audio/footstep.mp3",       200,  0.05),
     ("assets/audio/armor_hit.wav",      500,  0.08),
 ]
 

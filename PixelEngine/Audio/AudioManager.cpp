@@ -47,7 +47,7 @@ bool AudioManager::Initialize() {
     roundStartSound     = loadChunk("assets/audio/round_start.wav", "回合开始");
     roundWinSound       = loadChunk("assets/audio/round_win.wav", "回合胜利");
     roundLoseSound      = loadChunk("assets/audio/round_lose.wav", "回合失败");
-    footstepSound       = loadChunk("assets/audio/footstep.wav", "脚步");
+    footstepSound       = loadChunk("assets/audio/footstep.mp3", "脚步");
     armorHitSound       = loadChunk("assets/audio/armor_hit.wav", "护甲受击");
 
     // 换弹音效

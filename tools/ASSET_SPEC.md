@@ -135,7 +135,7 @@
 | `round_start.wav` | 回合开始 |
 | `round_win.wav` | 回合胜利 |
 | `round_lose.wav` | 回合失败 |
-| `footstep.wav` | 脚步 |
+| `footstep.mp3` | 脚步 |
 | `menu.wav` | 主菜单音乐 |
 | `button.ogg` | 按钮悬停 |
 | `click.ogg` | 按钮点击 |

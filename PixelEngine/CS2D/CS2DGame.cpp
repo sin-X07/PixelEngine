@@ -671,8 +671,10 @@ void CS2DGame::Render(int viewW, int viewH) {
 
     // 闪光致盲（最上层）：致盲期间完全丧失视野，最后 0.4s 快速淡出
     if (flashTimer_ > 0.0f) {
-        const float k = std::clamp(flashTimer_ / 0.4f, 0.0f, 1.0f);
-        renderer_->DrawFlashOverlay(static_cast<Uint8>(255.0f * k));
+        // 末尾 0.4 秒淡出，整体再乘以本次距离决定的峰值强度
+        const float fade = std::clamp(flashTimer_ / 0.4f, 0.0f, 1.0f);
+        const float peak = std::clamp(flashPeak_ > 0.0f ? flashPeak_ : 1.0f, 0.0f, 1.0f);
+        renderer_->DrawFlashOverlay(static_cast<Uint8>(255.0f * fade * peak));
     }
 
     const WeaponDef& pw = player_.CurrentWeapon();

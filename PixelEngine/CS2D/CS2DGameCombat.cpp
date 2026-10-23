@@ -10,6 +10,19 @@
 // 玩家移动 / 射击
 // ============================================================================
 
+float CS2DGame::ComputeFlashBlind(float dist) {
+    if (dist >= Tuning::FlashRadius) return 0.0f;
+    const float t01 = 1.0f - dist / Tuning::FlashRadius;
+    const float k = t01 * t01;
+    return Tuning::FlashMinBlind + (Tuning::FlashMaxBlind - Tuning::FlashMinBlind) * k;
+}
+
+float CS2DGame::ComputeFlashIntensity(float dist) {
+    if (dist >= Tuning::FlashRadius) return 0.0f;
+    const float t01 = 1.0f - dist / Tuning::FlashRadius;
+    return 0.35f + 0.65f * (t01 * t01);
+}
+
 void CS2DGame::UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bool stealth) {
     constexpr float ACCEL    = 600.0f;
     constexpr float FRICTION = 8.0f;
@@ -368,7 +381,13 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
                   smokes_.end());
 
     // 闪光致盲衰减
-    if (flashTimer_ > 0.0f) flashTimer_ -= dt;
+    if (flashTimer_ > 0.0f) {
+        flashTimer_ -= dt;
+        if (flashTimer_ <= 0.0f) {
+            flashTimer_ = 0.0f;
+            flashPeak_  = 0.0f;
+        }
+    }
 }
 
 void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
@@ -403,21 +422,38 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
         }
         case WeaponId::GrenadeFlash: {
             if (audio) audio->PlaySound(SoundEffect::FLASHBANG);
-            // 致盲：距离 + 视线（玩家与 BOT 一致）
+            // 致盲：距离越近越久（平方衰减）+ 墙体遮挡
+            // 返回 {致盲秒数, 峰值强度}，强度用于控制白屏有多白
+            auto flashAt = [&](const Player& t) -> std::pair<float, float> {
+                if (!t.alive) return {0.0f, 0.0f};
+
+                const float dx = t.x - g.x;
+                const float dy = t.y - g.y;
+                const float d = std::sqrt(dx * dx + dy * dy);
+                if (d >= Tuning::FlashRadius) return {0.0f, 0.0f};
+
+                // 墙后看不到闪光：不闪（避免隔墙致盲）
+                if (renderer_ && !renderer_->HasLineOfSight(g.x, g.y, t.x, t.y)) {
+                    return {0.0f, 0.0f};
+                }
+
+                return { ComputeFlashBlind(d), ComputeFlashIntensity(d) };
+            };
+
             if (player_.alive) {
-                const float dx = player_.x - g.x;
-                const float dy = player_.y - g.y;
-                if (std::sqrt(dx * dx + dy * dy) < 220.0f) {
-                    flashTimer_ = 2.5f;
+                const auto [blind, inten] = flashAt(player_);
+                if (blind > 0.0f) {
+                    flashTimer_ = std::max(flashTimer_, blind);
+                    flashPeak_  = std::max(flashPeak_, inten);
                 }
             }
             for (size_t bi = 0; bi < bots_.size(); ++bi) {
                 auto& b = bots_[bi];
                 if (!b.alive) continue;
-                const float dx = b.x - g.x;
-                const float dy = b.y - g.y;
-                if (std::sqrt(dx * dx + dy * dy) < 220.0f) {
-                    AiAt(bi).blindTimer = 2.5f;
+                const auto [blind, inten] = flashAt(b);
+                (void)inten;
+                if (blind > 0.0f) {
+                    AiAt(bi).blindTimer = std::max(AiAt(bi).blindTimer, blind);
                 }
             }
             if (audio) audio->PlaySound(SoundEffect::HIT);

@@ -61,6 +61,10 @@ constexpr float NadeMaxDamage    = 78.0f;   // 中心伤害（边缘按平方衰
 constexpr float DefuseRadius     = 26.0f;   // 拆包半径：必须贴近包点
 constexpr float BombHoldRing     = 85.0f;   // 下包后 T 守包的环形半径
 constexpr float NadeBlastFxTime  = 0.35f;   // 爆炸特效持续
+// 闪光弹：致盲时长随距离衰减（贴脸最长、边缘很短）
+constexpr float FlashRadius      = 260.0f;  // 有效半径（超出完全不闪）
+constexpr float FlashMaxBlind    = 3.2f;    // 正中心致盲秒数
+constexpr float FlashMinBlind    = 0.6f;    // 边缘致盲秒数
 constexpr float NadeThrowMin     = 90.0f;    // 投掷最小距离
 constexpr float NadeThrowMax     = 230.0f;   // 投掷最大距离
 constexpr float NadeCooldown     = 7.0f;     // 两次投掷间隔

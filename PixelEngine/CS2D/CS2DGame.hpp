@@ -388,6 +388,9 @@ public:
     int  GetPlayerArmor()  const { return player_.armor; }
     int  GetPlayerHealth()    const { return player_.health; }
     int  GetPlayerMaxHealth() const { return player_.maxHealth; }
+    // 闪光致盲：距离 → 秒数 / 强度（起爆与自检共用同一份公式）
+    static float ComputeFlashBlind(float dist);
+    static float ComputeFlashIntensity(float dist);
     // ---- 教练层（L3）----
     const TeamPlan&   GetCoachPlan(Team t) const;
     const std::string& GetCoachReason(Team t) const;
@@ -504,6 +507,7 @@ private:
 
     void DropEquipmentOnDeath(const Player& victim);
     float flashTimer_ = 0.0f;      // 玩家闪光致盲剩余秒数
+    float flashPeak_  = 0.0f;      // 本次致盲的峰值强度 0~1（越近越白）
     float footstepTimer_ = 0.0f;   // 玩家脚步声节奏
     float hitMarkerTimer_ = 0.0f;   // 命中敌人反馈
     float damageFlashTimer_ = 0.0f; // 玩家受伤反馈
