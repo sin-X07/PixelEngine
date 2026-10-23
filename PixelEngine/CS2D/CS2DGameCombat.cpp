@@ -326,10 +326,16 @@ void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle, AudioManager* audio
     // 每个投掷物一局只能用一次：用掉就从背包移除
     thrower.ConsumeActiveGrenade();
 
-    // 音效在「出手瞬间」播放（与投掷动作同一帧）
+    // 出手音效：按投掷物类型选择，且与投掷动作在同一帧
     if (audio) {
-        audio->PlaySoundAt(SoundEffect::GRENADE_THROW, thrower.x, thrower.y,
-                           player_.x, player_.y);
+        SoundEffect se = SoundEffect::GRENADE_THROW;
+        if (type == WeaponId::GrenadeHE)         se = SoundEffect::THROW_HE;
+        else if (type == WeaponId::GrenadeFlash)  se = SoundEffect::THROW_FLASH;
+        else if (type == WeaponId::GrenadeSmoke)  se = SoundEffect::THROW_SMOKE;
+
+        // 玩家自己的投掷用 2D 播放，保证一定能听到（不受距离衰减影响）
+        if (&thrower == &player_) audio->PlaySound(se);
+        else audio->PlaySoundAt(se, thrower.x, thrower.y, player_.x, player_.y);
     }
 }
 

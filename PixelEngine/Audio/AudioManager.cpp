@@ -40,6 +40,13 @@ bool AudioManager::Initialize() {
     // 战局事件
     grenadeExplodeSound = loadChunk("assets/audio/grenade_explode.wav", "手雷爆炸");
     grenadeThrowSound   = loadChunk("assets/audio/dagger_out.mp3", "投掷出手");
+    // 出手音效：优先用专用素材，缺失时回落到通用出手声
+    throwHeSound    = loadChunk("assets/audio/throw_he.wav", "高爆雷出手");
+    if (!throwHeSound)    throwHeSound    = grenadeThrowSound;
+    throwFlashSound = loadChunk("assets/audio/throw_flash.wav", "闪光弹出手");
+    if (!throwFlashSound) throwFlashSound = grenadeThrowSound;
+    throwSmokeSound = loadChunk("assets/audio/throw_smoke.wav", "烟雾弹出手");
+    if (!throwSmokeSound) throwSmokeSound = grenadeThrowSound;
     flashbangSound      = loadChunk("assets/audio/flashbang.wav", "闪光弹");
     smokeSound          = loadChunk("assets/audio/smoke.mp3", "烟雾弹");
     bombPlantSound      = loadChunk("assets/audio/bomb_plant.wav", "下包");
@@ -101,6 +108,9 @@ void AudioManager::Clean() {
     // 战局事件
     if (grenadeExplodeSound) { Mix_FreeChunk(grenadeExplodeSound); grenadeExplodeSound = nullptr; }
     if (grenadeThrowSound)   { Mix_FreeChunk(grenadeThrowSound);   grenadeThrowSound = nullptr; }
+    if (throwHeSound && throwHeSound != grenadeThrowSound) { Mix_FreeChunk(throwHeSound); throwHeSound = nullptr; }
+    if (throwFlashSound && throwFlashSound != grenadeThrowSound) { Mix_FreeChunk(throwFlashSound); throwFlashSound = nullptr; }
+    if (throwSmokeSound && throwSmokeSound != grenadeThrowSound) { Mix_FreeChunk(throwSmokeSound); throwSmokeSound = nullptr; }
     if (flashbangSound)      { Mix_FreeChunk(flashbangSound);      flashbangSound = nullptr; }
     if (smokeSound)          { Mix_FreeChunk(smokeSound);          smokeSound = nullptr; }
     if (bombPlantSound)      { Mix_FreeChunk(bombPlantSound);      bombPlantSound = nullptr; }
@@ -180,6 +190,9 @@ Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
         case SoundEffect::DEAGLE_FIRE:      return deagleSound;
 
         case SoundEffect::GRENADE_THROW:   return grenadeThrowSound;
+        case SoundEffect::THROW_HE:        return throwHeSound;
+        case SoundEffect::THROW_FLASH:     return throwFlashSound;
+        case SoundEffect::THROW_SMOKE:     return throwSmokeSound;
         case SoundEffect::GRENADE_EXPLODE:  return grenadeExplodeSound;
         case SoundEffect::FLASHBANG:        return flashbangSound;
         case SoundEffect::SMOKE:            return smokeSound;
