@@ -438,8 +438,6 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     }
 
     if (player_.alive && canMove) {
-        // 先按当前鼠标位置刷新朝向，移动才知道「正前方」是哪边
-        player_.aimAngle = std::atan2(mouseWorldY - player_.y, mouseWorldX - player_.x);
         UpdatePlayerMovement(dt, wPressed, aPressed, sPressed, dPressed, player_.stealth);
         if (!ending) {
             UpdatePlayerShooting(dt, mouseLeftDown, mouseWorldX, mouseWorldY, audio);

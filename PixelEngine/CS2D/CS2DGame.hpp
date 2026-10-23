@@ -388,9 +388,6 @@ public:
     int  GetPlayerArmor()  const { return player_.armor; }
     int  GetPlayerHealth()    const { return player_.health; }
     int  GetPlayerMaxHealth() const { return player_.maxHealth; }
-    // 把「相对朝向的移动键」转成世界方向单位向量（移动与自检共用）
-    static void MoveVectorFromInput(float aimAngle, bool w, bool a, bool s, bool d,
-                                    float& outX, float& outY);
     // ---- 教练层（L3）----
     const TeamPlan&   GetCoachPlan(Team t) const;
     const std::string& GetCoachReason(Team t) const;
