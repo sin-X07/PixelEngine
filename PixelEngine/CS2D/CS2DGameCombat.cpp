@@ -10,6 +10,25 @@
 // 玩家移动 / 射击
 // ============================================================================
 
+void CS2DGame::MoveVectorFromInput(float aimAngle, bool w, bool a, bool s, bool d,
+                                   float& outX, float& outY) {
+    outX = 0.0f;
+    outY = 0.0f;
+
+    const float fwd    = (w ? 1.0f : 0.0f) - (s ? 1.0f : 0.0f);
+    const float strafe = (d ? 1.0f : 0.0f) - (a ? 1.0f : 0.0f);
+    if (std::abs(fwd) < 0.001f && std::abs(strafe) < 0.001f) return;
+
+    // 屏幕坐标系 y 轴向下：前方向量 (cos, sin)，右方向量 (-sin, cos)
+    const float fx = std::cos(aimAngle), fy = std::sin(aimAngle);
+    const float rx = -std::sin(aimAngle), ry = std::cos(aimAngle);
+
+    float mx = fx * fwd + rx * strafe;
+    float my = fy * fwd + ry * strafe;
+    const float len = std::sqrt(mx * mx + my * my);
+    if (len > 0.001f) { outX = mx / len; outY = my / len; }
+}
+
 void CS2DGame::UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bool stealth) {
     constexpr float ACCEL    = 600.0f;
     constexpr float FRICTION = 8.0f;
@@ -18,13 +37,13 @@ void CS2DGame::UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bo
     const float baseSpeed = stealth ? Tuning::PlayerStealthSpeed : Tuning::PlayerBaseSpeed;
     const float maxSpeed  = baseSpeed * weaponMul;
 
-    const int dx = (d ? 1 : 0) - (a ? 1 : 0);
-    const int dy = (s ? 1 : 0) - (w ? 1 : 0);
+    // 相对朝向的移动：W=正前方（准星方向）S=后退 A=左平移 D=右平移
+    float mx = 0.0f, my = 0.0f;
+    MoveVectorFromInput(player_.aimAngle, w, a, s, d, mx, my);
 
-    const float len = std::sqrt(static_cast<float>(dx * dx + dy * dy));
-    if (len > 0.001f) {
-        player_.vx += (dx / len) * ACCEL * dt;
-        player_.vy += (dy / len) * ACCEL * dt;
+    if (mx != 0.0f || my != 0.0f) {
+        player_.vx += mx * ACCEL * dt;
+        player_.vy += my * ACCEL * dt;
     } else {
         player_.vx -= player_.vx * FRICTION * dt;
         player_.vy -= player_.vy * FRICTION * dt;
