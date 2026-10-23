@@ -3,43 +3,38 @@
 #include "../CS2D/MiniJSON.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <iostream>
 #include <sstream>
 
 // ============================================================================
-// 教练层的 LLM 接入
+// 教练层的 LLM 接入（结构化输出 + 短摘要 + TTL + 复盘笔记）
 //
-// 流程：CoachThink 先用 RuleCoach 落地一份计划（零延迟），
-//       再异步向 LLM 要一份更好的；回包后校验，通过就替换并重新下发。
-// 约束：回包在 worker 线程，只写进加锁队列，主线程 CoachDrainLlm 消费。
+//   - system prompt 固定（角色 / 词表 / 区域表 / 输出契约），利于前缀缓存
+//   - user 只放「会变的短摘要」，控制在几十 token
+//   - response_format:json_schema 强制结构化输出，游戏侧再校验一次
+//   - 每条计划带 ttl_s；回包时回合号或炸弹状态变了就丢弃
+//   - 回合结束额外请求一次「一句话复盘」，滚动保留最近 5 条笔记
 // ============================================================================
 
 namespace {
 
-const char* kCoachSystemPrompt =
-    "你是 CS2D 战队的主教练（IGL）。你只负责战术选择，不负责瞄准和走位。\n"
-    "根据比分、人数、包点状态和过去几回合的比赛记忆，为全队制定本回合计划。\n"
-    "严格只输出一个 JSON 对象，不要解释、不要 Markdown、不要代码块。\n"
-    "字段要求：\n"
-    "  intent: default|rush_a|rush_b|split_a|split_b|stack_a|stack_b|retake_a|retake_b|save|fake\n"
-    "  target: A|B|MID 或空字符串\n"
-    "  tempo: slow|normal|fast\n"
-    "  slots: 恰好 5 个元素，slot 从 0 到 4\n"
-    "     每个元素 {role, area}；role 取 entry|support|lurk|anchor|awper；\n"
-    "     area 必须是【区域】里出现过的名字，不知道就填空字符串\n"
-    "  reason: 一句中文，不超过 20 个字，说明你为什么这么打\n"
-    "  branch: 可选。{\"after_sec\":整数, \"intent\":同上, \"target\":同上, \"tempo\":同上}\n"
-    "     表示「再过 N 秒切换到这个战术」，用于做时间差打法；不需要就省略\n"
-    "\n"
-    "intent 语义约束（必须遵守）：\n"
-    "  retake_a / retake_b 只能用于 C4 已被敌方安装、我方需要夺回包点的情况\n"
-    "  stack_a / stack_b 用于全员集中到一个点（进攻或守包）\n"
-    "  save 只能用于经济崩溃、主动放弃本回合\n"
-    "  没下包、正常开局时，只能用 default / rush_* / split_* / fake\n"
-    "  rush_* / split_* / fake 是 T（进攻方）的战术；CT（防守方）不要使用\n"
-    "  CT 常用 default / stack_a / stack_b / retake_a / retake_b\n";
+// llama-server 结构化输出 schema（与游戏侧枚举一一对应）
+const char* kCoachSchema = R"JSON({"type":"object","additionalProperties":false,
+"required":["intent","target","tempo","ttl_s","reason"],
+"properties":{
+ "intent":{"enum":["default","rush_a","rush_b","split_a","split_b","stack_a","stack_b","retake_a","retake_b","save","fake"]},
+ "target":{"enum":["A","B","MID",""]},
+ "tempo":{"enum":["slow","normal","fast"]},
+ "ttl_s":{"type":"integer","minimum":3,"maximum":30},
+ "reason":{"type":"string","maxLength":60},
+ "slots":{"type":"array","maxItems":5,"items":{"type":"object","additionalProperties":false,
+   "required":["slot","role"],
+   "properties":{"slot":{"type":"integer","minimum":0,"maximum":4},
+                 "role":{"enum":["entry","support","lurk","anchor","awper"]},
+                 "area":{"type":"string"}}}}}})JSON";
 
-const char* IntentToStr(PlanIntent i) {
+const char* IntentLabel(PlanIntent i) {
     switch (i) {
         case PlanIntent::RushA:   return "rush_a";
         case PlanIntent::RushB:   return "rush_b";
@@ -86,99 +81,110 @@ bool ParseRole(const std::string& v, CoachRole& out) {
     return false;
 }
 
-std::string LowerCopy(const std::string& s) {
+std::string Lower(const std::string& s) {
     std::string r = s;
     std::transform(r.begin(), r.end(), r.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return r;
 }
 
-} // namespace
+// 固定前缀：角色 + 词表 + 区域表 + 输出契约
+std::string BuildSystemPrompt(const CS2DWorld* world) {
+    std::ostringstream o;
+    o << "你是 CS2D 战队主教练。只做战术决策，不做瞄准与走位。\n"
+      << "严格只输出一个 JSON 对象：不要 YAML、不要解释、不要代码块。\n"
+      << "示例：{\"intent\":\"rush_b\",\"target\":\"B\",\"tempo\":\"fast\","
+         "\"ttl_s\":12,\"reason\":\"敌方减员速推B\","
+         "\"slots\":[{\"slot\":0,\"role\":\"entry\",\"area\":\"B_Long\"}]}\n"
+      << "字段含义：\n"
+      << " intent: default/rush_a/rush_b/split_a/split_b/stack_a/stack_b/"
+         "retake_a/retake_b/save/fake\n"
+      << "   retake_* 仅在 C4 已被安装时使用；save 仅在经济崩溃时使用\n"
+      << "   rush_*/split_*/fake 是 T 战术；CT 用 default/stack_*/retake_*\n"
+      << " target: A / B / MID / 空\n"
+      << " tempo: slow/normal/fast\n"
+      << " ttl_s: 指令有效秒数（3~30），场面易变给小值\n"
+      << " slots: 最多 5 个，slot 0~4，area 必须是下列区域之一\n"
+      << " reason: 不超过 20 个汉字，只用于日志\n";
+    if (world) {
+        o << "可选区域:";
+        for (const auto& a : world->GetAreas()) o << ' ' << a.name;
+        o << "\n";
+    }
+    return o.str();
+}
 
-// ---------------------------------------------------------------------------
-// 组 prompt
-// ---------------------------------------------------------------------------
-static std::string BuildCoachUserPrompt(const CS2DGame& game, Team t,
-                                        const CoachEvent& ev,
-                                        const std::deque<RoundMemo>& memory,
-                                        const CS2DWorld* world) {
+// 会变化的短摘要
+std::string BuildStateDigest(const CS2DGame& game, Team team,
+                             const CoachEvent& ev,
+                             const std::deque<std::string>& notes,
+                             const std::string& lastOrder,
+                             const CS2DWorld* world) {
     std::ostringstream o;
 
-    const Team enemy = TeamManager::Opponent(t);
-    o << "【队伍】" << (t == Team::T ? "T（进攻方）" : "CT（防守方）")
-      << "  比分 T:" << game.GetScoreT() << " CT:" << game.GetScoreCT()
-      << "  第" << game.GetRoundNumber() << "回合\n";
+    const int total = static_cast<int>(game.GetRoundElapsed());
+    o << "R" << game.GetRoundNumber() << (team == Team::T ? " T" : " CT")
+      << " " << game.GetScoreT() << ":" << game.GetScoreCT()
+      << " " << (total / 60) << ":" << (total % 60)
+      << " 我" << game.AliveCount(team) << " 敌"
+      << game.AliveCount(TeamManager::Opponent(team));
 
-    o << "【人数】我方存活 " << game.AliveCount(t)
-      << "  敌方存活 " << game.AliveCount(enemy) << "\n";
+    int sum = 0, n = 0;
+    if (game.GetPlayer().team == team) { sum += game.GetPlayer().money; ++n; }
+    for (const auto& b : game.GetBOTs()) {
+        if (b.team == team) { sum += b.money; ++n; }
+    }
+    const int avg = (n > 0) ? sum / n : 0;
+    o << " 经济" << (avg < 1800 ? "穷" : (avg < 3500 ? "中" : "富"));
 
-    o << "【时间】回合已进行 " << static_cast<int>(game.GetRoundElapsed()) << " 秒\n";
-
-    o << "【包点】";
     if (game.IsBombPlanted()) {
-        o << "C4 已安装，剩余 " << static_cast<int>(game.GetBombTimer()) << " 秒，位置在 "
-          << (world ? world->FindAreaAt(game.GetBombX(), game.GetBombY()) : "") << "\n";
+        o << " 炸弹:已下" << static_cast<int>(game.GetBombTimer()) << "s";
     } else {
-        o << "尚未下包\n";
+        o << " 炸弹:未下";
     }
 
-    o << "【区域】";
-    if (world) {
-        const auto& areas = world->GetAreas();
-        for (size_t i = 0; i < areas.size(); ++i) {
-            o << areas[i].name << (i + 1 < areas.size() ? " " : "");
-        }
+    o << "\n敌:";
+    bool any = false;
+    for (const auto& c : game.GetContactsOfTeam(team)) {
+        const std::string area = world ? world->FindAreaAt(c.x, c.y) : std::string();
+        if (area.empty()) continue;
+        o << " " << area << "x1(" << static_cast<int>(c.age) << "s)";
+        any = true;
     }
-    o << "\n";
+    if (!any) o << " 未知";
 
-    // 比赛记忆（最近 10 回合）
-    o << "【记忆】\n";
-    if (memory.empty()) {
-        o << "（这是第一回合，没有历史）\n";
-    } else {
-        for (const auto& m : memory) {
-            o << "R" << m.roundNo << " " << IntentToStr(m.plan);
-            if (!m.target.empty()) o << "->" << m.target;
-            o << (m.won ? " 胜 " : " 负 ");
-            o << m.scoreT << ":" << m.scoreCT;
-            if (m.bombPlanted) o << " 已下包";
-            if (!m.firstContactArea.empty()) o << " 首次接触@" << m.firstContactArea;
-            o << " 我方存活" << m.aliveEnd;
-            // 双方阵亡点（最多列 4 条，控制 token）
-            int listed = 0;
-            for (const auto& d : m.deaths) {
-                if (listed++ >= 4) break;
-                o << " | " << (d.team == t ? "我方" : "敌方") << "亡@"
-                  << (d.area.empty() ? "未知" : d.area);
-            }
-            o << "\n";
+    if (!lastOrder.empty()) o << "\n上条:" << lastOrder;
+
+    if (!notes.empty()) {
+        o << "\n笔记:";
+        int k = 0;
+        for (auto it = notes.rbegin(); it != notes.rend() && k < 3; ++it, ++k) {
+            o << (k ? " / " : " ") << *it;
         }
     }
 
-    o << "【当前事件】";
+    o << "\n事件:";
     switch (ev.type) {
-        case CoachEventType::RoundStart:    o << "回合刚开始，制定整回合计划"; break;
-        case CoachEventType::EnemySpotted:  o << "发现敌人，首次接触@" << ev.area; break;
+        case CoachEventType::RoundStart:    o << "回合开始"; break;
+        case CoachEventType::EnemySpotted:  o << "首次接火@" << ev.area; break;
         case CoachEventType::AllyDown:      o << "我方减员@" << ev.area; break;
         case CoachEventType::EnemyDown:     o << "敌方减员@" << ev.area; break;
-        case CoachEventType::BombPlanted:   o << "C4 已安装@" << ev.area; break;
-        case CoachEventType::DefuseStarted: o << "有人在拆包@" << ev.area; break;
-        case CoachEventType::DefuseAborted: o << "拆包被中断"; break;
+        case CoachEventType::BombPlanted:   o << "C4已安装@" << ev.area; break;
+        case CoachEventType::DefuseStarted: o << "有人在拆包"; break;
+        case CoachEventType::DefuseAborted: o << "拆包中断"; break;
         case CoachEventType::TimeLow:       o << "时间不足"; break;
         case CoachEventType::EconomyLow:    o << "经济不足"; break;
         case CoachEventType::HumanDied:     o << "玩家阵亡"; break;
         case CoachEventType::MatchPoint:    o << "赛点"; break;
+        case CoachEventType::Heartbeat:     o << "例行检查"; break;
         default: break;
     }
-    o << "\n【输出】只输出 JSON。";
     return o.str();
 }
 
-// ---------------------------------------------------------------------------
-// 解析并校验 LLM 计划
-// ---------------------------------------------------------------------------
-static bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* world,
-                           bool game_bombPlanted, bool lowEconomy, bool teamIsCT) {
+// 解析 + 游戏侧二次校验
+bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* world,
+                    bool bombPlanted, bool teamIsCT, bool lowEconomy, float& ttlOut) {
     const auto bo = raw.find('{');
     const auto bc = raw.rfind('}');
     if (bo == std::string::npos || bc == std::string::npos || bc <= bo) return false;
@@ -192,121 +198,145 @@ static bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorl
     if (!root.is_object()) return false;
 
     TeamPlan plan;
-    bool ok = false;
-
-    const std::string intent = LowerCopy(root.value<std::string>("intent", ""));
-    if (ParseIntent(intent, plan.intent)) ok = true;
+    if (!ParseIntent(Lower(root.value<std::string>("intent", "")), plan.intent)) {
+        return false;
+    }
 
     plan.target = root.value<std::string>("target", "");
-    const std::string tempo = LowerCopy(root.value<std::string>("tempo", "normal"));
-    ParseTempo(tempo, plan.tempo);
+    ParseTempo(Lower(root.value<std::string>("tempo", "normal")), plan.tempo);
     plan.reason = root.value<std::string>("reason", "");
 
-    // slots
+    ttlOut = static_cast<float>(root.value<double>("ttl_s", 12.0));
+    ttlOut = std::clamp(ttlOut, 3.0f, 30.0f);
+
     if (root.contains("slots") && root["slots"].is_array()) {
         const auto& arr = root["slots"];
         const size_t n = std::min<size_t>(arr.size(), 5);
+        std::array<bool, 5> filled{};
         for (size_t i = 0; i < n; ++i) {
             const auto& sl = arr[i];
+            int slot = static_cast<int>(sl.value<double>("slot", static_cast<double>(i)));
+            if (slot < 0 || slot > 4 || filled[static_cast<size_t>(slot)]) continue;
+
             CoachRole role = CoachRole::Support;
-            ParseRole(LowerCopy(sl.value<std::string>("role", "")), role);
+            ParseRole(Lower(sl.value<std::string>("role", "")), role);
+
             std::string area = sl.value<std::string>("area", "");
-
-            // 区域必须在世界区域表里存在，否则丢弃（避免模型编造）
-            bool areaOk = area.empty();
-            if (!areaOk && world) {
+            if (!area.empty() && world) {
+                bool found = false;
                 for (const auto& a : world->GetAreas()) {
-                    if (LowerCopy(a.name) == LowerCopy(area)) { areaOk = true; break; }
+                    if (Lower(a.name) == Lower(area)) { found = true; break; }
                 }
+                if (!found) area.clear();
             }
-            if (!areaOk) area.clear();
+            if (area.empty()) continue;      // 没有区域就没有意义
 
-            plan.slots[i].role = role;
-            plan.slots[i].area = area;
-            plan.slots[i].canTrade = true;
-            plan.slots[i].canRotate = (role == CoachRole::Lurk);
+            auto& dst = plan.slots[static_cast<size_t>(slot)];
+            dst.role      = role;
+            dst.area      = area;
+            dst.canTrade  = true;
+            dst.canRotate = (role == CoachRole::Lurk);
+            filled[static_cast<size_t>(slot)] = true;
         }
     }
 
-    // 条件分支（可选）
-    if (root.contains("branch") && root["branch"].is_object()) {
-        const auto& br = root["branch"];
-        PlanIntent bi = PlanIntent::Default;
-        if (ParseIntent(LowerCopy(br.value<std::string>("intent", "")), bi)) {
-            plan.hasBranch      = true;
-            plan.branchAfterSec = static_cast<float>(br.value<double>("after_sec", 20.0));
-            plan.branchIntent   = bi;
-            plan.branchTarget   = br.value<std::string>("target", "");
-            ParseTempo(LowerCopy(br.value<std::string>("tempo", "normal")), plan.branchTempo);
-        }
+    // 语义校验
+    if (!bombPlanted && (plan.intent == PlanIntent::RetakeA ||
+                         plan.intent == PlanIntent::RetakeB)) {
+        plan.intent = PlanIntent::Default;
     }
-
-    if (!ok) return false;
-
-    // 语义校验：纠正模型最常见的两个误用
-    const bool bombDown = game_bombPlanted;
-    if (!bombDown &&
-        (plan.intent == PlanIntent::RetakeA || plan.intent == PlanIntent::RetakeB)) {
-        plan.intent = PlanIntent::Default;          // 没下包不可能是回防
+    // save 只允许「经济确实穷」且「还没下包」时使用；否则会变成消极送分
+    if (plan.intent == PlanIntent::Save && (!lowEconomy || bombPlanted)) {
+        plan.intent = bombPlanted ? PlanIntent::RetakeA : PlanIntent::Default;
     }
-    if (plan.intent == PlanIntent::Save && !lowEconomy) {
-        plan.intent = PlanIntent::Default;          // 有钱就别保枪
-    }
-    // 阵营纠错：CT 不会 rush / 假打；T 不会回防
     if (teamIsCT) {
-        if (plan.intent == PlanIntent::RushA || plan.intent == PlanIntent::SplitA ||
-            plan.intent == PlanIntent::FakeThenOther) {
+        if (plan.intent == PlanIntent::RushA || plan.intent == PlanIntent::SplitA) {
             plan.intent = PlanIntent::StackA;
         } else if (plan.intent == PlanIntent::RushB || plan.intent == PlanIntent::SplitB) {
             plan.intent = PlanIntent::StackB;
+        } else if (plan.intent == PlanIntent::FakeThenOther) {
+            plan.intent = PlanIntent::Default;
         }
-    } else {
-        if (plan.intent == PlanIntent::RetakeA) plan.intent = PlanIntent::Default;
-        if (plan.intent == PlanIntent::RetakeB) plan.intent = PlanIntent::Default;
+    } else if (plan.intent == PlanIntent::RetakeA || plan.intent == PlanIntent::RetakeB) {
+        plan.intent = PlanIntent::Default;
     }
 
     out = plan;
     return true;
 }
 
+} // namespace
+
 // ---------------------------------------------------------------------------
-// 发起 LLM 请求
+// 发起计划请求
 // ---------------------------------------------------------------------------
 void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
     if (!coachLlmEnabled_ || !coachLlm_) return;
     if (!world_) return;
 
-    // 只对「战略级」事件开教练会议。
-    // 普通减员每 1~2 秒就发生一次，若每次都调用，代际号会被不断推高，
-    // 而模型回包要 2~7 秒 —— 回包永远是过期的（实测大量「回包过期，丢弃」）。
-    // 战术级反应交给规则教练即可。
+    CoachState& st = CoachFor(t);
+    if (st.llmPending) return;      // 同时只允许一个在途请求
+
     switch (ev.type) {
         case CoachEventType::RoundStart:
         case CoachEventType::BombPlanted:
         case CoachEventType::DefuseStarted:
         case CoachEventType::TimeLow:
         case CoachEventType::MatchPoint:
+        case CoachEventType::Heartbeat:
             break;
         default:
-            return;
+            return;                 // 战术级事件交给规则层
     }
 
-    CoachState& st = CoachFor(t);
-    if (st.llmPending) return;      // 一次只允许一个在途请求
+    const std::string user = BuildStateDigest(*this, t, ev, st.notes,
+                                              st.lastOrder, world_.get());
 
-    const std::string user = BuildCoachUserPrompt(*this, t, ev, st.memory, world_.get());
+    st.llmPending     = true;
+    st.llmGen         = st.gen;
+    st.llmAt          = clockSec_;
+    st.llmEventType   = static_cast<int>(ev.type);
+    st.llmRoundNo     = round_.RoundNumber();
+    st.llmBombPlanted = bombPlanted_;
 
-    st.llmPending   = true;
-    st.llmGen       = st.gen;
-    st.llmAt        = clockSec_;
-    st.llmEventType = static_cast<int>(ev.type);
     const int gen = st.gen;
 
-    // 回调在 worker 线程：只写加锁队列，绝不碰游戏状态
-    coachLlm_(kCoachSystemPrompt, user, 200,
+    coachLlm_(BuildSystemPrompt(world_.get()), user, 150, kCoachSchema,
               [this, t, gen](const std::string& raw) {
                   std::lock_guard<std::mutex> lock(coachLlmMutex_);
-                  coachLlmResults_.push_back(CoachLlmResult{t, gen, raw});
+                  coachLlmResults_.push_back(CoachLlmResult{t, gen, raw, false});
+              });
+}
+
+// ---------------------------------------------------------------------------
+// 回合复盘：请求一句话教训
+// ---------------------------------------------------------------------------
+void CS2DGame::CoachTryDebrief(Team t) {
+    if (!coachLlmEnabled_ || !coachLlm_ || !world_) return;
+
+    CoachState& st = CoachFor(t);
+    if (st.memory.empty()) return;
+
+    const RoundMemo& m = st.memory.back();
+
+    std::ostringstream o;
+    o << "R" << m.roundNo << " " << (t == Team::T ? "T" : "CT")
+      << " 计划" << static_cast<int>(m.plan)
+      << " 目标" << (m.target.empty() ? "-" : m.target)
+      << " 结果" << (m.won ? "胜" : "负")
+      << " 比分" << m.scoreT << ":" << m.scoreCT
+      << " 收尾存活" << m.aliveEnd
+      << (m.bombPlanted ? " 已下包" : " 未下包");
+    if (!m.firstContactArea.empty()) o << " 首接触@" << m.firstContactArea;
+
+    const std::string sys =
+        "用不超过 18 个汉字总结这回合的教训或对手习惯。只输出一句话，不要引号和解释。";
+
+    const int gen = st.gen;
+    coachLlm_(sys, o.str(), 48, std::string(),
+              [this, t, gen](const std::string& raw) {
+                  std::lock_guard<std::mutex> lock(coachLlmMutex_);
+                  coachLlmResults_.push_back(CoachLlmResult{t, gen, raw, true});
               });
 }
 
@@ -322,12 +352,37 @@ void CS2DGame::CoachDrainLlm() {
 
     for (const auto& r : got) {
         CoachState& st = CoachFor(r.team);
+
+        // ---------- 复盘笔记 ----------
+        if (r.debrief) {
+            std::string note = r.raw;
+            note.erase(std::remove_if(note.begin(), note.end(),
+                                      [](unsigned char c) { return c == '\n' || c == '\r'; }),
+                       note.end());
+            while (!note.empty() && (note.front() == '"' || note.front() == ' ')) {
+                note.erase(note.begin());
+            }
+            while (!note.empty() && (note.back() == '"' || note.back() == ' ')) {
+                note.pop_back();
+            }
+            if (!note.empty()) {
+                if (note.size() > 60) note.resize(60);
+                st.notes.push_back(note);
+                while (st.notes.size() > 5) st.notes.pop_front();
+                std::cout << "[Coach] " << TeamName(r.team) << " 笔记: " << note << std::endl;
+            }
+            continue;
+        }
+
         st.llmPending = false;
 
-        // 代际号过期 → 丢弃（防止旧计划覆盖新计划）
+        // 回包过期：代际号 / 回合号 / 炸弹状态任一变化都丢弃
         if (r.gen < st.gen) {
-            std::cout << "[Coach] " << TeamName(r.team)
-                      << " LLM 回包过期(" << r.gen << "<" << st.gen << ")，丢弃" << std::endl;
+            std::cout << "[Coach] " << TeamName(r.team) << " LLM 回包过期(gen)，丢弃" << std::endl;
+            continue;
+        }
+        if (st.llmRoundNo != round_.RoundNumber() || st.llmBombPlanted != bombPlanted_) {
+            std::cout << "[Coach] " << TeamName(r.team) << " LLM 回包状态已变，丢弃" << std::endl;
             continue;
         }
         if (r.raw.empty()) {
@@ -336,36 +391,44 @@ void CS2DGame::CoachDrainLlm() {
         }
 
         TeamPlan plan;
-        if (!ParseCoachPlan(r.raw, plan, world_.get(), bombPlanted_, false,
-                                r.team == Team::CT)) {
+        float ttl = 12.0f;
+        if (!ParseCoachPlan(r.raw, plan, world_.get(), bombPlanted_,
+                            r.team == Team::CT, LowEconomyAverage(r.team), ttl)) {
             std::cout << "[Coach] " << TeamName(r.team) << " LLM 计划非法，沿用规则计划 | "
-                      << r.raw.substr(0, 120) << std::endl;
+                      << r.raw.substr(0, 100) << std::endl;
             continue;
         }
 
         plan.gen       = st.gen;
         plan.createdAt = clockSec_;
-        plan.expiresAt = clockSec_ + 20.0f;
-        st.planExpiresAt = plan.expiresAt;
+        plan.expiresAt = clockSec_ + ttl;      // 由模型给的 ttl_s 决定
         plan.valid     = true;
+        st.planExpiresAt = plan.expiresAt;
         st.plan   = plan;
         st.reason = plan.reason;
-        coachPlanChangedAt_ = clockSec_;
 
+        {   // 记录上一条指令，供下一次 prompt 使用
+            std::ostringstream o;
+            o << IntentLabel(plan.intent);
+            if (!plan.target.empty()) o << "->" << plan.target;
+            st.lastOrder = o.str();
+        }
+
+        coachPlanChangedAt_ = clockSec_;
         std::cout << "[Coach] " << TeamName(r.team) << " LLM("
-                  << (clockSec_ - st.llmAt) << "s) -> "
-                  << IntentToStr(plan.intent)
+                  << (clockSec_ - st.llmAt) << "s, ttl=" << static_cast<int>(ttl) << "s) -> "
+                  << IntentLabel(plan.intent)
                   << " 目标=" << (plan.target.empty() ? "-" : plan.target)
                   << " | " << plan.reason << std::endl;
 
         CoachApplyPlan(r.team);
     }
 
-    // 超时兜底：3.5 秒没回包就认为失败，规则计划继续生效
+    // 超时兜底
     for (Team t : {Team::T, Team::CT}) {
         CoachState& st = CoachFor(t);
-        const float deadline = (st.llmEventType == static_cast<int>(CoachEventType::RoundStart))
-                                   ? 7.0f : 4.0f;
+        const float deadline =
+            (st.llmEventType == static_cast<int>(CoachEventType::RoundStart)) ? 7.0f : 4.0f;
         if (st.llmPending && clockSec_ - st.llmAt > deadline) {
             st.llmPending = false;
             std::cout << "[Coach] " << TeamName(t) << " LLM 超时，沿用规则计划" << std::endl;

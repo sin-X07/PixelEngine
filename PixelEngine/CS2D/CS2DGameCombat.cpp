@@ -436,7 +436,7 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
             break;
         }
         case WeaponId::GrenadeFlash: {
-            if (audio) audio->PlaySound(SoundEffect::FLASHBANG);
+            if (audio) audio->PlaySound(SoundEffect::FLASH);
             // 致盲：距离越近越久（平方衰减）+ 墙体遮挡
             // 返回 {致盲秒数, 峰值强度}，强度用于控制白屏有多白
             auto flashAt = [&](const Player& t) -> std::pair<float, float> {

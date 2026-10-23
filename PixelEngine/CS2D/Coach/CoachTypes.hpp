@@ -98,7 +98,8 @@ enum class CoachEventType {
     TimeLow,          // 时间不足
     EconomyLow,       // 经济不足
     HumanDied,        // 人类玩家阵亡
-    MatchPoint        // 赛点
+    MatchPoint,       // 赛点
+    Heartbeat         // 低频例行检查（6 秒无事件时）
 };
 
 struct CoachEvent {

@@ -127,7 +127,7 @@
 | `player_hurt.ogg` | 玩家受伤 |
 | `armor_hit.wav` | 护甲受击 |
 | `grenade_explode.wav` | 手雷爆炸 |
-| `flashbang.wav` | 闪光弹爆响 |
+| `flash.mp3` | 闪光弹爆响 |
 | `smoke.mp3` | 烟雾弹释放 |
 | `bomb_plant.wav` | C4 下包 |
 | `bomb_defuse.wav` | C4 拆包 |

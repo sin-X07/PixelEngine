@@ -42,10 +42,15 @@ struct LLMConfig {
 class PromptBuilder {
 public:
     // 用 system + user 构造 OpenAI 兼容请求体（教练层使用）
+    // jsonSchema 非空时启用 response_format:json_schema（结构化输出）
+    // cachePrompt / idSlot 用于 llama-server 的前缀缓存
     static std::string BuildRequestBodyEx(const std::string& systemPrompt,
                                           const std::string& userMessage,
-                                          int maxTokens = 260,
-                                          float temperature = 0.6f);
+                                          int maxTokens = 150,
+                                          float temperature = 0.3f,
+                                          const std::string& jsonSchema = std::string(),
+                                          bool cachePrompt = true,
+                                          int idSlot = 0);
 };
 
 // ---- 异步 LLM 控制器 ----
@@ -74,7 +79,8 @@ public:
     // 通用请求：自定义 system prompt，回调返回模型原文（教练层用）
     using RawCallback = std::function<void(const std::string&)>;
     void AskRaw(const std::string& systemPrompt, const std::string& userMessage,
-                int maxTokens, RawCallback callback, const std::string& tag = std::string());
+                int maxTokens, RawCallback callback, const std::string& tag = std::string(),
+                const std::string& jsonSchema = std::string());
 
 private:
     // HTTP 核心
@@ -119,6 +125,7 @@ private:
         std::string tag;
         bool        raw = false;
         std::string system;
+        std::string schema;
         int         maxTokens = 260;
         RawCallback      rawCb;
     };
@@ -129,4 +136,5 @@ private:
     static constexpr int kWorkers = 2;
     std::thread workers_[kWorkers];
     std::atomic<int> activeWorkers_{0};
+    std::atomic<bool> schemaSupported_{true};   // 服务端是否支持 json_schema
 };

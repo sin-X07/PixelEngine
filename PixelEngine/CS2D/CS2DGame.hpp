@@ -399,11 +399,13 @@ public:
 
     // 教练层 LLM 接入：由 Engine 注入（system, user, maxTokens, 回调原文）
     using CoachLlmFn = std::function<void(const std::string&, const std::string&, int,
+                                          const std::string&,
                                           std::function<void(const std::string&)>)>;
     void SetCoachLlm(CoachLlmFn fn) { coachLlm_ = std::move(fn); }
     void SetCoachLlmEnabled(bool on) { coachLlmEnabled_ = on; }
     bool IsCoachLlmEnabled() const { return coachLlmEnabled_; }
     void CoachTryLlm(Team t, const CoachEvent& ev);
+    void CoachTryDebrief(Team t);
     void CoachDrainLlm();
     // 玩家操作：主动拾取（E）/ 丢弃当前武器（G）
     void TryPickupDrops(bool manual);
@@ -473,19 +475,26 @@ private:
         bool  timeLowFired = false;
         bool  matchPointFired = false;
 
+        // 教练笔记（最近 5 条复盘结论，滚动）
+        std::deque<std::string> notes;
+        std::string lastOrder;        // 上一条指令摘要（喂给下一次 prompt）
+
         // LLM 请求在途
         float planExpiresAt = 0.0f;   // 计划时效（到期回到默认）
         bool  llmPending = false;
         int   llmGen = 0;
         float llmAt = 0.0f;
         int   llmEventType = 0;
+        int   llmRoundNo = 0;
+        bool  llmBombPlanted = false;
+        float lastThinkAt = 0.0f;
     };
     CoachState coachT_, coachCT_;
 
     CoachLlmFn coachLlm_;
     bool coachLlmEnabled_ = true;
     float coachPlanChangedAt_ = 0.0f;
-    struct CoachLlmResult { Team team; int gen; std::string raw; };
+    struct CoachLlmResult { Team team; int gen; std::string raw; bool debrief = false; };
     std::vector<CoachLlmResult> coachLlmResults_;
     std::mutex coachLlmMutex_;
     CoachState&       CoachFor(Team t);

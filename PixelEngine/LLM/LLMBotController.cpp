@@ -62,7 +62,9 @@ static std::string EscapeJSON(const std::string& s) {
 
 std::string PromptBuilder::BuildRequestBodyEx(const std::string& systemPrompt,
                                               const std::string& userMessage,
-                                              int maxTokens, float temperature)
+                                              int maxTokens, float temperature,
+                                              const std::string& jsonSchema,
+                                              bool cachePrompt, int idSlot)
 {
     std::ostringstream oss;
     oss << "{"
@@ -76,8 +78,19 @@ std::string PromptBuilder::BuildRequestBodyEx(const std::string& systemPrompt,
         << "\"}"
         << "],"
         << "\"max_tokens\":" << maxTokens << ","
-        << "\"temperature\":" << temperature
-        << "}";
+        << "\"n_predict\":" << maxTokens << ","
+        << "\"temperature\":" << temperature << ","
+        << "\"cache_prompt\":" << (cachePrompt ? "true" : "false") << ","
+        << "\"id_slot\":" << idSlot;
+
+    if (!jsonSchema.empty()) {
+        // llama-server 的结构化输出：强制模型按 schema 产出 JSON
+        oss << ",\"response_format\":{\"type\":\"json_schema\","
+            << "\"json_schema\":{\"name\":\"coach_plan\",\"strict\":true,"
+            << "\"schema\":" << jsonSchema << "}}";
+    }
+
+    oss << "}";
     return oss.str();
 }
 
@@ -402,7 +415,8 @@ void LLMBotController::KillServer() {
 
 
 void LLMBotController::AskRaw(const std::string& systemPrompt, const std::string& userMessage,
-                              int maxTokens, RawCallback callback, const std::string& tag) {
+                              int maxTokens, RawCallback callback, const std::string& tag,
+                              const std::string& jsonSchema) {
     if (!ready_) {
         if (callback) callback(std::string());
         return;
@@ -416,6 +430,7 @@ void LLMBotController::AskRaw(const std::string& systemPrompt, const std::string
         req.raw       = true;
         req.system    = systemPrompt;
         req.maxTokens = maxTokens;
+        req.schema    = jsonSchema;
         req.rawCb     = std::move(callback);
         queue_.push_back(std::move(req));
     }
@@ -433,7 +448,7 @@ void LLMBotController::AskRaw(const std::string& systemPrompt, const std::string
 
 void LLMBotController::WorkerLoop() {
     while (running_.load()) {
-        std::string body, tag, system;
+        std::string body, tag, system, schema;
         int maxTokens = 260;
         RawCallback rawCb;
         {
@@ -447,15 +462,29 @@ void LLMBotController::WorkerLoop() {
             body      = std::move(req.body);
             tag       = std::move(req.tag);
             system    = std::move(req.system);
+            schema    = std::move(req.schema);
             maxTokens = req.maxTokens;
             rawCb     = std::move(req.rawCb);
         }
 
         busy_ = true;
         std::string raw;
-        const std::string req =
-            PromptBuilder::BuildRequestBodyEx(system, body, maxTokens, 0.6f);
-        DoHttpRequest(req, tag, raw);
+        const bool useSchema = !schema.empty() && schemaSupported_.load();
+        std::string req = PromptBuilder::BuildRequestBodyEx(
+            system, body, maxTokens, 0.3f, useSchema ? schema : std::string(), true, 0);
+
+        bool ok = DoHttpRequest(req, tag, raw);
+        if (!ok && useSchema) {
+            // 服务端不支持 response_format:json_schema → 永久回退为普通 JSON
+            if (schemaSupported_.exchange(false)) {
+                std::cout << "[LLM] 服务端不支持 json_schema，已回退为普通 JSON 输出"
+                          << std::endl;
+            }
+            raw.clear();
+            const std::string req2 = PromptBuilder::BuildRequestBodyEx(
+                system, body, maxTokens, 0.3f, std::string(), true, 0);
+            DoHttpRequest(req2, tag, raw);
+        }
         busy_ = false;
 
         if (rawCb) rawCb(raw);

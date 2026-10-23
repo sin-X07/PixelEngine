@@ -631,9 +631,9 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile) {
     if (botDriver) {
         if (auto* ctrl = botDriver->Controller()) {
             cs2dGame->SetCoachLlm([ctrl](const std::string& sys, const std::string& usr,
-                                         int maxTok,
+                                         int maxTok, const std::string& schema,
                                          std::function<void(const std::string&)> cb) {
-                ctrl->AskRaw(sys, usr, maxTok, std::move(cb), "COACH");
+                ctrl->AskRaw(sys, usr, maxTok, std::move(cb), "COACH", schema);
             });
         }
     }

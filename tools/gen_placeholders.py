@@ -62,7 +62,7 @@ SOUNDS = [
     ("assets/audio/shotgun.wav",        180,  0.22),
     ("assets/audio/smg.wav",            620,  0.09),
     ("assets/audio/grenade_explode.wav", 90,  0.60),
-    ("assets/audio/flashbang.wav",     1200,  0.35),
+    ("assets/audio/flash.mp3",         1200,  0.35),
     ("assets/audio/smoke.mp3",          300,  0.50),
     ("assets/audio/bomb_plant.wav",     520,  0.20),
     ("assets/audio/bomb_defuse.wav",    440,  0.20),

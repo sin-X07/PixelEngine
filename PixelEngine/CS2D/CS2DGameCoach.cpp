@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <sstream>
 
 // ============================================================================
 // L3 主教练（当前为规则教练；接入 LLM 后 RuleCoach 作为兜底）
@@ -189,6 +190,19 @@ void CS2DGame::CoachUpdate(float dt) {
             st.mergeWindow -= dt;
             if (st.mergeWindow > 0.0f) continue;
         }
+        // 低频心跳：战斗中每 6 秒给一次「例行检查」，保证计划不会僵住
+        if (st.lastThinkAt > 0.0f && clockSec_ - st.lastThinkAt > 8.0f &&
+            round_.IsLive() && st.pending.empty() &&
+            clockSec_ - st.plan.createdAt > 10.0f) {
+            st.lastThinkAt = clockSec_;
+            CoachEvent hb;
+            hb.type = CoachEventType::Heartbeat;
+            hb.priority = 30.0f;
+            hb.atSec = clockSec_;
+            st.pending.push_back(hb);
+            st.mergeWindow = 0.0f;
+        }
+
         if (st.pending.empty()) continue;
 
         auto best = std::max_element(st.pending.begin(), st.pending.end(),
@@ -217,7 +231,14 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
     st.planExpiresAt = plan.expiresAt;
     st.plan   = plan;
     st.reason = plan.reason;
+    st.lastThinkAt = clockSec_;
     coachPlanChangedAt_ = clockSec_;
+    {   // 规则计划也算「上条指令」，让 LLM 知道自己上一手是什么
+        std::ostringstream o;
+        o << static_cast<int>(plan.intent);
+        if (!plan.target.empty()) o << "->" << plan.target;
+        st.lastOrder = o.str();
+    }
 
     std::cout << "[Coach] " << TeamName(t) << " 第" << st.callsThisRound << "次"
               << " 事件#" << static_cast<int>(ev.type)
@@ -434,6 +455,9 @@ void CS2DGame::CoachRecordRound(Team t, bool won) {
 
     st.memory.push_back(m);
     while (st.memory.size() > 10) st.memory.pop_front();
+
+    // 回合结束额外调用一次复盘（异步，不阻塞）
+    CoachTryDebrief(t);
 
     st.deaths.clear();
     st.firstContactArea.clear();
