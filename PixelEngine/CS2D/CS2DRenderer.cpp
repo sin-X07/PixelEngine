@@ -1026,9 +1026,7 @@ void CS2DRenderer::DrawScoreboard(int total, int kills, int deaths, int viewW, i
 }
 
 void CS2DRenderer::DrawRadarHUD(float playerX, float playerY, float playerAngle,
-                                 const std::vector<float>& botXs,
-                                 const std::vector<float>& botYs,
-                                 const std::vector<bool>& botAlive,
+                                 const std::vector<RadarDot>& dots,
                                  float mapW, float mapH,
                                  bool playerCentered, bool rotateWithPlayer,
                                  bool blendBg, int bgAlpha,
@@ -1038,111 +1036,115 @@ void CS2DRenderer::DrawRadarHUD(float playerX, float playerY, float playerAngle,
     const int radarSize = showCenterRadar ? 320 : hudSize;
     const int radarX = showCenterRadar ? (viewW - radarSize) / 2 : 8;
     const int radarY = showCenterRadar ? (viewH - radarSize) / 2 : 8;
+    if (mapW <= 0.0f || mapH <= 0.0f) return;
 
     // 背景
-    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, static_cast<Uint8>(showCenterRadar ? 200 : bgAlpha));
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0,
+                           static_cast<Uint8>(showCenterRadar ? 200 : bgAlpha));
     const SDL_Rect bgRect = {radarX, radarY, radarSize, radarSize};
     SDL_RenderFillRect(renderer_, &bgRect);
-    SDL_SetRenderDrawColor(renderer_, 100, 100, 100, 180);
-    SDL_RenderDrawRect(renderer_, &bgRect);
 
-    const float scale = static_cast<float>(radarSize) * mapZoom;
-    const float half = static_cast<float>(radarSize) * 0.5f;
+    // ---- 统一的坐标变换 ----
+    // mapZoom 语义：1 = 整张地图刚好铺满雷达；>1 放大；<1 缩小。
+    // 兼容旧存档：历史默认值 0.005 是另一套公式的产物，这里视为 1。
+    float zoom = mapZoom;
+    if (zoom < 0.5f || zoom > 8.0f) zoom = 1.0f;
 
-    // 计算地图在雷达中的中心偏移
-    float mapCenterX = playerCentered ? playerX : (mapW * 0.5f);
-    float mapCenterY = playerCentered ? playerY : (mapH * 0.5f);
+    const float spanW = mapW / zoom;
+    const float spanH = mapH / zoom;
 
-    // ---- 地图底图：直接贴烘焙好的纹理，按设置做缩放/居中/旋转 ----
+    // 视野中心（并且限制在地图内，避免边缘看到空白导致点与图错位）
+    float cx = playerCentered ? playerX : mapW * 0.5f;
+    float cy = playerCentered ? playerY : mapH * 0.5f;
+    if (spanW <= mapW) cx = std::clamp(cx, spanW * 0.5f, mapW - spanW * 0.5f);
+    else              cx = mapW * 0.5f;
+    if (spanH <= mapH) cy = std::clamp(cy, spanH * 0.5f, mapH - spanH * 0.5f);
+    else              cy = mapH * 0.5f;
+
+    // 世界 → 雷达像素
+    const float sx = static_cast<float>(radarSize) / spanW;
+    const float sy = static_cast<float>(radarSize) / spanH;
+    const float halfSize = static_cast<float>(radarSize) * 0.5f;
+
+    // 跟随旋转角（与地图贴图的 RenderCopyEx 用同一个角度）
+    const float rotRad = rotateWithPlayer ? (playerAngle + 1.5707963f) : 0.0f;
+    const float cosR = std::cos(rotRad);
+    const float sinR = std::sin(rotRad);
+
+    auto worldToRadar = [&](float wx, float wy) {
+        float dx = (wx - cx) * sx;
+        float dy = (wy - cy) * sy;
+        if (rotateWithPlayer) {
+            const float rx = dx * cosR - dy * sinR;
+            const float ry = dx * sinR + dy * cosR;
+            dx = rx;
+            dy = ry;
+        }
+        return std::make_pair(radarX + halfSize + dx, radarY + halfSize + dy);
+    };
+
+    // ---- 地图底图：与点位共用同一套中心/缩放/旋转 ----
     if (radarMapTex_ && radarImgW_ > 0.0f && radarImgH_ > 0.0f) {
-        // 可见世界范围（由 mapZoom 决定）
-        const float visW = mapW / std::max(0.01f, mapZoom);
-        const float visH = mapH / std::max(0.01f, mapZoom);
-
-        // 视野中心
-        const float cX = playerCentered ? playerX : (mapW * 0.5f);
-        const float cY = playerCentered ? playerY : (mapH * 0.5f);
-
-        // 世界 → 底图纹理坐标
         const float kx = radarImgW_ / mapW;
         const float ky = radarImgH_ / mapH;
 
         SDL_Rect src;
-        src.x = static_cast<int>(radarImgX_ + (cX - visW * 0.5f) * kx);
-        src.y = static_cast<int>(radarImgY_ + (cY - visH * 0.5f) * ky);
-        src.w = std::max(1, static_cast<int>(visW * kx));
-        src.h = std::max(1, static_cast<int>(visH * ky));
+        src.x = static_cast<int>(radarImgX_ + (cx - spanW * 0.5f) * kx);
+        src.y = static_cast<int>(radarImgY_ + (cy - spanH * 0.5f) * ky);
+        src.w = std::max(1, static_cast<int>(spanW * kx));
+        src.h = std::max(1, static_cast<int>(spanH * ky));
 
-        const SDL_Rect dst = { radarX, radarY, radarSize, radarSize };
+        const SDL_Rect dst = {radarX, radarY, radarSize, radarSize};
 
-        Uint8 mod = static_cast<Uint8>(std::clamp(bgAlpha, 0, 255));
+        const Uint8 mod = static_cast<Uint8>(std::clamp(bgAlpha, 0, 255));
         SDL_SetTextureColorMod(radarMapTex_, mod, mod, mod);
-        SDL_SetTextureAlphaMod(radarMapTex_, 255);
 
         if (rotateWithPlayer) {
-            const SDL_Point center = { radarSize / 2, radarSize / 2 };
+            const SDL_Point center = {radarSize / 2, radarSize / 2};
             SDL_RenderCopyEx(renderer_, radarMapTex_, &src, &dst,
-                             static_cast<double>(playerAngle * 180.0f / 3.14159265f + 90.0f),
+                             static_cast<double>(rotRad * 180.0f / 3.14159265f),
                              &center, SDL_FLIP_NONE);
         } else {
             SDL_RenderCopy(renderer_, radarMapTex_, &src, &dst);
         }
         SDL_SetTextureColorMod(radarMapTex_, 255, 255, 255);
-
-        // 外框重画一次，避免被底图覆盖
-        SDL_SetRenderDrawColor(renderer_, 120, 160, 200, 200);
-        SDL_RenderDrawRect(renderer_, &bgRect);
     }
 
-    // 辅助函数：世界坐标→雷达屏幕坐标
-    auto worldToRadar = [&](float wx, float wy) {
-        float rx, ry;
-        if (rotateWithPlayer) {
-            const float dx = wx - mapCenterX;
-            const float dy = wy - mapCenterY;
-            const float cosA = std::cos(-playerAngle);
-            const float sinA = std::sin(-playerAngle);
-            const float rx_rot = dx * cosA - dy * sinA;
-            const float ry_rot = dx * sinA + dy * cosA;
-            rx = rx_rot * scale + half + radarX;
-            ry = ry_rot * scale + half + radarY;
-        } else {
-            rx = (wx - mapCenterX) * scale + half + radarX;
-            ry = (wy - mapCenterY) * scale + half + radarY;
-        }
-        return std::make_pair(rx, ry);
-    };
+    // ---- 点位（友军 / 可见敌人）----
+    for (const auto& d : dots) {
+        auto [rx, ry] = worldToRadar(d.x, d.y);
+        if (rx < radarX + 1 || rx > radarX + radarSize - 1 ||
+            ry < radarY + 1 || ry > radarY + radarSize - 1) continue;
 
-    // 绘制 BOT 点（已隐藏——雷达不显示敌人位置）
-    // 如需启用，取消注释即可
-    /*
-    for (size_t i = 0; i < botXs.size(); ++i) {
-        if (!botAlive[i]) continue;
-        auto [bx, by] = worldToRadar(botXs[i], botYs[i]);
-        if (bx < radarX || bx > radarX + radarSize ||
-            by < radarY || by > radarY + radarSize) continue;
-        SDL_SetRenderDrawColor(renderer_, 255, 80, 80, 220);
-        const int r = 3;
-        const SDL_Rect dot = {static_cast<int>(bx) - r, static_cast<int>(by) - r, r * 2, r * 2};
-        SDL_RenderFillRect(renderer_, &dot);
+        const float r = 3.0f;
+        SDL_FRect dot = {rx - r, ry - r, r * 2.0f, r * 2.0f};
+        // 描一圈深色边，避免和地图底色糊在一起
+        SDL_SetRenderDrawColor(renderer_, 10, 12, 16, 230);
+        SDL_FRect edge = {dot.x - 1.0f, dot.y - 1.0f, dot.w + 2.0f, dot.h + 2.0f};
+        SDL_RenderFillRectF(renderer_, &edge);
+        SDL_SetRenderDrawColor(renderer_, d.r, d.g, d.b, 255);
+        SDL_RenderFillRectF(renderer_, &dot);
     }
-    */
 
-    // 绘制玩家点（三角箭头）
+    // ---- 玩家：箭头 ----
     auto [px, py] = worldToRadar(playerX, playerY);
-    const float arrowAngle = rotateWithPlayer ? 0.0f : playerAngle;
-    const float arrowSize = 5.0f;
-    SDL_SetRenderDrawColor(renderer_, 80, 180, 255, 255);
-    // 画三角形
-    const float tipX = px + std::cos(arrowAngle) * arrowSize;
-    const float tipY = py + std::sin(arrowAngle) * arrowSize;
-    const float leftX = px + std::cos(arrowAngle + 2.5f) * (arrowSize * 0.6f);
-    const float leftY = py + std::sin(arrowAngle + 2.5f) * (arrowSize * 0.6f);
-    const float rightX = px + std::cos(arrowAngle - 2.5f) * (arrowSize * 0.6f);
-    const float rightY = py + std::sin(arrowAngle - 2.5f) * (arrowSize * 0.6f);
+    // 跟随旋转时地图上的「前」已经朝上，箭头固定朝上
+    const float arrowAngle = rotateWithPlayer ? -1.5707963f : playerAngle;
+    const float arrowSize = 6.0f;
+    SDL_SetRenderDrawColor(renderer_, 90, 200, 255, 255);
+    const float tipX  = px + std::cos(arrowAngle) * arrowSize;
+    const float tipY  = py + std::sin(arrowAngle) * arrowSize;
+    const float leftX = px + std::cos(arrowAngle + 2.5f) * (arrowSize * 0.65f);
+    const float leftY = py + std::sin(arrowAngle + 2.5f) * (arrowSize * 0.65f);
+    const float rightX = px + std::cos(arrowAngle - 2.5f) * (arrowSize * 0.65f);
+    const float rightY = py + std::sin(arrowAngle - 2.5f) * (arrowSize * 0.65f);
     SDL_RenderDrawLineF(renderer_, tipX, tipY, leftX, leftY);
     SDL_RenderDrawLineF(renderer_, tipX, tipY, rightX, rightY);
     SDL_RenderDrawLineF(renderer_, leftX, leftY, rightX, rightY);
+
+    // 外框最后画，压住底图边缘
+    SDL_SetRenderDrawColor(renderer_, 120, 160, 200, 220);
+    SDL_RenderDrawRect(renderer_, &bgRect);
 }
 
 // ============================================================================

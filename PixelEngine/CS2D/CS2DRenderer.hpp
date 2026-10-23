@@ -73,16 +73,20 @@ public:
                        float length = 12.0f, float gap = 3.0f);
 
     // 雷达（左上角 HUD + 中心全屏覆盖 — Tab）
+    // 雷达上的一个标记（世界坐标 + 颜色）
+    struct RadarDot {
+        float x = 0.0f, y = 0.0f;
+        Uint8 r = 255, g = 255, b = 255;
+    };
+
     void DrawRadarHUD(float playerX, float playerY, float playerAngle,
-                      const std::vector<float>& botXs,
-                      const std::vector<float>& botYs,
-                      const std::vector<bool>& botAlive,
+                      const std::vector<RadarDot>& dots,
                       float mapW, float mapH,
                       bool playerCentered, bool rotateWithPlayer,
                       bool blendBg, int bgAlpha,
                       int hudSize, float mapZoom,
-                      bool showCenterRadar = false,
-                      int viewW = 800, int viewH = 600);
+                      bool showCenterRadar,
+                      int viewW, int viewH);
 
     // 计分板（屏幕顶端正中）
     void DrawScoreboard(int total, int kills, int deaths, int viewW = 800, int viewH = 600);

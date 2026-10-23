@@ -60,17 +60,18 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
         }
     }
 
-    // 收集 BOT 坐标
+    // 收集雷达点位：友军（绿） + 出现在友军视野里的敌人（红）
+    std::vector<CS2DRenderer::RadarDot> dots;
     const auto& bots = game->GetBOTs();
-    std::vector<float> bXs, bYs;
-    std::vector<bool> bAlive;
-    bXs.reserve(bots.size());
-    bYs.reserve(bots.size());
-    bAlive.reserve(bots.size());
+    const Team myTeam = game->GetPlayer().team;
+
     for (const auto& b : bots) {
-        bXs.push_back(b.x);
-        bYs.push_back(b.y);
-        bAlive.push_back(b.alive);
+        if (!b.alive || b.team != myTeam) continue;      // 只显示同队存活者
+        dots.push_back({b.x, b.y, 90, 220, 130});        // 友军：绿色
+    }
+    for (const auto& c : game->GetContactsOfTeam(myTeam)) {
+        if (c.age > 6.0f) continue;                      // 情报超过 6 秒不再显示
+        dots.push_back({c.x, c.y, 235, 75, 70});         // 可见敌人：红色
     }
 
     const auto& w = game->GetWorld();
@@ -81,7 +82,7 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
     renderer->DrawRadarHUD(
         game->GetPlayer().x, game->GetPlayer().y,
         game->GetAimAngle(),
-        bXs, bYs, bAlive,
+        dots,
         mapPixelW, mapPixelH,
         radar.playerCentered, radar.rotateWithPlayer,
         radar.blendBg, radar.bgAlpha,
@@ -93,7 +94,7 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
         renderer->DrawRadarHUD(
             game->GetPlayer().x, game->GetPlayer().y,
             game->GetAimAngle(),
-            bXs, bYs, bAlive,
+            dots,
             mapPixelW, mapPixelH,
             radar.playerCentered, radar.rotateWithPlayer,
             false, 200,

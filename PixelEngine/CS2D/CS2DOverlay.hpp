@@ -20,12 +20,12 @@ struct CrosshairCfg {
 };
 
 struct RadarCfg {
-    bool  playerCentered      = true;
+    bool  playerCentered      = false;   // 默认整张地图，玩家点在图上真实移动
     bool  rotateWithPlayer    = false;
     bool  blendBg             = false;
     int   bgAlpha             = 160;
     int   hudSize             = 120;
-    float mapZoom             = 0.005f;
+    float mapZoom             = 1.0f;    // 1 = 整张地图铺满雷达，>1 放大
 };
 
 class CS2DOverlay {
