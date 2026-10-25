@@ -329,11 +329,26 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
         }
         return plan;
     }
-    if (ev.type == CoachEventType::DefuseStarted && isT) {
-        plan.intent = PlanIntent::StackA;
-        plan.tempo  = Tempo::Fast;
-        plan.reason = "有人在拆包，回防包点";
-        for (auto& sl : plan.slots) sl = { CoachRole::Entry, siteArea, true, false };
+    if (ev.type == CoachEventType::DefuseStarted) {
+        // 按实际包点分侧（原来写死 StackA，B 点会错；CT 也从未进这个分支）
+        std::string lower = siteArea;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        const bool onB = (lower.find("b_") != std::string::npos ||
+                          lower.find("b site") != std::string::npos);
+
+        plan.tempo = Tempo::Fast;
+        if (isT) {
+            plan.intent = onB ? PlanIntent::StackB : PlanIntent::StackA;
+            plan.target = onB ? "B" : "A";
+            plan.reason = "有人在拆包，回防包点";
+            for (auto& sl : plan.slots) sl = { CoachRole::Entry, siteArea, true, false };
+        } else {
+            plan.intent = onB ? PlanIntent::RetakeB : PlanIntent::RetakeA;
+            plan.target = onB ? "B" : "A";
+            plan.reason = "正在拆包，掩护拆弹";
+            for (auto& sl : plan.slots) sl = { CoachRole::Anchor, siteArea, true, false };
+        }
         return plan;
     }
     if (ev.type == CoachEventType::EnemyDown) {

@@ -102,6 +102,17 @@ bool ContainsCI(const std::vector<std::string>& v, const std::string& s) {
     return false;
 }
 
+// 区域名 → "A" / "B" / ""（与规则教练同样的大小写/子串判断）
+std::string SiteSideFromArea(const std::string& area) {
+    if (area.empty()) return std::string();
+    std::string lower = Lower(area);
+    if (lower.find("b_") != std::string::npos ||
+        lower.find("b site") != std::string::npos) {
+        return "B";
+    }
+    return "A";
+}
+
 // 根据阵营 / 炸弹 / 经济，算出「当前允许的战术闭集」
 CoachAllowSet BuildAllowSet(Team team, bool bombPlanted, bool lowEconomy,
                             const CS2DWorld* world) {
@@ -181,7 +192,10 @@ std::string BuildSystemPrompt(const CS2DWorld* world) {
       << " slots: 最多 5 个，slot 0~4，area 必须是下列区域之一\n"
       << " reason: 不超过 20 个汉字，只用于日志\n"
       << "C4 规则：若 C4 掉落在地上，T 方应派最近的队友去拾取后再进攻；"
-         "CT 方若已知掉落位置，应收缩到该区域卡点。\n";
+         "CT 方若已知掉落位置，应收缩到该区域卡点。\n"
+      << "优先级：当前炸弹状态与经济高于笔记。已下包时必须按包点选择 "
+         "retake_*（CT）或 stack_*（T），禁止因笔记改打另一侧；穷局优先 save。\n"
+      << "ttl_s 建议：开局 18~25；已下包 12~20；不要给低于 10 的开局 ttl。\n";
     if (world) {
         o << "可选区域:";
         for (const auto& a : world->GetAreas()) o << ' ' << a.name;
@@ -200,12 +214,31 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
                              const CoachAllowSet& allow) {
     std::ostringstream o;
 
+    o << "优先级:炸弹>经济>减员>笔记\n";
+
     const int total = static_cast<int>(game.GetRoundElapsed());
     o << "R" << game.GetRoundNumber() << (team == Team::T ? " T" : " CT")
       << " " << game.GetScoreT() << ":" << game.GetScoreCT()
       << " " << (total / 60) << ":" << (total % 60)
       << " 我" << game.AliveCount(team) << " 敌"
       << game.AliveCount(TeamManager::Opponent(team));
+    // ---- 炸弹状态：放在最前面，优先级最高 ----
+    o << "\n炸弹:";
+    if (game.IsBombDropped()) {
+        const std::string da = world ? world->FindAreaAt(game.BombDropX(), game.BombDropY())
+                                     : std::string();
+        o << "掉落@" << (da.empty() ? "未知" : da);
+        if (game.HasBombIntel() && team == Team::CT) o << "(已知位置)";
+    } else if (game.IsBombPlanted()) {
+        const std::string site = world ? world->FindAreaAt(game.GetBombX(), game.GetBombY())
+                                       : std::string();
+        o << "已下@" << (site.empty() ? "未知" : site)
+          << " 倒计时" << static_cast<int>(game.GetBombTimer()) << "s";
+    } else if (game.PlayerHasC4()) {
+        o << "未下(玩家携带)";
+    } else {
+        o << "未下";
+    }
 
     int sum = 0, n = 0;
     if (game.GetPlayer().team == team) { sum += game.GetPlayer().money; ++n; }
@@ -215,18 +248,6 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
     const int avg = (n > 0) ? sum / n : 0;
     o << " 经济" << (avg < 1800 ? "穷" : (avg < 3500 ? "中" : "富"));
 
-    if (game.IsBombDropped()) {
-        const std::string da = world ? world->FindAreaAt(game.BombDropX(), game.BombDropY())
-                                     : std::string();
-        o << " C4:掉落@" << (da.empty() ? "未知" : da);
-        if (game.HasBombIntel() && team == Team::CT) o << "(已知位置)";
-    } else if (game.PlayerHasC4()) {
-        o << " C4:玩家携带";
-    } else if (game.IsBombPlanted()) {
-        o << " 炸弹:已下" << static_cast<int>(game.GetBombTimer()) << "s";
-    } else {
-        o << " 炸弹:未下";
-    }
 
     o << "\n敌:";
     bool any = false;
@@ -240,12 +261,9 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
 
     if (!lastOrder.empty()) o << "\n上条:" << lastOrder;
 
+    // 笔记只参考最新 1 条，且明确标注优先级低于炸弹/经济
     if (!notes.empty()) {
-        o << "\n笔记:";
-        int k = 0;
-        for (auto it = notes.rbegin(); it != notes.rend() && k < 3; ++it, ++k) {
-            o << (k ? " / " : " ") << *it;
-        }
+        o << "\n参考笔记(勿覆盖炸弹/经济): " << notes.back();
     }
 
     o << "\n事件:";
@@ -298,6 +316,7 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
 // 解析 + 游戏侧二次校验
 bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* world,
                     bool bombPlanted, bool teamIsCT, bool lowEconomy,
+                    const std::string& plantSiteArea,
                     const CoachAllowSet& allow, float& ttlOut) {
     const auto bo = raw.find('{');
     const auto bc = raw.rfind('}');
@@ -390,6 +409,41 @@ bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* worl
         plan.intent = PlanIntent::Default;   // stack 仅 CT 有效
     }
 
+    // ---- 硬规则 1：已下包必须锁在包点一侧 ----
+    if (bombPlanted) {
+        const std::string side = SiteSideFromArea(plantSiteArea);
+        if (!side.empty()) {
+            const bool onB = (side == "B");
+            if (teamIsCT) {
+                const bool okIntent = onB ? (plan.intent == PlanIntent::RetakeB)
+                                          : (plan.intent == PlanIntent::RetakeA);
+                const bool okTarget = onB ? (plan.target == "B") : (plan.target == "A");
+                if (!okIntent || !okTarget) return false;
+            } else {
+                const bool okIntent = onB
+                    ? (plan.intent == PlanIntent::StackB || plan.intent == PlanIntent::Default)
+                    : (plan.intent == PlanIntent::StackA || plan.intent == PlanIntent::Default);
+                const bool okTarget = onB ? (plan.target == "B") : (plan.target == "A");
+                if (!okIntent || !okTarget) return false;
+            }
+        }
+    }
+
+    // ---- 硬规则 2：穷局不许主动进攻 ----
+    if (lowEconomy && !bombPlanted) {
+        if (teamIsCT) {
+            if (plan.intent != PlanIntent::Save &&
+                plan.intent != PlanIntent::Default &&
+                plan.intent != PlanIntent::StackA &&
+                plan.intent != PlanIntent::StackB) {
+                return false;
+            }
+        } else if (plan.intent != PlanIntent::Save &&
+                   plan.intent != PlanIntent::Default) {
+            return false;
+        }
+    }
+
     out = plan;
     return true;
 }
@@ -412,8 +466,9 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
         case CoachEventType::DefuseStarted:
         case CoachEventType::TimeLow:
         case CoachEventType::MatchPoint:
-        case CoachEventType::Heartbeat:
             break;
+        case CoachEventType::Heartbeat:
+            return;    // 心跳只刷新规则（规则层在 CoachThink 里已跑），不再烧 LLM
         default:
             return;                 // 战术级事件交给规则层
     }
@@ -452,8 +507,8 @@ void CS2DGame::CoachTryDebrief(Team t) {
     const RoundMemo& m = st.memory.back();
 
     std::ostringstream o;
-    o << "R" << m.roundNo << " " << (t == Team::T ? "T" : "CT")
-      << " 计划" << static_cast<int>(m.plan)
+    o << "回合R" << m.roundNo << " 阵营" << (t == Team::T ? "T" : "CT")
+      << " 战术" << IntentLabel(m.plan)
       << " 目标" << (m.target.empty() ? "-" : m.target)
       << " 结果" << (m.won ? "胜" : "负")
       << " 比分" << m.scoreT << ":" << m.scoreCT
@@ -462,7 +517,9 @@ void CS2DGame::CoachTryDebrief(Team t) {
     if (!m.firstContactArea.empty()) o << " 首接触@" << m.firstContactArea;
 
     const std::string sys =
-        "用不超过 18 个汉字总结这回合的教训或对手习惯。只输出一句话，不要引号和解释。";
+        "只根据给定事实写一句不超过 18 个汉字的教训。"
+        "只允许写下包点、首接触区域、是否超时、攻防结果；"
+        "禁止猜测「习惯/性格/耐心」，不要写未出现的信息。只输出一句话，不要引号。";
 
     const int gen = st.gen;
     coachLlm_(sys, o.str(), 48, std::string(),
@@ -526,13 +583,35 @@ void CS2DGame::CoachDrainLlm() {
         const CoachAllowSet allow = BuildAllowSet(r.team, bombPlanted_,
                                                   LowEconomyAverage(r.team), world_.get());
 
+        std::string plantArea;
+        if (bombPlanted_ && world_) plantArea = world_->FindAreaAt(bombX_, bombY_);
+
+        const bool lowEco = LowEconomyAverage(r.team);
+
         TeamPlan plan;
         float ttl = 12.0f;
         if (!ParseCoachPlan(r.raw, plan, world_.get(), bombPlanted_,
-                            r.team == Team::CT, LowEconomyAverage(r.team), allow, ttl)) {
-            std::cout << "[Coach] " << TeamName(r.team) << " LLM 计划非法，沿用规则计划 | "
+                            r.team == Team::CT, lowEco, plantArea, allow, ttl)) {
+            std::cout << "[Coach] " << TeamName(r.team)
+                      << " LLM 计划非法(硬规则:plant/save)，沿用规则 | "
                       << r.raw.substr(0, 100) << std::endl;
             continue;
+        }
+
+        // 双保险：穷局且未下包，只接受 save（其余一律丢弃）
+        if (lowEco && !bombPlanted_ && plan.intent != PlanIntent::Save) {
+            std::cout << "[Coach] " << TeamName(r.team)
+                      << " 穷局拒绝进攻性 LLM 计划，沿用规则计划" << std::endl;
+            continue;
+        }
+
+        // TTL 下限：开局 18s / 下包·拆包 12s / 其它 10s
+        {
+            float floorTtl = 10.0f;
+            if (st.llmEventType == static_cast<int>(CoachEventType::RoundStart))      floorTtl = 18.0f;
+            else if (st.llmEventType == static_cast<int>(CoachEventType::BombPlanted) ||
+                     st.llmEventType == static_cast<int>(CoachEventType::DefuseStarted)) floorTtl = 12.0f;
+            ttl = std::min(30.0f, std::max(ttl, floorTtl));
         }
 
         plan.gen       = st.gen;
