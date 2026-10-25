@@ -88,7 +88,82 @@ std::string Lower(const std::string& s) {
     return r;
 }
 
+struct CoachAllowSet {
+    std::vector<std::string> intents;   // 小写标签，与 IntentLabel 一致
+    std::vector<std::string> targets;   // "A","B","MID" 的子集（可含空串）
+    std::vector<std::string> areas;     // 地图区域名
+};
+
+bool ContainsCI(const std::vector<std::string>& v, const std::string& s) {
+    const std::string t = Lower(s);
+    for (const auto& x : v) {
+        if (Lower(x) == t) return true;
+    }
+    return false;
+}
+
+// 根据阵营 / 炸弹 / 经济，算出「当前允许的战术闭集」
+CoachAllowSet BuildAllowSet(Team team, bool bombPlanted, bool lowEconomy,
+                            const CS2DWorld* world) {
+    CoachAllowSet a;
+
+    if (team == Team::CT) {
+        a.intents = { "default", "stack_a", "stack_b" };
+        if (bombPlanted) {
+            a.intents.push_back("retake_a");
+            a.intents.push_back("retake_b");
+        } else if (lowEconomy) {
+            a.intents.push_back("save");
+        }
+    } else {   // T
+        if (bombPlanted) {
+            a.intents = { "default" };          // 已下包：T 只守包
+        } else {
+            a.intents = { "default", "rush_a", "rush_b",
+                          "split_a", "split_b", "fake" };
+            if (lowEconomy) a.intents.push_back("save");
+        }
+    }
+
+    a.targets = { "A", "B", "MID", "" };
+
+    if (world) {
+        for (const auto& ar : world->GetAreas()) a.areas.push_back(ar.name);
+    }
+    return a;
+}
+
 // 固定前缀：角色 + 词表 + 区域表 + 输出契约
+// 按允许集合动态生成 json_schema 的 enum
+std::string BuildCoachSchema(const CoachAllowSet& allow) {
+    std::ostringstream o;
+    o << "{\"type\":\"object\",\"additionalProperties\":false,"
+         "\"required\":[\"intent\",\"target\",\"tempo\",\"ttl_s\",\"reason\"],"
+         "\"properties\":{"
+         "\"intent\":{\"enum\":[";
+    for (size_t i = 0; i < allow.intents.size(); ++i) {
+        if (i) o << ',';
+        o << '"' << allow.intents[i] << '"';
+    }
+    o << "]},\"target\":{\"enum\":[";
+    for (size_t i = 0; i < allow.targets.size(); ++i) {
+        if (i) o << ',';
+        o << '"' << allow.targets[i] << '"';
+    }
+    o << "]},"
+         "\"tempo\":{\"enum\":[\"slow\",\"normal\",\"fast\"]},"
+         "\"ttl_s\":{\"type\":\"integer\",\"minimum\":3,\"maximum\":30},"
+         "\"reason\":{\"type\":\"string\",\"maxLength\":60},"
+         "\"slots\":{\"type\":\"array\",\"maxItems\":5,"
+         "\"items\":{\"type\":\"object\",\"additionalProperties\":false,"
+         "\"required\":[\"slot\",\"role\"],"
+         "\"properties\":{"
+         "\"slot\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":4},"
+         "\"role\":{\"enum\":[\"entry\",\"support\",\"lurk\",\"anchor\",\"awper\"]},"
+         "\"area\":{\"type\":\"string\"}}}}}}";
+    return o.str();
+}
+
 std::string BuildSystemPrompt(const CS2DWorld* world) {
     std::ostringstream o;
     o << "你是 CS2D 战队主教练。只做战术决策，不做瞄准与走位。\n"
@@ -97,8 +172,7 @@ std::string BuildSystemPrompt(const CS2DWorld* world) {
          "\"ttl_s\":12,\"reason\":\"敌方减员速推B\","
          "\"slots\":[{\"slot\":0,\"role\":\"entry\",\"area\":\"B_Long\"}]}\n"
       << "字段含义：\n"
-      << " intent: default/rush_a/rush_b/split_a/split_b/stack_a/stack_b/"
-         "retake_a/retake_b/save/fake\n"
+      << " intent: 只能从 user 行「允许:intent=...」中选，不得使用其它值\n"
       << "   retake_* 仅在 C4 已被安装时使用；save 仅在经济崩溃时使用\n"
       << "   rush_*/split_*/fake 是 T 战术；CT 用 default/stack_*/retake_*\n"
       << " target: A / B / MID / 空\n"
@@ -121,7 +195,9 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
                              const CoachEvent& ev,
                              const std::deque<std::string>& notes,
                              const std::string& lastOrder,
-                             const CS2DWorld* world) {
+                             const CS2DWorld* world,
+                             const std::deque<RoundMemo>& memory,
+                             const CoachAllowSet& allow) {
     std::ostringstream o;
 
     const int total = static_cast<int>(game.GetRoundElapsed());
@@ -188,12 +264,41 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
         case CoachEventType::Heartbeat:     o << "例行检查"; break;
         default: break;
     }
+    // ---- 合法闭集（重点卡 intent）----
+    o << "\n允许:intent=";
+    for (size_t ai = 0; ai < allow.intents.size(); ++ai) {
+        if (ai) o << ',';
+        o << allow.intents[ai];
+    }
+    o << " target=";
+    for (size_t ai = 0; ai < allow.targets.size(); ++ai) {
+        if (ai) o << ',';
+        o << (allow.targets[ai].empty() ? "-" : allow.targets[ai]);
+    }
+    o << " area_n=" << allow.areas.size();
+
+    // ---- 最近 3 回合（结构化一行，不塞死亡坐标）----
+    if (!memory.empty()) {
+        o << "\n近局:";
+        int mk = 0;
+        for (auto it = memory.rbegin(); it != memory.rend() && mk < 3; ++it, ++mk) {
+            const RoundMemo& m = *it;
+            if (mk) o << "; ";
+            o << "R" << m.roundNo << ' ' << IntentLabel(m.plan)
+              << "->" << (m.target.empty() ? "-" : m.target)
+              << (m.won ? " 胜" : " 负");
+            if (!m.firstContactArea.empty()) o << " 首触@" << m.firstContactArea;
+            if (m.bombPlanted) o << " 已下包";
+        }
+    }
+
     return o.str();
 }
 
 // 解析 + 游戏侧二次校验
 bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* world,
-                    bool bombPlanted, bool teamIsCT, bool lowEconomy, float& ttlOut) {
+                    bool bombPlanted, bool teamIsCT, bool lowEconomy,
+                    const CoachAllowSet& allow, float& ttlOut) {
     const auto bo = raw.find('{');
     const auto bc = raw.rfind('}');
     if (bo == std::string::npos || bc == std::string::npos || bc <= bo) return false;
@@ -211,7 +316,15 @@ bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* worl
         return false;
     }
 
+    // ---- 闭集硬过滤：越界整份拒绝（沿用规则计划）----
+    if (!ContainsCI(allow.intents, IntentLabel(plan.intent))) {
+        return false;
+    }
+
     plan.target = root.value<std::string>("target", "");
+    if (!plan.target.empty() && !ContainsCI(allow.targets, plan.target)) {
+        return false;
+    }
     ParseTempo(Lower(root.value<std::string>("tempo", "normal")), plan.tempo);
     plan.reason = root.value<std::string>("reason", "");
 
@@ -231,6 +344,10 @@ bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* worl
             ParseRole(Lower(sl.value<std::string>("role", "")), role);
 
             std::string area = sl.value<std::string>("area", "");
+            if (!area.empty() && !allow.areas.empty() &&
+                !ContainsCI(allow.areas, area)) {
+                continue;      // 区域不在合法闭集内：跳过这个 slot
+            }
             if (!area.empty() && world) {
                 bool found = false;
                 for (const auto& a : world->GetAreas()) {
@@ -301,8 +418,11 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
             return;                 // 战术级事件交给规则层
     }
 
+    const bool lowEco = LowEconomyAverage(t);
+    const CoachAllowSet allow = BuildAllowSet(t, bombPlanted_, lowEco, world_.get());
     const std::string user = BuildStateDigest(*this, t, ev, st.notes,
-                                              st.lastOrder, world_.get());
+                                              st.lastOrder, world_.get(),
+                                              st.memory, allow);
 
     st.llmPending     = true;
     st.llmGen         = st.gen;
@@ -313,7 +433,7 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
 
     const int gen = st.gen;
 
-    coachLlm_(BuildSystemPrompt(world_.get()), user, 150, kCoachSchema,
+    coachLlm_(BuildSystemPrompt(world_.get()), user, 150, BuildCoachSchema(allow),
               [this, t, gen](const std::string& raw) {
                   std::lock_guard<std::mutex> lock(coachLlmMutex_);
                   coachLlmResults_.push_back(CoachLlmResult{t, gen, raw, false});
@@ -402,10 +522,14 @@ void CS2DGame::CoachDrainLlm() {
             continue;
         }
 
+        // 回包时用「当前」局面重建闭集（发请求后局面可能已变）
+        const CoachAllowSet allow = BuildAllowSet(r.team, bombPlanted_,
+                                                  LowEconomyAverage(r.team), world_.get());
+
         TeamPlan plan;
         float ttl = 12.0f;
         if (!ParseCoachPlan(r.raw, plan, world_.get(), bombPlanted_,
-                            r.team == Team::CT, LowEconomyAverage(r.team), ttl)) {
+                            r.team == Team::CT, LowEconomyAverage(r.team), allow, ttl)) {
             std::cout << "[Coach] " << TeamName(r.team) << " LLM 计划非法，沿用规则计划 | "
                       << r.raw.substr(0, 100) << std::endl;
             continue;
