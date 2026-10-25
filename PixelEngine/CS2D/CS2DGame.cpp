@@ -295,7 +295,7 @@ void CS2DGame::SpawnPlayer() {
     slotMaxAmmo_[1] = w.magazine;
 
     for (int attempt = 0; attempt < 20; ++attempt) {
-        PickSpawnForTeam(Team::CT, player_.x, player_.y);
+        PickSpawnForTeam(player_.team, player_.x, player_.y);
         if (!IsEnemyNearby(player_.x, player_.y, 120.0f, Team::CT)) break;
     }
 }
@@ -490,6 +490,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 
     if (canMove) {
         UpdateBOTs(dt, audio);
+
     } else {
         // 暂停 / 结算冻结：BOT 原地待命
         for (auto& bot : bots_) { bot.vx = bot.vy = 0.0f; }

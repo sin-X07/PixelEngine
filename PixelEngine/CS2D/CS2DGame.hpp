@@ -188,6 +188,9 @@ public:
         bool  hadTarget       = false; // 上一帧是否看得见敌人（决定是否原地扫描）
         float scanPhase       = 0.0f;  // 扫视相位（行走时左右小幅摆头）
         float scanBase        = 0.0f;  // 原地扫视的中心朝向
+        float wanderX         = 0.0f;  // 巡逻目标（缓存，避免每帧重掷导致抖动）
+        float wanderY         = 0.0f;
+        float wanderTimer     = 0.0f;  // >0 时沿用缓存目标
         bool  scanBaseValid   = false;
         float footstepTimer   = 0.0f;  // 脚步音节奏
 

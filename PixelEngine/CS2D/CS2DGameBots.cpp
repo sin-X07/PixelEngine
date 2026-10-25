@@ -40,6 +40,23 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
                             float dt, float speedMul) {
     if (!pathFinder_.IsBuilt()) return false;
 
+    // 到达死区：距目标很近时直接停下，别再为几个像素反复微调
+    // （驻守点位时队友的分离力会把人推开，下一帧又走回来 → 视觉上一直抖）
+    {
+        const float adx = destX - bot.x;
+        const float ady = destY - bot.y;
+        constexpr float kArriveR = 14.0f;
+        if (adx * adx + ady * ady < kArriveR * kArriveR) {
+            ai.goalX = destX;
+            ai.goalY = destY;
+            ai.path.clear();
+            ai.pathIdx = 0;
+            bot.vx = 0.0f;
+            bot.vy = 0.0f;
+            return true;
+        }
+    }
+
     // 目标明显移动 / 定时 / 路径走完 → 重算
     const float gdx = destX - ai.goalX;
     const float gdy = destY - ai.goalY;
@@ -157,6 +174,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         if (!bot.alive) continue;
         auto& ai = AiAt(i);
         ai.scanPhase += dt;
+        if (ai.wanderTimer > 0.0f) ai.wanderTimer -= dt;
 
 
         // 分工指令
@@ -400,23 +418,34 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 const bool hasEnemyCentroid =
                     !holdPost && pushToEnemy && EnemySpawnCentroid(bot.team, ecx, ecy);
 
-                for (int t = 0; t < 12; ++t) {
-                    float rx = 0.0f, ry = 0.0f;
-                    if (holdPost) {
-                        rx = order.holdX + static_cast<float>(rng_() % 181) - Tuning::PatrolHoldSpread;
-                        ry = order.holdY + static_cast<float>(rng_() % 181) - Tuning::PatrolHoldSpread;
-                    } else if (hasEnemyCentroid) {
-                        rx = ecx + static_cast<float>(rng_() % 521) - 260.0f;
-                        ry = ecy + static_cast<float>(rng_() % 521) - 260.0f;
-                    } else {
-                        rx = bot.x + static_cast<float>(rng_() % 601) - 300.0f;
-                        ry = bot.y + static_cast<float>(rng_() % 601) - 300.0f;
-                    }
-                    if (pathFinder_.IsWalkableWorld(rx, ry)) {
-                        destX = rx;
-                        destY = ry;
-                        hasDest = true;
-                        break;
+                // 巡逻/驻守目标要「缓存一段时间」再重选。
+                // 之前每帧都用 rng 重掷一个 ±90px 的目标，BOT 会一直在原地小幅抖动。
+                if (ai.wanderTimer > 0.0f) {
+                    destX = ai.wanderX;
+                    destY = ai.wanderY;
+                    hasDest = true;
+                } else {
+                    for (int t = 0; t < 12; ++t) {
+                        float rx = 0.0f, ry = 0.0f;
+                        if (holdPost) {
+                            rx = order.holdX + static_cast<float>(rng_() % 181) - Tuning::PatrolHoldSpread;
+                            ry = order.holdY + static_cast<float>(rng_() % 181) - Tuning::PatrolHoldSpread;
+                        } else if (hasEnemyCentroid) {
+                            rx = ecx + static_cast<float>(rng_() % 521) - 260.0f;
+                            ry = ecy + static_cast<float>(rng_() % 521) - 260.0f;
+                        } else {
+                            rx = bot.x + static_cast<float>(rng_() % 601) - 300.0f;
+                            ry = bot.y + static_cast<float>(rng_() % 601) - 300.0f;
+                        }
+                        if (pathFinder_.IsWalkableWorld(rx, ry)) {
+                            ai.wanderX = rx;
+                            ai.wanderY = ry;
+                            ai.wanderTimer = 3.0f;   // 3 秒后换个位置
+                            destX = rx;
+                            destY = ry;
+                            hasDest = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -497,10 +526,21 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         bot.vy = out.vy * roleMul;
 
         // 局部避障（战斗中同样避免叠人）
+        // 已经驻守到位且没有敌人：彻底站定，不参与避让推力。
+        // 否则队友的分离力会每帧推一下 → 视觉上一直在抖。
         {
-            float sepX = 0.0f, sepY = 0.0f;
-            AccumulateSeparation(bot, sepX, sepY);
-            ApplyAvoidance(bot.vx, bot.vy, sepX, sepY);
+            const float gdx = ai.goalX - bot.x;
+            const float gdy = ai.goalY - bot.y;
+            const bool parked = !canSee &&
+                                (gdx * gdx + gdy * gdy) < 18.0f * 18.0f;
+            if (parked) {
+                bot.vx = 0.0f;
+                bot.vy = 0.0f;
+            } else {
+                float sepX = 0.0f, sepY = 0.0f;
+                AccumulateSeparation(bot, sepX, sepY);
+                ApplyAvoidance(bot.vx, bot.vy, sepX, sepY);
+            }
         }
 
         // 持械移速上限（与玩家同一套武器倍率）

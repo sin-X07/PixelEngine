@@ -102,7 +102,7 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
     player_.reloadTimer = 0.0f;
     player_.deathTimer = 0.0f;
     player_.vx = player_.vy = 0.0f;
-    PickSpawnForTeam(Team::CT, player_.x, player_.y);
+    PickSpawnForTeam(player_.team, player_.x, player_.y);
 
     if (playerSurvived) {
         player_.weapons[0] = keepW0;

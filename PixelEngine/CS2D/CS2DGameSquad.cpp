@@ -470,7 +470,10 @@ void CS2DGame::AccumulateSeparation(const Player& self, float& outX, float& outY
         const float dx = self.x - other.x;
         const float dy = self.y - other.y;
         const float d2 = dx * dx + dy * dy;
-        if (d2 >= SEP_RADIUS * SEP_RADIUS) return;
+        // 死区：只有真的靠近（< 55% 半径）才推。原来 26px 就开始推，
+        // 驻守时队友稍微靠近就互相顶，表现为原地抖动。
+        constexpr float kSepDeadZone = SEP_RADIUS * 0.55f;
+        if (d2 >= kSepDeadZone * kSepDeadZone) return;
 
         // 完全重叠时给一个确定性的偏移，避免除零与抖动
         if (d2 < 0.01f) {
@@ -481,7 +484,9 @@ void CS2DGame::AccumulateSeparation(const Player& self, float& outX, float& outY
 
         const float d = std::sqrt(d2);
         // 线性衰减权重：越近越强
-        const float w = 1.0f - d / SEP_RADIUS;
+        // 平方衰减：死区边界处从 0 平滑增长，避免推力突变造成抽搐
+        const float t = 1.0f - d / kSepDeadZone;
+        const float w = t * t;
         outX += dx / d * w;
         outY += dy / d * w;
     };

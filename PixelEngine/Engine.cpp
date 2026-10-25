@@ -618,7 +618,7 @@ void Engine::StartMatch(MatchMode mode) {
         case MatchMode::HostageRescue:   mapRel = "assets/cs2d/maps/ancient_ruins.tmj"; break;
         default:                         mapRel = "assets/cs2d/maps/ancient_ruins.tmj"; break;
     }
-    StartMatchWithMap(mode, mapRel);
+    StartMatchWithMap(mode, mapRel, pendingPlayerTeam_);
 }
 
 void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team playerTeam) {
@@ -630,14 +630,14 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
     // 模式必须在 LoadMap 之前设定（LoadMap → ResetToNewMatch 依赖 mode_）
     cs2dGame->SetMatchMode(mode);
 
+    // 阵营必须在 LoadMap 之前设置：LoadMap 会立刻生成玩家
+    if (cs2dGame) cs2dGame->SetPlayerTeam(playerTeam);
+
     const std::string mapPath = PathUtils::ResolveAppPath(mapRel);
     if (!cs2dGame->LoadMap(mapPath, cs2dRenderer.get())) {
         std::cerr << "CS2D 地图加载失败: " << mapPath << std::endl;
         return;
     }
-
-    // 应用玩家选择的阵营（爆破模式）
-    if (cs2dGame) cs2dGame->SetPlayerTeam(playerTeam);
 
     inputManager->SwitchToEnglishKeyboardLayout();
 
