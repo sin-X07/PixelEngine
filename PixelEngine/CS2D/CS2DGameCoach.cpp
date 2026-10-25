@@ -307,6 +307,54 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
         bombPlanted_ && world_ ? world_->FindAreaAt(bombX_, bombY_) : std::string();
     const std::string siteArea = bombArea.empty() ? aSite : bombArea;
 
+    // ================= 下包后的战术姿态（任何事件都按当前局势重算）=================
+    // 参考公开攻略的通用原则：
+    //   T ：按用途分散守包（拆包角度 / 回防路线 / 延迟 peek），交叉火力；
+    //       残局少打多不硬拼，守包等 CT 上手拆包再抓；时间是 T 的盟友。
+    //   CT：先集结再进，utility 先清点，两人互换；拆包需队友掩护；
+    //       时间不够（无钳 10s）就强拆。
+    if (bombPlanted_) {
+        std::string lower = siteArea;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        const bool onB = (lower.find("b_") != std::string::npos ||
+                          lower.find("b site") != std::string::npos);
+        const float bombLeft = GetBombTimer();
+        const int aliveT  = AliveCount(Team::T);
+        const int aliveCT = AliveCount(Team::CT);
+
+        if (isT) {
+            if (aliveT < aliveCT) {
+                plan.intent = PlanIntent::Default;
+                plan.target = onB ? "B" : "A";
+                plan.tempo  = Tempo::Slow;
+                plan.reason = "包已下：残局守包，等拆包再抓";
+            } else {
+                plan.intent = onB ? PlanIntent::StackB : PlanIntent::StackA;
+                plan.target = onB ? "B" : "A";
+                plan.tempo  = (bombLeft < 15.0f) ? Tempo::Fast : Tempo::Normal;
+                plan.reason = "包已下：交叉火力守包";
+            }
+            plan.slots[0] = { CoachRole::Anchor,  siteArea, true, false };
+            plan.slots[1] = { CoachRole::Support, siteArea, true, false };
+            plan.slots[2] = { CoachRole::Lurk,    onB ? bLong : aLong, true, true };
+            plan.slots[3] = { CoachRole::Entry,   onB ? bSite : aSite, true, false };
+            plan.slots[4] = { CoachRole::Support, mid, true, false };
+            return plan;
+        }
+
+        const bool mustRush = (bombLeft <= 11.0f);   // 无钳需 10s，留 1s 余量
+        plan.intent = onB ? PlanIntent::RetakeB : PlanIntent::RetakeA;
+        plan.target = onB ? "B" : "A";
+        plan.tempo  = mustRush ? Tempo::Fast : Tempo::Normal;
+        plan.reason = mustRush ? "时间不足，强拆包点" : "集结回防，先清点再拆";
+        for (auto& sl : plan.slots) {
+            sl = { CoachRole::Entry, siteArea, true, false };
+        }
+        return plan;
+    }
+
+
     // ---- 事件优先 ----
     if (ev.type == CoachEventType::BombPlanted) {
         plan.tempo = Tempo::Fast;

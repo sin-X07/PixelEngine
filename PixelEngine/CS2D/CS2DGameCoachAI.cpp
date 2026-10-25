@@ -130,7 +130,8 @@ CoachAllowSet BuildAllowSet(Team team, bool bombPlanted, bool lowEconomy,
         }
     } else {   // T
         if (bombPlanted) {
-            a.intents = { "default" };          // 已下包：T 只守包
+            // 已下包：叠点守包（交叉火力）或默认守包
+            a.intents = { "default", "stack_a", "stack_b" };
         } else {
             a.intents = { "default", "rush_a", "rush_b",
                           "split_a", "split_b", "fake" };
@@ -244,7 +245,16 @@ std::string BuildSystemPrompt(const CS2DWorld* world) {
          "CT 方若已知掉落位置，应收缩到该区域卡点。\n"
       << "优先级：当前炸弹状态与经济高于笔记。已下包时必须按包点选择 "
          "retake_*（CT）或 stack_*（T），禁止因笔记改打另一侧；穷局优先 save。\n"
-      << "ttl_s 建议：开局 18~25；已下包 12~20；不要给低于 10 的开局 ttl。\n";
+      << "ttl_s 建议：开局 18~25；已下包 12~20；不要给低于 10 的开局 ttl。\n"
+      << "下包后战术（T）：\n"
+      << "  - 不要全员贴包：按用途分散——1 人看拆包角度、1 人控回防路线、"
+         "1 人延迟 peek，形成交叉火力\n"
+      << "  - 已下包用 stack_<包点侧>（叠点守包）或 default；不要 rush/split\n"
+      << "  - 残局少打多不要硬拼：守包、等 CT 上手拆包再抓；时间站在你这边\n"
+      << "回防战术（CT）：\n"
+      << "  - 先集结再进，别一个个送；两人同角度互换，utility 先清点\n"
+      << "  - 拆包必须有队友掩护；时间不够（无钳 10s，有钳 5s）就强拆\n"
+      << "  - 已下包用 retake_<包点侧>，target 必须是同一侧；2v4 时可打人数差/武器\n";
     if (world) {
         o << "可选区域:";
         for (const auto& a : world->GetAreas()) o << ' ' << a.name;
@@ -286,7 +296,8 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
         const std::string site = world ? world->FindAreaAt(game.GetBombX(), game.GetBombY())
                                        : std::string();
         o << "已下@" << (site.empty() ? "未知" : site)
-          << " 倒计时" << static_cast<int>(game.GetBombTimer()) << "s";
+          << " 倒计时" << static_cast<int>(game.GetBombTimer()) << "s"
+          << " 拆包需10s";
     } else if (game.PlayerHasC4()) {
         o << "未下(玩家携带)";
     } else {
