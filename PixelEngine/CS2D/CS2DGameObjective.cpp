@@ -64,6 +64,10 @@ std::vector<CS2DGame::ScoreRow> CS2DGame::BuildScoreboard() const {
 // 按模式初始化目标物
 void CS2DGame::SetupObjective() {
     hostages_.clear();
+
+    // C4 携带者：爆破模式且玩家在 T 侧 → 由玩家携带
+    plantProgress_ = 0.0f;
+    bombCarrier_ = (mode_ == MatchMode::BombDefusal && player_.team == Team::T) ? -1 : -2;
     bombPlanted_   = false;
     bombTimer_     = 0.0f;
     defuseProgress_ = 0.0f;
@@ -98,7 +102,35 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
     if (!round_.IsLive()) return;
 
     // ---------------- 爆破 ----------------
-    if (mode_ == MatchMode::BombDefusal) {
+    // 玩家持包且站在包点：按住 E 安装 C4
+    if (mode_ == MatchMode::BombDefusal && !bombPlanted_ && PlayerHasC4()) {
+        bool inSite = false;
+        for (const auto& site : world_->GetBombSites()) {
+            if (player_.x >= site.x && player_.x <= site.x + site.width &&
+                player_.y >= site.y && player_.y <= site.y + site.height) {
+                inSite = true;
+                break;
+            }
+        }
+        if (inSite && interactHeld) {
+            plantProgress_ += dt;
+            if (audio) {
+                // 安装阶段用下包音效做反馈（每 0.75 秒一次）
+                static float tick = 0.0f;
+                tick += dt;
+                if (tick >= 0.75f) { tick = 0.0f; audio->PlaySound(SoundEffect::BOMB_BEEP); }
+            }
+            if (plantProgress_ >= 3.0f) {
+                PlantBomb(player_.x, player_.y, audio);
+                bombCarrier_ = -2;
+                plantProgress_ = 0.0f;
+            }
+        } else {
+            plantProgress_ = 0.0f;
+        }
+    }
+
+if (mode_ == MatchMode::BombDefusal) {
         if (!bombPlanted_) {
             // 未下包：清掉所有 BOT 的拆包状态
             for (size_t bi = 0; bi < bots_.size(); ++bi) AiAt(bi).defusing = false;

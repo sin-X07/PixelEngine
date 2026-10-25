@@ -21,6 +21,7 @@ public:
         std::function<void()>              startMatch;        // 重新开始（沿用上一模式）
         std::function<void(int)>           startMatchMode;    // 按模式开始 (MatchMode 枚举值)
         std::function<void(int)>           startMatchOnMap;    // 指定地图开局（kMapCatalog 索引）
+        std::function<void(int)>           chooseSide;         // 0=T, 1=CT（爆破模式）
         std::function<void(int)>           selectMap;          // 地图选择光标移动
         std::function<void()>              resumeGame;        // 暂停页继续
         std::function<void(bool)>          confirmExit;       // 退出游戏(false) / 退出桌面(true)
@@ -147,7 +148,14 @@ public:
         // 屏幕中央提示（回合开始 / 胜负）
         std::string announcement;
         float announcementAlpha = 0.0f;
-    };
+    
+        // 观察者 / C4 提示
+        bool   spectating     = false;
+        int    spectateMode   = 0;      // 0 跟随, 1 自由
+        std::string spectateTarget;     // 例：BOT#3（2/4）
+        bool   hasC4          = false;
+        float  plantProgress  = 0.0f;   // 0~1
+};
 
     void DrawMenu(const MenuCtx& ctx, const Actions& actions);
 
@@ -163,6 +171,10 @@ public:
         const std::vector<MatchRecord>* records = nullptr;
     };
     void DrawHistory(const HistoryCtx& ctx, const Actions& actions);
+
+    // 阵营选择界面（爆破模式）
+    struct SideSelectCtx { std::string mapName; };
+    void DrawSideSelect(const SideSelectCtx& ctx, const Actions& actions);
     void DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI);
 
     // ---- 买枪菜单 ----

@@ -80,9 +80,23 @@ GameUI::Actions Engine::BuildActions() {
     a.openSettings = [this](GameState ret) { settingsReturnState = ret; currentState = SETTINGS; };
     a.startMatch     = [this] { StartMatch(currentMatchMode_); };
     a.startMatchMode = [this](int m) { StartMatch(static_cast<MatchMode>(m)); };
+    // 选择阵营（爆破模式）：0 = T, 1 = CT
+    a.chooseSide = [this](int side) {
+        pendingPlayerTeam_ = (side == 0) ? Team::T : Team::CT;
+        std::string mapRel = pendingSideMapRel_;
+        if (mapRel.empty() && currentMatchMode_ == MatchMode::BombDefusal) {
+            mapRel = "assets/cs2d/maps/ancient_ruins.tmj";
+        }
+        if (mapRel.empty()) mapRel = "assets/cs2d/maps/ancient_ruins.tmj";
+        StartMatchWithMap(currentMatchMode_, mapRel, pendingPlayerTeam_);
+    };
+
     a.startMatchOnMap = [this](int idx) {
         if (idx < 0 || idx >= kMapCatalogCount) return;
-        StartMatchWithMap(MatchMode::BombDefusal, kMapCatalog[idx].tmj);
+        // 爆破模式：先进入阵营选择界面
+        pendingSideMapRel_ = kMapCatalog[idx].tmj;
+        currentMatchMode_ = MatchMode::BombDefusal;
+        currentState = SIDE_SELECT;
     };
     a.selectMap = [this](int idx) {
         if (idx >= 0 && idx < kMapCatalogCount) mapSelectIndex_ = idx;
@@ -222,7 +236,7 @@ GameUI::Actions Engine::BuildActions() {
 // ============================================================================
 
 bool Engine::Initialize(const char* title, int width, int height, bool autostart, bool fastRound,
-                        int startMode, bool coachLlm, const std::string& startMap, bool openMapSelect, bool openHistory) {
+                        int startMode, bool coachLlm, const std::string& startMap, bool openMapSelect, bool openHistory, const std::string& side) {
     pendingStartMap_ = startMap;
     openMapSelectOnStart_ = openMapSelect;
 
@@ -316,6 +330,13 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
     isRunning = true;
 
     // 调试/回归用：跳过菜单直接进入对局
+    // 调试：--side=t|ct 指定玩家阵营
+    if (!side.empty()) {
+        pendingPlayerTeam_ = (side == "t" || side == "T") ? Team::T : Team::CT;
+        std::cout << "[CS2D] 玩家阵营: "
+                  << (pendingPlayerTeam_ == Team::T ? "T" : "CT") << std::endl;
+    }
+
     if (openHistory) {
         currentState = HISTORY;
     } else if (openMapSelectOnStart_) {
@@ -329,7 +350,7 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
             for (int i = 0; i < kMapCatalogCount; ++i) {
                 if (pendingStartMap_ == kMapCatalog[i].id) { chosen = kMapCatalog[i].tmj; break; }
             }
-            if (chosen) StartMatchWithMap(static_cast<MatchMode>(m), chosen);
+            if (chosen) StartMatchWithMap(static_cast<MatchMode>(m), chosen, pendingPlayerTeam_);
             else {
                 std::cerr << "[CS2D] 未知地图 id: " << pendingStartMap_ << std::endl;
                 StartMatch(static_cast<MatchMode>(m));
@@ -512,6 +533,8 @@ void Engine::HandleInput() {
             currentState = settingsReturnState;
         } else if (currentState == EXIT_CONFIRM) {
             currentState = PAUSED;
+        } else if (currentState == SIDE_SELECT) {
+            currentState = MAP_SELECT;
         } else if (currentState == MAP_SELECT || currentState == HISTORY) {
             currentState = MAIN_MENU;
         } else {
@@ -598,7 +621,7 @@ void Engine::StartMatch(MatchMode mode) {
     StartMatchWithMap(mode, mapRel);
 }
 
-void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile) {
+void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team playerTeam) {
     audioManager->StopMusic();
     currentMatchMode_ = mode;
 
@@ -612,6 +635,9 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile) {
         std::cerr << "CS2D 地图加载失败: " << mapPath << std::endl;
         return;
     }
+
+    // 应用玩家选择的阵营（爆破模式）
+    if (cs2dGame) cs2dGame->SetPlayerTeam(playerTeam);
 
     inputManager->SwitchToEnglishKeyboardLayout();
 
@@ -696,7 +722,19 @@ void Engine::Render() {
 
     imGuiUI->BeginFrame();
 
-    if (currentState == HISTORY) {
+    if (currentState == SIDE_SELECT) {
+        GameUI::SideSelectCtx sctx;
+        // 用地图目录里的显示名
+        sctx.mapName = "古代遗迹";
+        for (int i = 0; i < kMapCatalogCount; ++i) {
+            if (pendingSideMapRel_.find(kMapCatalog[i].tmj) != std::string::npos ||
+                std::string(kMapCatalog[i].tmj) == pendingSideMapRel_) {
+                sctx.mapName = kMapCatalog[i].name;
+                break;
+            }
+        }
+        gameUI->DrawSideSelect(sctx, BuildActions());
+    } else if (currentState == HISTORY) {
         GameUI::HistoryCtx hctx;
         hctx.records = &history_;
         gameUI->DrawHistory(hctx, BuildActions());
@@ -807,6 +845,19 @@ void Engine::Render() {
 
         // 记分板
         ictx.showScoreboard = showScoreboard_;
+        // 观察者 / C4
+        ictx.spectating   = cs2dGame->IsSpectating();
+        ictx.spectateMode = (cs2dGame->GetSpectateMode() == CS2DGame::SpectateMode::Free) ? 1 : 0;
+        ictx.hasC4        = cs2dGame->PlayerHasC4();
+        ictx.plantProgress = cs2dGame->GetPlantProgress() / 3.0f;
+        if (ictx.spectating) {
+            char sbuf[64];
+            const int tgt = cs2dGame->GetSpectateTarget();
+            if (tgt >= 0) snprintf(sbuf, sizeof(sbuf), "BOT#%d", tgt);
+            else          snprintf(sbuf, sizeof(sbuf), "-");
+            ictx.spectateTarget = sbuf;
+        }
+
         if (showScoreboard_) {
             for (const auto& r : cs2dGame->BuildScoreboard()) {
                 GameUI::InGameCtx::ScoreRowView v;

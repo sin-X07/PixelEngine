@@ -32,6 +32,7 @@ int main(int argc, char* argv[]) {
     std::string startMap;   // --map=<id> 指定地图（kMapCatalog 的 id）
     bool openMapSelect = false;  // --mapselect 直接打开地图选择界面（调试）
     bool openHistory = false;    // --history 直接打开历史记录（调试）
+    std::string sideArg;        // --side=t|ct 指定玩家阵营（调试）
     for (int i = 1; i < argc; ++i) {
         if (!argv[i]) continue;
         const std::string a(argv[i]);
@@ -46,9 +47,12 @@ int main(int argc, char* argv[]) {
         if (a.rfind("--map=", 0) == 0) startMap = a.substr(6);
         if (a == "--mapselect") openMapSelect = true;
         if (a == "--history") openHistory = true;
+        if (a.rfind("--side=", 0) == 0) {
+            sideArg = a.substr(7);
+        }
     }
 
-    if (engine.Initialize("CS2D Pixel", 800, 600, autostart, fastRound, startMode, coachLlm, startMap, openMapSelect, openHistory)) {
+    if (engine.Initialize("CS2D Pixel", 800, 600, autostart, fastRound, startMode, coachLlm, startMap, openMapSelect, openHistory, sideArg)) {
         engine.Run();
     }
 

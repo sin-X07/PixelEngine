@@ -70,7 +70,8 @@ private:
     void HandleInput();
     GameUI::Actions BuildActions();
     void StartMatch(MatchMode mode);   // 按模式加载对应地图并开局
-    void StartMatchWithMap(MatchMode mode, const std::string& mapRel);  // 指定地图开局
+    void StartMatchWithMap(MatchMode mode, const std::string& mapRel,
+                           Team playerTeam = Team::CT);  // 指定地图开局
     // 对局历史
     std::vector<MatchRecord> history_;
     std::string historyPath_;
@@ -79,6 +80,8 @@ private:
     void RecordMatchHistory(bool abandoned);
     int  mapSelectIndex_ = 0;                                            // 地图选择光标
     std::string pendingStartMap_;        // --map=<id> 指定的地图
+    std::string pendingSideMapRel_;      // 选阵营时记住待开局地图
+    Team        pendingPlayerTeam_ = Team::CT;
     bool openMapSelectOnStart_ = false;  // --mapselect
     void* menuBgTex_ = nullptr;   // 主菜单背景图
     int   menuBgW_ = 0, menuBgH_ = 0;
@@ -98,7 +101,7 @@ public:
     bool Initialize(const char* title, int width, int height, bool autostart = false,
                     bool fastRound = false, int startMode = 1, bool coachLlm = true,
                     const std::string& startMap = std::string(),
-                    bool openMapSelect = false, bool openHistory = false);
+                    bool openMapSelect = false, bool openHistory = false, const std::string& side = "");
     void Run();
     void Clean();
     void ToggleFullscreen();

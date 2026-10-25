@@ -753,6 +753,94 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx, const std::function<void(int)>& 
 // 游戏内 HUD
 // ============================================================================
 
+void GameUI::DrawSideSelect(const SideSelectCtx& ctx, const Actions& actions) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->WorkPos);
+    ImGui::SetNextWindowSize(vp->WorkSize);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::Begin("##sideSelectRoot", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
+                 ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    DrawMenuBackdrop(dl, vp->WorkPos, vp->WorkSize);
+
+    const float cx = vp->WorkPos.x + vp->WorkSize.x * 0.5f;
+    DrawImGuiTextCentered(imGuiUI_, "选择阵营", vp->WorkPos.y + UI(48.0f), 240, 246, 255, 255, 32);
+    DrawTitleAccent(dl, cx, vp->WorkPos.y + UI(94.0f), UI(50.0f));
+
+    if (!ctx.mapName.empty()) {
+        DrawImGuiTextCentered(imGuiUI_, ctx.mapName.c_str(),
+                              vp->WorkPos.y + UI(106.0f), 150, 178, 200, 255, 16);
+    }
+
+    const float cardW = UI(300.0f);
+    const float cardH = UI(300.0f);
+    const float gap   = UI(40.0f);
+    const float yTop  = vp->WorkPos.y + (vp->WorkSize.y - cardH) * 0.42f;
+    const float xLeft = cx - cardW - gap * 0.5f;
+
+    struct Card { const char* title; const char* sub; const char* desc; ImU32 accent; int side; };
+    const Card cards[2] = {
+        { "T  恐怖分子", "进攻方", "携带 C4 · 负责下包\n拿到炸弹后按住 E 在包点安装", IM_COL32(240, 170, 70, 255), 0 },
+        { "CT  反恐精英", "防守方", "阻止下包 / 拆除 C4\n在包点按住 E 拆弹", IM_COL32(90, 170, 245, 255), 1 },
+    };
+
+    for (int i = 0; i < 2; ++i) {
+        const Card& c = cards[i];
+        ImGui::SetCursorScreenPos(ImVec2(xLeft + i * (cardW + gap), yTop));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.055f, 0.075f, 0.100f, 0.95f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImGui::ColorConvertU32ToFloat4(c.accent));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, UI(2.0f));
+        ImGui::BeginChild(i == 0 ? "##sideT" : "##sideCT", ImVec2(cardW, cardH), true);
+
+        ImGui::Dummy(ImVec2(0.0f, UI(24.0f)));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(c.accent));
+        if (ImFont* f = imGuiUI_ ? imGuiUI_->GetFont(static_cast<int>(UI(26.0f))) : nullptr)
+            ImGui::PushFont(f);
+        ImGui::TextUnformatted(c.title);
+        if (imGuiUI_ && imGuiUI_->GetFont(static_cast<int>(UI(26.0f)))) ImGui::PopFont();
+        ImGui::PopStyleColor();
+
+        if (ImFont* f2 = imGuiUI_ ? imGuiUI_->GetFont(static_cast<int>(UI(16.0f))) : nullptr)
+            ImGui::PushFont(f2);
+        ImGui::PushStyleColor(ImGuiCol_Text, Palette::TextDim());
+        ImGui::TextUnformatted(c.sub);
+        ImGui::PopStyleColor();
+
+        ImGui::Dummy(ImVec2(0.0f, UI(12.0f)));
+        ImGui::PushStyleColor(ImGuiCol_Text, Palette::Text());
+        ImGui::TextWrapped("%s", c.desc);
+        ImGui::PopStyleColor();
+        if (imGuiUI_ && imGuiUI_->GetFont(static_cast<int>(UI(16.0f)))) ImGui::PopFont();
+
+        ImGui::SetCursorPosY(cardH - UI(72.0f));
+        if (ImGui::Button(i == 0 ? "以 T 开始" : "以 CT 开始",
+                          ImVec2(cardW - UI(28.0f), UI(48.0f)))) {
+            if (actions.playClick) actions.playClick();
+            if (actions.chooseSide) actions.chooseSide(c.side);
+        }
+
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar();
+    }
+
+    // 返回
+    ImGui::SetCursorScreenPos(ImVec2(cx - UI(110.0f), vp->WorkPos.y + vp->WorkSize.y - UI(80.0f)));
+    if (ImGui::Button("返回地图选择", ImVec2(UI(220.0f), UI(46.0f)))) {
+        if (actions.playClick) actions.playClick();
+        if (actions.goState) actions.goState(MAP_SELECT);
+    }
+
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+}
+
 void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
     if (ctx.state != PLAYING) return;
 
@@ -1042,5 +1130,34 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
     // 提示（换弹等）
     if (ctx.hasNoWeaponHint && !ctx.hintText.empty()) {
         DrawImGuiTextCentered(imGuiUI, ctx.hintText.c_str(), 512.0f, 245, 200, 90, 255, 22);
+    }
+
+
+    // 观察者 / C4 底部提示
+    {
+        const float yBase = ImGui::GetIO().DisplaySize.y - UI(96.0f);
+        if (ctx.spectating) {
+            if (ctx.spectateMode == 1) {
+                DrawImGuiTextCentered(imGuiUI,
+                    "自由视角 · [空格] 回到队友视角 · [WASD] 移动镜头",
+                    yBase, 200, 214, 230, 235, 16);
+            } else {
+                char buf[128];
+                snprintf(buf, sizeof(buf),
+                         "观察者 · 跟随 %s · [空格] 自由视角 · [左/右键] 切换队友",
+                         ctx.spectateTarget.empty() ? "-" : ctx.spectateTarget.c_str());
+                DrawImGuiTextCentered(imGuiUI, buf, yBase, 200, 214, 230, 235, 16);
+            }
+        } else if (ctx.hasC4) {
+            if (ctx.plantProgress > 0.0f) {
+                char buf[64];
+                snprintf(buf, sizeof(buf), "正在安装 C4 … %d%%",
+                         static_cast<int>(ctx.plantProgress * 100.0f));
+                DrawImGuiTextCentered(imGuiUI, buf, yBase, 255, 190, 90, 255, 18);
+            } else {
+                DrawImGuiTextCentered(imGuiUI, "你携带 C4 · 在包点按住 E 安装",
+                                      yBase, 255, 190, 90, 255, 16);
+            }
+        }
     }
 }

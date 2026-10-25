@@ -256,17 +256,19 @@ bool CS2DGame::PickSpawnForTeam(Team team, float& outX, float& outY) {
 }
 
 void CS2DGame::SpawnPlayer() {
+    SpectatorEnd();
+
     player_.alive      = true;
     player_.health     = 100;
     player_.maxHealth  = 100;
     player_.vx = player_.vy = 0.0f;
     player_.shootCooldown = 0.0f;
-    player_.team       = Team::CT;
+    player_.team       = desiredPlayerTeam_;
     player_.animState  = AnimState::Idle;
     player_.animTimer  = 0.0f;
     player_.deathTimer = 0.0f;
     player_.shootAnimTimer = 0.0f;
-    player_.spriteKey  = 0;            // CT 头盔
+    player_.spriteKey  = (desiredPlayerTeam_ == Team::CT) ? 0 : 1;
     // 开局只有手枪（CT = USP），无护甲无投掷物，其余靠购买
     player_.weapons[0] = WeaponId::None;
     player_.weapons[1] = WeaponId::USP;
@@ -416,6 +418,30 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
                       bool wPressed, bool aPressed, bool sPressed, bool dPressed,
                       bool shiftPressed, bool rPressed, bool interactHeld,
                       AudioManager* audio) {
+    // ---- 观察者输入：空格切换视角，左右键切换队友，自由视角用 WASD ----
+    if (IsSpectating()) {
+        static bool prevSpace = false, prevLmb = false, prevRmb = false;
+        const Uint8* ks = SDL_GetKeyboardState(nullptr);
+        const bool spaceNow = ks && ks[SDL_SCANCODE_SPACE];
+        if (spaceNow && !prevSpace) SpectatorToggle();
+        prevSpace = spaceNow;
+
+        int mx = 0, my = 0;
+        const Uint32 mbtn = SDL_GetMouseState(&mx, &my);
+        const bool lmb = (mbtn & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+        const bool rmb = (mbtn & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0;
+        if (lmb && !prevLmb) SpectatorCycle(-1);
+        if (rmb && !prevRmb) SpectatorCycle(+1);
+        prevLmb = lmb;
+        prevRmb = rmb;
+
+        if (specMode_ == SpectateMode::Free) {
+            const float fx = (dPressed ? 1.0f : 0.0f) - (aPressed ? 1.0f : 0.0f);
+            const float fy = (sPressed ? 1.0f : 0.0f) - (wPressed ? 1.0f : 0.0f);
+            SpectatorMoveFree(fx, fy, dt);
+        }
+    }
+
     if (!world_) return;
 
     clockSec_ += dt;
@@ -574,7 +600,18 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 void CS2DGame::Render(int viewW, int viewH) {
     if (!renderer_ || !world_) return;
 
-    renderer_->UpdateCamera(player_.x, player_.y, viewW, viewH);
+    // 观察者：镜头跟随队友或自由移动
+    float camX = player_.x, camY = player_.y;
+    if (IsSpectating()) {
+        if (specMode_ == SpectateMode::Free) {
+            camX = specFreeX_;
+            camY = specFreeY_;
+        } else if (specTarget_ >= 0 && specTarget_ < static_cast<int>(bots_.size())) {
+            camX = bots_[static_cast<size_t>(specTarget_)].x;
+            camY = bots_[static_cast<size_t>(specTarget_)].y;
+        }
+    }
+    renderer_->UpdateCamera(camX, camY, viewW, viewH);
     renderer_->DrawWorld();
 
     auto fillParams = [](const Player& p, SpriteDrawParams& sp) {
@@ -592,17 +629,23 @@ void CS2DGame::Render(int viewW, int viewH) {
     };
 
     // 队友始终可见；敌人按视野剔除
-    const bool applyVisionCull = player_.alive;
+    const bool applyVisionCull = player_.alive || IsSpectating();
     for (const auto& bot : bots_) {
         if (!bot.alive && bot.deathTimer > 2.0f) continue;
         const bool friendly = (bot.team == player_.team);
-        if (!friendly && applyVisionCull && !PlayerCanSeeBot(bot)) continue;
+        if (!friendly && applyVisionCull) {
+            if (IsSpectating()) {
+                if (!SpectatorCanSeeEnemy(bot)) continue;
+            } else if (!PlayerCanSeeBot(bot)) {
+                continue;
+            }
+        }
         SpriteDrawParams sp;
         fillParams(bot, sp);
         renderer_->DrawCharacter(sp);
     }
 
-    if (player_.alive || player_.deathTimer <= 2.0f) {
+    if (!IsSpectating() && (player_.alive || player_.deathTimer <= 2.0f)) {
         SpriteDrawParams sp;
         fillParams(player_, sp);
         renderer_->DrawCharacter(sp);

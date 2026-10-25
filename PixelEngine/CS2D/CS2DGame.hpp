@@ -364,6 +364,22 @@ public:
     }
 
     bool IsMatchOver()   const { return teams_.MatchOver(); }
+    // ---- 玩家阵营（爆破模式可选 T / CT）----
+    void SetPlayerTeam(Team t) { desiredPlayerTeam_ = t; }
+    Team GetPlayerTeam() const { return desiredPlayerTeam_; }
+    bool PlayerHasC4() const { return bombCarrier_ == -1 && player_.team == Team::T && !bombPlanted_; }
+    float GetPlantProgress() const { return plantProgress_; }
+
+    // ---- 观察者（死亡后）----
+    enum class SpectateMode { None = 0, Follow, Free };
+    bool          IsSpectating() const { return specMode_ != SpectateMode::None; }
+    SpectateMode  GetSpectateMode() const { return specMode_; }
+    int           GetSpectateTarget() const { return specTarget_; }
+    void SpectatorToggle();
+    void SpectatorCycle(int dir);
+    void SpectatorMoveFree(float dx, float dy, float dt);
+    void SpectatorBegin();
+    void SpectatorEnd();
     Team GetMatchWinner() const { return teams_.MatchWinner(); }
 
     // 各阵营存活人数
@@ -553,6 +569,16 @@ private:
     PathFinder pathFinder_;   // 载入地图后烘焙
 
     void PushKillFeed(const std::string& text);
+
+    Team  desiredPlayerTeam_ = Team::CT;
+    int   bombCarrier_ = -2;      // -2 无人, -1 玩家, >=0 BOT 索引
+    float plantProgress_ = 0.0f;
+
+    SpectateMode specMode_ = SpectateMode::None;
+    int   specTarget_ = -1;
+    float specFreeX_ = 0.0f, specFreeY_ = 0.0f;
+    int   NextTeammateBot(int from, int dir) const;
+    bool  SpectatorCanSeeEnemy(const Player& e) const;
 
     int playerKills_  = 0;
     int playerDeaths_ = 0;

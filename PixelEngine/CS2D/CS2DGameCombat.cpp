@@ -531,6 +531,9 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio, Player* ki
     ++victim.deaths;
 
     // 击杀归属（自己炸自己 / 环境伤害不计入）
+    // 玩家阵亡 → 进入观察者模式
+    if (&victim == &player_) SpectatorBegin();
+
     if (killer && killer != &victim) {
         ++killer->kills;
         if (killer == &player_) ++playerKills_;
