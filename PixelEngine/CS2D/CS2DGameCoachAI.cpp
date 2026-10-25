@@ -192,6 +192,9 @@ std::string LoadCoachPlaybook() {
         std::cout << "[Coach] 未找到战术库: " << path << std::endl;
         return cached;
     }
+    // 上限 6000 字节（约 2000 汉字），超出部分按行截断，避免撑爆上下文
+    constexpr size_t kMaxBookBytes = 6000;
+
     std::ostringstream buf;
     buf << in.rdbuf();
     cached = buf.str();
@@ -206,6 +209,15 @@ std::string LoadCoachPlaybook() {
         cleaned.append(line);
         cleaned.push_back('\n');
     }
+    // 超限按行截断（保留完整的行，避免把一句话切成两半）
+    if (cleaned.size() > kMaxBookBytes) {
+        size_t cut = cleaned.rfind('\n', kMaxBookBytes);
+        if (cut == std::string::npos) cut = kMaxBookBytes;
+        cleaned.resize(cut);
+        std::cout << "[Coach] 战术库超过 " << kMaxBookBytes
+                  << " 字节，已按行截断" << std::endl;
+    }
+
     cached.swap(cleaned);
     std::cout << "[Coach] 已加载战术库 (" << cached.size() << " bytes): " << path
               << std::endl;
@@ -236,13 +248,11 @@ std::string BuildSystemPrompt(const CS2DWorld* world) {
     if (world) {
         o << "可选区域:";
         for (const auto& a : world->GetAreas()) o << ' ' << a.name;
-        o << "
-";
+        o << "\n";
     }
-        const std::string& book = LoadCoachPlaybook();
+    const std::string& book = LoadCoachPlaybook();
     if (!book.empty()) {
-        o << "
-" << book;
+        o << "\n" << book;
     }
     return o.str();
 }

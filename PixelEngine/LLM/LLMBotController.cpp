@@ -302,7 +302,7 @@ bool LLMBotController::LaunchServer(const std::string& exePath, const std::strin
     cmd << "\"" << exePath << "\""
         << " -m \"" << modelPath << "\""
         << " -ngl " << ngl
-        << " -c 4096"
+        << " -c 8192"
         << " --parallel 2"
         << " --host " << host
         << " --port " << port;
