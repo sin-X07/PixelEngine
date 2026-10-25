@@ -279,6 +279,11 @@ if (mode_ == MatchMode::BombDefusal) {
 }
 
 void CS2DGame::PlantBomb(float x, float y, AudioManager* audio) {
+    // C4 已安装：从玩家手里/槽位里移除
+    bombCarrier_ = -2;
+    playerHoldingC4_ = false;
+    player_.weapons[4] = WeaponId::None;
+    if (player_.weaponSlot == 4) SwitchWeaponSlot(1);
     bombPlanted_ = true;
     CoachOnEvent(Team::T,  CoachEventType::BombPlanted, world_ ? world_->FindAreaAt(bombX_, bombY_) : std::string());
     CoachOnEvent(Team::CT, CoachEventType::BombPlanted, world_ ? world_->FindAreaAt(bombX_, bombY_) : std::string());

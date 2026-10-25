@@ -784,7 +784,19 @@ void CS2DGame::TryPickupDrops(bool manual) {
 
 // G：丢弃当前武器（近战不可丢弃）
 void CS2DGame::DropCurrentWeapon() {
-    // 手持 C4 时，G 键丢的是 C4 本身
+    // 槽位 4 = C4：G 键丢的就是 C4 本身
+    if (player_.weaponSlot == 4) {
+        if (mode_ == MatchMode::BombDefusal && bombCarrier_ == -1 && !bombPlanted_) {
+            DropC4(player_.x, player_.y);
+        } else {
+            // 已经下包 / C4 已丢失：只清空槽位，避免卡在空槽
+            player_.weapons[4] = WeaponId::None;
+            playerHoldingC4_ = false;
+            SwitchWeaponSlot(1);
+        }
+        return;
+    }
+    // 手持 C4（旧路径保留）
     if (playerHoldingC4_ && PlayerHasC4()) {
         DropC4(player_.x, player_.y);
         return;

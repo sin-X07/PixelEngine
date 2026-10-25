@@ -28,8 +28,10 @@ void CS2DGame::UpdateBombItem(float dt) {
         return;
     }
 
-    // ---- 掉落在地上的 C4：最近的 T 靠近即拾取 ----
-    if (bombDropped_) {
+    if (bombDropDelay_ > 0.0f) bombDropDelay_ -= dt;
+
+    // ---- 掉落在地上的 C4：最近的 T 靠近即拾取（丢下 1 秒内不捡）----
+    if (bombDropped_ && bombDropDelay_ <= 0.0f) {
         Player* best = nullptr;
         float bestD2 = 24.0f * 24.0f;
 
@@ -90,12 +92,17 @@ void CS2DGame::DropC4(float x, float y) {
     if (bombCarrier_ == -2) return;
 
     bombDropped_ = true;
+    bombDropDelay_ = 1.0f;
     bombDropX_ = x;
     bombDropY_ = y;
     bombCarrier_ = -2;
     playerHoldingC4_ = false;
     player_.weapons[4] = WeaponId::None;
-    if (player_.weaponSlot == 4) SwitchWeaponSlot(1);
+    if (player_.weaponSlot == 4) {
+        player_.weaponSlot = 1;
+        player_.ammo = 1;
+        player_.maxAmmo = 1;
+    }
     std::cout << "[C4] C4 掉落在 (" << static_cast<int>(x) << ","
               << static_cast<int>(y) << ")" << std::endl;
 }

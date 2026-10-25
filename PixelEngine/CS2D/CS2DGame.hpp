@@ -593,6 +593,7 @@ private:
     Team  desiredPlayerTeam_ = Team::CT;
     int   bombCarrier_ = -2;      // -2 无人, -1 玩家, >=0 BOT 索引
     bool  bombDropped_ = false;    // C4 掉在地上
+    float bombDropDelay_ = 0.0f;   // 丢下后 1 秒内不能被捡回（否则原地立刻捡起，像「丢不掉」）
     float bombDropX_ = 0.0f, bombDropY_ = 0.0f;
     bool  playerHoldingC4_ = false; // 玩家把 C4 拿在手上（按 5）
 
