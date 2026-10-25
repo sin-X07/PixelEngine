@@ -47,6 +47,8 @@ const char* IntentLabel(PlanIntent i) {
         case PlanIntent::RetakeA: return "retake_a";
         case PlanIntent::RetakeB: return "retake_b";
         case PlanIntent::Save:    return "save";
+    case PlanIntent::RotateA: return "rotate_a";
+    case PlanIntent::RotateB: return "rotate_b";
         case PlanIntent::FakeThenOther: return "fake";
         default:                  return "default";
     }
@@ -63,6 +65,8 @@ bool ParseIntent(const std::string& v, PlanIntent& out) {
     if (v == "retake_a") { out = PlanIntent::RetakeA; return true; }
     if (v == "retake_b") { out = PlanIntent::RetakeB; return true; }
     if (v == "save")     { out = PlanIntent::Save;    return true; }
+    if (v == "rotate_a") { out = PlanIntent::RotateA; return true; }
+    if (v == "rotate_b") { out = PlanIntent::RotateB; return true; }
     if (v == "fake")     { out = PlanIntent::FakeThenOther; return true; }
     return false;
 }
@@ -254,6 +258,10 @@ std::string BuildSystemPrompt(const CS2DWorld* world) {
          "1 人延迟 peek，形成交叉火力\n"
       << "  - 已下包用 stack_<包点侧>（叠点守包）或 default；不要 rush/split\n"
       << "  - 残局少打多不要硬拼：守包、等 CT 上手拆包再抓；时间站在你这边\n"
+      << "转点战术（T，rotate_a/rotate_b）：\n"
+      << "  - 只有「另一侧明显没人」时才转：未知不等于空，没情报不要转\n"
+      << "  - 时间必须够（剩余 30 秒以上），且不要少打多时转点\n"
+      << "  - 转点后 8 秒内不要来回改主意；转点执行是「先中路收拢再推」\n"
       << "回防战术（CT）：\n"
       << "  - 先集结再进，别一个个送；两人同角度互换，utility 先清点\n"
       << "  - 拆包必须有队友掩护；时间不够（无钳 10s，有钳 5s）就强拆\n"
@@ -315,6 +323,20 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
     const int avg = (n > 0) ? sum / n : 0;
     o << " 经济" << (avg < 1800 ? "穷" : (avg < 3500 ? "中" : "富"));
 
+
+    // ---- 敌方分布（按包点威胁度；未知 != 空）----
+    {
+        const TacticalIntel& in = game.Intel();
+        if (in.SiteCount() > 0) {
+            o << "\n敌分布:";
+            for (int si = 0; si < in.SiteCount(); ++si) {
+                const std::string an = in.AreaName(si);
+                if (an.empty()) continue;
+                o << (si ? " " : " ") << an << "=" << in.Heat(si);
+            }
+            if (in.ObservationCount() == 0) o << " (暂无情报)";
+        }
+    }
 
     o << "\n敌:";
     bool any = false;
@@ -382,7 +404,8 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
 
 // 解析 + 游戏侧二次校验
 bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* world,
-                    bool bombPlanted, bool teamIsCT, bool lowEconomy,
+                    bool bombPlanted, bool teamIsCT, bool saveAllowed,
+                    bool rotateAllowed,
                     const std::string& plantSiteArea,
                     const CoachAllowSet& allow, float& ttlOut) {
     const auto bo = raw.find('{');
@@ -458,7 +481,7 @@ bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* worl
         plan.intent = PlanIntent::Default;
     }
     // save 只允许「经济确实穷」且「还没下包」时使用；否则会变成消极送分
-    if (plan.intent == PlanIntent::Save && (!lowEconomy || bombPlanted)) {
+    if (plan.intent == PlanIntent::Save && (!saveAllowed || bombPlanted)) {
         plan.intent = bombPlanted ? PlanIntent::RetakeA : PlanIntent::Default;
     }
     if (teamIsCT) {
@@ -496,8 +519,15 @@ bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* worl
         }
     }
 
+    // ---- 硬规则 1.5：转点必须有证据 + 时间允许 ----
+    if (plan.intent == PlanIntent::RotateA || plan.intent == PlanIntent::RotateB) {
+        if (!rotateAllowed) return false;
+        const std::string side = (plan.intent == PlanIntent::RotateA) ? "A" : "B";
+        if (plan.target != side) return false;
+    }
+
     // ---- 硬规则 2：穷局不许主动进攻 ----
-    if (lowEconomy && !bombPlanted) {
+    if (saveAllowed && !bombPlanted) {
         if (teamIsCT) {
             if (plan.intent != PlanIntent::Save &&
                 plan.intent != PlanIntent::Default &&
@@ -654,11 +684,13 @@ void CS2DGame::CoachDrainLlm() {
         if (bombPlanted_ && world_) plantArea = world_->FindAreaAt(bombX_, bombY_);
 
         const bool lowEco = LowEconomyAverage(r.team);
+        const bool saveAllowed = ShouldSaveNow(r.team);
+        const bool rotateAllowed = CanRotateNow(r.team);
 
         TeamPlan plan;
         float ttl = 12.0f;
         if (!ParseCoachPlan(r.raw, plan, world_.get(), bombPlanted_,
-                            r.team == Team::CT, lowEco, plantArea, allow, ttl)) {
+                            r.team == Team::CT, saveAllowed, rotateAllowed, plantArea, allow, ttl)) {
             std::cout << "[Coach] " << TeamName(r.team)
                       << " LLM 计划非法(硬规则:plant/save)，沿用规则 | "
                       << r.raw.substr(0, 100) << std::endl;
@@ -666,7 +698,7 @@ void CS2DGame::CoachDrainLlm() {
         }
 
         // 双保险：穷局且未下包，只接受 save（其余一律丢弃）
-        if (lowEco && !bombPlanted_ && plan.intent != PlanIntent::Save) {
+        if (saveAllowed && !bombPlanted_ && plan.intent != PlanIntent::Save) {
             std::cout << "[Coach] " << TeamName(r.team)
                       << " 穷局拒绝进攻性 LLM 计划，沿用规则计划" << std::endl;
             continue;

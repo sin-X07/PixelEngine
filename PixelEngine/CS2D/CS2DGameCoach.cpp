@@ -131,6 +131,46 @@ void CS2DGame::CoachOnEvent(Team t, CoachEventType type, const std::string& area
 void CS2DGame::CoachUpdate(float dt) {
     CoachDrainLlm();   // 先收 LLM 回包，再处理新事件
 
+    // 转点评估：每 0.75 秒看一次（不依赖事件，事件可能被 KEEP 逻辑吃掉）
+    if (mode_ == MatchMode::BombDefusal && !bombPlanted_ && round_.IsLive()) {
+        rotateCheckTimer_ += dt;
+        if (rotateCheckTimer_ >= 0.75f) {
+            rotateCheckTimer_ = 0.0f;
+            CoachTryRotate(Team::T);
+        }
+    }
+
+    // 转点中止：时间不够或突然少两个以上，撤回原目标（避免送人头）
+    for (Team t : {Team::T, Team::CT}) {
+        CoachState& st = CoachFor(t);
+        if (!st.plan.valid) continue;
+        const bool rotating = (st.plan.intent == PlanIntent::RotateA ||
+                               st.plan.intent == PlanIntent::RotateB);
+        if (!rotating) continue;
+
+        const int mine = AliveCount(t);
+        const int their = AliveCount(TeamManager::Opponent(t));
+        if (bombPlanted_ || !round_.IsLive() ||
+            round_.PhaseRemaining() < 25.0f || mine + 2 <= their) {
+            std::cout << "[Rotate] " << TeamName(t) << " 中止(";
+            if (bombPlanted_)                          std::cout << "已下包";
+            else if (!round_.IsLive())                 std::cout << "非交战期";
+            else if (round_.PhaseRemaining() < 25.0f)  std::cout << "时间不足";
+            else                                       std::cout << "人数劣势";
+            std::cout << ")，回到 " << (st.rotateFrom.empty() ? "-" : st.rotateFrom)
+                      << std::endl;
+
+            st.plan.intent = PlanIntent::Default;
+            if (!st.rotateFrom.empty()) st.plan.target = st.rotateFrom;
+            st.plan.valid     = true;
+            st.plan.expiresAt = clockSec_ + 10.0f;
+            st.planExpiresAt  = st.plan.expiresAt;
+            coachPlanChangedAt_ = clockSec_;
+            CoachApplyPlan(t);
+        }
+    }
+
+
     // 条件分支：到点自动切换战术（时间差打法）
     for (Team t : {Team::T, Team::CT}) {
         CoachState& st = CoachFor(t);
@@ -324,7 +364,18 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
               << " 目标=" << (plan.target.empty() ? "-" : plan.target)
               << " | " << plan.reason << std::endl;
 
+        // 记录最近进攻侧（供转点判断用）
+    if (t == Team::T && (plan.target == "A" || plan.target == "B")) {
+        st.lastAttackSide = plan.target;
+    }
+
     CoachApplyPlan(t);
+
+    // 信息驱动转点：规则已出计划，若有充分情报再改打另一侧
+    if (mode_ == MatchMode::BombDefusal && !bombPlanted_ && t == Team::T) {
+        CoachTryRotate(t);
+    }
+
 
     // 规则计划先落地（保证零延迟），再异步向 LLM 要一份更好的
     CoachTryLlm(t, ev);
@@ -719,4 +770,79 @@ bool CS2DGame::ShouldSaveNow(Team t) const {
     }
     return LowEconomyAverage(t);
 }
+
+// ============================================================================
+// 转点（信息驱动）
+//
+//   判定顺序：时间 -> 人数 -> 冷却 -> 证据
+//   证据 = 两个包点的威胁度差；未知的包点不会被当成「空」
+// ============================================================================
+
+bool CS2DGame::CanRotateNow(Team t) const {
+    if (mode_ != MatchMode::BombDefusal) return false;
+    if (bombPlanted_) return false;                       // 下包后不转
+    if (t != Team::T) return false;                       // 目前只做进攻方转点
+    if (!round_.IsLive()) return false;
+    if (round_.PhaseRemaining() < 30.0f) return false;    // 留足执行 + 下包时间
+    if (AliveCount(t) + 1 < AliveCount(TeamManager::Opponent(t))) return false;  // 少两个不转
+    if (clockSec_ - lastRotateAt_ < 8.0f) return false;   // 8 秒冷却，防来回抖
+    if (intel_.ObservationCount() < 2) return false;      // 至少两条情报
+    return true;
+}
+
+void CS2DGame::CoachTryRotate(Team t) {
+    if (!CanRotateNow(t)) return;
+
+    CoachState& st = CoachFor(t);
+    std::string cur = st.plan.target.empty() ? st.lastAttackSide : st.plan.target;
+    if (cur != "A" && cur != "B") cur = "A";   // 默认分兵时按 A 侧推进，可被转点改写
+    if (cur != "A" && cur != "B") return;
+    const std::string other = (cur == "A") ? "B" : "A";
+
+    const float heatCur = intel_.HeatOfSide(world_.get(), cur);
+    const float heatOth = intel_.HeatOfSide(world_.get(), other);
+    const std::string curSite = AreaHint(cur == "A" ? "A_Site" : "B_Site");
+    const std::string othSite = AreaHint(other == "A" ? "A_Site" : "B_Site");
+
+    // 证据门槛：当前目标侧明显更重防才转
+    constexpr float kDelta = 1.2f;
+    if (heatCur - heatOth < kDelta) return;
+
+    TeamPlan plan = st.plan;
+    plan.intent    = (other == "A") ? PlanIntent::RotateA : PlanIntent::RotateB;
+    plan.target    = other;
+    plan.tempo     = Tempo::Fast;
+    plan.reason    = cur + " 点重防，转 " + other;
+    plan.gen       = ++st.gen;
+    plan.createdAt = clockSec_;
+    plan.expiresAt = clockSec_ + 12.0f;
+    plan.valid     = true;
+
+    // 执行：两人先到中路重组，三人转推新点（避免全员拉一条长蛇）
+    const std::string midArea = AreaHint("Mid");
+    plan.slots[0] = { CoachRole::Entry,   othSite, true, false };
+    plan.slots[1] = { CoachRole::Support, othSite, true, false };
+    plan.slots[2] = { CoachRole::Anchor,  othSite, true, false };
+    plan.slots[3] = { CoachRole::Lurk,    midArea, true, true };
+    plan.slots[4] = { CoachRole::Support, midArea, true, false };
+
+    st.plan        = plan;
+    st.reason      = plan.reason;
+    st.planExpiresAt = plan.expiresAt;
+    st.rotateFrom  = cur;
+    st.rotateTo    = other;
+    st.rotateAt    = clockSec_;
+    st.lastAttackSide = other;
+    lastRotateAt_  = clockSec_;
+    coachPlanChangedAt_ = clockSec_;
+
+    std::cout << "[Rotate] " << TeamName(t) << " " << cur << "->" << other
+              << " heat" << cur << "=" << heatCur << " heat" << other << "=" << heatOth
+              << " 剩余=" << static_cast<int>(round_.PhaseRemaining()) << "s"
+              << " 人数=" << AliveCount(t) << "v" << AliveCount(TeamManager::Opponent(t))
+              << std::endl;
+
+    CoachApplyPlan(t);
+}
+
 

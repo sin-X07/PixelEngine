@@ -33,6 +33,7 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
               << " 已构建" << std::endl;
 
     ResetToNewMatch();
+        intel_.Build(world_.get(), clockSec_);
     return true;
 }
 
@@ -456,6 +457,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 
     // 团队情报：老化 + 探点上报（冻结期也推进，保证情报会过期）
     UpdateTeamContacts(dt);
+    intel_.Update(dt);
 
     const bool frozen  = (mode_ != MatchMode::DeathMatch) && round_.IsFrozen();
     const bool ending  = (mode_ != MatchMode::DeathMatch) && round_.IsRoundEnd();
@@ -492,6 +494,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     }
     UpdateReload(player_, dt);
     UpdateBombItem(dt);
+
 
     if (canMove) {
         UpdateBOTs(dt, audio);

@@ -144,9 +144,15 @@ void CS2DGame::ReportContact(Team team, int id, float x, float y) {
 
     auto& list = ContactsOf(team);
     for (auto& c : list) {
-        if (c.id == id) { c.x = x; c.y = y; c.age = 0.0f; return; }
+        if (c.id == id) {
+            // 同一个人隔了 2 秒以上再次被看到，算一次新的观察（喂给威胁度）
+            if (c.age > 2.0f) intel_.OnEnemySeen(x, y, clockSec_);
+            c.x = x; c.y = y; c.age = 0.0f;
+            return;
+        }
     }
     list.push_back(EnemyContact{ id, x, y, 0.0f });
+    intel_.OnEnemySeen(x, y, clockSec_);
 }
 
 const CS2DGame::EnemyContact* CS2DGame::FindNearestContact(Team team, float x, float y) const {

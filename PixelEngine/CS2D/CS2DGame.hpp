@@ -3,6 +3,7 @@
 #include "CS2DRenderer.hpp"
 #include "Teams/TeamManager.hpp"
 #include "Coach/CoachTypes.hpp"
+#include "TacticalIntel.hpp"
 #include "Rounds/RoundManager.hpp"
 #include "Weapons/WeaponDef.hpp"
 #include "Tuning.hpp"
@@ -498,6 +499,11 @@ public:
     void CoachTryDebrief(Team t);
     // 现在是否允许「保枪」：仅回合早段 + 经济崩 + 非人数优势 + 未下包
     bool ShouldSaveNow(Team t) const;
+    // ---- 敌方威胁度（信息层）----
+    const TacticalIntel& Intel() const { return intel_; }
+    // 转点判定：时间/人数/冷却/证据 都满足才允许
+    bool CanRotateNow(Team t) const;
+    void CoachTryRotate(Team t);
     void CoachDrainLlm();
     // 玩家操作：主动拾取（E）/ 丢弃当前武器（G）
     void TryPickupDrops(bool manual);
@@ -574,6 +580,11 @@ private:
         // 教练笔记（最近 5 条复盘结论，滚动）
         std::deque<std::string> notes;
         std::string lastOrder;        // 上一条指令摘要（喂给下一次 prompt）
+        // ---- 转点状态（信息驱动）----
+        std::string rotateFrom;       // 转点前目标侧
+        std::string rotateTo;         // 转点后目标侧
+        float       rotateAt = 0.0f;  // 转点时刻
+        std::string lastAttackSide;   // 最近一次进攻目标侧
 
         // LLM 请求在途
         float planExpiresAt = 0.0f;   // 计划时效（到期回到默认）
@@ -685,6 +696,9 @@ private:
     float squadFocusTimer_ = 0.0f;
 
     // 团队情报（按阵营分开）
+    TacticalIntel intel_;
+    float lastRotateAt_ = -999.0f;   // 转点冷却（全局，按队伍用 CoachState 更细也行）
+    float rotateCheckTimer_ = 0.0f;   // 转点评估节流
     std::vector<EnemyContact> contactsT_;
     std::vector<EnemyContact> contactsCT_;
 

@@ -540,6 +540,11 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio, Player* ki
     // 玩家阵亡 → 进入观察者模式
     if (&victim == &player_) SpectatorBegin();
 
+    // 敌方阵亡位置也是一种情报（会衰减）
+    if (victim.team != player_.team) {
+        intel_.OnEnemySeen(victim.x, victim.y, clockSec_);
+    }
+
     if (killer && killer != &victim) {
         ++killer->kills;
         if (killer == &player_) ++playerKills_;

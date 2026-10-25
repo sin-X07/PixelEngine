@@ -20,6 +20,7 @@ enum class PlanIntent {
     StackA, StackB,// 重兵堆点
     RetakeA, RetakeB, // 回防（包已下）
     Save,          // 保枪
+    RotateA, RotateB,  // 转点：从当前目标改打另一侧（信息驱动）
     FakeThenOther  // 假打后转点
 };
 
