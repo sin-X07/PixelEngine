@@ -469,13 +469,13 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
         assign(aSite, aLong, bSite, bLong, mid);
         return plan;
     }
-    if (ev.type == CoachEventType::EconomyLow) {
+    if (ev.type == CoachEventType::EconomyLow && ShouldSaveNow(t)) {
         plan.intent = PlanIntent::Save;
         plan.tempo  = Tempo::Slow;
-        plan.reason = "经济不足，本回合保枪";
-        const std::string home = AreaHint(isT ? "T_Spawn" : "CT_Spawn");
+        plan.reason = "经济不足，少打少拼保枪";
+        // 保枪不等于跑回出生点：留空目标，让 BOT 就地收缩、避免交火
         for (auto& sl : plan.slots) {
-            sl = { CoachRole::Anchor, home.empty() ? std::string() : home, false, false };
+            sl = { CoachRole::Anchor, std::string(), false, false };
         }
         return plan;
     }
@@ -497,14 +497,13 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
     const bool avoidB = (bTries >= 2 && bWins == 0);
 
     // 经济崩溃就别硬打（回合开始时的第一道判断）
-    const bool broke = (ev.type == CoachEventType::RoundStart && LowEconomyAverage(t));
+    const bool broke = (ev.type == CoachEventType::RoundStart && ShouldSaveNow(t));
     if (broke) {
         plan.intent = PlanIntent::Save;
         plan.tempo  = Tempo::Slow;
-        plan.reason = "开局平均余额不足，保枪攒钱";
-        const std::string home = AreaHint(isT ? "T_Spawn" : "CT_Spawn");
+        plan.reason = "经济平均不健康，保枪存钱";
         for (auto& sl : plan.slots) {
-            sl = { CoachRole::Anchor, home.empty() ? std::string() : home, false, false };
+            sl = { CoachRole::Anchor, std::string(), false, false };
         }
         return plan;
     }
@@ -567,6 +566,22 @@ void CS2DGame::CoachApplyPlan(Team t) {
         }
 
         float cx = 0.0f, cy = 0.0f;
+        // 保枪：不跑回出生点，就地收缩（以当前位置为中心小范围站位）
+        if (st.plan.intent == PlanIntent::Save) {
+            std::uniform_real_distribution<float> jit(-18.0f, 18.0f);
+            cx = bot.x + jit(rng_);
+            cy = bot.y + jit(rng_);
+            ai.hasPlanHold = true;
+            ai.planHoldX   = cx;
+            ai.planHoldY   = cy;
+            ai.goalArea    = std::string();
+            ++holdOk;
+            detail << " #" << slot << "=(save)";
+            squad_[i].canTrade  = false;
+            squad_[i].canRotate = false;
+            ++slot;
+            continue;
+        }
         if (!so.area.empty() && AreaCenterByName(so.area, cx, cy)) {
             ai.hasPlanHold = true;
             ai.planHoldX   = cx;
@@ -679,3 +694,29 @@ bool CS2DGame::LowEconomyAverage(Team t) const {
     if (round_.RoundNumber() <= 1) return false;
     return (n > 0 && sum / n < 1800);
 }
+
+// 保枪只在「真的该保」时成立：
+//   1) 还没下包（下了包就必须守包/回防）
+//   2) 回合前 20 秒（中后期再保枪只会送掉回合）
+//   3) 不是人数优势（多打少还保枪 = 主动让出主动权）
+//   4) 经济确实崩（已有阈值）
+bool CS2DGame::ShouldSaveNow(Team t) const {
+    if (bombPlanted_) return false;
+    if (GetRoundElapsed() > 45.0f) return false;
+    if (AliveCount(t) > AliveCount(TeamManager::Opponent(t))) return false;
+
+    // T 已经站上包点 = 已经拿到主动权，再保枪等于把包点白送
+    if (t == Team::T && world_) {
+        for (const auto& b : bots_) {
+            if (!b.alive || b.team != Team::T) continue;
+            for (const auto& site : world_->GetBombSites()) {
+                if (b.x >= site.x && b.x <= site.x + site.width &&
+                    b.y >= site.y && b.y <= site.y + site.height) {
+                    return false;
+                }
+            }
+        }
+    }
+    return LowEconomyAverage(t);
+}
+

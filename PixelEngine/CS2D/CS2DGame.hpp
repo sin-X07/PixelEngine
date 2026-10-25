@@ -496,6 +496,8 @@ public:
     bool IsCoachLlmEnabled() const { return coachLlmEnabled_; }
     void CoachTryLlm(Team t, const CoachEvent& ev);
     void CoachTryDebrief(Team t);
+    // 现在是否允许「保枪」：仅回合早段 + 经济崩 + 非人数优势 + 未下包
+    bool ShouldSaveNow(Team t) const;
     void CoachDrainLlm();
     // 玩家操作：主动拾取（E）/ 丢弃当前武器（G）
     void TryPickupDrops(bool manual);
