@@ -1148,6 +1148,13 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
                          ctx.spectateTarget.empty() ? "-" : ctx.spectateTarget.c_str());
                 DrawImGuiTextCentered(imGuiUI, buf, yBase, 200, 214, 230, 235, 16);
             }
+        } else if (ctx.holdingC4) {
+            DrawImGuiTextCentered(imGuiUI, "手持 C4 · [5] 收起 · [G] 丢下",
+                                  yBase, 255, 210, 120, 255, 16);
+        } else if (ctx.bombDropped) {
+            DrawImGuiTextCentered(imGuiUI,
+                ctx.bombIntel ? "C4 掉落在已知位置（地图有标记）" : "C4 掉在地上 · 靠近可拾取",
+                yBase, 255, 150, 110, 255, 16);
         } else if (ctx.hasC4) {
             if (ctx.plantProgress > 0.0f) {
                 char buf[64];

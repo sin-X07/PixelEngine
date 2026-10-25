@@ -223,6 +223,29 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
 
     ++st.gen;
     TeamPlan plan = RuleCoach(t, ev);
+
+    // ---- C4 相关决策（规则层）----
+    if (mode_ == MatchMode::BombDefusal && !bombPlanted_) {
+        if (bombDropped_) {
+            const std::string area = world_ ? world_->FindAreaAt(bombDropX_, bombDropY_)
+                                            : std::string();
+            if (t == Team::T) {
+                // T：C4 掉了，先派最近的队友去捡
+                plan.intent = PlanIntent::Default;
+                plan.target = area;
+                plan.tempo  = Tempo::Fast;
+                plan.reason = "C4掉落，先取回再下包";
+            } else if (bombIntel_) {
+                // CT：已知 C4 掉落位置 → 去卡那个区域
+                const std::string ia = world_ ? world_->FindAreaAt(bombIntelX_, bombIntelY_)
+                                              : std::string();
+                plan.intent = PlanIntent::StackA;   // 收缩防守到该区
+                plan.target = ia;
+                plan.tempo  = Tempo::Normal;
+                plan.reason = "发现掉落C4，收缩卡点";
+            }
+        }
+    }
     plan.gen       = st.gen;
     plan.createdAt = clockSec_;
     plan.valid     = true;

@@ -105,7 +105,9 @@ std::string BuildSystemPrompt(const CS2DWorld* world) {
       << " tempo: slow/normal/fast\n"
       << " ttl_s: 指令有效秒数（3~30），场面易变给小值\n"
       << " slots: 最多 5 个，slot 0~4，area 必须是下列区域之一\n"
-      << " reason: 不超过 20 个汉字，只用于日志\n";
+      << " reason: 不超过 20 个汉字，只用于日志\n"
+      << "C4 规则：若 C4 掉落在地上，T 方应派最近的队友去拾取后再进攻；"
+         "CT 方若已知掉落位置，应收缩到该区域卡点。\n";
     if (world) {
         o << "可选区域:";
         for (const auto& a : world->GetAreas()) o << ' ' << a.name;
@@ -137,7 +139,14 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
     const int avg = (n > 0) ? sum / n : 0;
     o << " 经济" << (avg < 1800 ? "穷" : (avg < 3500 ? "中" : "富"));
 
-    if (game.IsBombPlanted()) {
+    if (game.IsBombDropped()) {
+        const std::string da = world ? world->FindAreaAt(game.BombDropX(), game.BombDropY())
+                                     : std::string();
+        o << " C4:掉落@" << (da.empty() ? "未知" : da);
+        if (game.HasBombIntel() && team == Team::CT) o << "(已知位置)";
+    } else if (game.PlayerHasC4()) {
+        o << " C4:玩家携带";
+    } else if (game.IsBombPlanted()) {
         o << " 炸弹:已下" << static_cast<int>(game.GetBombTimer()) << "s";
     } else {
         o << " 炸弹:未下";

@@ -98,6 +98,9 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     const WeaponDef& def = player_.CurrentWeapon();
 
     // 投掷物：按下即投（音效在出手瞬间播放）
+    // 手上拿着 C4：不能开枪也不能投掷
+    if (playerHoldingC4_) return;
+
     if (def.cls == WeaponClass::Grenade) {
         if (!mouseDown || player_.shootCooldown > 0.0f) return;
         if (player_.grenadeCount <= 0) return;
@@ -539,6 +542,15 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio, Player* ki
         if (killer == &player_) ++playerKills_;
     }
 
+    // C4 携带者阵亡 → C4 掉在原地
+    if (mode_ == MatchMode::BombDefusal && bombCarrier_ >= -1) {
+        if ((&victim == &player_ && bombCarrier_ == -1) ||
+            (bombCarrier_ >= 0 && bombCarrier_ < static_cast<int>(bots_.size()) &&
+             &victim == &bots_[static_cast<size_t>(bombCarrier_)])) {
+            DropC4(victim.x, victim.y);
+        }
+    }
+
     // 阵亡掉落：主武器 → 副武器（仅非标配） → 随机一个投掷物
     DropEquipmentOnDeath(victim);
 
@@ -769,6 +781,11 @@ void CS2DGame::TryPickupDrops(bool manual) {
 
 // G：丢弃当前武器（近战不可丢弃）
 void CS2DGame::DropCurrentWeapon() {
+    // 手持 C4 时，G 键丢的是 C4 本身
+    if (playerHoldingC4_ && PlayerHasC4()) {
+        DropC4(player_.x, player_.y);
+        return;
+    }
     if (!player_.alive) return;
 
     const int slot = player_.weaponSlot;

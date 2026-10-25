@@ -76,6 +76,15 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
         dots.push_back({c.x, c.y, 235, 75, 70});         // 可见敌人：红色
     }
 
+    // 掉落 C4：T 方始终可见；CT 只在情报期内可见（橙色小点）
+    if (game->IsBombDropped()) {
+        const bool show = (myTeam == Team::T) ||
+                          (myTeam == Team::CT && game->HasBombIntel());
+        if (show) {
+            dots.push_back({game->BombDropX(), game->BombDropY(), 255, 170, 60});
+        }
+    }
+
     const auto& w = game->GetWorld();
     const float mapPixelW = static_cast<float>(w.GetMapWidth()  * w.GetTileWidth());
     const float mapPixelH = static_cast<float>(w.GetMapHeight() * w.GetTileHeight());

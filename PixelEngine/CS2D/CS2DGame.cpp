@@ -55,7 +55,7 @@ void CS2DGame::ResetToNewMatch() {
     economy_.Reset();
     prevPhase_ = round_.Phase();
 
-    player_.team = Team::CT;
+    player_.team = desiredPlayerTeam_;
     player_.kills = 0;
     player_.deaths = 0;
     player_.money = economy_.StartMoney();
@@ -64,8 +64,11 @@ void CS2DGame::ResetToNewMatch() {
 
     // CT 侧：玩家 + (TEAM_SIZE-1) 个 BOT；T 侧：TEAM_SIZE 个 BOT
     botAi_.clear();
+    // 玩家所在阵营 4 个 BOT（凑满 5 人），敌方 5 个 BOT
+    const Team mySide    = player_.team;
+    const Team enemySide = TeamManager::Opponent(mySide);
     for (int i = 0; i < TOTAL_BOTS; ++i) {
-        const Team t = (i < TEAM_SIZE - 1) ? Team::CT : Team::T;
+        const Team t = (i < TEAM_SIZE) ? enemySide : mySide;
         Player bot;
         SpawnBOT(bot, t);
         bots_.push_back(bot);
@@ -73,8 +76,12 @@ void CS2DGame::ResetToNewMatch() {
         botAi_.emplace_back();          // 与 bots_ 同下标
     }
 
+    int nT = (player_.team == Team::T) ? 1 : 0;
+    int nCT = (player_.team == Team::CT) ? 1 : 0;
+    for (const auto& b : bots_) (b.team == Team::T ? nT : nCT)++;
     std::cout << "[CS2DGame] 对局开始: " << TEAM_SIZE << "v" << TEAM_SIZE
-              << " (玩家 CT + " << bots_.size() << " BOT)" << std::endl;
+              << " 玩家阵营=" << (player_.team == Team::T ? "T" : "CT")
+              << " 实际人数 T=" << nT << " CT=" << nCT << std::endl;
 
     AssignSquadRoles();
     CoachResetRound();
@@ -487,6 +494,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
         }
     }
     UpdateReload(player_, dt);
+    UpdateBombItem(dt);
 
     if (canMove) {
         UpdateBOTs(dt, audio);
@@ -689,6 +697,19 @@ void CS2DGame::Render(int viewW, int viewH) {
     }
 
     // 已安装的 C4：醒目的红色脉冲标记 + 拆包有效范围
+    // 掉在地上的 C4：T 方始终可见；CT 只在「有人看到过」的情报期内可见
+    if (bombDropped_) {
+        const bool visible = (player_.team == Team::T) || bombIntel_ || IsSpectating();
+        if (visible) {
+            const float pulse = 0.5f + 0.5f * std::sin(clockSec_ * 5.0f);
+            renderer_->DrawCircleOutline(bombDropX_, bombDropY_,
+                                         10.0f + 4.0f * pulse,
+                                         255, 170, 60, static_cast<Uint8>(150 + 90 * pulse));
+            renderer_->DrawCircleOutline(bombDropX_, bombDropY_, 4.0f,
+                                         255, 220, 140, 230);
+        }
+    }
+
     if (bombPlanted_) {
         const float pulse = 0.5f + 0.5f * std::sin(clockSec_ * 6.0f);
         renderer_->DrawCircleOutline(bombX_, bombY_, 18.0f + 4.0f * pulse,

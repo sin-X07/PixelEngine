@@ -370,7 +370,20 @@ public:
     // ---- 玩家阵营（爆破模式可选 T / CT）----
     void SetPlayerTeam(Team t) { desiredPlayerTeam_ = t; }
     Team GetPlayerTeam() const { return desiredPlayerTeam_; }
-    bool PlayerHasC4() const { return bombCarrier_ == -1 && player_.team == Team::T && !bombPlanted_; }
+    bool PlayerHasC4() const {
+        return bombCarrier_ == -1 && player_.team == Team::T &&
+               !bombPlanted_ && !bombDropped_;
+    }
+    bool PlayerHoldingC4() const { return playerHoldingC4_; }
+    bool IsBombDropped() const { return bombDropped_; }
+    float BombDropX() const { return bombDropX_; }
+    float BombDropY() const { return bombDropY_; }
+    bool  HasBombIntel() const { return bombIntel_; }
+    float BombIntelX() const { return bombIntelX_; }
+    float BombIntelY() const { return bombIntelY_; }
+    void ToggleHoldC4();
+    void UpdateBombItem(float dt);
+    void DropC4(float x, float y);
     float GetPlantProgress() const { return plantProgress_; }
 
     // ---- 观察者（死亡后）----
@@ -579,6 +592,14 @@ private:
 
     Team  desiredPlayerTeam_ = Team::CT;
     int   bombCarrier_ = -2;      // -2 无人, -1 玩家, >=0 BOT 索引
+    bool  bombDropped_ = false;    // C4 掉在地上
+    float bombDropX_ = 0.0f, bombDropY_ = 0.0f;
+    bool  playerHoldingC4_ = false; // 玩家把 C4 拿在手上（按 5）
+
+    // CT 对「掉落 C4」的情报（像敌人情报一样会过期）
+    bool  bombIntel_ = false;
+    float bombIntelX_ = 0.0f, bombIntelY_ = 0.0f;
+    float bombIntelAge_ = 0.0f;
     float plantProgress_ = 0.0f;
 
     SpectateMode specMode_ = SpectateMode::None;
