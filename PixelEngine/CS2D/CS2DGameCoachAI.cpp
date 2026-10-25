@@ -194,7 +194,7 @@ std::string LoadCoachPlaybook() {
         return cached;
     }
     // 上限 6000 字节（约 2000 汉字），超出部分按行截断，避免撑爆上下文
-    constexpr size_t kMaxBookBytes = 6000;
+    constexpr size_t kMaxBookBytes = 12000;
 
     std::ostringstream buf;
     buf << in.rdbuf();
@@ -231,7 +231,7 @@ std::string BuildSystemPrompt(const CS2DWorld* world) {
       << "严格只输出一个 JSON 对象：不要 YAML、不要解释、不要代码块。\n"
       << "示例：{\"intent\":\"rush_b\",\"target\":\"B\",\"tempo\":\"fast\","
          "\"ttl_s\":12,\"reason\":\"敌方减员速推B\","
-         "\"slots\":[{\"slot\":0,\"role\":\"entry\",\"area\":\"B_Long\"}]}\n"
+         "\"slots\":[{\"slot\":0,\"role\":\"entry\",\"area\":\"Tunnel\"}]}\n"
       << "字段含义：\n"
       << " intent: 只能从 user 行「允许:intent=...」中选，不得使用其它值\n"
       << "   retake_* 仅在 C4 已被安装时使用；save 仅在经济崩溃时使用\n"
@@ -685,6 +685,7 @@ void CS2DGame::CoachDrainLlm() {
         st.planExpiresAt = plan.expiresAt;
         st.plan   = plan;
         st.reason = plan.reason;
+        st.stickyLlm = true;       // LLM owns plan until expiry/critical
 
         {   // 记录上一条指令，供下一次 prompt 使用
             std::ostringstream o;
@@ -698,7 +699,7 @@ void CS2DGame::CoachDrainLlm() {
                   << (clockSec_ - st.llmAt) << "s, ttl=" << static_cast<int>(ttl) << "s) -> "
                   << IntentLabel(plan.intent)
                   << " 目标=" << (plan.target.empty() ? "-" : plan.target)
-                  << " | " << plan.reason << std::endl;
+                  << " | " << plan.reason << " [sticky]" << std::endl;
 
         CoachApplyPlan(r.team);
     }

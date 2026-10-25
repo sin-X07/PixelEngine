@@ -582,6 +582,8 @@ private:
         int   llmRoundNo = 0;
         bool  llmBombPlanted = false;
         float lastThinkAt = 0.0f;
+        // true = plan from LLM; RuleCoach must not overwrite until expiry/critical.
+        bool  stickyLlm = false;
     };
     CoachState coachT_, coachCT_;
 

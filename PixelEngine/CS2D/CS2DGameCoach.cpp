@@ -78,6 +78,14 @@ std::string CS2DGame::AreaHint(const std::string& key) const {
     std::string want = key;
     std::transform(want.begin(), want.end(), want.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    // 1) exact match first (Long must not become Outside_Long)
+    for (const auto& a : world_->GetAreas()) {
+        std::string n = a.name;
+        std::transform(n.begin(), n.end(), n.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (n == want) return a.name;
+    }
+    // 2) substring fallback
     for (const auto& a : world_->GetAreas()) {
         std::string n = a.name;
         std::transform(n.begin(), n.end(), n.begin(),
@@ -176,6 +184,7 @@ void CS2DGame::CoachUpdate(float dt) {
             p.valid = true;
             st.plan = p;
             st.reason = p.reason + "（计划过期，重新评估）";
+            st.stickyLlm = false; // plan expiry sticky clear
             coachPlanChangedAt_ = clockSec_;
             std::cout << "[Coach] " << TeamName(t) << " 计划过期 -> "
                       << IntentName(p.intent) << std::endl;
@@ -221,6 +230,51 @@ void CS2DGame::CoachUpdate(float dt) {
 void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
     CoachState& st = CoachFor(t);
 
+    const bool criticalEv =
+        ev.type == CoachEventType::RoundStart ||
+        ev.type == CoachEventType::BombPlanted ||
+        ev.type == CoachEventType::DefuseStarted ||
+        ev.type == CoachEventType::TimeLow ||
+        ev.type == CoachEventType::EconomyLow ||
+        ev.type == CoachEventType::MatchPoint ||
+        ev.type == CoachEventType::HumanDied;
+
+    // Soft events: keep a still-valid plan (skip full replan (sticky soft)).
+    // Kill spam was flipping reason every death while intent stayed Default split.
+    const bool softEv =
+        ev.type == CoachEventType::Heartbeat ||
+        ev.type == CoachEventType::EnemyDown ||
+        ev.type == CoachEventType::AllyDown ||
+        ev.type == CoachEventType::EnemySpotted ||
+        ev.type == CoachEventType::DefuseAborted;
+
+    if (st.plan.valid && clockSec_ < st.planExpiresAt && !bombPlanted_ && softEv) {
+        if (ev.type == CoachEventType::EnemyDown) {
+            st.plan.tempo = Tempo::Fast;
+        } else if (ev.type == CoachEventType::AllyDown) {
+            st.plan.tempo = Tempo::Slow;
+        }
+        if (st.callsThisRound > 0) --st.callsThisRound;
+        std::cout << "[Coach] " << TeamName(t) << " KEEP plan "
+                  << IntentName(st.plan.intent)
+                  << " target=" << (st.plan.target.empty() ? "-" : st.plan.target)
+                  << " (" << (st.stickyLlm ? "llm" : "rules")
+                  << " unexpired, ev#" << static_cast<int>(ev.type)
+                  << " no-replan)" << std::endl;
+        return;
+    }
+
+    // LLM sticky: block RuleCoach overwrite until expiry / critical / plant.
+    if (st.stickyLlm && st.plan.valid && clockSec_ < st.planExpiresAt &&
+        !bombPlanted_ && !criticalEv) {
+        if (st.callsThisRound > 0) --st.callsThisRound;
+        std::cout << "[Coach] " << TeamName(t) << " KEEP LLM plan "
+                  << IntentName(st.plan.intent)
+                  << " (unexpired, ev#" << static_cast<int>(ev.type)
+                  << " non-critical)" << std::endl;
+        return;
+    }
+
     ++st.gen;
     TeamPlan plan = RuleCoach(t, ev);
 
@@ -254,6 +308,7 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
     st.planExpiresAt = plan.expiresAt;
     st.plan   = plan;
     st.reason = plan.reason;
+    st.stickyLlm = false;          // rules own this plan
     st.lastThinkAt = clockSec_;
     coachPlanChangedAt_ = clockSec_;
     {   // 规则计划也算「上条指令」，让 LLM 知道自己上一手是什么
@@ -295,11 +350,12 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
         plan.slots[4] = { CoachRole::Support, b2,  true, false };
     };
 
+    // dust_2 site layer real names: Long/Short/Cat/Tunnel (no A_Long/A_Short/B_Long)
     const std::string aSite  = AreaHint("A_Site");
-    const std::string aLong  = AreaHint("A_Long");
-    const std::string aShort = AreaHint("A_Short");
+    const std::string aLong  = AreaHint("Long");
+    const std::string aShort = AreaHint("Short");
     const std::string bSite  = AreaHint("B_Site");
-    const std::string bLong  = AreaHint("B_Long");
+    const std::string bLong  = AreaHint("Tunnel");
     const std::string mid    = AreaHint("Mid");
 
     // 当前包点区域（未下包就用 A 点占位，避免空字符串）
@@ -400,12 +456,14 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
         return plan;
     }
     if (ev.type == CoachEventType::EnemyDown) {
+        plan.intent = PlanIntent::Default;
         plan.tempo  = Tempo::Fast;
         plan.reason = "对面减员，前压抓人";
         assign(aLong, aSite, bLong, bSite, mid);
         return plan;
     }
     if (ev.type == CoachEventType::AllyDown) {
+        plan.intent = PlanIntent::Default;
         plan.tempo  = Tempo::Slow;
         plan.reason = "我方减员，收缩等机会";
         assign(aSite, aLong, bSite, bLong, mid);
@@ -491,6 +549,8 @@ void CS2DGame::CoachApplyPlan(Team t) {
     if (!st.plan.valid) return;
 
     int slot = 0;
+    int holdOk = 0, holdFail = 0;
+    std::ostringstream detail;
     for (size_t i = 0; i < bots_.size(); ++i) {
         auto& bot = bots_[i];
         if (!bot.alive || bot.team != t) continue;
@@ -507,16 +567,25 @@ void CS2DGame::CoachApplyPlan(Team t) {
         }
 
         float cx = 0.0f, cy = 0.0f;
-        if (AreaCenterByName(so.area, cx, cy)) {
+        if (!so.area.empty() && AreaCenterByName(so.area, cx, cy)) {
             ai.hasPlanHold = true;
             ai.planHoldX   = cx;
             ai.planHoldY   = cy;
             ai.goalArea    = so.area;
+            ++holdOk;
+            detail << " #" << slot << "=" << so.area;
+        } else {
+            ai.hasPlanHold = false;
+            ++holdFail;
+            detail << " #" << slot << "=" << (so.area.empty() ? "(empty)" : so.area + "!");
         }
         squad_[i].canTrade  = so.canTrade;
         squad_[i].canRotate = so.canRotate;
         ++slot;
     }
+    std::cout << "[Coach] Apply " << TeamName(t)
+              << " holdOk=" << holdOk << " holdFail=" << holdFail
+              << detail.str() << std::endl;
 }
 
 // ---------------------------------------------------------------------------
@@ -588,6 +657,7 @@ void CS2DGame::CoachBeginRound() {
         st.plan          = plan;
         st.reason        = plan.reason;
         st.planExpiresAt = plan.expiresAt;
+        st.stickyLlm     = false; // BeginRound sticky clear
         coachPlanChangedAt_ = clockSec_;
 
         std::cout << "[Coach] " << TeamName(t) << " 回合计划 -> "

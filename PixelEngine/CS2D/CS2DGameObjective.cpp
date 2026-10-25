@@ -311,10 +311,16 @@ void CS2DGame::PlantBomb(float x, float y, AudioManager* audio) {
     player_.weapons[4] = WeaponId::None;
     if (player_.weaponSlot == 4) EquipFallbackWeapon();
     bombPlanted_ = true;
-    CoachOnEvent(Team::T,  CoachEventType::BombPlanted, world_ ? world_->FindAreaAt(bombX_, bombY_) : std::string());
-    CoachOnEvent(Team::CT, CoachEventType::BombPlanted, world_ ? world_->FindAreaAt(bombX_, bombY_) : std::string());
+    // Set coords before events so FindAreaAt is not fed stale/zero bomb position.
     bombX_ = x;
     bombY_ = y;
+    {
+        const std::string plantArea = world_ ? world_->FindAreaAt(bombX_, bombY_) : std::string();
+        CoachOnEvent(Team::T,  CoachEventType::BombPlanted, plantArea);
+        CoachOnEvent(Team::CT, CoachEventType::BombPlanted, plantArea);
+        std::cout << "[Coach] BombPlanted area="
+                  << (plantArea.empty() ? "(empty)" : plantArea) << std::endl;
+    }
     bombTimer_ = BOMB_FUSE;
     bombBeepTimer_ = 0.0f;
     defuseProgress_ = 0.0f;

@@ -53,7 +53,8 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
             ai.pathIdx = 0;
             bot.vx = 0.0f;
             bot.vy = 0.0f;
-            return true;
+            // false = arrived / not pathing; callers must not continue forever
+            return false;
         }
     }
 
@@ -302,12 +303,23 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         }
 
         // 教练计划：没有可见敌人时优先去计划的驻守点（有敌人时反应交给决策树）
-        if (!target && ai.hasPlanHold) {
-            const float planMul = (order.role == BotRole::Entry)   ? Tuning::SpeedMulEntry
-                                : (order.role == BotRole::Anchor)  ? Tuning::SpeedMulAnchor
-                                                                   : Tuning::SpeedMulSupport;
-            if (FollowPathTo(bot, ai, ai.planHoldX, ai.planHoldY, dt, planMul)) {
-                continue;
+        // After plant, defer to bomb ring / defuse dest below (do not pin CT on site center).
+        if (!target && ai.hasPlanHold && !bombPlanted_) {
+            const float pdx = ai.planHoldX - bot.x;
+            const float pdy = ai.planHoldY - bot.y;
+            constexpr float kPlanArrive = 16.0f;
+            if (pdx * pdx + pdy * pdy < kPlanArrive * kPlanArrive) {
+                // Arrived at plan point: clear hold so peek/patrol/default goals can resume.
+                std::cout << "[Bot] #" << i << " 到达计划点，解除驻守"
+                          << (ai.goalArea.empty() ? "" : (" " + ai.goalArea)) << std::endl;
+                ai.hasPlanHold = false;
+            } else {
+                const float planMul = (order.role == BotRole::Entry)   ? Tuning::SpeedMulEntry
+                                    : (order.role == BotRole::Anchor)  ? Tuning::SpeedMulAnchor
+                                                                       : Tuning::SpeedMulSupport;
+                if (FollowPathTo(bot, ai, ai.planHoldX, ai.planHoldY, dt, planMul)) {
+                    continue;
+                }
             }
         }
         const EnemyContact* intel = target ? nullptr
