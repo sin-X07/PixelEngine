@@ -67,10 +67,36 @@ void CS2DGame::SetupObjective() {
 
     // C4 携带者：爆破模式且玩家在 T 侧 → 由玩家携带
     plantProgress_ = 0.0f;
-    bombCarrier_ = (mode_ == MatchMode::BombDefusal && player_.team == Team::T) ? -1 : -2;
+    // C4 携带者：每回合重新分配（T 侧玩家约 60% 概率拿到，其余给某个 T BOT）
+    bombCarrier_ = -2;
+    if (mode_ == MatchMode::BombDefusal) {
+        if (player_.team == Team::T) {
+            std::vector<int> tBots;
+            for (size_t i = 0; i < bots_.size(); ++i) {
+                if (bots_[i].team == Team::T) tBots.push_back(static_cast<int>(i));
+            }
+            if (tBots.empty() || (rng_() % 100) < 60) {
+                bombCarrier_ = -1;                       // 玩家携带
+            } else {
+                bombCarrier_ = tBots[rng_() % tBots.size()];  // 某个 T BOT 携带
+            }
+        }
+    }
     bombPlanted_   = false;
     bombTimer_     = 0.0f;
     defuseProgress_ = 0.0f;
+
+    // 每回合必须清掉上一局遗留的 C4 掉落 / 情报 / 拾取冷却，
+    // 否则上一局的掉落点会「继承」到新回合
+    bombDropped_    = false;
+    bombDropDelay_  = 0.0f;
+    bombDropX_ = bombDropY_ = 0.0f;
+    bombIntel_      = false;
+    bombIntelAge_   = 0.0f;
+    bombIntelX_ = bombIntelY_ = 0.0f;
+    playerHoldingC4_ = false;
+    player_.weapons[4] = WeaponId::None;
+    if (player_.weaponSlot == 4) player_.weaponSlot = 1;
     rescueProgress_ = 0.0f;
     hostageNearIdx_ = -1;
     bombX_ = bombY_ = 0.0f;
