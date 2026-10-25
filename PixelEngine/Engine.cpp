@@ -911,9 +911,9 @@ void Engine::RenderBuyMenu() {
 
     gameUI->DrawBuyMenu(bctx, [this](int id) {
         if (id < 0) {
-            cs2dGame->TryBuyArmor(-id);      // -1 → 护甲, -2 → 护甲+头盔
+            cs2dGame->TryBuyArmor(-id, audioManager.get());      // -1 → 护甲, -2 → 护甲+头盔
         } else {
-            cs2dGame->TryBuy(static_cast<WeaponId>(id));
+            cs2dGame->TryBuy(static_cast<WeaponId>(id), audioManager.get());
         }
     });
 }

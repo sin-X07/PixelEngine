@@ -1,4 +1,5 @@
 #include "GameUI.hpp"
+#include <algorithm>
 #include <iostream>
 #include "UiScale.hpp"
 #include "Palette.hpp"
@@ -937,53 +938,84 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
     // ---- 记分板（Tab 按住）----
     if (ctx.showScoreboard) {
         const ImGuiViewport* vp = ImGui::GetMainViewport();
-        const float w = UI(560.0f);
-        const float h = std::min(UI(420.0f), vp->WorkSize.y - UI(48.0f));
+        const float w = std::min(UI(760.0f), vp->WorkSize.x - UI(40.0f));
+        const float h = std::min(UI(560.0f), vp->WorkSize.y - UI(40.0f));
         ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + (vp->WorkSize.x - w) * 0.5f,
                                       vp->WorkPos.y + (vp->WorkSize.y - h) * 0.5f),
                                 ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.05f, 0.08f, 0.11f, 0.95f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.043f, 0.059f, 0.078f, 0.97f));
         ImGui::Begin("##Scoreboard", nullptr,
                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
-        ImGui::TextColored(ImVec4(0.95f, 0.82f, 0.35f, 1.0f),
-                           "T %d : %d CT", ctx.scoreT, ctx.scoreCT);
+        // 顶部分数
+        char title[64];
+        snprintf(title, sizeof(title), "T  %d : %d  CT", ctx.scoreT, ctx.scoreCT);
+        ImGui::TextColored(Palette::Accent(), "%s", title);
         ImGui::Separator();
 
-        if (ImGui::BeginTable("##score", 5,
-                ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
-            ImGui::TableSetupColumn("阵营", ImGuiTableColumnFlags_WidthFixed, UI(60.0f));
-            ImGui::TableSetupColumn("名称", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("K", ImGuiTableColumnFlags_WidthFixed, UI(50.0f));
-            ImGui::TableSetupColumn("D", ImGuiTableColumnFlags_WidthFixed, UI(50.0f));
-            ImGui::TableSetupColumn("$", ImGuiTableColumnFlags_WidthFixed, UI(70.0f));
-            ImGui::TableHeadersRow();
+        // 列宽（设计基准，随 UI 缩放）
+        const float colName  = UI(210.0f);
+        const float colKill  = UI(80.0f);
+        const float colDeath = UI(80.0f);
+        const float colMoney = UI(110.0f);
+        const float colState = UI(90.0f);
 
-            for (const auto& r : ctx.scoreRows) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextUnformatted(r.team == 2 ? "CT" : (r.team == 1 ? "T" : "-"));
-                ImGui::TableNextColumn();
-                if (r.isPlayer) {
-                    ImGui::TextColored(ImVec4(0.45f, 0.90f, 0.55f, 1.0f), "%s", r.name.c_str());
-                } else {
-                    ImGui::TextColored(ImVec4(r.alive ? 0.80f : 0.45f,
-                                              r.alive ? 0.80f : 0.45f,
-                                              r.alive ? 0.80f : 0.45f, 1.0f),
-                                       "%s%s", r.name.c_str(), r.alive ? "" : " (阵亡)");
-                }
-                ImGui::TableNextColumn();
-                ImGui::Text("%d", r.kills);
-                ImGui::TableNextColumn();
-                ImGui::Text("%d", r.deaths);
-                ImGui::TableNextColumn();
-                ImGui::Text("$%d", r.money);
-            }
-            ImGui::EndTable();
+        auto drawHeaderRow = [&]() {
+            ImGui::TextColored(Palette::TextFaint(), "%s", "名称");
+            ImGui::SameLine(colName);
+            ImGui::TextColored(Palette::TextFaint(), "%s", "击杀");
+            ImGui::SameLine(colName + colKill);
+            ImGui::TextColored(Palette::TextFaint(), "%s", "死亡");
+            ImGui::SameLine(colName + colKill + colDeath);
+            ImGui::TextColored(Palette::TextFaint(), "%s", "余额");
+            ImGui::SameLine(colName + colKill + colDeath + colMoney);
+            ImGui::TextColored(Palette::TextFaint(), "%s", "状态");
+        };
+
+        // 收集两队并按击杀数排序（同分按死亡数少优先）
+        std::vector<InGameCtx::ScoreRowView> tRows, ctRows;
+        for (const auto& r : ctx.scoreRows) {
+            if (r.team == 1) tRows.push_back(r);
+            else if (r.team == 2) ctRows.push_back(r);
         }
+        auto byScore = [](const InGameCtx::ScoreRowView& a, const InGameCtx::ScoreRowView& b) {
+            if (a.kills != b.kills) return a.kills > b.kills;
+            if (a.deaths != b.deaths) return a.deaths < b.deaths;
+            return a.name < b.name;
+        };
+        std::sort(tRows.begin(), tRows.end(), byScore);
+        std::sort(ctRows.begin(), ctRows.end(), byScore);
+
+        auto drawTeam = [&](const char* label, const std::vector<InGameCtx::ScoreRowView>& rows,
+                            ImVec4 color) {
+            ImGui::Spacing();
+            ImGui::TextColored(color, "%s", label);
+            ImGui::Separator();
+            drawHeaderRow();
+            for (const auto& r : rows) {
+                const ImVec4 c = r.alive ? Palette::Text() : Palette::TextFaint();
+                ImGui::TextColored(r.isPlayer ? Palette::Ally() : c, "%s%s",
+                                   r.name.c_str(), r.isPlayer ? "（你）" : "");
+                ImGui::SameLine(colName);
+                ImGui::TextColored(c, "%d", r.kills);
+                ImGui::SameLine(colName + colKill);
+                ImGui::TextColored(c, "%d", r.deaths);
+                ImGui::SameLine(colName + colKill + colDeath);
+                ImGui::TextColored(c, "$%d", r.money);
+                ImGui::SameLine(colName + colKill + colDeath + colMoney);
+                if (r.alive) {
+                    ImGui::TextColored(Palette::Ally(), "%s", "存活");
+                } else {
+                    ImGui::TextColored(Palette::Danger(), "%s", "阵亡");
+                }
+            }
+        };
+
+        drawTeam("T", tRows, ImVec4(0.95f, 0.72f, 0.30f, 1.0f));
+        drawTeam("CT", ctRows, ImVec4(0.42f, 0.72f, 0.95f, 1.0f));
 
         ImGui::End();
         ImGui::PopStyleColor();

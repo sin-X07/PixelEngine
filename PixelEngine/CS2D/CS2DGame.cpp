@@ -118,7 +118,7 @@ bool CS2DGame::IsPlayerInBuyZone() const {
     return false;
 }
 
-bool CS2DGame::TryBuy(WeaponId id) {
+bool CS2DGame::TryBuy(WeaponId id, AudioManager* audio) {
     if (id == WeaponId::None) return false;
     if (!IsBuyPhase()) return false;
     if (!player_.alive) return false;
@@ -169,11 +169,12 @@ bool CS2DGame::TryBuy(WeaponId id) {
 
     std::cout << "[Buy] " << def.name << " ($" << def.price
               << ") 余额 $" << player_.money << std::endl;
-    return true;
+    if (audio) audio->PlaySound(SoundEffect::EQUIP);
+        return true;
 }
 
 // 购买护甲：tier 1=护甲($650) 2=护甲+头盔($1000)
-bool CS2DGame::TryBuyArmor(int tier) {
+bool CS2DGame::TryBuyArmor(int tier, AudioManager* audio) {
     if (tier < 1 || tier > 2) return false;
     if (!IsBuyPhase() || !player_.alive || !IsPlayerInBuyZone()) return false;
 
@@ -191,7 +192,8 @@ bool CS2DGame::TryBuyArmor(int tier) {
 
     std::cout << "[Buy] " << (tier == 2 ? "护甲+头盔" : "护甲")
               << " ($" << price << ") 余额 $" << player_.money << std::endl;
-    return true;
+    if (audio) audio->PlaySound(SoundEffect::EQUIP);
+        return true;
 }
 
 // ============================================================================
@@ -628,7 +630,7 @@ void CS2DGame::Render(int viewW, int viewH) {
     // 地面掉落物（用 _d 图标）
     for (const auto& d : drops_) {
         if (d.id == WeaponId::None) continue;
-        renderer_->DrawDroppedWeapon(static_cast<int>(d.id), d.x, d.y, clockSec_);
+        renderer_->DrawDroppedWeapon(static_cast<int>(d.id), d.x, d.y, d.rot);
     }
 
     // 已安装的 C4：醒目的红色脉冲标记 + 拆包有效范围

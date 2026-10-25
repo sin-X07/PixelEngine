@@ -78,7 +78,8 @@ constexpr float PatrolHoldSpread = 90.0f;    // 守点时岗位附近的游走�
 // ---------------- BOT 朝向 ----------------
 constexpr float BotScanSpeed     = 1.0f;   // 无目标时原地扫描的角速度（弧度/秒 ≈ 57°/s）
 constexpr float BotScanAmplitudeRad = 0.45f; // 行进时左右摆头幅度（≈26°）
-constexpr float BotTurnOnHit     = 1.0f;   // 是否在受击时立刻转向威胁
+constexpr float BotTurnOnHit     = 1.0f;
+constexpr float BotMaxTurnRate   = 8.0f;   // 最大转向速度（弧度/秒 ≈ 458°/s）   // 是否在受击时立刻转向威胁
 
 // ---------------- 小队 ----------------
 constexpr float FocusUpdateInterval = 0.5f;  // 集火目标刷新间隔

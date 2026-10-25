@@ -187,6 +187,8 @@ public:
         bool  tradePushed     = false; // 本回合是否已补过枪
         bool  hadTarget       = false; // 上一帧是否看得见敌人（决定是否原地扫描）
         float scanPhase       = 0.0f;  // 扫视相位（行走时左右小幅摆头）
+        float scanBase        = 0.0f;  // 原地扫视的中心朝向
+        bool  scanBaseValid   = false;
         float footstepTimer   = 0.0f;  // 脚步音节奏
 
         // 卡墙检测
@@ -371,7 +373,10 @@ public:
     int  GetPlayerMoney() const { return player_.money; }
     // 购买窗口：自回合开始起的前 BuyWindowSeconds 秒（覆盖冻结 + 购买 + 交战初期）
     bool IsBuyPhase() const {
-        if (mode_ == MatchMode::DeathMatch) return false;
+        // 死斗：只有站在出生点的购买区内才能买，离开就关闭
+        if (mode_ == MatchMode::DeathMatch) {
+            return player_.alive && IsPlayerInBuyZone();
+        }
         if (teams_.MatchOver()) return false;
         if (!player_.alive) return false;
         return round_.Elapsed() <= Tuning::BuyWindowSeconds;
@@ -382,9 +387,9 @@ public:
     // 玩家当前是否处于购买区内（地图未定义购买区时视为全图可买）
     bool IsPlayerInBuyZone() const;
     // 尝试购买；成功返回 true（已扣款并装备）
-    bool TryBuy(WeaponId id);
+    bool TryBuy(WeaponId id, class AudioManager* audio = nullptr);
     // 购买护甲：tier 1=护甲 2=护甲+头盔
-    bool TryBuyArmor(int tier);
+    bool TryBuyArmor(int tier, class AudioManager* audio = nullptr);
     int  GetPlayerArmor()  const { return player_.armor; }
     int  GetPlayerHealth()    const { return player_.health; }
     int  GetPlayerMaxHealth() const { return player_.maxHealth; }
@@ -455,6 +460,7 @@ private:
         WeaponId id = WeaponId::None;
         float x = 0.0f, y = 0.0f;
         float life = 30.0f;      // 30 秒后消失
+        float rot = 0.0f;        // 平铺在地面的朝向（度）
         bool  isGrenade = false;
     };
     std::vector<DroppedItem> drops_;
@@ -665,5 +671,6 @@ private:
     void UpdateObjective(float dt, bool interactHeld, class AudioManager* audio);
     void PlantBomb(float x, float y, class AudioManager* audio);
     void DetonateBomb(class AudioManager* audio);
-    void OnCombatantKilled(Player& victim, class AudioManager* audio);
+    void OnCombatantKilled(Player& victim, class AudioManager* audio,
+                           Player* killer = nullptr);
 };

@@ -648,7 +648,7 @@ void CS2DRenderer::DrawCircleFilled(float worldX, float worldY, float radius,
 // ============================================================================
 
 void CS2DRenderer::DrawDroppedWeapon(int weaponId, float worldX, float worldY,
-                                     float timeSec) {
+                                     float angleDeg) {
     if (!renderer_ || weaponId <= 0) return;
 
     // 掉落物属于「状态栏那一类素材」：优先 _d 图标
@@ -669,10 +669,10 @@ void CS2DRenderer::DrawDroppedWeapon(int weaponId, float worldX, float worldY,
     if (tw >= th) dh = box * static_cast<float>(th) / static_cast<float>(tw);
     else          dw = box * static_cast<float>(tw) / static_cast<float>(th);
 
-    const float bob = std::sin(timeSec * 2.2f) * 1.2f * zoom_;
+    // 平铺在地面：不做上下浮动
     SDL_FRect dst;
     dst.x = (worldX - cameraX_) * zoom_ - dw * 0.5f;
-    dst.y = (worldY - cameraY_) * zoom_ - dh * 0.5f + bob;
+    dst.y = (worldY - cameraY_) * zoom_ - dh * 0.5f;
     dst.w = dw;
     dst.h = dh;
 
@@ -682,7 +682,9 @@ void CS2DRenderer::DrawDroppedWeapon(int weaponId, float worldX, float worldY,
     SDL_FRect shadow = { dst.x - 1.0f, dst.y + dh - 1.0f, dw + 2.0f, 2.0f * zoom_ };
     SDL_RenderFillRectF(renderer_, &shadow);
 
-    SDL_RenderCopyF(renderer_, tex, nullptr, &dst);
+    const SDL_FPoint rotCenter = { dst.w * 0.5f, dst.h * 0.5f };
+    SDL_RenderCopyExF(renderer_, tex, nullptr, &dst,
+                      static_cast<double>(angleDeg), &rotCenter, SDL_FLIP_NONE);
 }
 
 // ============================================================================

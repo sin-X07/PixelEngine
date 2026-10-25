@@ -111,9 +111,17 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
 
     MoveWithCollision(bot, dt);
     // 行进方向 + 左右小幅扫视（扇形视野下避免只盯正前方，与真实玩家一致）
-    bot.aimAngle = std::atan2(dy, dx)
-                 + std::sin(ai.scanPhase * 2.2f) * Tuning::BotScanAmplitudeRad;
-
+    const float distToWp = std::sqrt(dx * dx + dy * dy);
+    if (distToWp > 10.0f) {
+        const float desired = std::atan2(dy, dx)
+                            + std::sin(ai.scanPhase * 2.2f) * Tuning::BotScanAmplitudeRad;
+        float delta = desired - bot.aimAngle;
+        while (delta >  3.14159265f) delta -= 6.28318531f;
+        while (delta < -3.14159265f) delta += 6.28318531f;
+        const float maxTurn = Tuning::BotMaxTurnRate * dt;
+        bot.aimAngle += std::clamp(delta, -maxTurn, maxTurn);
+    }
+    ai.scanBaseValid = false;
     // 被墙卡住（速度被碰撞清零）→ 立刻失效当前路径，下一帧重算
     if (bot.vx == 0.0f && bot.vy == 0.0f) {
         ai.path.clear();
@@ -164,9 +172,16 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // ---- 原地扫描：没有目标时缓慢转身 ----
         // 视野是 120° 扇形，若不扫描，背对着敌人的 BOT 会永远发现不了对方
         if (!ai.hadTarget) {
-            bot.aimAngle += Tuning::BotScanSpeed * dt;
-            while (bot.aimAngle >  3.14159265f) bot.aimAngle -= 6.28318531f;
-            while (bot.aimAngle < -3.14159265f) bot.aimAngle += 6.28318531f;
+            // 原地扫视：绕「进入空闲时的朝向」左右 ±60° 摆动。
+            // 原先是 aimAngle += 角速度（360° 连续自转），看起来像原地转圈。
+            if (!ai.scanBaseValid) {
+                ai.scanBase = bot.aimAngle;
+                ai.scanBaseValid = true;
+            }
+            bot.aimAngle = ai.scanBase +
+                           std::sin(ai.scanPhase * 1.6f) * 1.05f;   // ±60°
+        } else {
+            ai.scanBaseValid = false;
         }
 
         // ---- 补枪（trade）：队友刚在附近阵亡 → 冲过去换人 ----
@@ -543,7 +558,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             if (bot.shootCooldown <= 0.0f) {
                 if (target == &player_) {
                     if (ApplyDamage(player_, static_cast<int>(def.damage * 0.33f))) {
-                        OnCombatantKilled(player_, audio);
+                        OnCombatantKilled(player_, audio, &bot);
                     }
                 }
                 bot.shootCooldown = def.cooldown * 1.5f * out.shootCooldownMul;

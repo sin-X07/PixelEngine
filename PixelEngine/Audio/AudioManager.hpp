@@ -18,6 +18,7 @@ enum class SoundEffect {
 
     // ---- 战局事件 ----
     GRENADE_EXPLODE,
+    EQUIP,           // 购买装备
     GRENADE_THROW,   // 投掷出手（通用兜底）
     THROW_HE,        // 高爆雷出手
     THROW_FLASH,     // 闪光弹出手
@@ -71,6 +72,7 @@ private:
 
     // 战局事件音效
     Mix_Chunk* grenadeExplodeSound = nullptr;
+    Mix_Chunk* equipSound         = nullptr;
     Mix_Chunk* grenadeThrowSound  = nullptr;
     Mix_Chunk* throwHeSound        = nullptr;
     Mix_Chunk* throwFlashSound     = nullptr;

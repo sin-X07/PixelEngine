@@ -39,6 +39,7 @@ bool AudioManager::Initialize() {
 
     // 战局事件
     grenadeExplodeSound = loadChunk("assets/audio/grenade_explode.wav", "手雷爆炸");
+    equipSound          = loadChunk("assets/audio/equip.mp3", "购买装备");
     grenadeThrowSound   = loadChunk("assets/audio/dagger_out.mp3", "投掷出手");
     // 出手音效：优先用专用素材，缺失时回落到通用出手声
     throwHeSound    = loadChunk("assets/audio/throw_grenade.mp3", "高爆雷出手");
@@ -107,6 +108,7 @@ void AudioManager::Clean() {
 
     // 战局事件
     if (grenadeExplodeSound) { Mix_FreeChunk(grenadeExplodeSound); grenadeExplodeSound = nullptr; }
+    if (equipSound) { Mix_FreeChunk(equipSound); equipSound = nullptr; }
     if (grenadeThrowSound)   { Mix_FreeChunk(grenadeThrowSound);   grenadeThrowSound = nullptr; }
     if (throwHeSound && throwHeSound != grenadeThrowSound) { Mix_FreeChunk(throwHeSound); throwHeSound = nullptr; }
     if (throwFlashSound && throwFlashSound != grenadeThrowSound) { Mix_FreeChunk(throwFlashSound); throwFlashSound = nullptr; }
@@ -193,6 +195,7 @@ Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
         case SoundEffect::THROW_HE:        return throwHeSound;
         case SoundEffect::THROW_FLASH:     return throwFlashSound;
         case SoundEffect::THROW_SMOKE:     return throwSmokeSound;
+        case SoundEffect::EQUIP:            return equipSound;
         case SoundEffect::GRENADE_EXPLODE:  return grenadeExplodeSound;
         case SoundEffect::FLASH:        return flashSound;
         case SoundEffect::SMOKE:            return smokeSound;

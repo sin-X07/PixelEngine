@@ -123,7 +123,7 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
             const float bdx = bot.x - player_.x;
             const float bdy = bot.y - player_.y;
             if (std::sqrt(bdx * bdx + bdy * bdy) < def.range) {
-                if (ApplyDamage(bot, static_cast<int>(def.damage))) OnCombatantKilled(bot, audio);
+                if (ApplyDamage(bot, static_cast<int>(def.damage))) OnCombatantKilled(bot, audio, &player_);
             }
         }
         player_.shootCooldown = def.cooldown;
@@ -219,7 +219,12 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             if (bullet.ownerIdx == -1) hitMarkerTimer_ = 0.18f;
 
             if (ApplyDamage(bot, bullet.damage)) {
-                OnCombatantKilled(bot, audio);
+                Player* bulletKiller = (bullet.ownerIdx == -1)
+                    ? &player_
+                    : ((bullet.ownerIdx >= 0 &&
+                        bullet.ownerIdx < static_cast<int>(bots_.size()))
+                       ? &bots_[static_cast<size_t>(bullet.ownerIdx)] : nullptr);
+                OnCombatantKilled(bot, audio, bulletKiller);
 
                 // 玩家击杀：计分 + 经济奖励 + 播报
                 if (bullet.ownerIdx == -1) {
@@ -515,7 +520,7 @@ bool CS2DGame::SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) con
 // 死亡处理
 // ============================================================================
 
-void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio) {
+void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio, Player* killer) {
     if (!victim.alive) return;
 
     victim.alive = false;
@@ -524,6 +529,12 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio) {
     victim.vx = victim.vy = 0.0f;
     victim.reloading = false;
     ++victim.deaths;
+
+    // 击杀归属（自己炸自己 / 环境伤害不计入）
+    if (killer && killer != &victim) {
+        ++killer->kills;
+        if (killer == &player_) ++playerKills_;
+    }
 
     // 阵亡掉落：主武器 → 副武器（仅非标配） → 随机一个投掷物
     DropEquipmentOnDeath(victim);
@@ -679,10 +690,14 @@ void CS2DGame::DropEquipmentOnDeath(const Player& victim) {
 
     DroppedItem it;
     it.id = dropId;
-    it.x = victim.x;
-    it.y = victim.y;
-    it.life = 30.0f;
     it.isGrenade = isGrenade;
+    it.life = 30.0f;
+    // 随机平铺朝向 + 少量抖动，避免多件物品完全重叠
+    std::uniform_real_distribution<float> ang(0.0f, 360.0f);
+    std::uniform_real_distribution<float> jitter(-5.0f, 5.0f);
+    it.x   = victim.x + jitter(rng_);
+    it.y   = victim.y + jitter(rng_);
+    it.rot = ang(rng_);
     drops_.push_back(it);
 
     std::cout << "[Drop] " << TeamName(victim.team) << " 掉落 "
@@ -802,9 +817,12 @@ void CS2DGame::DropCurrentWeapon() {
 
     DroppedItem it;
     it.id = dropId;
-    it.x = player_.x;
-    it.y = player_.y;
     it.isGrenade = isGrenade;
+    std::uniform_real_distribution<float> ang(0.0f, 360.0f);
+    std::uniform_real_distribution<float> jitter(-5.0f, 5.0f);
+    it.x   = player_.x + jitter(rng_);
+    it.y   = player_.y + jitter(rng_);
+    it.rot = ang(rng_);
     drops_.push_back(it);
 
     std::cout << "[Drop] 玩家丢弃 " << WeaponDB::Get(dropId).name << std::endl;
