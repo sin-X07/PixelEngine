@@ -664,7 +664,7 @@ void CS2DRenderer::DrawDroppedWeapon(int weaponId, float worldX, float worldY,
     if (tw <= 0 || th <= 0) return;
 
     // 统一放进约 9 个世界单位的方框，保持宽高比
-    const float box = 9.0f * zoom_;
+    const float box = 5.5f * zoom_;
     float dw = box, dh = box;
     if (tw >= th) dh = box * static_cast<float>(th) / static_cast<float>(tw);
     else          dw = box * static_cast<float>(tw) / static_cast<float>(th);

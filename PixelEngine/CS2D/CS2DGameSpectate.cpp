@@ -96,3 +96,22 @@ bool CS2DGame::SpectatorCanSeeEnemy(const Player& e) const {
     }
     return false;
 }
+
+// 音频听者：观战跟随 → 被观战者；自由视角 → 镜头中心；否则玩家自己
+float CS2DGame::ListenerX() const {
+    if (specMode_ == SpectateMode::Follow &&
+        specTarget_ >= 0 && specTarget_ < static_cast<int>(bots_.size())) {
+        return bots_[static_cast<size_t>(specTarget_)].x;
+    }
+    if (specMode_ == SpectateMode::Free) return specFreeX_;
+    return player_.x;
+}
+
+float CS2DGame::ListenerY() const {
+    if (specMode_ == SpectateMode::Follow &&
+        specTarget_ >= 0 && specTarget_ < static_cast<int>(bots_.size())) {
+        return bots_[static_cast<size_t>(specTarget_)].y;
+    }
+    if (specMode_ == SpectateMode::Free) return specFreeY_;
+    return player_.y;
+}

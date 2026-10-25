@@ -264,6 +264,7 @@ void CS2DGame::SpawnPlayer() {
     player_.vx = player_.vy = 0.0f;
     player_.shootCooldown = 0.0f;
     player_.team       = desiredPlayerTeam_;
+    if (mode_ == MatchMode::DeathMatch) player_.money = 16000;
     player_.animState  = AnimState::Idle;
     player_.animTimer  = 0.0f;
     player_.deathTimer = 0.0f;
@@ -488,11 +489,12 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     UpdateReload(player_, dt);
 
     if (canMove) {
-        UpdateBOTs(dt, audio);   // 结算展示期也允许移动站位，但内部已禁止开火
+        UpdateBOTs(dt, audio);
     } else {
-        // 冻结/结算期：BOT 原地待命
+        // 暂停 / 结算冻结：BOT 原地待命
         for (auto& bot : bots_) { bot.vx = bot.vy = 0.0f; }
     }
+
 
     // BOT 脚步声：与玩家同一套节奏，按 3D 位置播放（静步的 BOT 不出声）
     for (size_t i = 0; i < bots_.size(); ++i) {
@@ -504,7 +506,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
         if (spd > 5.0f && bai.footstepTimer <= 0.0f) {
             bai.footstepTimer = 0.34f + static_cast<float>(i % 5) * 0.02f;
             if (audio) {
-                audio->PlaySoundAt(SoundEffect::FOOTSTEP, b.x, b.y, player_.x, player_.y);
+                audio->PlaySoundAt(SoundEffect::FOOTSTEP, b.x, b.y, ListenerX(), ListenerY());
             }
         }
     }
@@ -553,12 +555,21 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
         UpdateReload(bot, dt);
     }
 
+    // 死斗：经济恒定 16000（买完立即补满）
+    if (mode_ == MatchMode::DeathMatch) {
+        player_.money = 16000;
+        for (auto& b2 : bots_) b2.money = 16000;
+    }
+
     prevMouseDown_ = mouseLeftDown;
 
     // 掉落物：保留到回合结束（不再按时间消失），已拾取的移除
     drops_.erase(std::remove_if(drops_.begin(), drops_.end(),
                                 [](const DroppedItem& d) { return d.id == WeaponId::None; }),
                  drops_.end());
+    for (auto& d : drops_) {
+        if (d.pickupDelay > 0.0f) d.pickupDelay -= dt;
+    }
     TryPickupDrops(false);
 
     // 爆炸特效寿命

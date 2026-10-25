@@ -245,10 +245,10 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                 }
 
                 if (audio) audio->PlaySoundAt(SoundEffect::KILL, bot.x, bot.y,
-                                              player_.x, player_.y);
+                                              ListenerX(), ListenerY());
             } else if (audio) {
                 audio->PlaySoundAt(SoundEffect::HIT, bot.x, bot.y,
-                                   player_.x, player_.y);
+                                   ListenerX(), ListenerY());
             }
 
             // 受击反应：血量低且当前未在撤退 → 记录威胁来源并撤退一次
@@ -340,7 +340,7 @@ void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle, AudioManager* audio
 
         // 玩家自己的投掷用 2D 播放，保证一定能听到（不受距离衰减影响）
         if (&thrower == &player_) audio->PlaySound(se);
-        else audio->PlaySoundAt(se, thrower.x, thrower.y, player_.x, player_.y);
+        else audio->PlaySoundAt(se, thrower.x, thrower.y, ListenerX(), ListenerY());
     }
 }
 
@@ -619,7 +619,7 @@ void CS2DGame::StartReload(Player& p, AudioManager* audio) {
     p.reloading   = true;
     p.reloadTimer = def.reloadTime;         // 每把枪不同，取自素材时长
     if (audio) {
-        audio->PlaySoundAt(ReloadSoundFor(def.id), p.x, p.y, player_.x, player_.y);
+        audio->PlaySoundAt(ReloadSoundFor(def.id), p.x, p.y, ListenerX(), ListenerY());
     }
 }
 
@@ -701,6 +701,7 @@ void CS2DGame::DropEquipmentOnDeath(const Player& victim) {
     it.x   = victim.x + jitter(rng_);
     it.y   = victim.y + jitter(rng_);
     it.rot = ang(rng_);
+    it.pickupDelay = 0.8f;   // 丢下后 0.8 秒内不能捡回
     drops_.push_back(it);
 
     std::cout << "[Drop] " << TeamName(victim.team) << " 掉落 "
@@ -717,6 +718,7 @@ void CS2DGame::TryPickupDrops(bool manual) {
     float bestD2 = (manual ? 30.0f * 30.0f : 16.0f * 16.0f);
     for (size_t i = 0; i < drops_.size(); ++i) {
         if (drops_[i].id == WeaponId::None) continue;
+        if (drops_[i].pickupDelay > 0.0f) continue;   // 冷却中
         const float dx = drops_[i].x - player_.x;
         const float dy = drops_[i].y - player_.y;
         const float d2 = dx * dx + dy * dy;
@@ -826,6 +828,7 @@ void CS2DGame::DropCurrentWeapon() {
     it.x   = player_.x + jitter(rng_);
     it.y   = player_.y + jitter(rng_);
     it.rot = ang(rng_);
+    it.pickupDelay = 0.8f;   // 丢下后 0.8 秒内不能捡回
     drops_.push_back(it);
 
     std::cout << "[Drop] 玩家丢弃 " << WeaponDB::Get(dropId).name << std::endl;

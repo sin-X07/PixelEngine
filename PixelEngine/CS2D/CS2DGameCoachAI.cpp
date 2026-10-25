@@ -258,7 +258,10 @@ bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* worl
             plan.intent = PlanIntent::Default;
         }
     } else if (plan.intent == PlanIntent::RetakeA || plan.intent == PlanIntent::RetakeB) {
+        // T 侧不能"重夺"（那是 CT 的战术），也别用 stack 这种防守站位
         plan.intent = PlanIntent::Default;
+    } else if (plan.intent == PlanIntent::StackA || plan.intent == PlanIntent::StackB) {
+        plan.intent = PlanIntent::Default;   // stack 仅 CT 有效
     }
 
     out = plan;

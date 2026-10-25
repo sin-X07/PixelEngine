@@ -110,10 +110,12 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     }
 
     MoveWithCollision(bot, dt);
-    // 行进方向 + 左右小幅扫视（扇形视野下避免只盯正前方，与真实玩家一致）
-    const float distToWp = std::sqrt(dx * dx + dy * dy);
-    if (distToWp > 10.0f) {
-        const float desired = std::atan2(dy, dx)
+
+    // 朝向：只在真正移动时朝「速度方向」，并限制转向速率。
+    // 之前朝航点算，航点落在身后时会让 BOT 一直转圈找方向。
+    const float speed2 = bot.vx * bot.vx + bot.vy * bot.vy;
+    if (speed2 > 25.0f) {
+        const float desired = std::atan2(bot.vy, bot.vx)
                             + std::sin(ai.scanPhase * 2.2f) * Tuning::BotScanAmplitudeRad;
         float delta = desired - bot.aimAngle;
         while (delta >  3.14159265f) delta -= 6.28318531f;
@@ -121,7 +123,6 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
         const float maxTurn = Tuning::BotMaxTurnRate * dt;
         bot.aimAngle += std::clamp(delta, -maxTurn, maxTurn);
     }
-    ai.scanBaseValid = false;
     // 被墙卡住（速度被碰撞清零）→ 立刻失效当前路径，下一帧重算
     if (bot.vx == 0.0f && bot.vy == 0.0f) {
         ai.path.clear();
@@ -171,8 +172,9 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
         // ---- 原地扫描：没有目标时缓慢转身 ----
         // 视野是 120° 扇形，若不扫描，背对着敌人的 BOT 会永远发现不了对方
-        if (!ai.hadTarget) {
+        if (!ai.hadTarget && bot.vx == 0.0f && bot.vy == 0.0f) {
             // 原地扫视：绕「进入空闲时的朝向」左右 ±60° 摆动。
+            // 中心只在进入空闲时锁定一次，否则 base 会跟着摆角漂移 → 变成整圈旋转。
             // 原先是 aimAngle += 角速度（360° 连续自转），看起来像原地转圈。
             if (!ai.scanBaseValid) {
                 ai.scanBase = bot.aimAngle;
@@ -546,7 +548,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
                     if (audio) {
                         audio->PlaySoundAt(FireSoundFor(def.id), bot.x, bot.y,
-                                           player_.x, player_.y);
+                                           ListenerX(), ListenerY());
                     }
                 }
             }

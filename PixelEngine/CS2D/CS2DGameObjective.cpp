@@ -179,7 +179,7 @@ if (mode_ == MatchMode::BombDefusal) {
                 if (bombBeepTimer_ <= 0.0f) {
                     bombBeepTimer_ = interval;
                     audio->PlaySoundAt(SoundEffect::BOMB_BEEP, bombX_, bombY_,
-                                       player_.x, player_.y);
+                                       ListenerX(), ListenerY());
                 }
             }
 

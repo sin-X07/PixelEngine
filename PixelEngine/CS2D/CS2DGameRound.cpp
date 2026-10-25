@@ -93,6 +93,9 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
     const int keepArmor = player_.armor;
     const bool keepHelmet = player_.helmet;
 
+    // 新回合必须退出观战，否则会以观战状态继续下一局
+    SpectatorEnd();
+
     player_.health    = player_.maxHealth;
     player_.alive     = true;
     player_.reloading = false;

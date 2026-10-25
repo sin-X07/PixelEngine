@@ -372,7 +372,7 @@ public:
 
     // ---- 观察者（死亡后）----
     enum class SpectateMode { None = 0, Follow, Free };
-    bool          IsSpectating() const { return specMode_ != SpectateMode::None; }
+    bool          IsSpectating() const { return specMode_ != SpectateMode::None && !player_.alive; }
     SpectateMode  GetSpectateMode() const { return specMode_; }
     int           GetSpectateTarget() const { return specTarget_; }
     void SpectatorToggle();
@@ -380,6 +380,9 @@ public:
     void SpectatorMoveFree(float dx, float dy, float dt);
     void SpectatorBegin();
     void SpectatorEnd();
+    // 音效听者位置：观战时以镜头/被观战者为准
+    float ListenerX() const;
+    float ListenerY() const;
     Team GetMatchWinner() const { return teams_.MatchWinner(); }
 
     // 各阵营存活人数
@@ -476,6 +479,7 @@ private:
         WeaponId id = WeaponId::None;
         float x = 0.0f, y = 0.0f;
         float life = 30.0f;      // 30 秒后消失
+        float pickupDelay = 0.0f;  // 拾取冷却（丢下后短时间内不能马上捡回）
         float rot = 0.0f;        // 平铺在地面的朝向（度）
         bool  isGrenade = false;
     };
