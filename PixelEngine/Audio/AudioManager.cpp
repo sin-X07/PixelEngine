@@ -41,13 +41,13 @@ bool AudioManager::Initialize() {
     grenadeExplodeSound = loadChunk("assets/audio/grenade_explode.wav", "手雷爆炸");
     grenadeThrowSound   = loadChunk("assets/audio/dagger_out.mp3", "投掷出手");
     // 出手音效：优先用专用素材，缺失时回落到通用出手声
-    throwHeSound    = loadChunk("assets/audio/throw_he.wav", "高爆雷出手");
+    throwHeSound    = loadChunk("assets/audio/throw_grenade.mp3", "高爆雷出手");
     if (!throwHeSound)    throwHeSound    = grenadeThrowSound;
     throwFlashSound = loadChunk("assets/audio/throw_flash.mp3", "闪光弹出手");
     if (!throwFlashSound) throwFlashSound = grenadeThrowSound;
     throwSmokeSound = loadChunk("assets/audio/throw_smoke.mp3", "烟雾弹出手");
     if (!throwSmokeSound) throwSmokeSound = grenadeThrowSound;
-    flashSound      = loadChunk("assets/audio/flash.mp3", "闪光弹");
+    flashSound          = loadChunk("assets/audio/flash.mp3", "闪光弹");
     smokeSound          = loadChunk("assets/audio/smoke.mp3", "烟雾弹");
     bombPlantSound      = loadChunk("assets/audio/bomb_plant.wav", "下包");
     bombDefuseSound     = loadChunk("assets/audio/bomb_defuse.wav", "拆包");

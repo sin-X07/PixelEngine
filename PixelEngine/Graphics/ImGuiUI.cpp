@@ -172,15 +172,18 @@ bool ImGuiUI::Initialize(SDL_Window* win, SDL_Renderer* ren) {
         io.Fonts->AddFontDefault();
     }
 
-    initialized = true;
-    return true;
-
+    // 记录基准样式，并按「启动时算好的 UI 缩放」应用一次
+    // （这段必须在 return 之前，否则永远不会执行 → 字号/内边距不缩放）
     baseStyle_ = ImGui::GetStyle();
     styleReady_ = true;
     uiScaleApplied_ = 0.0f;
     const float pendingScale = g_uiScale;
     g_uiScale = 1.0f;
     if (pendingScale > 0.0f) SetUiScale(pendingScale);
+
+
+    initialized = true;
+    return true;
 }
 
 void ImGuiUI::Shutdown() {
@@ -261,7 +264,9 @@ void ImGuiUI::SetUiScale(float scale) {
 
     // ImGui 上下文还没创建时只记下缩放值，等 Initialize 之后由这里补上
     if (!styleReady_) { g_uiScale = scale; uiScaleApplied_ = 0.0f; return; }
-    if (std::abs(scale - g_uiScale) < 0.001f && uiScaleApplied_ > 0.0f) return;
+    // 注意：调用方会先更新 g_uiScale，所以这里必须跟「已应用的缩放」比较，
+    // 否则真实的窗口尺寸第三次调用会被误判为「没变化」而跳过。
+    if (std::abs(scale - uiScaleApplied_) < 0.001f) return;
 
     g_uiScale = scale;
     uiScaleApplied_ = scale;
@@ -272,4 +277,8 @@ void ImGuiUI::SetUiScale(float scale) {
 
     ImGuiIO& io = ImGui::GetIO();
     io.FontGlobalScale = scale;
+
+    std::cout << "[UI] 缩放=" << scale
+              << " 内边距=" << ImGui::GetStyle().FramePadding.y
+              << " 行距=" << ImGui::GetStyle().ItemSpacing.y << std::endl;
 }
