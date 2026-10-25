@@ -238,6 +238,8 @@ public:
         float wanderX         = 0.0f;  // 巡逻目标（缓存，避免每帧重掷导致抖动）
         float wanderY         = 0.0f;
         float wanderTimer     = 0.0f;  // >0 时沿用缓存目标
+        float detourX = 0.0f, detourY = 0.0f;   // 卡住时的绕行方向（单位向量）
+        float detourTimer = 0.0f;               // >0 时沿 detour 方向走
         bool  scanBaseValid   = false;
         float footstepTimer   = 0.0f;  // 脚步音节奏
 

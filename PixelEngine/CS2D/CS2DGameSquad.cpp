@@ -106,31 +106,23 @@ bool CS2DGame::NudgeOutOfStuck(Player& bot, BotRuntime& ai) {
     const float half = bot.size * 0.5f;
     const float baseAng = std::atan2(ai.goalY - bot.y, ai.goalX - bot.x);
 
-    // 候选方向：先侧移（±90°），再斜后（±135°），最后直退（180°）
-    const float offsets[5] = { 1.5707963f, -1.5707963f, 2.3561945f, -2.3561945f,
-                               3.1415927f };
-    const float steps[3] = { 6.0f, 10.0f, 14.0f };
+    // 只在「侧向」找可走方向；绝不把 BOT 瞬移到别的位置
+    const float offsets[4] = { 1.5707963f, -1.5707963f, 0.7853982f, -0.7853982f };
+    const float probe = 14.0f;
 
     for (float off : offsets) {
         const float ang = baseAng + off;
-        for (float step : steps) {
-            const float nx = bot.x + std::cos(ang) * step;
-            const float ny = bot.y + std::sin(ang) * step;
-            if (world_->CheckRectCollision(nx - half, ny - half, bot.size, bot.size)) {
-                continue;
-            }
-            bot.x = nx;
-            bot.y = ny;
-            bot.vx = bot.vy = 0.0f;
-            // 强制重算路径
-            ai.path.clear();
-            ai.pathIdx = 0;
-            ai.repathTimer = 0.0f;
-            ai.lastX = nx;
-            ai.lastY = ny;
-            ai.stuckTimer = 0.0f;
-            return true;
+        const float px = bot.x + std::cos(ang) * probe;
+        const float py = bot.y + std::sin(ang) * probe;
+        if (world_->CheckRectCollision(px - half, py - half, bot.size, bot.size)) {
+            continue;
         }
+        ai.detourX = std::cos(ang);
+        ai.detourY = std::sin(ang);
+        ai.detourTimer = 0.45f;      // 沿这个方向走一小段，再回到寻路
+        bot.vx = ai.detourX * Tuning::BotMoveSpeed;
+        bot.vy = ai.detourY * Tuning::BotMoveSpeed;
+        return true;
     }
     return false;
 }

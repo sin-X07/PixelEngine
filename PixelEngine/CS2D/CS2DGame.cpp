@@ -291,7 +291,6 @@ void CS2DGame::SpawnPlayer() {
     player_.reloadTimer = 0.0f;
     player_.stealth    = false;
 
-
     for (int attempt = 0; attempt < 20; ++attempt) {
         PickSpawnForTeam(player_.team, player_.x, player_.y);
         if (!IsEnemyNearby(player_.x, player_.y, 120.0f, Team::CT)) break;
@@ -453,7 +452,6 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 
     clockSec_ += dt;
 
-
     UpdateRoundFlow(dt, audio);
 
     // 团队情报：老化 + 探点上报（冻结期也推进，保证情报会过期）
@@ -502,7 +500,6 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
         // 暂停 / 结算冻结：BOT 原地待命
         for (auto& bot : bots_) { bot.vx = bot.vy = 0.0f; }
     }
-
 
     // BOT 脚步声：与玩家同一套节奏，按 3D 位置播放（静步的 BOT 不出声）
     for (size_t i = 0; i < bots_.size(); ++i) {

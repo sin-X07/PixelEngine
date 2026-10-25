@@ -105,8 +105,42 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
                          : (tempo == Tempo::Slow) ? 0.92f : 1.0f;
     const float speed = Tuning::BotMoveSpeed * weaponMul * tempoMul
                       * std::clamp(speedMul, Tuning::SpeedMulMin, 1.0f);
-    bot.vx = dx / d * speed;
-    bot.vy = dy / d * speed;
+    // 绕行状态：卡住后沿侧向方向走一小段时间（不再瞬移）
+    if (ai.detourTimer > 0.0f) {
+        ai.detourTimer -= dt;
+        bot.vx = ai.detourX * speed;
+        bot.vy = ai.detourY * speed;
+        MoveWithCollision(bot, dt);
+        return true;
+    }
+
+    // ---- 角点转向：直行被墙挡住时，依次尝试左右偏转 ----
+    // 原来只会朝路点直线走，撞墙就把速度清零（然后 0.7s 后瞬移），
+    // 在拐角处表现为「卡住 → 向后瞬移 → 再卡住」的死循环。
+    float dirX = dx / d, dirY = dy / d;
+    {
+        const float half = bot.size * 0.5f;
+        const float probe = std::max(8.0f, speed * dt * 2.0f);
+        static const float kOffsets[7] = {
+            0.0f,
+             0.5235988f, -0.5235988f,   // ±30°
+             1.0471976f, -1.0471976f,   // ±60°
+             1.5707963f, -1.5707963f    // ±90°
+        };
+        for (float off : kOffsets) {
+            const float ang = std::atan2(dirY, dirX) + off;
+            const float px = bot.x + std::cos(ang) * probe;
+            const float py = bot.y + std::sin(ang) * probe;
+            if (!world_->CheckRectCollision(px - half, py - half, bot.size, bot.size)) {
+                dirX = std::cos(ang);
+                dirY = std::sin(ang);
+                break;
+            }
+        }
+    }
+
+    bot.vx = dirX * speed;
+    bot.vy = dirY * speed;
 
     // 局部避障：防止多人挤在同一路线上互相卡住
     {
@@ -141,11 +175,7 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
         bot.aimAngle += std::clamp(delta, -maxTurn, maxTurn);
     }
     // 被墙卡住（速度被碰撞清零）→ 立刻失效当前路径，下一帧重算
-    if (bot.vx == 0.0f && bot.vy == 0.0f) {
-        ai.path.clear();
-        ai.pathIdx = 0;
-        ai.repathTimer = 0.0f;
-    }
+    // 撞墙不再清空路径：由角点转向与绕行处理，避免每帧重算路径
 
     // 卡墙脱困：只在「本该沿路径移动」的帧判定，避免站桩/拆包/守点被误挪
     {
@@ -157,7 +187,15 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
             ai.stuckTimer = 0.0f;
         } else {
             ai.stuckTimer += dt;
-            if (ai.stuckTimer > 0.7f) NudgeOutOfStuck(bot, ai);
+            if (ai.stuckTimer > 0.55f) {
+                // 只设置一个侧向绕行方向，绝不瞬移
+                ai.stuckTimer = 0.0f;
+                if (NudgeOutOfStuck(bot, ai)) {
+                    ai.path.clear();
+                    ai.pathIdx = 0;
+                    ai.repathTimer = 0.0f;
+                }
+            }
         }
     }
     return true;
