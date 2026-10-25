@@ -661,6 +661,7 @@ void CS2DGame::UpdateReload(Player& p, float dt) {
         p.reloading = false;
         p.reloadTimer = 0.0f;
         p.ammo = p.maxAmmo;
+        p.SaveAmmoToSlot();
     }
 }
 
@@ -754,26 +755,19 @@ void CS2DGame::TryPickupDrops(bool manual) {
             taken = true;
         }
     } else if (def.slot == WeaponSlotKind::Primary) {
-        // 自动拾取只在空槽时发生；主动按 E 可以替换
+        // 自动拾取只在空槽时发生，按住 E 可以替换
         if (manual || player_.weapons[0] == WeaponId::None) {
-            player_.weapons[0] = d.id;
-            slotAmmo_[0]    = def.magazine;
-            slotMaxAmmo_[0] = def.magazine;
+            player_.SetSlotWeapon(0, d.id);
             if (player_.weaponSlot == 0) {
-                player_.ammo = slotAmmo_[0];
-                player_.maxAmmo = slotMaxAmmo_[0];
+                player_.LoadAmmoFromSlot();
             }
-            // 注意：任何情况下都不切换当前手持武器
             taken = true;
         }
     } else if (def.slot == WeaponSlotKind::Secondary) {
         if (manual || player_.weapons[1] == WeaponId::None) {
-            player_.weapons[1] = d.id;
-            slotAmmo_[1]    = def.magazine;
-            slotMaxAmmo_[1] = def.magazine;
+            player_.SetSlotWeapon(1, d.id);
             if (player_.weaponSlot == 1) {
-                player_.ammo = slotAmmo_[1];
-                player_.maxAmmo = slotMaxAmmo_[1];
+                player_.LoadAmmoFromSlot();
             }
             taken = true;
         }
@@ -792,7 +786,7 @@ void CS2DGame::DropCurrentWeapon() {
             // 已经下包 / C4 已丢失：只清空槽位，避免卡在空槽
             player_.weapons[4] = WeaponId::None;
             playerHoldingC4_ = false;
-            SwitchWeaponSlot(1);
+            EquipFallbackWeapon();
         }
         return;
     }
@@ -814,41 +808,26 @@ void CS2DGame::DropCurrentWeapon() {
         if (dropId == WeaponId::None) return;
         isGrenade = true;
         player_.ConsumeActiveGrenade();
-        // 背包空了就切回枪/刀，避免停在一个空槽位上
+        // 没有投掷物了：回到有枪的槽位
         if (player_.grenadeCount <= 0) {
-            if (player_.weapons[0] != WeaponId::None) {
-                player_.weaponSlot = 0;
-                player_.ammo = slotAmmo_[0];
-                player_.maxAmmo = slotMaxAmmo_[0];
-            } else if (player_.weapons[1] != WeaponId::None) {
-                player_.weaponSlot = 1;
-                player_.ammo = slotAmmo_[1];
-                player_.maxAmmo = slotMaxAmmo_[1];
-            } else {
-                player_.weaponSlot = 2;
-                player_.ammo = 1; player_.maxAmmo = 1;
-            }
+            if (player_.weapons[0] != WeaponId::None)      player_.weaponSlot = 0;
+            else if (player_.weapons[1] != WeaponId::None) player_.weaponSlot = 1;
+            else                                           player_.weaponSlot = 2;
+            player_.LoadAmmoFromSlot();
         }
     } else {
         dropId = player_.weapons[slot];
         if (dropId == WeaponId::None) return;
-        player_.weapons[slot] = WeaponId::None;
-        if (slot == 0) { slotAmmo_[0] = 0; slotMaxAmmo_[0] = 0; }
-        if (slot == 1) { slotAmmo_[1] = 0; slotMaxAmmo_[1] = 0; }
+        player_.ClearSlotWeapon(slot);
 
-        // 切到还有子弹的槽位：副武器优先，其次近战
+        // 主武器丢了 → 自动换成副武器，再不行换近战
         if (slot == 0) {
-            if (player_.weapons[1] != WeaponId::None) {
-                player_.weaponSlot = 1;
-                player_.ammo = slotAmmo_[1];
-                player_.maxAmmo = slotMaxAmmo_[1];
-            } else {
-                player_.weaponSlot = 2;
-                player_.ammo = 1; player_.maxAmmo = 1;
-            }
+            if (player_.weapons[1] != WeaponId::None) { player_.weaponSlot = 1; }
+            else                                       { player_.weaponSlot = 2; }
+            player_.LoadAmmoFromSlot();
         } else if (slot == 1) {
             player_.weaponSlot = 2;
-            player_.ammo = 1; player_.maxAmmo = 1;
+            player_.LoadAmmoFromSlot();
         }
     }
 

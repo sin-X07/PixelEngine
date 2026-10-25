@@ -98,11 +98,24 @@ void CS2DGame::DropC4(float x, float y) {
     bombCarrier_ = -2;
     playerHoldingC4_ = false;
     player_.weapons[4] = WeaponId::None;
-    if (player_.weaponSlot == 4) {
-        player_.weaponSlot = 1;
-        player_.ammo = 1;
-        player_.maxAmmo = 1;
-    }
+    if (player_.weaponSlot == 4) EquipFallbackWeapon();
     std::cout << "[C4] C4 掉落在 (" << static_cast<int>(x) << ","
               << static_cast<int>(y) << ")" << std::endl;
+}
+
+// 当前槽位不可用（C4 丢了 / 枪丢了）时，切到有武器的槽位并读它自己的弹药
+void CS2DGame::EquipFallbackWeapon() {
+    if (player_.weapons[player_.weaponSlot] != WeaponId::None &&
+        player_.weaponSlot != 4) {
+        player_.LoadAmmoFromSlot();
+        return;
+    }
+    int target = 2;   // 近战永远有
+    if (player_.weapons[0] != WeaponId::None)      target = 0;
+    else if (player_.weapons[1] != WeaponId::None) target = 1;
+    player_.weaponSlot = target;
+    player_.reloading = false;
+    player_.reloadTimer = 0.0f;
+    playerHoldingC4_ = false;
+    player_.LoadAmmoFromSlot();
 }

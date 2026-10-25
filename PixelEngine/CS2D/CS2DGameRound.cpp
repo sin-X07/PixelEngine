@@ -124,18 +124,19 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
         player_.weaponSlot = 1;
     }
 
-    // 弹匣按当前槽位补满
-    {
-        const WeaponId cur = player_.weapons[player_.weaponSlot];
-        const WeaponDef& w = (cur == WeaponId::None) ? pistol : WeaponDB::Get(cur);
-        player_.ammo    = w.magazine;
-        player_.maxAmmo = w.magazine;
-        slotAmmo_[0]    = (player_.weapons[0] == WeaponId::None)
-                            ? 0 : WeaponDB::Get(player_.weapons[0]).magazine;
-        slotMaxAmmo_[0] = slotAmmo_[0];
-        slotAmmo_[1]    = WeaponDB::Get(player_.weapons[1]).magazine;
-        slotMaxAmmo_[1] = slotAmmo_[1];
+    // 每个槽位的武器各自填满弹夹，再把当前槽读出来
+    for (int sl = 0; sl < 5; ++sl) {
+        const WeaponId wid = player_.weapons[sl];
+        if (wid == WeaponId::None) {
+            player_.ClearSlotWeapon(sl);
+        } else {
+            player_.SetSlotWeapon(sl, wid);
+        }
     }
+    if (player_.weapons[player_.weaponSlot] == WeaponId::None) player_.weaponSlot = 1;
+    player_.LoadAmmoFromSlot();
+    player_.reloading = false;
+    player_.reloadTimer = 0.0f;
 
     // BOT：同样的规则
     EnsureBotAi();

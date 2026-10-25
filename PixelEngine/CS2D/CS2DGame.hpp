@@ -137,9 +137,56 @@ public:
             SyncActiveGrenade();
         }
 
-        // 弹药（活动槽位）
+        // 弹药：活动槽位（缓存值，切换武器时与 ammoSlot 互相同步）
         int       ammo      = 30;
         int       maxAmmo   = 30;
+
+        // ---- 每个槽位武器自己的弹药（根治「切枪后弹夹变 1 发」）----
+        int       ammoSlot[5]    = { 0, 12, 0, 0, 0 };
+        int       maxAmmoSlot[5] = { 0, 12, 0, 0, 0 };
+
+        // 装载武器到槽位，并按该武器弹夹容量填满
+        void SetSlotWeapon(int slot, WeaponId id) {
+            if (slot < 0 || slot > 4) return;
+            weapons[slot] = id;
+            if (id == WeaponId::None) {
+                ammoSlot[slot] = 0;
+                maxAmmoSlot[slot] = 0;
+                return;
+            }
+            const WeaponDef& d = WeaponDB::Get(id);
+            const int mag = (d.magazine > 0) ? d.magazine : 1;
+            ammoSlot[slot] = mag;
+            maxAmmoSlot[slot] = mag;
+        }
+
+        // 清空槽位（丢弃 / 被拿走）
+        void ClearSlotWeapon(int slot) {
+            if (slot < 0 || slot > 4) return;
+            weapons[slot] = WeaponId::None;
+            ammoSlot[slot] = 0;
+            maxAmmoSlot[slot] = 0;
+        }
+
+        // 把活动槽位的实时弹药写回该槽
+        void SaveAmmoToSlot() {
+            if (weaponSlot < 0 || weaponSlot > 4) return;
+            if (weapons[weaponSlot] == WeaponId::None) return;
+            ammoSlot[weaponSlot] = ammo;
+            maxAmmoSlot[weaponSlot] = maxAmmo;
+        }
+
+        // 从活动槽位读出弹药到实时值
+        void LoadAmmoFromSlot() {
+            if (weaponSlot < 0 || weaponSlot > 4) return;
+            if (weapons[weaponSlot] == WeaponId::None) {
+                ammo = 1;
+                maxAmmo = 1;
+                return;
+            }
+            ammo = ammoSlot[weaponSlot];
+            maxAmmo = maxAmmoSlot[weaponSlot];
+        }
         bool      reloading = false;
         float     reloadTimer = 0.0f;
 
@@ -384,6 +431,7 @@ public:
     void ToggleHoldC4();
     void UpdateBombItem(float dt);
     void DropC4(float x, float y);
+    void EquipFallbackWeapon();   // 当前槽不可用时切到有武器的槽并读弹药
     float GetPlantProgress() const { return plantProgress_; }
 
     // ---- 观察者（死亡后）----
@@ -641,8 +689,6 @@ private:
     float mouseSensitivity_ = 1.0f;
     bool  prevMouseDown_    = false;
 
-    int   slotAmmo_[2]    = {30, 7};
-    int   slotMaxAmmo_[2] = {30, 7};
 
     // 内部方法
     void ResetToNewMatch();          // 清空比分与统计并重建所有战斗单位

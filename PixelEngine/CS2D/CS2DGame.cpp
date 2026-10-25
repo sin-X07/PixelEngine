@@ -137,25 +137,20 @@ bool CS2DGame::TryBuy(WeaponId id, AudioManager* audio) {
 
     switch (def.slot) {
         case WeaponSlotKind::Primary:
-            player_.weapons[0] = id;
-            slotAmmo_[0]    = def.magazine;
-            slotMaxAmmo_[0] = def.magazine;
-            // 买完自动装备
+            player_.SetSlotWeapon(0, id);
             player_.weaponSlot = 0;
-            player_.ammo = def.magazine;
-            player_.maxAmmo = def.magazine;
+            player_.LoadAmmoFromSlot();
             player_.reloading = false;
             player_.reloadTimer = 0.0f;
+            playerHoldingC4_ = false;
             break;
         case WeaponSlotKind::Secondary:
-            player_.weapons[1] = id;
-            slotAmmo_[1]    = def.magazine;
-            slotMaxAmmo_[1] = def.magazine;
+            player_.SetSlotWeapon(1, id);
             player_.weaponSlot = 1;
-            player_.ammo = def.magazine;
-            player_.maxAmmo = def.magazine;
+            player_.LoadAmmoFromSlot();
             player_.reloading = false;
             player_.reloadTimer = 0.0f;
+            playerHoldingC4_ = false;
             break;
         case WeaponSlotKind::Melee:
             player_.weapons[2] = id;
@@ -296,10 +291,6 @@ void CS2DGame::SpawnPlayer() {
     player_.reloadTimer = 0.0f;
     player_.stealth    = false;
 
-    slotAmmo_[0]    = 0;
-    slotMaxAmmo_[0] = 0;
-    slotAmmo_[1]    = w.magazine;
-    slotMaxAmmo_[1] = w.magazine;
 
     for (int attempt = 0; attempt < 20; ++attempt) {
         PickSpawnForTeam(player_.team, player_.x, player_.y);
@@ -378,68 +369,48 @@ void CS2DGame::RespawnBOT(Player& bot) {
 void CS2DGame::SwitchWeaponSlot(int slot) {
     if (slot < 0 || slot > 4) return;
 
-    // 槽位 4：C4（只有携带者能切过去，且下包后就不再可用）
+    // 同一槽位重复按：投掷物在多个道具间轮换
+    if (slot == player_.weaponSlot) {
+        if (slot == 3 && player_.grenadeCount > 1) {
+            player_.grenadeSlot = (player_.grenadeSlot + 1) % player_.grenadeCount;
+            player_.SyncActiveGrenade();
+        }
+        return;
+    }
+
+    // 目标槽校验
     if (slot == 4) {
         if (!PlayerHasC4()) return;
-        // 切走之前先把当前枪械的弹药存进镜像槽，否则切回来弹药会丢
-        const int prevSlot = player_.weaponSlot;
-        if (prevSlot >= 0 && prevSlot <= 1) {
-            slotAmmo_[prevSlot]    = player_.ammo;
-            slotMaxAmmo_[prevSlot] = player_.maxAmmo;
-        }
-
         player_.weapons[4] = WeaponId::C4;
-        player_.weaponSlot = 4;
+    } else if (slot == 3) {
+        if (player_.grenadeCount <= 0) return;
+    } else if (player_.weapons[slot] == WeaponId::None) {
+        return;
+    }
+
+    // 切走前把当前武器的弹药写回它自己的槽位
+    player_.SaveAmmoToSlot();
+
+    player_.weaponSlot = slot;
+    player_.reloading   = false;
+    player_.reloadTimer = 0.0f;
+    playerHoldingC4_ = (slot == 4);
+
+    if (slot == 4) {
         player_.ammo = 1;
         player_.maxAmmo = 1;
-        player_.reloading = false;
-        player_.reloadTimer = 0.0f;
-        playerHoldingC4_ = true;
         return;
     }
-    // 切到其它槽位 → 放下 C4 的「手持」状态
-    playerHoldingC4_ = false;
-
-    // 投掷物槽：按 4 在已装备的投掷物之间循环切换
     if (slot == 3) {
-        if (player_.grenadeCount <= 0) return;
-        // 切走前保存当前枪械弹药（原来在投掷物槽也漏了这一步）
-        const int prev = player_.weaponSlot;
-        if (prev >= 0 && prev <= 1) {
-            slotAmmo_[prev]    = player_.ammo;
-            slotMaxAmmo_[prev] = player_.maxAmmo;
-        }
-        if (player_.weaponSlot != 3) {
-            player_.weaponSlot = 3;                 // 先切到投掷物
-        } else {
-            player_.grenadeSlot = (player_.grenadeSlot + 1) % player_.grenadeCount;
-        }
+        player_.grenadeSlot = 0;
         player_.SyncActiveGrenade();
-        player_.ammo    = 1;
+        player_.ammo = 1;
         player_.maxAmmo = 1;
-        player_.reloading = false;
-        player_.reloadTimer = 0.0f;
         return;
     }
 
-    if (player_.weapons[slot] == WeaponId::None) return;   // 空槽位
-
-    const int oldSlot = player_.weaponSlot;
-    if (oldSlot >= 0 && oldSlot <= 1) {
-        slotAmmo_[oldSlot]    = player_.ammo;
-        slotMaxAmmo_[oldSlot] = player_.maxAmmo;
-    }
-    player_.weaponSlot = slot;
-
-    if (slot <= 1) {
-        player_.ammo    = slotAmmo_[slot];
-        player_.maxAmmo = slotMaxAmmo_[slot];
-    } else {
-        player_.ammo    = 1;
-        player_.maxAmmo = 1;
-    }
-    player_.reloading = false;
-    player_.reloadTimer = 0.0f;
+    // 从目标槽读取它自己的弹药
+    player_.LoadAmmoFromSlot();
 }
 
 std::string CS2DGame::GetWeaponName() const {

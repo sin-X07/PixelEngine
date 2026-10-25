@@ -283,7 +283,7 @@ void CS2DGame::PlantBomb(float x, float y, AudioManager* audio) {
     bombCarrier_ = -2;
     playerHoldingC4_ = false;
     player_.weapons[4] = WeaponId::None;
-    if (player_.weaponSlot == 4) SwitchWeaponSlot(1);
+    if (player_.weaponSlot == 4) EquipFallbackWeapon();
     bombPlanted_ = true;
     CoachOnEvent(Team::T,  CoachEventType::BombPlanted, world_ ? world_->FindAreaAt(bombX_, bombY_) : std::string());
     CoachOnEvent(Team::CT, CoachEventType::BombPlanted, world_ ? world_->FindAreaAt(bombX_, bombY_) : std::string());
