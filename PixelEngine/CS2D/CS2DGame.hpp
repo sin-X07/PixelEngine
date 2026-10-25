@@ -435,6 +435,7 @@ public:
     void UpdateBombItem(float dt);
     void DropC4(float x, float y);
     void EquipFallbackWeapon();   // 当前槽不可用时切到有武器的槽并读弹药
+    void AssignBombCarrier();     // 每回合分配 C4 携带者（含 bot 创建后补一次）
     float GetPlantProgress() const { return plantProgress_; }
 
     // ---- 观察者（死亡后）----

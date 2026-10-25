@@ -65,24 +65,8 @@ std::vector<CS2DGame::ScoreRow> CS2DGame::BuildScoreboard() const {
 void CS2DGame::SetupObjective() {
     hostages_.clear();
 
-    // C4 携带者：爆破模式且玩家在 T 侧 → 由玩家携带
-    plantProgress_ = 0.0f;
-    // C4 携带者：每回合重新分配（T 侧玩家约 60% 概率拿到，其余给某个 T BOT）
-    bombCarrier_ = -2;
-    if (mode_ == MatchMode::BombDefusal) {
-        if (player_.team == Team::T) {
-            std::vector<int> tBots;
-            for (size_t i = 0; i < bots_.size(); ++i) {
-                if (bots_[i].team == Team::T) tBots.push_back(static_cast<int>(i));
-            }
-            if (tBots.empty() || (rng_() % 100) < 60) {
-                bombCarrier_ = -1;                       // 玩家携带
-            } else {
-                bombCarrier_ = tBots[rng_() % tBots.size()];  // 某个 T BOT 携带
-            }
-        }
-    }
-    bombPlanted_   = false;
+        AssignBombCarrier();
+bombPlanted_   = false;
     bombTimer_     = 0.0f;
     defuseProgress_ = 0.0f;
 
@@ -156,38 +140,39 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
         }
     }
 
-if (mode_ == MatchMode::BombDefusal) {
+    if (mode_ == MatchMode::BombDefusal) {
         if (!bombPlanted_) {
             // 未下包：清掉所有 BOT 的拆包状态
             for (size_t bi = 0; bi < bots_.size(); ++bi) AiAt(bi).defusing = false;
 
             // T 站在包点内累积下包进度
+            // T 只有「C4 携带者」本人能在包点安装
             const auto& sites = world_->GetBombSites();
-            bool tInSite = false;
+            bool carrierInSite = false;
 
-            if (!sites.empty()) {
-                for (const auto& b : bots_) {
-                    if (!b.alive || b.team != Team::T) continue;
+            if (!bombDropped_ && !sites.empty() &&
+                bombCarrier_ >= 0 && bombCarrier_ < static_cast<int>(bots_.size())) {
+                const Player& carrier = bots_[static_cast<size_t>(bombCarrier_)];
+                if (carrier.alive && carrier.team == Team::T) {
                     for (const auto& s : sites) {
-                        if (b.x >= s.x && b.x <= s.x + s.width &&
-                            b.y >= s.y && b.y <= s.y + s.height) {
-                            tInSite = true;
-                            bombX_ = b.x;
-                            bombY_ = b.y;
+                        if (carrier.x >= s.x && carrier.x <= s.x + s.width &&
+                            carrier.y >= s.y && carrier.y <= s.y + s.height) {
+                            carrierInSite = true;
+                            bombX_ = carrier.x;
+                            bombY_ = carrier.y;
                             break;
                         }
                     }
-                    if (tInSite) break;
                 }
             }
 
-            if (tInSite) {
-                defuseProgress_ += dt;      // 复用为"下包进度"
+            if (carrierInSite) {
+                defuseProgress_ += dt;      // 复用为「下包进度」
                 if (defuseProgress_ >= PLANT_TIME) {
                     PlantBomb(bombX_, bombY_, audio);
                     defuseProgress_ = 0.0f;
-                CoachOnEvent(Team::T,  CoachEventType::DefuseAborted);
-                CoachOnEvent(Team::CT, CoachEventType::DefuseAborted);
+                    CoachOnEvent(Team::T,  CoachEventType::DefuseAborted);
+                    CoachOnEvent(Team::CT, CoachEventType::DefuseAborted);
                 }
             } else {
                 defuseProgress_ = 0.0f;
@@ -353,4 +338,28 @@ void CS2DGame::DetonateBomb(AudioManager* audio) {
 
     ApplyRoundResult(Team::T, audio);
     round_.EndRound(Team::T);
+}
+
+
+// C4 携带者：每回合重新分配
+//   玩家在 T 侧：60% 玩家，40% 随机 T BOT
+//   玩家在 CT 侧：随机 T BOT（否则 T 方无人能下包）
+void CS2DGame::AssignBombCarrier() {
+    bombCarrier_ = -2;
+    if (mode_ != MatchMode::BombDefusal) return;
+
+    std::vector<int> tBots;
+    for (size_t i = 0; i < bots_.size(); ++i) {
+        if (bots_[i].team == Team::T) tBots.push_back(static_cast<int>(i));
+    }
+
+    if (player_.team == Team::T) {
+        if (tBots.empty() || (rng_() % 100) < 60) {
+            bombCarrier_ = -1;
+        } else {
+            bombCarrier_ = tBots[rng_() % tBots.size()];
+        }
+    } else if (!tBots.empty()) {
+        bombCarrier_ = tBots[rng_() % tBots.size()];
+    }
 }

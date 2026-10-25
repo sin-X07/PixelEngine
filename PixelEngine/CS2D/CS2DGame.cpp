@@ -84,6 +84,7 @@ void CS2DGame::ResetToNewMatch() {
               << " 玩家阵营=" << (player_.team == Team::T ? "T" : "CT")
               << " 实际人数 T=" << nT << " CT=" << nCT << std::endl;
 
+    AssignBombCarrier();   // bot 创建后再分配一次（首次开局时 bots_ 还为空）
     AssignSquadRoles();
     CoachResetRound();
     CoachOnEvent(Team::T,  CoachEventType::RoundStart);
