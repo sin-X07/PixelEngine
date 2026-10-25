@@ -381,6 +381,13 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
     // 槽位 4：C4（只有携带者能切过去，且下包后就不再可用）
     if (slot == 4) {
         if (!PlayerHasC4()) return;
+        // 切走之前先把当前枪械的弹药存进镜像槽，否则切回来弹药会丢
+        const int prevSlot = player_.weaponSlot;
+        if (prevSlot >= 0 && prevSlot <= 1) {
+            slotAmmo_[prevSlot]    = player_.ammo;
+            slotMaxAmmo_[prevSlot] = player_.maxAmmo;
+        }
+
         player_.weapons[4] = WeaponId::C4;
         player_.weaponSlot = 4;
         player_.ammo = 1;
@@ -396,6 +403,12 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
     // 投掷物槽：按 4 在已装备的投掷物之间循环切换
     if (slot == 3) {
         if (player_.grenadeCount <= 0) return;
+        // 切走前保存当前枪械弹药（原来在投掷物槽也漏了这一步）
+        const int prev = player_.weaponSlot;
+        if (prev >= 0 && prev <= 1) {
+            slotAmmo_[prev]    = player_.ammo;
+            slotMaxAmmo_[prev] = player_.maxAmmo;
+        }
         if (player_.weaponSlot != 3) {
             player_.weaponSlot = 3;                 // 先切到投掷物
         } else {
