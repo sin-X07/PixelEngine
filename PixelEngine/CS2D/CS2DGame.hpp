@@ -84,13 +84,13 @@ public:
         // 精灵
         AnimState animState = AnimState::Idle;
         float     animTimer = 0.0f;
-        int       weaponSlot = 0;          // 活动槽位 0=主 1=副 2=近战 3=投掷
+        int       weaponSlot = 0;          // 活动槽位 0=主 1=副 2=近战 3=投掷 4=C4
         int       spriteKey  = 0;
         float     deathTimer = 0.0f;
         float     shootAnimTimer = 0.0f;
 
         // 武器（按槽位）
-        WeaponId  weapons[4] = { WeaponId::None, WeaponId::USP, WeaponId::Knife, WeaponId::GrenadeHE };
+        WeaponId  weapons[5] = { WeaponId::None, WeaponId::USP, WeaponId::Knife, WeaponId::GrenadeHE, WeaponId::None };
 
         // ---- 投掷物背包 ----
         // 一局最多装备 4 个；闪光可带 2 个，其它每种 1 个；每个只能用一次
@@ -154,7 +154,7 @@ public:
 
         // 当前活动武器定义
         const WeaponDef& CurrentWeapon() const {
-            const int s = (weaponSlot < 0 || weaponSlot > 3) ? 0 : weaponSlot;
+            const int s = (weaponSlot < 0 || weaponSlot > 4) ? 0 : weaponSlot;
             return WeaponDB::Get(weapons[s]);
         }
     };

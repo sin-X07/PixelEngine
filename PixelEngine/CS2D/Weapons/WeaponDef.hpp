@@ -23,10 +23,11 @@ enum class WeaponId : int {
     GrenadeHE,
     GrenadeFlash,
     GrenadeSmoke,
+    C4,             // 第 5 槽：C4（仅携带者可用）
     Count
 };
 
-enum class WeaponClass { Melee, Pistol, SMG, Rifle, Sniper, Shotgun, Grenade };
+enum class WeaponClass { Melee, Pistol, SMG, Rifle, Sniper, Shotgun, Grenade, Bomb };
 
 // 武器栏位
 enum class WeaponSlotKind { Primary, Secondary, Melee, Grenade };
@@ -81,6 +82,7 @@ inline const WeaponDef kWeapons[] = {
     { WeaponId::GrenadeHE,   "高爆雷", WeaponClass::Grenade,WeaponSlotKind::Grenade,    300,  98.0f, 1.00f,  420.0f,  250.0f,  1, 0.000f, false,   0, 0.0f,  0.95f, false, 90.0f, "cs2d/sprites/grenade_he.png", "cs2d/sprites/grenade_he_d.png" },
     { WeaponId::GrenadeFlash,"闪光弹", WeaponClass::Grenade,WeaponSlotKind::Grenade,    200,   0.0f, 1.00f,  420.0f,  250.0f,  1, 0.000f, false,   0, 0.0f,  0.95f, false, 90.0f, "cs2d/sprites/grenade_flash.png", "cs2d/sprites/grenade_flash_d.png" },
     { WeaponId::GrenadeSmoke,"烟雾弹", WeaponClass::Grenade,WeaponSlotKind::Grenade,    300,   0.0f, 1.00f,  420.0f,  250.0f,  1, 0.000f, false,   0, 0.0f,  0.95f, false, 90.0f, "cs2d/sprites/grenade_smoke.png", "cs2d/sprites/grenade_smoke_d.png" },
+    { WeaponId::C4,          "C4",    WeaponClass::Bomb,   WeaponSlotKind::Melee,         0,   0.0f, 0.0f,    0.0f,    0.0f,  1, 0.00f, false,   0, 0.0f,  1.00f, false, 90.0f, nullptr, nullptr },
 };
 
 inline constexpr int kWeaponCount = static_cast<int>(sizeof(kWeapons) / sizeof(kWeapons[0]));

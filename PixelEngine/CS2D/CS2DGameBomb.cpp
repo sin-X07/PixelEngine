@@ -8,17 +8,17 @@
 // ============================================================================
 
 void CS2DGame::ToggleHoldC4() {
+    // 按 5 等价于切到 C4 槽；已经在 C4 槽则切回副武器
     if (!PlayerHasC4()) {
         playerHoldingC4_ = false;
         return;
     }
-    playerHoldingC4_ = !playerHoldingC4_;
-    if (playerHoldingC4_) {
-        // 拿在手上时收起武器动作
-        player_.reloading = false;
-        std::cout << "[C4] 玩家拿起了 C4" << std::endl;
+    if (player_.weaponSlot == 4) {
+        player_.weapons[4] = WeaponId::None;
+        playerHoldingC4_ = false;
+        SwitchWeaponSlot(1);
     } else {
-        std::cout << "[C4] 玩家收起了 C4" << std::endl;
+        SwitchWeaponSlot(4);
     }
 }
 
@@ -46,6 +46,7 @@ void CS2DGame::UpdateBombItem(float dt) {
         if (best) {
             bombCarrier_ = (best == &player_) ? -1 : static_cast<int>(best - bots_.data());
             bombDropped_ = false;
+            if (best == &player_) player_.weapons[4] = WeaponId::C4;
             if (best == &player_) {
                 std::cout << "[C4] 玩家拾取了掉落的 C4" << std::endl;
             } else {
@@ -93,6 +94,8 @@ void CS2DGame::DropC4(float x, float y) {
     bombDropY_ = y;
     bombCarrier_ = -2;
     playerHoldingC4_ = false;
+    player_.weapons[4] = WeaponId::None;
+    if (player_.weaponSlot == 4) SwitchWeaponSlot(1);
     std::cout << "[C4] C4 掉落在 (" << static_cast<int>(x) << ","
               << static_cast<int>(y) << ")" << std::endl;
 }

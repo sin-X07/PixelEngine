@@ -619,6 +619,12 @@ void Engine::StartMatch(MatchMode mode) {
     // 模式 → 默认地图（爆破模式可由地图选择界面指定）
     //   死斗               → cs_office（老图，节奏快）
     //   团队歼灭/爆破/人质  → ancient_ruins（5v5 主战图）
+    // 已经在某张地图里 → 重新开始沿用该地图，而不是回到默认地图
+    if (!currentMapRel_.empty()) {
+        StartMatchWithMap(mode, currentMapRel_, pendingPlayerTeam_);
+        return;
+    }
+
     const char* mapRel = "assets/cs2d/maps/ancient_ruins.tmj";
     switch (mode) {
         case MatchMode::DeathMatch:      mapRel = "assets/cs2d/maps/cs_office.tmj"; break;
@@ -638,6 +644,8 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
 
     // 模式必须在 LoadMap 之前设定（LoadMap → ResetToNewMatch 依赖 mode_）
     cs2dGame->SetMatchMode(mode);
+
+    currentMapRel_ = mapRel;
 
     // 阵营必须在 LoadMap 之前设置：LoadMap 会立刻生成玩家
     if (cs2dGame) cs2dGame->SetPlayerTeam(playerTeam);

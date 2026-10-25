@@ -98,8 +98,11 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     const WeaponDef& def = player_.CurrentWeapon();
 
     // 投掷物：按下即投（音效在出手瞬间播放）
-    // 手上拿着 C4：不能开枪也不能投掷
-    if (playerHoldingC4_) return;
+    // C4 槽 / 手持 C4：不能开枪也不能投掷
+    if (player_.weaponSlot == 4 || playerHoldingC4_ ||
+        def.cls == WeaponClass::Bomb) {
+        return;
+    }
 
     if (def.cls == WeaponClass::Grenade) {
         if (!mouseDown || player_.shootCooldown > 0.0f) return;

@@ -376,7 +376,22 @@ void CS2DGame::RespawnBOT(Player& bot) {
 // ============================================================================
 
 void CS2DGame::SwitchWeaponSlot(int slot) {
-    if (slot < 0 || slot > 3) return;
+    if (slot < 0 || slot > 4) return;
+
+    // 槽位 4：C4（只有携带者能切过去，且下包后就不再可用）
+    if (slot == 4) {
+        if (!PlayerHasC4()) return;
+        player_.weapons[4] = WeaponId::C4;
+        player_.weaponSlot = 4;
+        player_.ammo = 1;
+        player_.maxAmmo = 1;
+        player_.reloading = false;
+        player_.reloadTimer = 0.0f;
+        playerHoldingC4_ = true;
+        return;
+    }
+    // 切到其它槽位 → 放下 C4 的「手持」状态
+    playerHoldingC4_ = false;
 
     // 投掷物槽：按 4 在已装备的投掷物之间循环切换
     if (slot == 3) {

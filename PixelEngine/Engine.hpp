@@ -81,6 +81,7 @@ private:
     int  mapSelectIndex_ = 0;                                            // 地图选择光标
     std::string pendingStartMap_;        // --map=<id> 指定的地图
     std::string pendingSideMapRel_;      // 选阵营时记住待开局地图
+    std::string currentMapRel_;          // 当前对局地图（重新开始时沿用）
     Team        pendingPlayerTeam_ = Team::CT;
     bool openMapSelectOnStart_ = false;  // --mapselect
     void* menuBgTex_ = nullptr;   // 主菜单背景图
