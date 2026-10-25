@@ -148,6 +148,8 @@ EngineApp.exe --autostart --mode=2    # 0=死斗 1=歼灭 2=爆破 3=人质
 
 ## LLM BOT 配置
 
+主教练战术库（dust2）在 `assets/config/coach_playbook_dust2.txt`，启动时追加进固定 system prompt。来源见 `assets/config/coach_playbook_SOURCES.md`。
+
 配置在 `assets/config/llm.ini`：
 
 ```ini

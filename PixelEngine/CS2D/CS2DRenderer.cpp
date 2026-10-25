@@ -677,16 +677,11 @@ void CS2DRenderer::DrawDroppedWeapon(int weaponId, float worldX, float worldY,
     dst.h = dh;
 
     // 地面投影，避免看着像浮在空中
-    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 70);
-    SDL_FRect shadow = { dst.x - 1.0f, dst.y + dh - 1.0f, dw + 2.0f, 2.0f * zoom_ };
-    SDL_RenderFillRectF(renderer_, &shadow);
-
     const SDL_FPoint rotCenter = { dst.w * 0.5f, dst.h * 0.5f };
     SDL_RenderCopyExF(renderer_, tex, nullptr, &dst,
                       static_cast<double>(angleDeg), &rotCenter, SDL_FLIP_NONE);
-}
 
+}
 // ============================================================================
 // 目标物标记（包点 / C4）
 // ============================================================================

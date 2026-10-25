@@ -757,6 +757,10 @@ void CS2DGame::TryPickupDrops(bool manual) {
     } else if (def.slot == WeaponSlotKind::Primary) {
         // 自动拾取只在空槽时发生，按住 E 可以替换
         if (manual || player_.weapons[0] == WeaponId::None) {
+            // 手上有旧主武器且不是同一把 → 先丢到地上
+            if (player_.weapons[0] != WeaponId::None && player_.weapons[0] != d.id) {
+                DropWeaponToGround(0, player_.x, player_.y);
+            }
             player_.SetSlotWeapon(0, d.id);
             if (player_.weaponSlot == 0) {
                 player_.LoadAmmoFromSlot();
@@ -765,6 +769,9 @@ void CS2DGame::TryPickupDrops(bool manual) {
         }
     } else if (def.slot == WeaponSlotKind::Secondary) {
         if (manual || player_.weapons[1] == WeaponId::None) {
+            if (player_.weapons[1] != WeaponId::None && player_.weapons[1] != d.id) {
+                DropWeaponToGround(1, player_.x, player_.y);
+            }
             player_.SetSlotWeapon(1, d.id);
             if (player_.weaponSlot == 1) {
                 player_.LoadAmmoFromSlot();
@@ -777,6 +784,26 @@ void CS2DGame::TryPickupDrops(bool manual) {
 }
 
 // G：丢弃当前武器（近战不可丢弃）
+// 把某个槽位的枪丢到地面（换枪/被替换时调用，避免旧枪凭空消失）
+void CS2DGame::DropWeaponToGround(int slot, float x, float y) {
+    if (slot < 0 || slot > 4) return;
+    const WeaponId id = player_.weapons[slot];
+    if (id == WeaponId::None) return;
+
+    DroppedItem it;
+    it.id = id;
+    it.isGrenade = false;
+    std::uniform_real_distribution<float> ang(0.0f, 360.0f);
+    std::uniform_real_distribution<float> jitter(-6.0f, 6.0f);
+    it.x = x + jitter(rng_);
+    it.y = y + jitter(rng_);
+    it.rot = ang(rng_);
+    it.pickupDelay = 0.8f;
+    drops_.push_back(it);
+
+    std::cout << "[Drop] 换下 " << WeaponDB::Get(id).name << std::endl;
+}
+
 void CS2DGame::DropCurrentWeapon() {
     // 槽位 4 = C4：G 键丢的就是 C4 本身
     if (player_.weaponSlot == 4) {

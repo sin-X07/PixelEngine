@@ -5,7 +5,9 @@
 #include <cctype>
 #include <cmath>
 #include <iostream>
+#include <fstream>
 #include <sstream>
+#include "../Core/PathUtils.hpp"
 
 // ============================================================================
 // 教练层的 LLM 接入（结构化输出 + 短摘要 + TTL + 复盘笔记）
@@ -175,6 +177,41 @@ std::string BuildCoachSchema(const CoachAllowSet& allow) {
     return o.str();
 }
 
+
+// 战术库：启动后读一次，追加进固定 system 前缀（利于 cache_prompt）
+std::string LoadCoachPlaybook() {
+    static std::string cached;
+    static bool tried = false;
+    if (tried) return cached;
+    tried = true;
+
+    const std::string path =
+        PathUtils::ResolveAppPath("assets/config/coach_playbook_dust2.txt");
+    std::ifstream in(path);
+    if (!in) {
+        std::cout << "[Coach] 未找到战术库: " << path << std::endl;
+        return cached;
+    }
+    std::ostringstream buf;
+    buf << in.rdbuf();
+    cached = buf.str();
+    std::string cleaned;
+    cleaned.reserve(cached.size());
+    std::istringstream lines(cached);
+    std::string line;
+    while (std::getline(lines, line)) {
+        std::string t = line;
+        while (!t.empty() && (t.front() == ' ' || t.front() == '\t')) t.erase(t.begin());
+        if (!t.empty() && t.front() == '#') continue;
+        cleaned.append(line);
+        cleaned.push_back('\n');
+    }
+    cached.swap(cleaned);
+    std::cout << "[Coach] 已加载战术库 (" << cached.size() << " bytes): " << path
+              << std::endl;
+    return cached;
+}
+
 std::string BuildSystemPrompt(const CS2DWorld* world) {
     std::ostringstream o;
     o << "你是 CS2D 战队主教练。只做战术决策，不做瞄准与走位。\n"
@@ -199,7 +236,13 @@ std::string BuildSystemPrompt(const CS2DWorld* world) {
     if (world) {
         o << "可选区域:";
         for (const auto& a : world->GetAreas()) o << ' ' << a.name;
-        o << "\n";
+        o << "
+";
+    }
+        const std::string& book = LoadCoachPlaybook();
+    if (!book.empty()) {
+        o << "
+" << book;
     }
     return o.str();
 }

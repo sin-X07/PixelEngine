@@ -500,6 +500,8 @@ public:
     // 玩家操作：主动拾取（E）/ 丢弃当前武器（G）
     void TryPickupDrops(bool manual);
     void DropCurrentWeapon();
+    // 把指定槽位的武器丢到地面（换枪 / 被替换时用）
+    void DropWeaponToGround(int slot, float x, float y);
     bool GetPlayerHelmet() const { return player_.helmet; }
 
     // ---- 武器 ----
