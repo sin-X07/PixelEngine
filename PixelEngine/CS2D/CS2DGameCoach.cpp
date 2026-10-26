@@ -401,13 +401,19 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
         plan.slots[4] = { CoachRole::Support, b2,  true, false };
     };
 
-    // dust_2 site layer real names: Long/Short/Cat/Tunnel (no A_Long/A_Short/B_Long)
+    // 侧翼区域按「关键词 → 找不到就退回本侧包点」解析：
+    // dust_2 的图层名是 Long/Short/Tunnel，其它地图（如 mirage: A_Site/B_Site/Mid）
+    // 未必有这些区域，回退后 BOT 至少还能拿到有效驻守点，不会退化成无计划游走。
     const std::string aSite  = AreaHint("A_Site");
-    const std::string aLong  = AreaHint("Long");
-    const std::string aShort = AreaHint("Short");
     const std::string bSite  = AreaHint("B_Site");
-    const std::string bLong  = AreaHint("Tunnel");
     const std::string mid    = AreaHint("Mid");
+
+    auto areaOr = [](const std::string& prefer, const std::string& fallback) {
+        return prefer.empty() ? fallback : prefer;
+    };
+    const std::string aLong  = areaOr(AreaHint("Long"),  aSite);
+    const std::string aShort = areaOr(AreaHint("Short"), aSite);
+    const std::string bLong  = areaOr(AreaHint("Tunnel"), bSite);
 
     // 当前包点区域（未下包就用 A 点占位，避免空字符串）
     const std::string bombArea =

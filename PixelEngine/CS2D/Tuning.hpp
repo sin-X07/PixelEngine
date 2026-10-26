@@ -75,6 +75,15 @@ constexpr float AnchorHoldRange  = 260.0f;   // 断后位超出此距离不主�
 constexpr float LowAmmoFraction  = 0.25f;    // 弹匣低于此比例时脱战也要换弹
 constexpr float PatrolHoldSpread = 90.0f;    // 守点时岗位附近的游走半径
 
+// ---------------- 下包 / 拆包的「可听」范围 ----------------
+// 声音比视野传得更远：听到下包/拆包声的敌对 BOT 会优先扑向执行者。
+// 这两个半径明显大于 BOT_VIEW_RADIUS(120)，体现「听见但还看不见」。
+constexpr float PlantHearRadius  = 300.0f;   // C4 安装声可被听到的半径
+constexpr float DefuseHearRadius = 300.0f;   // 拆包声可被听到的半径
+// 听觉触发时略微提高命中率（散布乘数 <1 = 打得更准）
+constexpr float PlantHearSpreadMul  = 0.72f;  // 听到下包 → 散布降到 72%
+constexpr float DefuseHearSpreadMul = 0.72f;  // 听到拆包 → 散布降到 72%
+
 // ---------------- BOT 朝向 ----------------
 constexpr float BotScanSpeed     = 1.0f;   // 无目标时原地扫描的角速度（弧度/秒 ≈ 57°/s）
 constexpr float BotScanAmplitudeRad = 0.45f; // 行进时左右摆头幅度（≈26°）

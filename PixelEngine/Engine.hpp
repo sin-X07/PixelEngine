@@ -8,7 +8,7 @@
 #include "CS2D/CS2DRenderer.hpp"
 #include "CS2D/CS2DGame.hpp"
 #include "CS2D/CS2DOverlay.hpp"
-#include "LLM/BotDecisionScheduler.hpp"
+#include "LLM/LLMBotController.hpp"
 #include <SDL2/SDL.h>
 #include <memory>
 #include "Storage/MatchHistory.hpp"
@@ -40,7 +40,8 @@ private:
     std::unique_ptr<CS2DRenderer> cs2dRenderer;
     std::unique_ptr<CS2DGame>     cs2dGame;
     CS2DOverlay                   cs2dOverlay;
-    std::unique_ptr<BotDecisionScheduler> botDriver;
+    // LLM 客户端：只服务于教练层（战术计划），不驱动 BOT 行动
+    std::unique_ptr<LLMBotController> llmController_;
     bool coachLlmEnabled_ = true;   // --coach=rule 时关闭（用于对比规则教练）
 
     // 输入状态（HandleInput 采集 → Update 消费）
@@ -89,7 +90,7 @@ private:
     void* mapPreviewTex_[8] = {nullptr, nullptr, nullptr, nullptr,
                              nullptr, nullptr, nullptr, nullptr};  // 地图预览图
     void LoadAudioConfig();
-    void InitLLMBot();
+    void InitLLM();
     void ApplySavedSettings();   // 把保存的设置应用到运行时对象
     void Update(float dt);
     void Render();

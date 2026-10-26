@@ -203,14 +203,15 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
 }
 
 void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
-    while (botExecutors_.size() < bots_.size()) botExecutors_.emplace_back();
-
     // 小队协同：刷新集火目标（内部 0.5s 节流）
     UpdateSquadFocus(dt);
 
     for (size_t i = 0; i < bots_.size(); ++i) {
         auto& bot = bots_[i];
         if (!bot.alive) continue;
+        // 进入本帧前先把上一帧的实时弹药落到槽位缓存：
+        // BOT 阵亡掉落 / 切换武器读取的都是 ammoSlot，必须保持最新。
+        bot.SaveAmmoToSlot();
         auto& ai = AiAt(i);
         ai.scanPhase += dt;
         if (ai.wanderTimer > 0.0f) ai.wanderTimer -= dt;
@@ -223,7 +224,6 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // ---- 正在拆包：原地不动（进度由 UpdateObjective 推进）----
         if (ai.defusing) {
             bot.vx = bot.vy = 0.0f;
-            ai.llmIntent.Tick(dt);
             continue;
         }
 
@@ -252,7 +252,6 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             if (d2 > Tuning::TradeMinDist * Tuning::TradeMinDist &&
                 d2 < Tuning::TradeMaxDist * Tuning::TradeMaxDist) {
                 ai.tradePushed = true;
-                ai.llmIntent.Tick(dt);
                 if (FollowPathTo(bot, ai, lastDeathX_, lastDeathY_, dt, 1.0f)) continue;
             }
         }
@@ -262,15 +261,48 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         if (ai.retreatTimer > 0.0f && bot.health <= Tuning::RetreatKeepHealth) {
             float covX = 0.0f, covY = 0.0f;
             if (FindCoverPoint(bot, ai.threatX, ai.threatY, covX, covY)) {
-                ai.llmIntent.Tick(dt);
-                if (bot.ammo <= 0 && !bot.reloading) StartReload(bot, audio);
+                if (bot.ammo <= 0 && !bot.reloading && bot.reserve > 0) StartReload(bot, audio);
                 if (FollowPathTo(bot, ai, covX, covY, dt, 1.0f)) continue;
             }
         }
 
         // ---- 目标选择：只用「看得见」的敌人 + 团队情报 ----
         float targetDist = 0.0f;
-        const Player* target = FindVisibleEnemy(bot, targetDist);
+        const Player* visibleTarget = FindVisibleEnemy(bot, targetDist);
+        const Player* target = visibleTarget;
+
+        // ---- 听声扑人：下包 / 拆包的声音优先级最高 ----
+        // T 下包时，能听到的 CT 优先扑向安装者；
+        // CT 拆包时，能听到的 T 优先扑向拆包者。
+        // 听声目标不需要在视野锥内（声音不分朝向），但必须敌我阵营相反，
+        // 且距离在对应可听半径内。
+        bool heardSound = false;
+        SoundMaker sm;
+        if (GetActiveSoundMaker(sm)) {
+            const bool hearThis = (sm.isPlant && bot.team == Team::CT)
+                               || (!sm.isPlant && bot.team == Team::T);
+            if (hearThis && sm.who && sm.who->alive) {
+                // 不再重复判断阵营：hearThis 已经把「我方听到敌方的动作」限定好了
+                const float sdx = sm.x - bot.x;
+                const float sdy = sm.y - bot.y;
+                const float sdist = std::sqrt(sdx * sdx + sdy * sdy);
+                const float hearR = sm.isPlant ? Tuning::PlantHearRadius
+                                               : Tuning::DefuseHearRadius;
+                if (sdist <= hearR) {
+                    heardSound = true;
+                    target      = sm.who;
+                    targetDist  = sdist;
+                    // 每只 BOT 每 2 秒最多打一行，避免刷屏
+                    if (ai.heardLogCooldown <= 0.0f) {
+                        ai.heardLogCooldown = 2.0f;
+                        std::cout << "[Bot] #" << i
+                                  << (sm.isPlant ? " 听到下包声" : " 听到拆包声")
+                                  << " 距离 " << static_cast<int>(sdist)
+                                  << " → 优先扑向执行者" << std::endl;
+                    }
+                }
+            }
+        }
 
         // 首次接火：每队每回合只报一次（教练据此判断主攻方向）
         if (target && CoachFor(bot.team).firstContactArea.empty()) {
@@ -340,7 +372,11 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             }
         }
 
-        const bool canSee = (target != nullptr);
+        // 可开火条件 = 目标真的在视野里。听声锁定的目标若恰好可见（或就是刚才
+        // 看见的那个人）也允许开火；若隔着墙没视线则只追不打。
+        const bool canSee = (visibleTarget != nullptr) &&
+                            (!heardSound || visibleTarget == target);
+        // hadTarget 保持原语义：是否「看得见」敌人（决定原地扫视与姿态推导）
         ai.hadTarget = canSee;
 
         // 交战目标位置（可见用真实位置；仅情报时用情报点）
@@ -360,14 +396,36 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             engageDist = 1e9f;
         }
 
-        ai.llmIntent.Tick(dt);
-
         // 闪光致盲倒计时
         if (ai.blindTimer > 0.0f) ai.blindTimer = std::max(0.0f, ai.blindTimer - dt);
+        if (ai.heardLogCooldown > 0.0f) ai.heardLogCooldown -= dt;
+
+        // ---- 弹药耗尽：主武器弹匣+备弹全空 → 切副武器，再不行切近战 ----
+        // （备弹有限，打光后不能再换弹，必须换枪而不是原地空放）
+        if (!bot.reloading && bot.ammo <= 0 && bot.reserve <= 0) {
+            int fallback = -1;
+            if (bot.weaponSlot != 0 && bot.weapons[0] != WeaponId::None &&
+                (bot.ammoSlot[0] > 0 || bot.reserveSlot[0] > 0)) {
+                fallback = 0;
+            } else if (bot.weaponSlot != 1 && bot.weapons[1] != WeaponId::None &&
+                       (bot.ammoSlot[1] > 0 || bot.reserveSlot[1] > 0)) {
+                fallback = 1;
+            } else if (bot.weaponSlot != 2 && bot.weapons[2] != WeaponId::None) {
+                fallback = 2;   // 近战不耗弹
+            }
+            if (fallback >= 0) {
+                bot.SaveAmmoToSlot();          // 先把当前槽（已空）写回
+                bot.weaponSlot = fallback;
+                bot.LoadAmmoFromSlot();
+                bot.reloading   = false;
+                bot.reloadTimer = 0.0f;
+            }
+        }
 
         // ---- 换弹决策 ----
         // 脱战就补满；交火中只在弹匣见底（<=25%）才打断射击去换弹
-        if (!bot.reloading && bot.ammo < bot.maxAmmo) {
+        // 备弹为 0 时无法换弹，交给上面的换枪逻辑
+        if (!bot.reloading && bot.ammo < bot.maxAmmo && bot.reserve > 0) {
             const int lowAmmo = static_cast<int>(static_cast<float>(bot.maxAmmo) * Tuning::LowAmmoFraction);
             if (!canSee || bot.ammo <= lowAmmo) StartReload(bot, audio);
         }
@@ -384,15 +442,27 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // ---- 目标引导：A* 寻路推进 ----
         // 角色行进速度：突破手全速、支援略慢、断后明显靠后
         const float aggr = TempoAggression(GetCoachPlan(bot.team).tempo);
-    const float roleMul = (order.role == BotRole::Entry)   ? Tuning::SpeedMulEntry
-                            : (order.role == BotRole::Anchor)  ? Tuning::SpeedMulAnchor
-                            :                                    Tuning::SpeedMulSupport;
+        const float roleMul = (order.role == BotRole::Entry)   ? Tuning::SpeedMulEntry
+                              : (order.role == BotRole::Anchor)  ? Tuning::SpeedMulAnchor
+                              :                                    Tuning::SpeedMulSupport;
+        // 本帧是否已由寻路接管移动（否则交给下方交火机动处理）
+        bool pathTookMove = false;
         {
             bool hasDest = false;
             bool destIsObjective = false;
             float destX = 0.0f, destY = 0.0f;
 
-            if (mode_ == MatchMode::BombDefusal) {
+            // ---- 听声扑人：优先级最高，直接压过常规驻守/进攻目标 ----
+            // 听到下包（CT 方）或拆包（T 方）的声音时，立刻转向发声者，
+            // 不再按教练计划守点/推进，避免"听见了却站着不动"。
+            if (heardSound && sm.who) {
+                destX = sm.x;
+                destY = sm.y;
+                hasDest = true;
+                destIsObjective = true;
+            }
+
+            if (!hasDest && mode_ == MatchMode::BombDefusal) {
                 if (bot.team == Team::T) {
                     if (!bombPlanted_) {
                         // 按分队指令进攻指定包点（保证 A/B 都有人去）
@@ -507,124 +577,202 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             }
 
             if (hasDest) {
-                // 近距离且可见 → 交给战术执行器（冲刺/绕侧手感更好）
-                const bool closeCombat = canSee && engageDist < Tuning::CloseCombatRange;
-                if (!closeCombat && FollowPathTo(bot, ai, destX, destY, dt, roleMul)) {
-                    continue;   // 本帧移动已由寻路接管
+                // 有明确目的地时一律走 A* 寻路（含拐角转向/卡墙脱困）。
+                // 交火中同样寻路：以前的 closeCombat 分支会把移动交给执行器的
+                // 写死几何位移，绕开寻路导致撞墙。
+                if (FollowPathTo(bot, ai, destX, destY, dt, roleMul)) {
+                    pathTookMove = true;   // 本帧移动已由寻路接管
                 }
             }
 
-            // 没有可见敌人 → 本帧不开火，移动已处理完
+            // 没有目标 → 本帧不开火，移动已处理完
             if (!target) {
-                bot.vx = bot.vy = 0.0f;
+                if (!pathTookMove) bot.vx = bot.vy = 0.0f;
                 continue;
             }
         }
 
-        // ---- 决策树姿态推导（取代原来的 per-BOT LLM 输出）----
-        // 这里必然有可见敌人（上面对 !target 已 continue），
-        // 所以姿态只在「强攻 / 固守 / 撤退 / 绕向掩体」之间选择。
-        {
-            BotIntent& it = ai.llmIntent;
-            const WeaponDef& wdef = bot.CurrentWeapon();
-            const SquadOrder& ord = squad_[i];
+        // ---- 决策树姿态推导 ----
+        // 到这里必然有目标（上面 !target 已 continue）。姿态只决定
+        // 「机动偏好 + 射击节奏」，不接管寻路：移动始终走碰撞检测的位移路径。
+        const WeaponDef& def = bot.CurrentWeapon();
+        const SquadOrder& ord = squad_[i];
 
-            const float hpFrac = (bot.maxHealth > 0)
-                ? static_cast<float>(bot.health) / static_cast<float>(bot.maxHealth)
-                : 1.0f;
+        const float hpFrac = (bot.maxHealth > 0)
+            ? static_cast<float>(bot.health) / static_cast<float>(bot.maxHealth)
+            : 1.0f;
 
-            const bool mustRetreat = ai.blindTimer > 0.0f ||
-                                     hpFrac * 100.0f < Tuning::RetreatHealth ||
-                                     (bot.ammo <= 0 && !bot.reloading);
+        const bool mustRetreat = ai.blindTimer > 0.0f ||
+                                 hpFrac * 100.0f < Tuning::RetreatHealth ||
+                                 (bot.ammo <= 0 && !bot.reloading && bot.reserve <= 0);
 
-            if (mustRetreat) {
-                it.action = BotIntent::Action::Retreat;
-            } else if (ord.role == BotRole::Anchor ||
-                       GetCoachPlan(bot.team).tempo == Tempo::Slow) {
-                it.action = BotIntent::Action::Defensive;
-            } else if (ord.role == BotRole::Entry ||
-                       engageDist < Tuning::CloseCombatRange * 0.6f * aggr) {
-                it.action = BotIntent::Action::Aggressive;
-            } else if (ai.hasPlanHold && engageDist > wdef.range) {
-                it.action = BotIntent::Action::MoveToCover;   // 借掩体接近
-            } else {
-                it.action = BotIntent::Action::Defensive;
+        BotStance stance = BotStance::Defensive;
+        if (mustRetreat) {
+            stance = BotStance::Retreat;
+        } else if (ord.role == BotRole::Anchor ||
+                   GetCoachPlan(bot.team).tempo == Tempo::Slow) {
+            stance = BotStance::Defensive;
+        } else if (ord.role == BotRole::Entry ||
+                   engageDist < Tuning::CloseCombatRange * 0.6f * aggr) {
+            stance = BotStance::Aggressive;
+        } else if (ai.hasPlanHold && engageDist > def.range) {
+            stance = BotStance::MoveToCover;
+        }
+        ai.stance = stance;
+
+        // 机动偏好：决定交火时是侧拉、后撤还是保持
+        BotManeuver maneuver = BotManeuver::None;
+        if (stance == BotStance::Retreat) {
+            maneuver = BotManeuver::BackOff;
+        } else if (stance == BotStance::Aggressive || stance == BotStance::Defensive) {
+            maneuver = BotManeuver::Strafe;
+        }
+        ai.maneuver = maneuver;
+
+        // ---- 交火机动：只在「没有寻路接管本帧」时生效 ----
+        // 之前这里由执行器用写死的几何关系（理想距离 80 / 斜向退 30）算位移，
+        // 完全不看墙和地图。现在改为「沿可行方向小步机动 + 碰撞检测」，
+        // 有明确目的地时优先让 A* 寻路接管。
+        if (!pathTookMove) {
+            const int   slot = bot.weaponSlot;
+            const bool  meleeSlot = (slot == 2);
+            // 近战要贴脸，远程要拉开；退枪角色则主动后撤
+            const float idealDist = meleeSlot ? 12.0f
+                                  : (def.range * 0.55f);
+            float mvx = 0.0f, mvy = 0.0f;
+
+            const float pdx = aimX - bot.x;
+            const float pdy = aimY - bot.y;
+            const float pd  = std::max(1.0f, std::sqrt(pdx * pdx + pdy * pdy));
+            const float nx  = pdx / pd;
+            const float ny  = pdy / pd;
+
+            if (maneuver == BotManeuver::BackOff) {
+                // 撤退：沿远离方向走，速度略高于常规
+                if (pd < idealDist * 1.6f) { mvx = -nx; mvy = -ny; }
+            } else if (maneuver == BotManeuver::Strafe) {
+                // 强攻/固守：距离不合适就调整进退，合适就侧向拉枪
+                if (pd > idealDist + 50.0f)      { mvx =  nx; mvy =  ny; }
+                else if (pd < idealDist - 40.0f) { mvx = -nx; mvy = -ny; }
+                else                             { mvx = -ny; mvy =  nx; }
             }
 
-            // 射击纪律
-            if (bot.reloading || bot.ammo <= 0) it.shootMode = BotIntent::ShootDiscipline::HoldFire;
-            else if (engageDist > wdef.range * 0.8f) it.shootMode = BotIntent::ShootDiscipline::Burst;
-            else it.shootMode = BotIntent::ShootDiscipline::Auto;
+            if (mvx != 0.0f || mvy != 0.0f) {
+                // 与寻路保持同一套速度基准：基础速度 × 武器倍率 × 角色倍率
+                // （tempo 已由 FollowPathTo 内部消费，这里复用同样的上限）
+                const float cap = Tuning::BotMoveSpeed * def.moveSpeedMul * roleMul;
+                const float spd = (maneuver == BotManeuver::BackOff ? cap : cap * 0.55f);
+                float vx = mvx * spd;
+                float vy = mvy * spd;
 
-            it.targetX = aimX;
-            it.targetY = aimY;
-            it.fresh   = true;
-            it.ageSec  = 0.0f;
+                // 侧拉方向被墙挡住 → 换成反侧；仍不行就原地（不硬挤穿墙）
+                const float half = bot.size * 0.5f;
+                const float probe = std::max(8.0f, spd * dt * 3.0f);
+                const bool blocked =
+                    !world_ || world_->CheckRectCollision(bot.x + mvx * probe - half,
+                                                          bot.y + mvy * probe - half,
+                                                          bot.size, bot.size);
+                if (blocked && maneuver == BotManeuver::Strafe) {
+                    vx = ny * spd;
+                    vy = -nx * spd;
+                    const bool altBlocked =
+                        !world_ || world_->CheckRectCollision(bot.x + ny * probe - half,
+                                                              bot.y - nx * probe - half,
+                                                              bot.size, bot.size);
+                    if (altBlocked) { vx = 0.0f; vy = 0.0f; }
+                } else if (blocked) {
+                    vx = 0.0f; vy = 0.0f;
+                }
 
-            ai.stance = static_cast<int>(it.action);   // 供诊断用
-        }
-
-        BehaviorOutput out = botExecutors_[i].Execute(
-            ai.llmIntent,
-            bot.x, bot.y,
-            aimX, aimY,
-            canSee, engageDist,
-            bot.ammo > 0, bot.reloading, bot.weaponSlot,
-            rng_, dt);
-
-        bot.vx = out.vx * roleMul;
-        bot.vy = out.vy * roleMul;
-
-        // 局部避障（战斗中同样避免叠人）
-        // 已经驻守到位且没有敌人：彻底站定，不参与避让推力。
-        // 否则队友的分离力会每帧推一下 → 视觉上一直在抖。
-        {
-            const float gdx = ai.goalX - bot.x;
-            const float gdy = ai.goalY - bot.y;
-            const bool parked = !canSee &&
-                                (gdx * gdx + gdy * gdy) < 18.0f * 18.0f;
-            if (parked) {
+                // 局部避障（避免与队友叠在一起）
+                if (vx != 0.0f || vy != 0.0f) {
+                    float sepX = 0.0f, sepY = 0.0f;
+                    AccumulateSeparation(bot, sepX, sepY);
+                    ApplyAvoidance(vx, vy, sepX, sepY);
+                    // 避障会叠加分离力，必须重新钳到持械上限，否则会突然加速
+                    const float s2 = std::sqrt(vx * vx + vy * vy);
+                    if (s2 > cap && s2 > 0.001f) {
+                        vx = vx / s2 * cap;
+                        vy = vy / s2 * cap;
+                    }
+                }
+                bot.vx = vx;
+                bot.vy = vy;
+            } else {
                 bot.vx = 0.0f;
                 bot.vy = 0.0f;
-            } else {
-                float sepX = 0.0f, sepY = 0.0f;
-                AccumulateSeparation(bot, sepX, sepY);
-                ApplyAvoidance(bot.vx, bot.vy, sepX, sepY);
             }
         }
 
-        // 持械移速上限（与玩家同一套武器倍率）
-        {
-            const float cap = Tuning::BotMoveSpeed * bot.CurrentWeapon().moveSpeedMul;
-            const float sp = std::sqrt(bot.vx * bot.vx + bot.vy * bot.vy);
-            if (sp > cap && sp > 0.001f) {
-                bot.vx = bot.vx / sp * cap;
-                bot.vy = bot.vy / sp * cap;
-            }
+        // 交战朝向：可见时直接瞄准目标（带短促摆头，避免完美锁头）
+        if (canSee) {
+            const float desired = std::atan2(aimY - bot.y, aimX - bot.x)
+                                + std::sin(ai.scanPhase * 2.2f) * Tuning::BotScanAmplitudeRad * 0.5f;
+            float delta = desired - bot.aimAngle;
+            while (delta >  3.14159265f) delta -= 6.28318531f;
+            while (delta < -3.14159265f) delta += 6.28318531f;
+            const float maxTurn = Tuning::BotMaxTurnRate * dt;
+            bot.aimAngle += std::clamp(delta, -maxTurn, maxTurn);
         }
 
-        MoveWithCollision(bot, dt);
+        // 位移：FollowPathTo 内部已经调用过 MoveWithCollision（含碰撞与卡墙脱困），
+        // 这里只在「本帧未走寻路」时补一次，否则会一帧位移两次 → 速度翻倍。
+        if (!pathTookMove) {
+            MoveWithCollision(bot, dt);
+        }
 
-        if (canSee) bot.aimAngle = out.aimAngle;
+        // ---- 射击纪律（决策树直接给出射速/散布乘数）----
+        // HoldFire 换弹中/无弹；Burst 远距离点射（更准更慢）；Auto 近距离连发
+        float shootCooldownMul = 1.0f;
+        float spreadMul        = 1.0f;
+        bool  shouldShoot      = canSee && !bot.reloading && bot.ammo > 0;
 
-        const WeaponDef& def = bot.CurrentWeapon();
+        if (bot.reloading || bot.ammo <= 0) {
+            shouldShoot = false;
+        } else if (engageDist > def.range * 0.8f) {
+            // 点射：射速降到 1/2.5，散布减到 40%（准度显著提升）
+            shootCooldownMul = 2.5f;
+            spreadMul        = 0.4f;
+        } else {
+            // 连发：按距离分档，近距离更快更准
+            if (engageDist < 60.0f)      { shootCooldownMul = 0.8f; spreadMul = 0.7f; }
+            else if (engageDist < 150.0f){ shootCooldownMul = 1.0f; spreadMul = 1.0f; }
+            else                          { shootCooldownMul = 1.5f; spreadMul = 1.3f; }
+        }
+
+        // 撤退/借掩体途中，除非目标贴脸（<50px）否则不开火
+        if ((stance == BotStance::Retreat || stance == BotStance::MoveToCover) &&
+            engageDist > 50.0f) {
+            shouldShoot = false;
+        }
+        // 近战只在贴身时出手
+        if (bot.weaponSlot >= 2 && engageDist > 25.0f) shouldShoot = false;
 
         // 结算展示期与回合中一致：BOT 同样可以开火
         // 枪械 / 霰弹（必须真实可见才开火，换弹中不开火）
-        if (target && out.shouldShoot && canSee && !bot.reloading &&
+        if (target && shouldShoot && canSee && !bot.reloading &&
             def.cls != WeaponClass::Melee && def.cls != WeaponClass::Grenade) {
             if (bot.shootCooldown > 0.0f) bot.shootCooldown -= dt;
 
             if (bot.shootCooldown <= 0.0f) {
                 if (engageDist < def.range + 200.0f) {
-                    if (bot.ammo <= 0) { StartReload(bot, audio); continue; }
+                    if (bot.ammo <= 0) {
+                        // 还有备弹就换弹；弹匣+备弹都空则本帧不开火（换枪逻辑在上方处理）
+                        if (bot.reserve > 0) StartReload(bot, audio);
+                        continue;
+                    }
 
                     // 命中倾向：30% 精确（小抖动），70% 打偏（大散布）
                     std::uniform_real_distribution<float> hitRoll(0.0f, 1.0f);
                     const bool precise = hitRoll(rng_) < 0.30f;
                     const float base = precise ? 0.08f : 0.8f;
+                    // 听到下包/拆包声而锁定目标时略微提高命中率（散布更小）
+                    if (heardSound) {
+                        spreadMul *= sm.isPlant ? Tuning::PlantHearSpreadMul
+                                                : Tuning::DefuseHearSpreadMul;
+                    }
                     std::uniform_real_distribution<float> spreadDist(
-                        -base * out.spreadMul, base * out.spreadMul);
+                        -base * spreadMul, base * spreadMul);
 
                     const float aimBase = std::atan2(target->y - bot.y, target->x - bot.x);
                     const int pellets = std::max(1, def.pellets);
@@ -633,7 +781,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                                    static_cast<int>(i), bot.team);
                     }
                     bot.ammo--;
-                    bot.shootCooldown = def.cooldown * 1.8f * out.shootCooldownMul;
+                    bot.shootCooldown = def.cooldown * 1.8f * shootCooldownMul;
                     bot.shootAnimTimer = 0.12f;
 
                     if (audio) {
@@ -653,7 +801,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                         OnCombatantKilled(player_, audio, &bot);
                     }
                 }
-                bot.shootCooldown = def.cooldown * 1.5f * out.shootCooldownMul;
+                bot.shootCooldown = def.cooldown * 1.5f * shootCooldownMul;
                 bot.shootAnimTimer = 0.12f;
             }
         }

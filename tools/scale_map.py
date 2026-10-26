@@ -68,41 +68,59 @@ def main():
     min_wall = None
     obj_count = 0
 
-    for layer in data.get("layers", []):
-        ltype = layer.get("type")
+    def scale_objects(layer):
+        """缩放一个对象层的所有对象，返回处理数量。"""
+        nonlocal min_wall
+        n_obj = 0
+        for obj in layer.get("objects", []):
+            obj["x"] = float(obj.get("x", 0.0)) / n
+            obj["y"] = float(obj.get("y", 0.0)) / n
+            if obj.get("width"):
+                obj["width"] = float(obj["width"]) / n
+            if obj.get("height"):
+                obj["height"] = float(obj["height"]) / n
 
-        if ltype == "imagelayer":
-            iw = layer.get("imagewidth")
-            ih = layer.get("imageheight")
-            if iw and ih:
-                layer["imagewidth"] = int(round(iw / n))
-                layer["imageheight"] = int(round(ih / n))
-                print(f"[imagelayer '{layer.get('name')}'] "
-                      f"{iw}x{ih} -> {layer['imagewidth']}x{layer['imageheight']}")
+            w, h = float(obj.get("width", 0)), float(obj.get("height", 0))
+            if w > 0 and h > 0:
+                thin = min(w, h)
+                if min_wall is None or thin < min_wall:
+                    min_wall = thin
+            n_obj += 1
+        return n_obj
 
-        elif ltype == "objectgroup":
-            for obj in layer.get("objects", []):
-                obj["x"] = float(obj.get("x", 0.0)) / n
-                obj["y"] = float(obj.get("y", 0.0)) / n
-                if obj.get("width"):
-                    obj["width"] = float(obj["width"]) / n
-                if obj.get("height"):
-                    obj["height"] = float(obj["height"]) / n
+    def walk(layer_list):
+        """递归处理图层树：组图层（group）里的子对象层同样要缩放，
+        否则 site 组下的战术区域会留在原坐标。"""
+        nonlocal obj_count
+        for layer in layer_list:
+            ltype = layer.get("type")
 
-                w, h = float(obj.get("width", 0)), float(obj.get("height", 0))
-                if w > 0 and h > 0:
-                    thin = min(w, h)
-                    if min_wall is None or thin < min_wall:
-                        min_wall = thin
-                obj_count += 1
+            if ltype == "imagelayer":
+                iw = layer.get("imagewidth")
+                ih = layer.get("imageheight")
+                if iw and ih:
+                    layer["imagewidth"] = int(round(iw / n))
+                    layer["imageheight"] = int(round(ih / n))
+                    print(f"[imagelayer '{layer.get('name')}'] "
+                          f"{iw}x{ih} -> {layer['imagewidth']}x{layer['imageheight']}")
 
-        elif ltype == "tilelayer":
-            # 缩小后 tile 层会错位，直接提示（本引擎的地图不使用 tile 层）
-            if layer.get("data"):
-                print(f"[警告] tile 层 '{layer.get('name')}' 含瓦片数据，本工具不会重采样；"
-                      f"缩小后该层会错位，请改用 imagelayer 背景")
+            elif ltype == "objectgroup":
+                n_obj = scale_objects(layer)
+                obj_count += n_obj
+                print(f"[objectgroup '{layer.get('name')}'] {n_obj} 个对象")
 
-    print(f"处理对象: {obj_count} 个")
+            elif ltype == "group":
+                print(f"[group '{layer.get('name')}'] 递归处理子图层")
+                walk(layer.get("layers", []))
+
+            elif ltype == "tilelayer":
+                # 缩小后 tile 层会错位，直接提示（本引擎的地图不使用 tile 层）
+                if layer.get("data"):
+                    print(f"[警告] tile 层 '{layer.get('name')}' 含瓦片数据，本工具不会重采样；"
+                          f"缩小后该层会错位，请改用 imagelayer 背景")
+
+    walk(data.get("layers", []))
+
     if min_wall is not None:
         tiles = min_wall / max(1, tw)
         print(f"最薄墙体: {min_wall:.2f}px ≈ {tiles:.2f} tile"

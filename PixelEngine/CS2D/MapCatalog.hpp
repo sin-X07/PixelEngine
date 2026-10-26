@@ -34,6 +34,14 @@ inline const MapEntry kMapCatalog[] = {
         "assets/cs2d/tilesets/dust_2.png",
         2, 35
     },
+    {
+        "mirage",
+        "荒漠迷城",
+        "中路控制 · 双包点 · 转点节奏快",
+        "assets/cs2d/maps/mirage.tmj",
+        "assets/cs2d/tilesets/mirage.jpg",
+        2, 32
+    },
 };
 
 inline constexpr int kMapCatalogCount =

@@ -10,8 +10,6 @@
 #include "Economy/EconomySystem.hpp"
 #include "Navigation/PathFinder.hpp"
 #include "../Core/Types.hpp"
-#include "../LLM/BotIntent.hpp"
-#include "../LLM/BotBehaviorExecutor.hpp"
 #include <SDL2/SDL.h>
 #include <vector>
 #include <deque>
@@ -20,6 +18,7 @@
 #include <random>
 #include <memory>
 #include <algorithm>
+#include <cmath>
 
 class AudioManager;
 
@@ -141,24 +140,52 @@ public:
         // 弹药：活动槽位（缓存值，切换武器时与 ammoSlot 互相同步）
         int       ammo      = 30;
         int       maxAmmo   = 30;
+        // 备弹（弹匣之外的存量）。换弹从备弹扣取，耗尽后无法再换弹。
+        int       reserve   = 0;
 
         // ---- 每个槽位武器自己的弹药（根治「切枪后弹夹变 1 发」）----
         int       ammoSlot[5]    = { 0, 12, 0, 0, 0 };
         int       maxAmmoSlot[5] = { 0, 12, 0, 0, 0 };
+        // 每个槽位自己的备弹
+        int       reserveSlot[5] = { 0, 36, 0, 0, 0 };
 
-        // 装载武器到槽位，并按该武器弹夹容量填满
+        // 备弹总容量：弹匣容量的三倍
+        static int ReserveCapacity(const WeaponDef& d) {
+            return (d.magazine > 0) ? d.magazine * 3 : 0;
+        }
+
+        // 装载武器到槽位，并按该武器弹匣容量填满（备弹按满配）
         void SetSlotWeapon(int slot, WeaponId id) {
             if (slot < 0 || slot > 4) return;
             weapons[slot] = id;
             if (id == WeaponId::None) {
                 ammoSlot[slot] = 0;
                 maxAmmoSlot[slot] = 0;
+                reserveSlot[slot] = 0;
                 return;
             }
             const WeaponDef& d = WeaponDB::Get(id);
             const int mag = (d.magazine > 0) ? d.magazine : 1;
             ammoSlot[slot] = mag;
             maxAmmoSlot[slot] = mag;
+            reserveSlot[slot] = ReserveCapacity(d);
+        }
+
+        // 装载武器到槽位，沿用指定的弹匣/备弹（捡起地上的枪时用）
+        void SetSlotWeaponWithAmmo(int slot, WeaponId id, int magAmmo, int reserveAmmo) {
+            if (slot < 0 || slot > 4) return;
+            weapons[slot] = id;
+            if (id == WeaponId::None) {
+                ammoSlot[slot] = 0;
+                maxAmmoSlot[slot] = 0;
+                reserveSlot[slot] = 0;
+                return;
+            }
+            const WeaponDef& d = WeaponDB::Get(id);
+            const int cap = (d.magazine > 0) ? d.magazine : 1;
+            ammoSlot[slot]    = std::max(0, std::min(magAmmo, cap));
+            maxAmmoSlot[slot] = cap;
+            reserveSlot[slot] = std::max(0, std::min(reserveAmmo, ReserveCapacity(d)));
         }
 
         // 清空槽位（丢弃 / 被拿走）
@@ -167,6 +194,7 @@ public:
             weapons[slot] = WeaponId::None;
             ammoSlot[slot] = 0;
             maxAmmoSlot[slot] = 0;
+            reserveSlot[slot] = 0;
         }
 
         // 把活动槽位的实时弹药写回该槽
@@ -175,6 +203,7 @@ public:
             if (weapons[weaponSlot] == WeaponId::None) return;
             ammoSlot[weaponSlot] = ammo;
             maxAmmoSlot[weaponSlot] = maxAmmo;
+            reserveSlot[weaponSlot] = reserve;
         }
 
         // 从活动槽位读出弹药到实时值
@@ -183,10 +212,12 @@ public:
             if (weapons[weaponSlot] == WeaponId::None) {
                 ammo = 1;
                 maxAmmo = 1;
+                reserve = 0;
                 return;
             }
             ammo = ammoSlot[weaponSlot];
             maxAmmo = maxAmmoSlot[weaponSlot];
+            reserve = reserveSlot[weaponSlot];
         }
         bool      reloading = false;
         float     reloadTimer = 0.0f;
@@ -211,9 +242,28 @@ public:
     // BOT 运行时状态（与 Player 分离，玩家实体不再背这些字段）
     // 与 bots_ 按下标一一对应，统一由 EnsureBotAi() 保证长度
     // ========================================================================
+    // BOT 交战姿态（决策树每帧推导，执行层只做物理与开火）
+    enum class BotStance {
+        None = 0,       // 无交战
+        Aggressive,     // 强攻：贴近压制
+        Defensive,      // 固守：保持距离周旋
+        Retreat,        // 撤退：拉开距离，压制射击
+        MoveToCover     // 借掩体接近
+    };
+    // BOT 交战时的侧向机动偏好（由姿态决定，移动仍走寻路 / 碰撞检测）
+    enum class BotManeuver {
+        None = 0,
+        Strafe,         // 侧向拉枪（强攻/固守周旋）
+        BackOff         // 后撤拉开距离（撤退）
+    };
+
+    // ========================================================================
+    // BOT 运行时状态（与 Player 分离，玩家实体不再背这些字段）
+    // 与 bots_ 按下标一一对应，统一由 EnsureBotAi() 保证长度
+    // ========================================================================
     struct BotRuntime {
-        BotIntent llmIntent;                       // 本帧姿态（由计划+感知推导）
-        int       stance = 0;                      // 最近一次姿态（诊断用）
+        BotStance   stance   = BotStance::None;    // 本帧姿态（决策树推导）
+        BotManeuver maneuver = BotManeuver::None;  // 本帧机动偏好
         float     rotateTimer = 0.0f;               // lurk 换点计时
 
         // 寻路
@@ -231,6 +281,7 @@ public:
         // 状态标记
         float blindTimer     = 0.0f;   // 闪光致盲剩余秒数
         bool  defusing       = false;  // 正在拆包
+        float heardLogCooldown = 0.0f; // 听声扑人日志节流（调试用）
         float grenadeCooldown = 0.0f;  // 投掷冷却
         bool  tradePushed     = false; // 本回合是否已补过枪
         bool  hadTarget       = false; // 上一帧是否看得见敌人（决定是否原地扫描）
@@ -438,6 +489,72 @@ public:
     void AssignBombCarrier();     // 每回合分配 C4 携带者（含 bot 创建后补一次）
     float GetPlantProgress() const { return plantProgress_; }
 
+    // ---- 下包 / 拆包中的「发声者」 ----
+    // 供 BOT 决策树做听声扑人：返回正在下包(planting=true)或正在拆包的目标。
+    // 没有人在做这两件事时返回 nullptr。
+    struct SoundMaker {
+        const Player* who   = nullptr;   // 执行者（可能是玩家或 BOT）
+        float         x     = 0.0f;      // 发声位置
+        float         y     = 0.0f;
+        bool          isPlant  = false;  // true=下包中, false=拆包中
+    };
+    // 若有人正在下包/拆包，返回其信息。拆包优先级高于下包（同一时刻不会共存）。
+    bool GetActiveSoundMaker(SoundMaker& out) const {
+        if (mode_ != MatchMode::BombDefusal) return false;
+
+        // 拆包：CT 在炸弹旁且拆包进度 > 0
+        if (bombPlanted_ && defuseProgress_ > 0.0f) {
+            out.x = bombX_;
+            out.y = bombY_;
+            out.isPlant = false;
+            // 找正在拆包的实体：玩家按住 E 或某 BOT 贴近炸弹
+            if (player_.alive && player_.team == Team::CT) {
+                const float dx = player_.x - bombX_;
+                const float dy = player_.y - bombY_;
+                if (std::sqrt(dx * dx + dy * dy) <= Tuning::DefuseRadius * 2.0f) {
+                    out.who = &player_;
+                    return true;
+                }
+            }
+            for (const auto& b : bots_) {
+                if (!b.alive || b.team != Team::CT) continue;
+                const float dx = b.x - bombX_;
+                const float dy = b.y - bombY_;
+                if (std::sqrt(dx * dx + dy * dy) <= Tuning::DefuseRadius * 2.0f) {
+                    out.who = &b;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // 下包：T 携带者站在包点内且已开始累积安装进度
+        // 注意：玩家下包用 plantProgress_，BOT 下包复用了 defuseProgress_，两者都要检查
+        const float plantProg = std::max(plantProgress_, bombPlanted_ ? 0.0f : defuseProgress_);
+        if (!bombPlanted_ && !bombDropped_ && plantProg > 0.0f &&
+            bombCarrier_ >= -1) {
+            if (bombCarrier_ == -1 && player_.alive && player_.team == Team::T) {
+                out.who = &player_;
+                out.x = player_.x;
+                out.y = player_.y;
+                out.isPlant = true;
+                return true;
+            }
+            if (bombCarrier_ >= 0 &&
+                bombCarrier_ < static_cast<int>(bots_.size())) {
+                const Player& carrier = bots_[static_cast<size_t>(bombCarrier_)];
+                if (carrier.alive && carrier.team == Team::T) {
+                    out.who = &carrier;
+                    out.x = carrier.x;
+                    out.y = carrier.y;
+                    out.isPlant = true;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     // ---- 观察者（死亡后）----
     enum class SpectateMode { None = 0, Follow, Free };
     bool          IsSpectating() const { return specMode_ != SpectateMode::None && !player_.alive; }
@@ -559,6 +676,10 @@ private:
         float pickupDelay = 0.0f;  // 拾取冷却（丢下后短时间内不能马上捡回）
         float rot = 0.0f;        // 平铺在地面的朝向（度）
         bool  isGrenade = false;
+        // 丢弃时的弹药状态：捡起时原样恢复（弹匣内 + 备弹）
+        int   magAmmo     = 0;
+        int   reserveAmmo = 0;
+        bool  hasAmmoState = false;   // false = 旧数据/未记录，捡起时按满配
     };
     std::vector<DroppedItem> drops_;
 
@@ -687,8 +808,6 @@ private:
     RoundPhase  prevPhase_ = RoundPhase::Freeze;
     bool        matchOverAnnounced_ = false;
 
-    std::vector<BotBehaviorExecutor> botExecutors_;
-
     // BOT 运行时状态（与 bots_ 同下标）
     std::vector<BotRuntime> botAi_;
 
@@ -765,8 +884,7 @@ private:
     bool SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) const;
     void RespawnBOT(Player& bot);
 
-    void MoveWithCollision(Player& entity, float dt);
-    void FireBullet(float x, float y, float angle, const WeaponDef& def,
+    void MoveWithCollision(Player& entity, float dt);    void FireBullet(float x, float y, float angle, const WeaponDef& def,
                     int ownerIdx, Team ownerTeam);
 
     bool BotCanSeePlayer(const Player& bot) const;

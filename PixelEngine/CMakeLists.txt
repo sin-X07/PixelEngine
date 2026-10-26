@@ -124,9 +124,6 @@ set(SOURCES
     ThirdParty/imgui/backends/imgui_impl_sdl2.cpp
     ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.cpp
     LLM/LLMBotController.cpp
-    LLM/BotIntent.cpp
-    LLM/BotBehaviorExecutor.cpp
-    LLM/BotDecisionScheduler.cpp
 )
 
 add_executable(EngineApp ${SOURCES})

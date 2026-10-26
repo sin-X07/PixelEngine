@@ -113,7 +113,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 
     // ---------------- 主菜单 ----------------
     if (ctx.state == MAIN_MENU) {
-        // 整块内容（标题 + 副标题 + 按钮组 + 战绩）垂直居中
+        // 整块内容（标题 + 副标题 + 按钮组）垂直居中
         const float vpH = viewport->WorkSize.y;
         const float itemSpacing = ImGui::GetStyle().ItemSpacing.y;
         const int   nBtn = 7;
@@ -121,10 +121,8 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         const float titleH = UI(46.0f);
         const float subH   = UI(30.0f);
         const float gap1   = UI(26.0f);
-        const float statsH = UI(28.0f);
-        const float gap2   = UI(26.0f);
         const float blockH = titleH + subH + gap1 + nBtn * buttonH +
-                             (nBtn - 1) * itemSpacing + gap2 + statsH;
+                             (nBtn - 1) * itemSpacing;
 
         const float yLocal  = std::max(UI(16.0f), (vpH - blockH) * 0.5f);
         const float yScreen = viewport->WorkPos.y + yLocal;
@@ -172,12 +170,6 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         if (bigButton("历史记录")) doClick([&] { actions.goState(HISTORY); });
         if (bigButton("设置"))     doClick([&] { actions.openSettings(MAIN_MENU); });
         if (bigButton("退出游戏")) doClick([&] { actions.quitToDesktop(); });
-
-        // 累计战绩（贴在内容块底部）
-        char buf[96];
-        snprintf(buf, sizeof(buf), "累计击杀 %d   累计阵亡 %d", ctx.statKills, ctx.statDeaths);
-        DrawImGuiTextCentered(imGuiUI_, buf, yScreen + blockH - statsH,
-                              150, 170, 185, 255, 18);
     }
     // ---------------- 暂停 ----------------
     else if (ctx.state == PAUSED) {
@@ -1113,7 +1105,8 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
     {
         std::string line = ctx.weaponName;
         if (ctx.magazineSize > 0) {
-            line += " " + std::to_string(ctx.ammo) + "/" + std::to_string(ctx.magazineSize);
+            line += " " + std::to_string(ctx.ammo) + "/" + std::to_string(ctx.magazineSize)
+                  + "  (+" + std::to_string(ctx.reserveAmmo) + ")";
         } else if (ctx.grenadeCount > 0) {
             // 投掷物：显示背包里还剩几个（按 4 切换）
             line += " (" + std::to_string(ctx.grenadeCount) + ")";

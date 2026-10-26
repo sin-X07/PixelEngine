@@ -165,6 +165,13 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
             const WeaponDef& w = WeaponDB::Get(bot.weapons[bot.weaponSlot]);
             bot.ammo    = w.magazine;
             bot.maxAmmo = w.magazine;
+            bot.reserve = Player::ReserveCapacity(w);
+            // 所有槽位按满配重置（幸存者本回合携带的枪全部补满）
+            for (int sl = 0; sl < 5; ++sl) {
+                if (bot.weapons[sl] == WeaponId::None) bot.ClearSlotWeapon(sl);
+                else                                   bot.SetSlotWeapon(sl, bot.weapons[sl]);
+            }
+            bot.SaveAmmoToSlot();
         }
 
         // 幸存者已持有主武器，BotBuyLoadout 只会补护甲/投掷物
@@ -229,15 +236,13 @@ void CS2DGame::BotBuyLoadout(Player& bot) {
 
     bot.weapons[0] = primary;
     if (primary != WeaponId::None) {
-        const WeaponDef& w = WeaponDB::Get(primary);
+        bot.SetSlotWeapon(0, primary);   // 填满弹匣 + 备弹
         bot.weaponSlot = 0;
-        bot.ammo    = w.magazine;
-        bot.maxAmmo = w.magazine;
+        bot.LoadAmmoFromSlot();
     } else {
-        const WeaponDef& p = WeaponDB::Get(bot.weapons[1]);
+        bot.SetSlotWeapon(1, bot.weapons[1]);
         bot.weaponSlot = 1;
-        bot.ammo    = p.magazine;
-        bot.maxAmmo = p.magazine;
+        bot.LoadAmmoFromSlot();
     }
 
     economy_.Clamp(bot.money);

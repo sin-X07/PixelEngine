@@ -1,4 +1,4 @@
-#include "Engine.hpp"
+﻿#include "Engine.hpp"
 #include <cstdlib>
 #include <ctime>
 #include <chrono>
@@ -302,7 +302,7 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
     });
 
     // LLM BOT
-    InitLLMBot();
+    InitLLM();
 
     // 若存档要求全屏
     if (saveManager->GetSettings().fullscreen && !isFullscreen) {
@@ -466,7 +466,7 @@ void Engine::Clean() {
 
     if (saveManager) saveManager->Save();
 
-    if (botDriver) { botDriver->Shutdown(); botDriver.reset(); }
+    if (llmController_) { llmController_->Shutdown(); llmController_.reset(); }
 
     if (audioManager) audioManager->Clean();
     if (imGuiUI)      imGuiUI->Shutdown();
@@ -659,9 +659,19 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
     inputManager->SwitchToEnglishKeyboardLayout();
 
     // 记录本场地图 id 与开始时间（历史记录用）
+    // 按地图目录匹配：路径里含该地图的 tmj 即认作该地图，避免逐张硬编码
     currentMapId_ = "ancient_ruins";
-    if (mapRel.find("dust_2") != std::string::npos)        currentMapId_ = "dust_2";
-    else if (mapRel.find("cs_office") != std::string::npos) currentMapId_ = "cs_office";
+    for (int i = 0; i < kMapCatalogCount; ++i) {
+        if (mapRel.find(kMapCatalog[i].tmj) != std::string::npos) {
+            currentMapId_ = kMapCatalog[i].id;
+            break;
+        }
+    }
+    // 死斗用的 cs_office 不在可选目录里，单独兜底
+    if (currentMapId_ == "ancient_ruins" &&
+        mapRel.find("cs_office") != std::string::npos) {
+        currentMapId_ = "cs_office";
+    }
     matchStartMs_ = static_cast<long long>(SDL_GetTicks64());
 
     currentState = PLAYING;
@@ -671,14 +681,14 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
     cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
 
     // 教练层接入 LLM（与 BOT 共用同一个客户端，串行请求）
-    if (botDriver) {
-        if (auto* ctrl = botDriver->Controller()) {
-            cs2dGame->SetCoachLlm([ctrl](const std::string& sys, const std::string& usr,
-                                         int maxTok, const std::string& schema,
-                                         std::function<void(const std::string&)> cb) {
-                ctrl->AskRaw(sys, usr, maxTok, std::move(cb), "COACH", schema);
-            });
-        }
+    // 教练层接入 LLM（全场唯一的 LLM 消费方：只产出战术计划，不驱动 BOT 行动）
+    if (llmController_) {
+        LLMBotController* ctrl = llmController_.get();
+        cs2dGame->SetCoachLlm([ctrl](const std::string& sys, const std::string& usr,
+                                     int maxTok, const std::string& schema,
+                                     std::function<void(const std::string&)> cb) {
+            ctrl->AskRaw(sys, usr, maxTok, std::move(cb), "COACH", schema);
+        });
     }
     cs2dGame->SetCoachLlmEnabled(coachLlmEnabled_);
 
@@ -800,8 +810,6 @@ void Engine::Render() {
         ctx.backdropTex = menuBgTex_;
         ctx.backdropW   = menuBgW_;
         ctx.backdropH   = menuBgH_;
-        ctx.statKills  = saveManager->GetStats().kills;
-        ctx.statDeaths = saveManager->GetStats().deaths;
 
         gameUI->DrawMenu(ctx, BuildActions());
     } else {
@@ -811,6 +819,7 @@ void Engine::Render() {
         ictx.ammo     = cs2dGame->GetPlayer().ammo;
         ictx.magazineSize = (cs2dGame->GetPlayer().weaponSlot == 2)
                               ? 0 : cs2dGame->GetPlayer().maxAmmo;
+        ictx.reserveAmmo = cs2dGame->GetPlayer().reserve;
         ictx.hasNoWeaponHint = cs2dGame->GetPlayer().reloading;
         ictx.hintText        = "换弹中...";
         ictx.totalPlayers    = cs2dGame->GetBotCount() + 1;
@@ -989,11 +998,29 @@ void Engine::RenderBuyMenu() {
     });
 }
 
-void Engine::InitLLMBot() {
+void Engine::InitLLM() {
     const std::string cfgPath = PathUtils::ResolveAppPath("assets/config/llm.ini");
 
-    botDriver = std::make_unique<BotDecisionScheduler>();
-    botDriver->Initialize(cfgPath);   // 失败时内部打印提示, BOT 回退传统行为树
+    LLMConfig cfg = LLMConfig::FromFile(cfgPath);
+
+    // 相对路径 → 绝对路径（CreateProcess 需要；基准是 exe 所在目录）
+    if (!cfg.serverExePath.empty()) {
+        const std::string resolved = PathUtils::ResolveAppPath(cfg.serverExePath);
+        if (!resolved.empty()) cfg.serverExePath = resolved;
+    }
+    if (!cfg.modelPath.empty()) {
+        const std::string resolved = PathUtils::ResolveAppPath(cfg.modelPath);
+        if (!resolved.empty()) cfg.modelPath = resolved;
+    }
+
+    llmController_ = std::make_unique<LLMBotController>();
+    const bool ok = llmController_->Initialize(cfg);
+    if (ok) {
+        std::cout << "[LLM] 就绪 (server: " << cfg.serverUrl
+                  << (cfg.autoLaunch ? ", 自动拉起" : "") << ")" << std::endl;
+    } else {
+        std::cout << "[LLM] 不可用, 教练回退规则引擎" << std::endl;
+    }
 }
 
 

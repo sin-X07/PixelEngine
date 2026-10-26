@@ -5,25 +5,12 @@
 // SaveManager — CS2D 单机版存档
 //
 // 持久化内容:
-//   [stats]    玩家累计击杀 / 阵亡 / 回合胜负
 //   [settings] 灵敏度、分辨率、帧率、全屏
 //   [crosshair] 准星颜色/粗细/长度/间隔/中心点
 //   [radar]    雷达设置
 //
 // 落盘位置: exe 同级 cs2d_save.ini（ResolveWritablePath）
 // ============================================================================
-
-struct PlayerStats {
-    int kills     = 0;
-    int deaths    = 0;
-    int roundsWon = 0;
-    int roundsLost = 0;
-
-    void AddKill()  { ++kills; }
-    void AddDeath() { ++deaths; }
-    void AddRound(bool won) { if (won) ++roundsWon; else ++roundsLost; }
-    void Reset() { kills = deaths = roundsWon = roundsLost = 0; }
-};
 
 struct GameSettings {
     float mouseSensitivity = 1.0f;
@@ -56,17 +43,10 @@ public:
     void Load();
     void Save();
 
-    const PlayerStats& GetStats() const { return stats_; }
-    void AddKill()  { stats_.AddKill(); }
-    void AddDeath() { stats_.AddDeath(); }
-    void AddRoundResult(bool won) { stats_.AddRound(won); }
-    void ResetStats() { stats_.Reset(); }
-
     GameSettings&       MutableSettings()       { return settings_; }
     const GameSettings& GetSettings() const     { return settings_; }
 
 private:
-    PlayerStats  stats_;
     GameSettings settings_;
     bool loaded_ = false;
 };

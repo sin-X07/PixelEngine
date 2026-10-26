@@ -16,12 +16,6 @@ void SaveManager::Load() {
         return;
     }
 
-    // ---- 战绩 ----
-    stats_.kills      = ini.GetInt("stats", "kills", 0);
-    stats_.deaths     = ini.GetInt("stats", "deaths", 0);
-    stats_.roundsWon  = ini.GetInt("stats", "rounds_won", 0);
-    stats_.roundsLost = ini.GetInt("stats", "rounds_lost", 0);
-
     // ---- 通用设置 ----
     settings_.mouseSensitivity = ini.GetFloat("settings", "sensitivity", 1.0f);
     settings_.resIdx           = ini.GetInt  ("settings", "res_idx", 0);
@@ -48,17 +42,11 @@ void SaveManager::Load() {
     settings_.radarMapZoom          = ini.GetFloat("radar", "map_zoom", 0.005f);
 
     loaded_ = true;
-    std::cout << "[Save] 已读取存档: K/D "
-              << stats_.kills << "/" << stats_.deaths << std::endl;
+    std::cout << "[Save] 已读取存档" << std::endl;
 }
 
 void SaveManager::Save() {
     IniFile ini;
-
-    ini.SetInt("stats", "kills",       stats_.kills);
-    ini.SetInt("stats", "deaths",      stats_.deaths);
-    ini.SetInt("stats", "rounds_won",  stats_.roundsWon);
-    ini.SetInt("stats", "rounds_lost", stats_.roundsLost);
 
     ini.SetFloat("settings", "sensitivity", settings_.mouseSensitivity);
     ini.SetInt  ("settings", "res_idx",     settings_.resIdx);

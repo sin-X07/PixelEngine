@@ -85,11 +85,9 @@ public:
         int   renderScalePct = 100;
         bool  isFullscreen = false;
 
-        // 玩家累计战绩（主菜单展示）
+        // 主菜单背景
         void* backdropTex = nullptr;   // 主菜单背景图（SDL_Texture*）
         int   backdropW = 0, backdropH = 0;
-        int   statKills = 0;
-        int   statDeaths = 0;
     };
 
     struct InGameCtx {
@@ -97,6 +95,7 @@ public:
         std::string weaponName;
         int         ammo = 0;
         int         magazineSize = 0;
+        int         reserveAmmo = 0;      // 备弹（弹匣之外的存量）
         bool        hasNoWeaponHint = false;
         std::string hintText;
         int         totalPlayers = 0;

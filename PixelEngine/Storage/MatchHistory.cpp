@@ -82,6 +82,7 @@ const char* ModeLabel(const std::string& modeId) {
 const char* MapLabel(const std::string& mapId) {
     if (mapId == "ancient_ruins") return "古代遗迹";
     if (mapId == "dust_2")        return "沙漠Ⅱ";
+    if (mapId == "mirage")        return "荒漠迷城";
     if (mapId == "cs_office")     return "办公室";
     return mapId.empty() ? "未知" : mapId.c_str();
 }

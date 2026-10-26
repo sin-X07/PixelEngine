@@ -75,7 +75,7 @@ bool AudioManager::Initialize() {
     uspFireSound     = loadChunk("assets/audio/usp.mp3", "USP 射击");
     deagleSound = loadChunk("assets/audio/deagle.mp3", "沙漠之鹰射击");
     m4a1FireSound    = loadChunk("assets/audio/m4a1.mp3", "M4A1 射击");
-    awpFireSound     = loadChunk("assets/audio/awp.wav", "AWP 射击");
+    awpFireSound     = loadChunk("assets/audio/awp.mp3", "AWP 射击");
     shotgunFireSound = loadChunk("assets/audio/shotgun.wav", "霰弹枪射击");
     smgFireSound     = loadChunk("assets/audio/smg.wav", "SMG 射击");
     galilFireSound   = loadChunk("assets/audio/galir.mp3", "Galil 射击");

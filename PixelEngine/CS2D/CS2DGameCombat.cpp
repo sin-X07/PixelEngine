@@ -635,6 +635,8 @@ void CS2DGame::StartReload(Player& p, AudioManager* audio) {
 
     const WeaponDef& def = p.CurrentWeapon();
     if (def.magazine <= 0) return;          // 刀/投掷物不换弹
+    if (p.ammo >= p.maxAmmo) return;        // 弹匣已满
+    if (p.reserve <= 0) return;             // 没有备弹，无法换弹
 
     p.reloading   = true;
     p.reloadTimer = def.reloadTime;         // 每把枪不同，取自素材时长
@@ -665,7 +667,11 @@ void CS2DGame::UpdateReload(Player& p, float dt) {
     if (p.reloadTimer <= 0.0f) {
         p.reloading = false;
         p.reloadTimer = 0.0f;
-        p.ammo = p.maxAmmo;
+        // 从备弹里取出子弹补满弹匣（备弹不够就装多少算多少）
+        const int need = std::max(0, p.maxAmmo - p.ammo);
+        const int take = std::min(need, p.reserve);
+        p.ammo    += take;
+        p.reserve -= take;
         p.SaveAmmoToSlot();
     }
 }
@@ -692,10 +698,13 @@ bool CS2DGame::IsEnemyNearby(float x, float y, float safeRadius, Team myTeam) co
 void CS2DGame::DropEquipmentOnDeath(const Player& victim) {
     WeaponId dropId = WeaponId::None;
     bool isGrenade = false;
+    bool fromPrimary = false;
+    int  dropMag = 0, dropReserve = 0;
 
     // 优先级 1：主武器
     if (victim.weapons[0] != WeaponId::None) {
         dropId = victim.weapons[0];
+        fromPrimary = true;
     } else {
         // 优先级 2：副武器（标配手枪不掉落）
         const WeaponId defaultPistol = (victim.team == Team::CT) ? WeaponId::USP
@@ -712,10 +721,25 @@ void CS2DGame::DropEquipmentOnDeath(const Player& victim) {
 
     if (dropId == WeaponId::None) return;
 
+    // 记录丢弃瞬间该武器的弹药：主武器可能正被手持（实时值），否则读它自己的槽位
+    if (!isGrenade) {
+        const int slot = fromPrimary ? 0 : 1;
+        if (victim.weaponSlot == slot) {
+            dropMag     = victim.ammo;
+            dropReserve = victim.reserve;
+        } else {
+            dropMag     = victim.ammoSlot[slot];
+            dropReserve = victim.reserveSlot[slot];
+        }
+    }
+
     DroppedItem it;
     it.id = dropId;
     it.isGrenade = isGrenade;
     it.life = 30.0f;
+    it.hasAmmoState = !isGrenade;
+    it.magAmmo      = dropMag;
+    it.reserveAmmo  = dropReserve;
     // 随机平铺朝向 + 少量抖动，避免多件物品完全重叠
     std::uniform_real_distribution<float> ang(0.0f, 360.0f);
     std::uniform_real_distribution<float> jitter(-5.0f, 5.0f);
@@ -727,6 +751,8 @@ void CS2DGame::DropEquipmentOnDeath(const Player& victim) {
 
     std::cout << "[Drop] " << TeamName(victim.team) << " 掉落 "
               << WeaponDB::Get(dropId).name
+              << (isGrenade ? "" : (" 弹匣 " + std::to_string(dropMag)
+                                    + " 备弹 " + std::to_string(dropReserve)))
               << " @(" << static_cast<int>(victim.x) << ","
               << static_cast<int>(victim.y) << ")" << std::endl;
 }
@@ -766,10 +792,17 @@ void CS2DGame::TryPickupDrops(bool manual) {
             if (player_.weapons[0] != WeaponId::None && player_.weapons[0] != d.id) {
                 DropWeaponToGround(0, player_.x, player_.y);
             }
-            player_.SetSlotWeapon(0, d.id);
+            // 捡起时沿用原持有者丢弃瞬间的弹药状态
+            if (d.hasAmmoState) {
+                player_.SetSlotWeaponWithAmmo(0, d.id, d.magAmmo, d.reserveAmmo);
+            } else {
+                player_.SetSlotWeapon(0, d.id);
+            }
             if (player_.weaponSlot == 0) {
                 player_.LoadAmmoFromSlot();
             }
+            player_.reloading   = false;
+            player_.reloadTimer = 0.0f;
             taken = true;
         }
     } else if (def.slot == WeaponSlotKind::Secondary) {
@@ -777,10 +810,16 @@ void CS2DGame::TryPickupDrops(bool manual) {
             if (player_.weapons[1] != WeaponId::None && player_.weapons[1] != d.id) {
                 DropWeaponToGround(1, player_.x, player_.y);
             }
-            player_.SetSlotWeapon(1, d.id);
+            if (d.hasAmmoState) {
+                player_.SetSlotWeaponWithAmmo(1, d.id, d.magAmmo, d.reserveAmmo);
+            } else {
+                player_.SetSlotWeapon(1, d.id);
+            }
             if (player_.weaponSlot == 1) {
                 player_.LoadAmmoFromSlot();
             }
+            player_.reloading   = false;
+            player_.reloadTimer = 0.0f;
             taken = true;
         }
     }
@@ -795,9 +834,22 @@ void CS2DGame::DropWeaponToGround(int slot, float x, float y) {
     const WeaponId id = player_.weapons[slot];
     if (id == WeaponId::None) return;
 
+    // 丢弃瞬间的弹药：正被手持的槽用实时值，否则用它自己的缓存
+    int magAmmo = 0, reserveAmmo = 0;
+    if (player_.weaponSlot == slot) {
+        magAmmo     = player_.ammo;
+        reserveAmmo = player_.reserve;
+    } else {
+        magAmmo     = player_.ammoSlot[slot];
+        reserveAmmo = player_.reserveSlot[slot];
+    }
+
     DroppedItem it;
     it.id = id;
     it.isGrenade = false;
+    it.hasAmmoState = true;
+    it.magAmmo      = magAmmo;
+    it.reserveAmmo  = reserveAmmo;
     std::uniform_real_distribution<float> ang(0.0f, 360.0f);
     std::uniform_real_distribution<float> jitter(-6.0f, 6.0f);
     it.x = x + jitter(rng_);
@@ -806,7 +858,8 @@ void CS2DGame::DropWeaponToGround(int slot, float x, float y) {
     it.pickupDelay = 0.8f;
     drops_.push_back(it);
 
-    std::cout << "[Drop] 换下 " << WeaponDB::Get(id).name << std::endl;
+    std::cout << "[Drop] 换下 " << WeaponDB::Get(id).name
+              << " 弹匣 " << magAmmo << " 备弹 " << reserveAmmo << std::endl;
 }
 
 void CS2DGame::DropCurrentWeapon() {
@@ -834,6 +887,7 @@ void CS2DGame::DropCurrentWeapon() {
 
     WeaponId dropId = WeaponId::None;
     bool isGrenade = false;
+    int  dropMag = 0, dropReserve = 0;
 
     if (slot == 3) {
         dropId = player_.ActiveGrenade();
@@ -850,6 +904,14 @@ void CS2DGame::DropCurrentWeapon() {
     } else {
         dropId = player_.weapons[slot];
         if (dropId == WeaponId::None) return;
+        // 丢弃瞬间的弹药（必须在 ClearSlotWeapon 之前取）
+        if (player_.weaponSlot == slot) {
+            dropMag     = player_.ammo;
+            dropReserve = player_.reserve;
+        } else {
+            dropMag     = player_.ammoSlot[slot];
+            dropReserve = player_.reserveSlot[slot];
+        }
         player_.ClearSlotWeapon(slot);
 
         // 主武器丢了 → 自动换成副武器，再不行换近战
@@ -866,6 +928,9 @@ void CS2DGame::DropCurrentWeapon() {
     DroppedItem it;
     it.id = dropId;
     it.isGrenade = isGrenade;
+    it.hasAmmoState = !isGrenade;
+    it.magAmmo      = dropMag;
+    it.reserveAmmo  = dropReserve;
     std::uniform_real_distribution<float> ang(0.0f, 360.0f);
     std::uniform_real_distribution<float> jitter(-5.0f, 5.0f);
     it.x   = player_.x + jitter(rng_);
@@ -874,6 +939,10 @@ void CS2DGame::DropCurrentWeapon() {
     it.pickupDelay = 0.8f;   // 丢下后 0.8 秒内不能捡回
     drops_.push_back(it);
 
-    std::cout << "[Drop] 玩家丢弃 " << WeaponDB::Get(dropId).name << std::endl;
+    std::cout << "[Drop] 玩家丢弃 " << WeaponDB::Get(dropId).name;
+    if (!isGrenade) {
+        std::cout << " 弹匣 " << dropMag << " 备弹 " << dropReserve;
+    }
+    std::cout << std::endl;
 }
 

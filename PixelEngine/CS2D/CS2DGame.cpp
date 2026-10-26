@@ -40,7 +40,6 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
 // 开始一场全新比赛（清空比分与统计）
 void CS2DGame::ResetToNewMatch() {
     bots_.clear();
-    botExecutors_.clear();
     bullets_.clear();
     playerKills_ = 0;
     playerDeaths_ = 0;
@@ -73,7 +72,6 @@ void CS2DGame::ResetToNewMatch() {
         Player bot;
         SpawnBOT(bot, t);
         bots_.push_back(bot);
-        botExecutors_.emplace_back();
         botAi_.emplace_back();          // 与 bots_ 同下标
     }
 
@@ -289,6 +287,13 @@ void CS2DGame::SpawnPlayer() {
     const WeaponDef& w = WeaponDB::Get(player_.weapons[1]);
     player_.ammo    = w.magazine;
     player_.maxAmmo = w.magazine;
+    player_.reserve = Player::ReserveCapacity(w);
+    // 各槽位弹药同步（避免旧局残留）
+    for (int sl = 0; sl < 5; ++sl) {
+        if (player_.weapons[sl] == WeaponId::None) player_.ClearSlotWeapon(sl);
+        else                                       player_.SetSlotWeapon(sl, player_.weapons[sl]);
+    }
+    player_.SaveAmmoToSlot();
     player_.reloading  = false;
     player_.reloadTimer = 0.0f;
     player_.stealth    = false;
@@ -351,6 +356,13 @@ void CS2DGame::SpawnBOT(Player& bot, Team team) {
     const WeaponDef& bw = WeaponDB::Get(bot.weapons[1]);
     bot.ammo    = bw.magazine;
     bot.maxAmmo = bw.magazine;
+    bot.reserve = Player::ReserveCapacity(bw);
+    // 各槽位弹药初始化（BOT 的副武器/近战槽）
+    for (int sl = 0; sl < 5; ++sl) {
+        if (bot.weapons[sl] == WeaponId::None) bot.ClearSlotWeapon(sl);
+        else                                   bot.SetSlotWeapon(sl, bot.weapons[sl]);
+    }
+    bot.SaveAmmoToSlot();
     bot.aimAngle = angleDist_(rng_);
 
     for (int attempt = 0; attempt < 20; ++attempt) {
@@ -400,6 +412,7 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
     if (slot == 4) {
         player_.ammo = 1;
         player_.maxAmmo = 1;
+        player_.reserve = 0;
         return;
     }
     if (slot == 3) {
@@ -407,6 +420,7 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
         player_.SyncActiveGrenade();
         player_.ammo = 1;
         player_.maxAmmo = 1;
+        player_.reserve = 0;
         return;
     }
 
@@ -468,7 +482,8 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     player_.stealth = shiftPressed && canAct;
 
     if (canAct && rPressed && !player_.reloading) {
-        if ((player_.weaponSlot == 0 || player_.weaponSlot == 1) && player_.ammo < player_.maxAmmo) {
+        if ((player_.weaponSlot == 0 || player_.weaponSlot == 1) &&
+            player_.ammo < player_.maxAmmo && player_.reserve > 0) {
             StartReload(player_, audio);
         }
     }

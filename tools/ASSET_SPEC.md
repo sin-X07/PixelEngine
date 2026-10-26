@@ -1,4 +1,4 @@
-﻿# 素材规格契约 (ASSET SPEC)
+# 素材规格契约 (ASSET SPEC)
 
 本文档是 **素材的唯一权威规格**。所有占位素材由 `tools/gen_placeholders.py` 与
 `tools/gen_placeholder_map.py` 按本规格生成；**用户真实素材到位后，直接覆盖同名同路径文件即可，
@@ -107,7 +107,7 @@
 | `ak47.wav` | AK-47 射击 |
 | `m4a1.mp3` | M4A1 射击 |
 | `galir.wav` | Galil 射击 |
-| `awp.wav` | AWP 射击 |
+| `awp.mp3` | AWP 射击 |
 | `deagle.mp3` | 沙鹰射击 |
 | `glock.wav` | Glock 射击 |
 | `usp.wav` | USP 射击 |
@@ -209,10 +209,23 @@ python tools/scale_map.py <map.tmj> --div 4                              # 面�
 
 做的事：地图 `width/height`（tile 数）、所有对象的 `x/y/width/height`、
 imagelayer 的 `imagewidth/imageheight` 全部除以 `--div`；`tilewidth/tileheight` 不变。
+**组图层（`group`）里的子对象层会一并递归处理**，所以 Tiled 里按区域分组的
+`site` 层（A_Site / Mid / B_Site …）坐标同样会被缩放。
 
 **背景图不用重新做**——渲染时背景会被拉伸到 imagelayer 声明的尺寸，
 原图保持全分辨率。脚本会额外打印缩放后最薄的墙体，若不足 1 个 tile
 （8px）会提示栅格化吸附风险。
+
+缩放后用两个校验脚本确认没有破坏可玩性：
+
+```powershell
+python tools/verify_scaled_map.py <原图.tmj> <缩放图.tmj> --div 2   # 逐项核对坐标是否恰好 ÷2
+python tools/check_map_connectivity.py <缩放图.tmj>               # 出生点/包点连通性 + 可达面积
+```
+
+`check_map_connectivity.py` 复刻引擎的碰撞栅格化规则（按 `PathAgentRadius=4` 膨胀墙体），
+输出实心格占比与可通行连通分量。正常结果应为「出生点 / 包点全部 `on_passable=1`
+且落在同一连通分量」；若出现多个分量或有点落在实心格上，说明走廊被吸附堵死。
 
 ### 6.4 出生点拆分工具
 若地图只有通用 `SpawnPoint`，双方会从同一批点出生。用脚本按空间位置自动拆分：
@@ -228,6 +241,22 @@ python tools/split_spawns.py <map.tmj> --axis y                        # 指定�
 
 > `buy_zone` 缺失时视为全图可购买；建议在双方出生点附近各放一个，
 > 用属性 `team = t / ct` 限定阵营。
+
+### 6.5 弹药模型自检
+
+武器弹药规则（备弹 = 弹匣 × 3、换弹扣备弹、捡枪沿用丢弃状态）有一套独立自检，
+改动 `Player` 的弹药字段后建议跑一次：
+
+```powershell
+# 需要 SDL 头文件；从构建目录借用一份即可
+g++ -std=c++17 -DSDL_MAIN_HANDLED ^
+    -I PixelEngine -I <SDL2 include> -I <SDL2 include>/SDL2 ^
+    tools/ammo_test.cpp -o ammo_test.exe
+./ammo_test.exe
+```
+
+覆盖：备弹容量换算、换弹扣减、备弹不足/耗尽、捡枪沿用弹药、越界夹紧、
+跨槽位持久化、清槽清备弹。全部输出 `[ OK ]` 即通过。
 
 ### 6.5 示例（最小可用 Entities 层）
 
