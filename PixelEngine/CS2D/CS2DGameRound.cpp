@@ -56,18 +56,19 @@ void CS2DGame::UpdateRoundFlow(float dt, AudioManager* audio) {
 void CS2DGame::BeginNewRound(AudioManager* audio) {
     if (teams_.MatchOver()) return;
     CoachResetRound();
+    SnapshotRoundEconomy();   // 必须在任何采购之前：save/eco 看的是买枪前经济
     CoachBeginRound();      // 必须在买枪之前：save/eco 要拦得住 BotBuyLoadout
     RespawnAllForRound();
     SetupObjective();   // 每回合重置包点 / 人质
     AssignSquadRoles(); // 每回合按新的相对位置重新分工
-    // 经济不足：队伍平均余额买不起步枪时提示教练（eco 决策依据）
+    // 购买延迟：等本轮教练（尤其 LLM save/eco）先给结论，再决定是否采购。
+    botBuyPending_ = true;
+    botBuyDoneT_   = false;
+    botBuyDoneCT_  = false;
+    botBuyTimer_   = (coachLlmEnabled_ && coachLlm_) ? 7.5f : 0.0f;
+    // 经济不足：按买枪前快照提示教练（eco 决策依据）
     for (Team t : {Team::T, Team::CT}) {
-        int sum = 0, n = 0;
-        if (player_.team == t) { sum += player_.money; ++n; }
-        for (const auto& b : bots_) {
-            if (b.team == t) { sum += b.money; ++n; }
-        }
-        if (n > 0 && sum / n < 1800) {
+        if (LowEconomyAverage(t)) {
             CoachOnEvent(t, CoachEventType::EconomyLow);
         }
     }
@@ -175,8 +176,8 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
             bot.SaveAmmoToSlot();
         }
 
-        // 幸存者已持有主武器，BotBuyLoadout 只会补护甲/投掷物
-        BotBuyLoadout(bot);
+        // 购买不在这里立刻执行：交给 UpdateBotBuy 等教练 save/eco 决策。
+        // 否则 LLM 的 save 回包总是晚于购买，BOT 会把钱花光。
     }
     bullets_.clear();
     drops_.clear();          // 掉落物只保留到本回合结束
@@ -261,6 +262,57 @@ void CS2DGame::BotBuyLoadout(Player& bot) {
     }
 
     economy_.Clamp(bot.money);
+}
+
+// 回合初延迟购买：先让教练（尤其 LLM）给出 save/eco，再决定是否采购。
+// 旧实现是在 RespawnAllForRound 立刻买，LLM 的 save 回包到达时钱已经花完。
+void CS2DGame::UpdateBotBuy(float dt) {
+    if (!botBuyPending_) return;
+
+    // 已经进入交战期还没买：强制补齐，避免 BOT 空枪出门。
+    const bool force = (round_.Phase() == RoundPhase::Live);
+    if (!force) {
+        botBuyTimer_ -= dt;
+        if (botBuyTimer_ < 0.0f) botBuyTimer_ = 0.0f;
+    }
+
+    bool anyWaiting = false;
+    for (Team t : {Team::T, Team::CT}) {
+        bool& done = (t == Team::T) ? botBuyDoneT_ : botBuyDoneCT_;
+        if (done) continue;
+
+        CoachState& st = CoachFor(t);
+
+        // 教练已确定保枪：本回合不采购，余额留到下一回合。
+        if (st.plan.intent == PlanIntent::Save) {
+            done = true;
+            std::cout << "[Buy] " << TeamName(t) << " BOT 保枪：本回合不采购" << std::endl;
+            continue;
+        }
+
+        // 回合初 LLM 请求在途：等回包或最长 6 秒；超时后按规则计划采购。
+        const bool waitingLlm = coachLlmEnabled_ && coachLlm_ &&
+                                !st.llmAnswered && botBuyTimer_ > 0.0f && !force;
+        if (waitingLlm) {
+            anyWaiting = true;
+            continue;
+        }
+
+        int bought = 0;
+        for (auto& b : bots_) {
+            if (b.team != t || !b.alive) continue;
+            BotBuyLoadout(b);
+            ++bought;
+        }
+        done = true;
+        std::cout << "[Buy] " << TeamName(t) << " BOT 采购完成 (" << bought << " 人)"
+                  << (force ? " [force]" : "") << std::endl;
+    }
+
+    if (force || (botBuyDoneT_ && botBuyDoneCT_) ||
+        (!anyWaiting && botBuyTimer_ <= 0.0f)) {
+        botBuyPending_ = false;
+    }
 }
 
 void CS2DGame::CheckWinConditions(AudioManager* audio) {

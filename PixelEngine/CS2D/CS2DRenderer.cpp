@@ -245,6 +245,14 @@ void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
     const float viewW = static_cast<float>(viewportW) / zoom_;
     const float viewH = static_cast<float>(viewportH) / zoom_;
 
+    // 玩家视野：正前方要能看到屏幕边缘，但必须有上限，避免 BOT 在屏幕外开火。
+    // 加一个软边宽度，让屏幕四角落在"完全点亮"区内，而不是刚好卡在雾边。
+    const float halfW = viewW * 0.5f;
+    const float halfH = viewH * 0.5f;
+    const float screenHalfDiag = std::sqrt(halfW * halfW + halfH * halfH);
+    visionRadius_ = std::clamp(screenHalfDiag + VISION_SOFT_EDGE, VISION_RADIUS,
+                               MAX_PLAYER_VISION_RADIUS);
+
     float totalW = world_->GetMapPixelW();
     float totalH = world_->GetMapPixelH();
     if (world_->HasBackgroundImage()) {
@@ -691,33 +699,35 @@ void CS2DRenderer::DrawObjectiveMarkers(float timeSec) {
 
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 
-    // 包点：琥珀色区域 + 呼吸边线
+    // 包点：琥珀色区域 + 呼吸边线（一个包点可能由多个矩形组成）
     const auto& sites = world_->GetBombSites();
     const float pulse = 0.5f + 0.5f * std::sin(timeSec * 2.2f);
-    for (const auto& s : sites) {
-        SDL_FRect r;
-        r.x = (s.x - cameraX_) * zoom_;
-        r.y = (s.y - cameraY_) * zoom_;
-        r.w = s.width * zoom_;
-        r.h = s.height * zoom_;
+    for (const auto& site : sites) {
+        for (const auto& s : site.rects) {
+            SDL_FRect r;
+            r.x = (s.x - cameraX_) * zoom_;
+            r.y = (s.y - cameraY_) * zoom_;
+            r.w = s.width * zoom_;
+            r.h = s.height * zoom_;
 
-        SDL_SetRenderDrawColor(renderer_, 240, 190, 60, 34);
-        SDL_RenderFillRectF(renderer_, &r);
+            SDL_SetRenderDrawColor(renderer_, 240, 190, 60, 34);
+            SDL_RenderFillRectF(renderer_, &r);
 
-        SDL_SetRenderDrawColor(renderer_, 250, 205, 80,
-                               static_cast<Uint8>(110 + 70 * pulse));
-        SDL_RenderDrawRectF(renderer_, &r);
+            SDL_SetRenderDrawColor(renderer_, 250, 205, 80,
+                                   static_cast<Uint8>(110 + 70 * pulse));
+            SDL_RenderDrawRectF(renderer_, &r);
 
-        // 四角加粗，强调边界
-        const float arm = std::min(r.w, r.h) * 0.22f;
-        SDL_SetRenderDrawColor(renderer_, 255, 225, 120, 200);
-        for (int i = 0; i < 4; ++i) {
-            const float cx = (i % 2 == 0) ? r.x : r.x + r.w;
-            const float cy = (i / 2 == 0) ? r.y : r.y + r.h;
-            const float dx = (i % 2 == 0) ? arm : -arm;
-            const float dy = (i / 2 == 0) ? arm : -arm;
-            SDL_RenderDrawLineF(renderer_, cx, cy, cx + dx, cy);
-            SDL_RenderDrawLineF(renderer_, cx, cy, cx, cy + dy);
+            // 四角加粗，强调边界
+            const float arm = std::min(r.w, r.h) * 0.22f;
+            SDL_SetRenderDrawColor(renderer_, 255, 225, 120, 200);
+            for (int i = 0; i < 4; ++i) {
+                const float cx = (i % 2 == 0) ? r.x : r.x + r.w;
+                const float cy = (i / 2 == 0) ? r.y : r.y + r.h;
+                const float dx = (i % 2 == 0) ? arm : -arm;
+                const float dy = (i / 2 == 0) ? arm : -arm;
+                SDL_RenderDrawLineF(renderer_, cx, cy, cx + dx, cy);
+                SDL_RenderDrawLineF(renderer_, cx, cy, cx, cy + dy);
+            }
         }
     }
 }
@@ -863,11 +873,12 @@ float CS2DRenderer::ComputeVisibility(float playerX, float playerY, float aimAng
     const float dist = std::sqrt(deltaX * deltaX + deltaY * deltaY);
 
     // 1) 距离因子：半径内 1.0，边缘 smoothstep → 0.0
-    const float fullyLitRadius = VISION_RADIUS - VISION_SOFT_EDGE;
+    const float radius = visionRadius_;
+    const float fullyLitRadius = radius - VISION_SOFT_EDGE;
     float distFactor = 0.0f;
     if (dist <= fullyLitRadius) {
         distFactor = 1.0f;
-    } else if (dist < VISION_RADIUS) {
+    } else if (dist < radius) {
         float blend = (dist - fullyLitRadius) / VISION_SOFT_EDGE;
         blend = blend * blend * (3.0f - 2.0f * blend);  // smoothstep
         distFactor = 1.0f - blend;

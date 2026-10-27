@@ -45,7 +45,7 @@ std::vector<CS2DGame::ScoreRow> CS2DGame::BuildScoreboard() const {
     for (size_t i = 0; i < bots_.size(); ++i) {
         const auto& b = bots_[i];
         ScoreRow r;
-        r.name   = "BOT#" + std::to_string(i);
+        r.name   = b.name.empty() ? ("BOT#" + std::to_string(i)) : b.name;
         r.team   = b.team;
         r.kills  = b.kills;
         r.deaths = b.deaths;
@@ -114,14 +114,7 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
     // ---------------- 爆破 ----------------
     // 玩家持包且站在包点：按住 E 安装 C4
     if (mode_ == MatchMode::BombDefusal && !bombPlanted_ && PlayerHasC4()) {
-        bool inSite = false;
-        for (const auto& site : world_->GetBombSites()) {
-            if (player_.x >= site.x && player_.x <= site.x + site.width &&
-                player_.y >= site.y && player_.y <= site.y + site.height) {
-                inSite = true;
-                break;
-            }
-        }
+        const bool inSite = world_ && world_->FindBombSiteAt(player_.x, player_.y) != nullptr;
         if (inSite && interactHeld) {
             plantProgress_ += dt;
             if (audio) {
@@ -147,21 +140,16 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
 
             // T 站在包点内累积下包进度
             // T 只有「C4 携带者」本人能在包点安装
-            const auto& sites = world_->GetBombSites();
             bool carrierInSite = false;
 
-            if (!bombDropped_ && !sites.empty() &&
+            if (!bombDropped_ && world_ &&
                 bombCarrier_ >= 0 && bombCarrier_ < static_cast<int>(bots_.size())) {
                 const Player& carrier = bots_[static_cast<size_t>(bombCarrier_)];
                 if (carrier.alive && carrier.team == Team::T) {
-                    for (const auto& s : sites) {
-                        if (carrier.x >= s.x && carrier.x <= s.x + s.width &&
-                            carrier.y >= s.y && carrier.y <= s.y + s.height) {
-                            carrierInSite = true;
-                            bombX_ = carrier.x;
-                            bombY_ = carrier.y;
-                            break;
-                        }
+                    if (world_->FindBombSiteAt(carrier.x, carrier.y)) {
+                        carrierInSite = true;
+                        bombX_ = carrier.x;
+                        bombY_ = carrier.y;
                     }
                 }
             }
@@ -199,33 +187,53 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
                 return;
             }
 
-            // CT 拆包：玩家需按住 E；BOT 只要贴近炸弹即自动拆
+            // CT 拆包：玩家需按住 E；BOT 只派一个「当前安全」的人拆，
+            // 其余人保持战斗/掩护，不会全部贴在炸弹上站桩。
             bool defusing = false;
             // 记录拆包者（-1=玩家, >=0=BOT索引, -2=无），拆包成功时给其个人发奖励
             int defuserIdx = -2;
 
+            bool playerDefusing = false;
             if (player_.alive && player_.team == Team::CT && interactHeld) {
                 const float dx = player_.x - bombX_;
                 const float dy = player_.y - bombY_;
                 if (std::sqrt(dx * dx + dy * dy) <= Tuning::DefuseRadius) {
                     defusing = true;
                     defuserIdx = -1;
+                    playerDefusing = true;
                 }
             }
 
-            // BOT 拆包（玩家阵亡后也能赢）
+            // BOT：只选一个安全候选（无可见敌人/最近没挨打；最后 6 秒强制拆）
+            int bestBot = -2;
+            float bestD2 = 1e36f;
             for (size_t bi = 0; bi < bots_.size(); ++bi) {
                 auto& b = bots_[bi];
-                if (!b.alive || b.team != Team::CT) continue;
+                if (!b.alive || b.team != Team::CT) {
+                    AiAt(bi).defusing = false;
+                    continue;
+                }
                 const float dx = b.x - bombX_;
                 const float dy = b.y - bombY_;
-                if (std::sqrt(dx * dx + dy * dy) <= Tuning::DefuseRadius) {
-                    defusing = true;
-                    AiAt(bi).defusing = true;      // 通知 BOT 停下原地拆包
-                    if (defuserIdx == -2) defuserIdx = static_cast<int>(bi);
-                } else {
+                const float d2 = dx * dx + dy * dy;
+                if (d2 > Tuning::DefuseRadius * Tuning::DefuseRadius) {
                     AiAt(bi).defusing = false;
+                    continue;
                 }
+                if (!BotCanDefuse(bi, b)) continue;
+                if (d2 < bestD2) { bestD2 = d2; bestBot = static_cast<int>(bi); }
+            }
+
+            if (!playerDefusing && bestBot >= 0) {
+                if (!AiAt(static_cast<size_t>(bestBot)).defusing) {
+                    std::cout << "[Defuse] #" << bestBot << " start" << std::endl;
+                }
+                defusing = true;
+                defuserIdx = bestBot;
+            }
+            for (size_t bi = 0; bi < bots_.size(); ++bi) {
+                if (bots_[bi].team != Team::CT) continue;
+                AiAt(bi).defusing = (!playerDefusing && static_cast<int>(bi) == bestBot);
             }
 
             if (defusing) {
@@ -237,6 +245,7 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
                 }
                 defuseProgress_ += dt / DEFUSE_TIME;
                 if (defuseProgress_ >= 1.0f) {
+                    std::cout << "[Defuse] #" << defuserIdx << " success" << std::endl;
                     std::cout << "[CS2D] C4 已拆除!" << std::endl;
                     bombPlanted_ = false;
                     bombTimer_ = 0.0f;
@@ -254,7 +263,7 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
                                    defuserIdx < static_cast<int>(bots_.size())) {
                             bots_[static_cast<size_t>(defuserIdx)].money += bonus;
                             economy_.Clamp(bots_[static_cast<size_t>(defuserIdx)].money);
-                            std::cout << "[Economy] BOT#" << defuserIdx
+                            std::cout << "[Economy] " << bots_[static_cast<size_t>(defuserIdx)].name
                                       << " 拆包 +$" << bonus << std::endl;
                         }
                     }

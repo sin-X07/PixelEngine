@@ -10,12 +10,14 @@
 
 #include <string>
 #include <vector>
+#include "CS2DTypes.hpp"
 
 class CS2DWorld;
 
 struct SiteHeat {
     std::string area;        // 包点所在区域名
-    float x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f;   // 包点矩形
+    float cx = 0.0f, cy = 0.0f;   // 包点中心
+    std::vector<ObjectDef> rects;  // 包点矩形（一个包点可由多块组成）
     float heat = 0.0f;       // 衰减后的威胁度
     float lastSeen = -999.0f;// 最后一次观察到敌人的时间
     int   lastCount = 0;     // 最近一次累计到的敌人数（粗估）

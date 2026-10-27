@@ -126,6 +126,7 @@ public:
     float GetCameraX() const { return cameraX_; }
     float GetCameraY() const { return cameraY_; }
     float GetZoom()   const { return zoom_; }
+    float GetVisionRadius() const { return visionRadius_; }
     void  SetZoom(float z) { zoom_ = z; }
     void  SetViewportSize(int w, int h);   // 全屏 FOV 自适应后重建视野纹理
 
@@ -137,6 +138,9 @@ private:
     float cameraX_ = 0.0f;
     float cameraY_ = 0.0f;
     float zoom_    = 6.0f;   // 镜头缩放（6px 命中盒 → 屏上约 36px）
+    // 玩家视野半径：随视口/缩放动态更新，覆盖屏幕边缘但不超过上限。
+    float visionRadius_ = Tuning::VisionRadius;
+    static constexpr float MAX_PLAYER_VISION_RADIUS = 320.0f;
 
     int viewW_ = 800;        // 逻辑视口尺寸（供 tile 剔除与视野纹理重建）
     int viewH_ = 600;

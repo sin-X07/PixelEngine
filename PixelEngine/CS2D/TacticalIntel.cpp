@@ -10,13 +10,12 @@ void TacticalIntel::Build(const CS2DWorld* world, float now) {
 
     for (const auto& s : world->GetBombSites()) {
         SiteHeat h;
-        h.x = s.x;
-        h.y = s.y;
-        h.w = s.width;
-        h.h = s.height;
-        h.area = world->FindAreaAt(s.x + s.width * 0.5f, s.y + s.height * 0.5f);
+        h.cx = s.cx;
+        h.cy = s.cy;
+        h.rects = s.rects;
+        h.area = s.area.empty() ? world->FindAreaAt(s.cx, s.cy) : s.area;
         h.lastSeen = now - 999.0f;
-        sites_.push_back(h);
+        sites_.push_back(std::move(h));
     }
 }
 
@@ -69,20 +68,21 @@ std::string TacticalIntel::AreaName(int i) const {
 }
 
 int TacticalIntel::SiteIndexAt(float x, float y) const {
-    // 先判断落在哪个包点矩形内
+    // 先判断落在哪个包点的任一矩形内
     for (size_t i = 0; i < sites_.size(); ++i) {
-        const auto& s = sites_[i];
-        if (x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + s.h) {
-            return static_cast<int>(i);
+        for (const auto& r : sites_[i].rects) {
+            if (x >= r.x && x <= r.x + r.width &&
+                y >= r.y && y <= r.y + r.height) {
+                return static_cast<int>(i);
+            }
         }
     }
     // 否则归到最近的包点（阈值 220px，避免把中路接触算成包点）
     int best = -1;
     float bestD2 = 220.0f * 220.0f;
     for (size_t i = 0; i < sites_.size(); ++i) {
-        const auto& s = sites_[i];
-        const float dx = (s.x + s.w * 0.5f) - x;
-        const float dy = (s.y + s.h * 0.5f) - y;
+        const float dx = sites_[i].cx - x;
+        const float dy = sites_[i].cy - y;
         const float d2 = dx * dx + dy * dy;
         if (d2 < bestD2) { bestD2 = d2; best = static_cast<int>(i); }
     }
@@ -119,8 +119,8 @@ float TacticalIntel::HeatOfSide(const CS2DWorld* world, const std::string& side)
     int best = -1;
     float bestD2 = 1e18f;
     for (size_t i = 0; i < sites_.size(); ++i) {
-        const float dx = (sites_[i].x + sites_[i].w * 0.5f) - ax;
-        const float dy = (sites_[i].y + sites_[i].h * 0.5f) - ay;
+        const float dx = sites_[i].cx - ax;
+        const float dy = sites_[i].cy - ay;
         const float d2 = dx * dx + dy * dy;
         if (d2 < bestD2) { bestD2 = d2; best = static_cast<int>(i); }
     }

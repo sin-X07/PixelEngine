@@ -9,6 +9,17 @@
 #include <random>
 #include <chrono>
 
+namespace {
+// BOT 昵称（固定表，避免每回合/每次重生换名字）。
+// 字符均已在 UI 字形表中，避免显示成方框。
+const char* const kBotNicknames[] = {
+    "冷面", "余火", "老K", "铁壁", "风火",
+    "白鹰", "雷鹰", "飞鹰", "铁血"
+};
+constexpr int kBotNicknameCount =
+    static_cast<int>(sizeof(kBotNicknames) / sizeof(kBotNicknames[0]));
+} // namespace
+
 CS2DGame::CS2DGame()
     : rng_(static_cast<unsigned>(std::chrono::steady_clock::now().time_since_epoch().count())) {
     world_ = std::make_unique<CS2DWorld>();
@@ -91,6 +102,8 @@ void CS2DGame::ResetToNewMatch() {
 
     // CT 侧：玩家 + (TEAM_SIZE-1) 个 BOT；T 侧：TEAM_SIZE 个 BOT
     botAi_.clear();
+    bots_.clear();
+    nextBotNameIndex_ = 0;
     // 玩家所在阵营 4 个 BOT（凑满 5 人），敌方 5 个 BOT
     const Team mySide    = player_.team;
     const Team enemySide = TeamManager::Opponent(mySide);
@@ -110,12 +123,18 @@ void CS2DGame::ResetToNewMatch() {
               << " 实际人数 T=" << nT << " CT=" << nCT << std::endl;
 
     AssignBombCarrier();   // bot 创建后再分配一次（首次开局时 bots_ 还为空）
+    SnapshotRoundEconomy();
     AssignSquadRoles();
     CoachResetRound();
+    // 首回合也走同一套延迟购买，等教练先给 save/eco 结论
+    botBuyPending_ = true;
+    botBuyDoneT_   = false;
+    botBuyDoneCT_  = false;
+    botBuyTimer_   = (coachLlmEnabled_ && coachLlm_) ? 7.5f : 0.0f;
     CoachOnEvent(Team::T,  CoachEventType::RoundStart);
     CoachOnEvent(Team::CT, CoachEventType::RoundStart);
     for (size_t i = 0; i < squad_.size(); ++i) {
-        std::cout << "  BOT#" << i << " (" << TeamName(bots_[i].team) << ") 角色: "
+        std::cout << "  " << bots_[i].name << " (" << TeamName(bots_[i].team) << ") 角色: "
                   << (squad_[i].role == BotRole::Entry ? "突破"
                       : squad_[i].role == BotRole::Anchor ? "断后" : "支援")
                   << std::endl;
@@ -342,6 +361,11 @@ void CS2DGame::SpawnBOT(Player& bot, Team team) {
     bot.vx = bot.vy = 0.0f;
     bot.shootCooldown = 0.0f;
     bot.team       = team;
+    // 首次创建时分配昵称；重生时保留原昵称。
+    if (bot.name.empty()) {
+        bot.name = kBotNicknames[nextBotNameIndex_ % kBotNicknameCount];
+        ++nextBotNameIndex_;
+    }
     bot.animState  = AnimState::Idle;
     bot.animTimer  = 0.0f;
     bot.deathTimer = 0.0f;
@@ -460,7 +484,11 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
 }
 
 std::string CS2DGame::GetWeaponName() const {
-    return WeaponDB::Get(player_.CurrentWeapon().id).name;
+    return GetWeaponNameFor(player_);
+}
+
+std::string CS2DGame::GetWeaponNameFor(const Player& p) const {
+    return WeaponDB::Get(p.CurrentWeapon().id).name;
 }
 
 // ============================================================================
@@ -546,8 +574,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     if (canMove) {
         UpdateBOTs(dt, audio);
 
-    } else {
-        // 暂停 / 结算冻结：BOT 原地待命
+    } else {        // 暂停 / 结算冻结：BOT 原地待命
         for (auto& bot : bots_) { bot.vx = bot.vy = 0.0f; }
     }
 
@@ -558,11 +585,12 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
         if (!b.alive) { bai.footstepTimer = 0.0f; continue; }
         bai.footstepTimer -= dt;
         const float spd = std::sqrt(b.vx * b.vx + b.vy * b.vy);
-        if (spd > 5.0f && bai.footstepTimer <= 0.0f) {
+        if (!b.stealth && spd > 5.0f && bai.footstepTimer <= 0.0f) {
             bai.footstepTimer = 0.34f + static_cast<float>(i % 5) * 0.02f;
             if (audio) {
                 audio->PlaySoundAt(SoundEffect::FOOTSTEP, b.x, b.y, ListenerX(), ListenerY());
             }
+            OnFootstepSound(b, b.x, b.y);
         }
     }
 
@@ -575,6 +603,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     prevInteract_ = interactHeld;
 
     CoachUpdate(dt);
+    UpdateBotBuy(dt);
 
     UpdateBullets(dt, audio);
     UpdateGrenades(dt, audio);
@@ -649,12 +678,13 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     }
 
     // 玩家脚步声（潜行时不出声）
-    if (audio && player_.alive && !player_.stealth) {
+    if (player_.alive && !player_.stealth) {
         footstepTimer_ -= dt;
         const float spd = std::sqrt(player_.vx * player_.vx + player_.vy * player_.vy);
         if (spd > 5.0f && footstepTimer_ <= 0.0f) {
             footstepTimer_ = 0.32f;
-            audio->PlaySound(SoundEffect::FOOTSTEP);
+            if (audio) audio->PlaySound(SoundEffect::FOOTSTEP);
+            OnFootstepSound(player_, player_.x, player_.y);
         }
     }
 }
@@ -679,6 +709,14 @@ void CS2DGame::Render(int viewW, int viewH) {
     }
     renderer_->UpdateCamera(camX, camY, viewW, viewH);
     renderer_->DrawWorld();
+
+    // 烟雾画在地面层：角色、掉落物、目标标记都在它之上。
+    // 视觉上不再"盖死"一切；但 SegmentBlockedBySmoke 仍然阻挡视线与敌人剔除。
+    for (const auto& s : smokes_) {
+        const float t = std::clamp(s.life / 12.0f, 0.0f, 1.0f);
+        renderer_->DrawSmokeCloud(s.x, s.y, s.radius,
+                                  static_cast<Uint8>(150.0f * std::min(1.0f, t * 3.0f)));
+    }
 
     auto fillParams = [](const Player& p, SpriteDrawParams& sp) {
         sp.x          = p.x;
@@ -728,13 +766,6 @@ void CS2DGame::Render(int viewW, int viewH) {
         renderer_->DrawBullet(g.x, g.y, g.vx, g.vy);
     }
 
-    // 烟雾云（在遮罩之前绘制，仍受视野影响但视觉上覆盖战场）
-    for (const auto& s : smokes_) {
-        const float t = std::clamp(s.life / 12.0f, 0.0f, 1.0f);
-        renderer_->DrawSmokeCloud(s.x, s.y, s.radius,
-                                  static_cast<Uint8>(200.0f * std::min(1.0f, t * 3.0f)));
-    }
-
     // 目标物标记（包点范围）：画在角色之下、遮罩之上，保证始终可辨
     // 地面掉落物（用 _d 图标）
     for (const auto& d : drops_) {
@@ -745,7 +776,12 @@ void CS2DGame::Render(int viewW, int viewH) {
     // 已安装的 C4：醒目的红色脉冲标记 + 拆包有效范围
     // 掉在地上的 C4：T 方始终可见；CT 只在「有人看到过」的情报期内可见
     if (bombDropped_) {
-        const bool visible = (player_.team == Team::T) || bombIntel_ || IsSpectating();
+        bool visible = (player_.team == Team::T) || bombIntel_ || IsSpectating();
+        if (!visible && player_.alive && renderer_) {
+            visible = renderer_->IsVisibleToPlayer(player_.x, player_.y, player_.aimAngle,
+                                                    bombDropX_, bombDropY_) &&
+                      !SegmentBlockedBySmoke(player_.x, player_.y, bombDropX_, bombDropY_);
+        }
         if (visible) {
             const float pulse = 0.5f + 0.5f * std::sin(clockSec_ * 5.0f);
             renderer_->DrawCircleOutline(bombDropX_, bombDropY_,

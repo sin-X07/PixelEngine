@@ -259,6 +259,20 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             if (dx * dx + dy * dy >= hitR * hitR) continue;
 
             bullet.active = false;
+            const std::string victimName =
+                bot.name.empty() ? ("BOT#" + std::to_string(i)) : bot.name;
+            {
+                auto& hitAi = AiAt(i);
+                hitAi.lastHitTimer = 2.0f;   // 拆包安全判定：最近受击
+                if (bullet.ownerIdx == -1) {
+                    hitAi.threatX = player_.x;
+                    hitAi.threatY = player_.y;
+                } else if (bullet.ownerIdx >= 0 &&
+                           bullet.ownerIdx < static_cast<int>(bots_.size())) {
+                    hitAi.threatX = bots_[static_cast<size_t>(bullet.ownerIdx)].x;
+                    hitAi.threatY = bots_[static_cast<size_t>(bullet.ownerIdx)].y;
+                }
+            }
 
             // 玩家命中反馈（无论是否致死）
             if (bullet.ownerIdx == -1) hitMarkerTimer_ = 0.18f;
@@ -278,10 +292,16 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                     // 击杀奖励按武器类型发放（照抄 CS2）
                     player_.money += economy_.GrantKill(WeaponDB::KillReward(bullet.weapon));
                     economy_.Clamp(player_.money);
-                    PushKillFeed("你  ▸  击杀 " + std::string(TeamName(bot.team)) + " BOT");
+                    PushKillFeed("你  ▸  击杀 " + victimName);
                 } else {
-                    PushKillFeed(std::string("BOT#") + std::to_string(bullet.ownerIdx)
-                                 + "  ▸  击杀 " + TeamName(bot.team) + " BOT");
+                    const std::string killerName =
+                        (bullet.ownerIdx >= 0 &&
+                         bullet.ownerIdx < static_cast<int>(bots_.size()))
+                            ? (bots_[static_cast<size_t>(bullet.ownerIdx)].name.empty()
+                                   ? ("BOT#" + std::to_string(bullet.ownerIdx))
+                                   : bots_[static_cast<size_t>(bullet.ownerIdx)].name)
+                            : std::string("BOT");
+                    PushKillFeed(killerName + "  ▸  击杀 " + victimName);
                     // BOT 击杀奖励（同样按武器类型）
                     if (bullet.ownerIdx >= 0 &&
                         bullet.ownerIdx < static_cast<int>(bots_.size())) {
@@ -333,7 +353,13 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                 if (audio) audio->PlaySound(player_.armor > 0 ? SoundEffect::ARMOR_HIT
                                                               : SoundEffect::HIT);
                 if (ApplyDamage(player_, bullet.damage)) {
-                    PushKillFeed(std::string("BOT#") + std::to_string(bullet.ownerIdx) + "  ▸  击杀 你");
+                    const std::string killerName =
+                        (bullet.ownerIdx >= 0 &&
+                         bullet.ownerIdx < static_cast<int>(bots_.size()) &&
+                         !bots_[static_cast<size_t>(bullet.ownerIdx)].name.empty())
+                            ? bots_[static_cast<size_t>(bullet.ownerIdx)].name
+                            : std::string("BOT#") + std::to_string(bullet.ownerIdx);
+                    PushKillFeed(killerName + "  ▸  击杀 你");
                     OnCombatantKilled(player_, audio);
                     // BOT 击杀玩家奖励（按武器类型）
                     if (bullet.ownerIdx >= 0 &&

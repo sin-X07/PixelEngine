@@ -523,19 +523,14 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
                                        : std::string();
         o << "已下@" << (site.empty() ? "未知" : site)
           << " 倒计时" << static_cast<int>(game.GetBombTimer()) << "s"
-          << " 拆包需10s";
+          << " 拆包需5s";
     } else if (game.PlayerHasC4()) {
         o << "未下(玩家携带)";
     } else {
         o << "未下";
     }
 
-    int sum = 0, n = 0;
-    if (game.GetPlayer().team == team) { sum += game.GetPlayer().money; ++n; }
-    for (const auto& b : game.GetBOTs()) {
-        if (b.team == team) { sum += b.money; ++n; }
-    }
-    const int avg = (n > 0) ? sum / n : 0;
+    const int avg = game.GetRoundStartEconomy(team);
     o << " 经济" << (avg < 1800 ? "穷" : (avg < 3500 ? "中" : "富"));
 
 
@@ -801,6 +796,7 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
                                               st.memory, allow);
 
     st.llmPending     = true;
+    st.llmAnswered    = false;
     st.llmGen         = st.gen;
     st.llmAt          = clockSec_;
     st.llmEventType   = static_cast<int>(ev.type);
@@ -886,6 +882,7 @@ void CS2DGame::CoachDrainLlm() {
         }
 
         st.llmPending = false;
+        st.llmAnswered = true;
 
         // 回包过期：代际号 / 回合号 / 炸弹状态任一变化都丢弃
         if (r.gen < st.gen) {
@@ -929,6 +926,9 @@ void CS2DGame::CoachDrainLlm() {
             continue;
         }
 
+        // 防单点 / 防连续同侧：LLM 可能因上一局 A 赢了而一直压 A。
+        SanitizeCoachPlan(r.team, plan);
+
         // TTL 下限：开局 18s / 下包·拆包 12s / 其它 10s
         {
             float floorTtl = 10.0f;
@@ -946,6 +946,9 @@ void CS2DGame::CoachDrainLlm() {
         st.plan   = plan;
         st.reason = plan.reason;
         st.stickyLlm = true;       // LLM owns plan until expiry/critical
+        if (r.team == Team::T && (plan.target == "A" || plan.target == "B")) {
+            st.lastAttackSide = plan.target;
+        }
 
         {   // 记录上一条指令，供下一次 prompt 使用
             std::ostringstream o;
@@ -971,6 +974,7 @@ void CS2DGame::CoachDrainLlm() {
             (st.llmEventType == static_cast<int>(CoachEventType::RoundStart)) ? 7.0f : 4.0f;
         if (st.llmPending && clockSec_ - st.llmAt > deadline) {
             st.llmPending = false;
+            st.llmAnswered = true;
             std::cout << "[Coach] " << TeamName(t) << " LLM 超时，沿用规则计划" << std::endl;
         }
     }

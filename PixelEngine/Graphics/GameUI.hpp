@@ -151,7 +151,7 @@ public:
         // 观察者 / C4 提示
         bool   spectating     = false;
         int    spectateMode   = 0;      // 0 跟随, 1 自由
-        std::string spectateTarget;     // 例：BOT#3（2/4）
+        std::string spectateTarget;     // 被观战 BOT 的昵称
         bool   hasC4          = false;
         bool   holdingC4      = false;   // C4 拿在手上（按 5）
         bool   bombDropped    = false;   // C4 掉在地上

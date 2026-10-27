@@ -63,7 +63,25 @@ public:
     const std::vector<SpawnPoint>&  GetSpawnPoints()  const { return spawnPoints_; }
 
     // ---- 目标物 / 购买区（来自 Entities 层对象，Phase 4/5 使用）----
-    const std::vector<ObjectDef>& GetBombSites()  const { return bombSites_; }
+    // 一个包点（A/B）可以由多个矩形组成；按 Tiled 的 bomb_site 对象层聚合。
+    struct BombSiteDef {
+        std::string name;                 // "A" / "B"（展示与选点用）
+        std::string area;                 // 所属战术区域名，如 A_Site / B_Site
+        std::vector<ObjectDef> rects;     // 该包点的所有矩形
+        float cx = 0.0f, cy = 0.0f;       // 代表点：面积最大矩形的中心，保证在包点内部
+        float minX = 0.0f, minY = 0.0f;   // 包围盒
+        float maxX = 0.0f, maxY = 0.0f;
+
+        bool Contains(float x, float y) const {
+            for (const auto& r : rects) {
+                if (x >= r.x && x <= r.x + r.width &&
+                    y >= r.y && y <= r.y + r.height) return true;
+            }
+            return false;
+        }
+    };
+
+    const std::vector<BombSiteDef>& GetBombSites()  const { return bombSites_; }
     const std::vector<ObjectDef>& GetHostages()   const { return hostages_; }
     const std::vector<ObjectDef>& GetBuyZones()   const { return buyZones_; }
 
@@ -75,6 +93,8 @@ public:
     const std::vector<AreaDef>& GetAreas() const { return areas_; }
     // 返回 (x,y) 所在区域名；未命中返回空串
     std::string FindAreaAt(float x, float y) const;
+    // 返回 (x,y) 所在包点；未命中返回 nullptr
+    const BombSiteDef* FindBombSiteAt(float x, float y) const;
     // 区域名列表（给 LLM prompt 用）
     std::vector<std::string> AreaNames() const;
 
@@ -111,7 +131,7 @@ private:
     std::vector<SpawnPoint>  spawnPoints_;
 
     // 目标物 / 购买区
-    std::vector<ObjectDef>   bombSites_;
+    std::vector<BombSiteDef> bombSites_;
     std::vector<AreaDef>     areas_;
     std::vector<ObjectDef>   hostages_;
     std::vector<ObjectDef>   buyZones_;

@@ -1103,21 +1103,35 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
 
     // 右下角武器状态文字（与 CS2DRenderer 的 160×56 面板对齐）
     {
-        std::string line = ctx.weaponName;
-        if (ctx.magazineSize > 0) {
-            line += " " + std::to_string(ctx.ammo) + "/" + std::to_string(ctx.magazineSize)
-                  + "  (+" + std::to_string(ctx.reserveAmmo) + ")";
-        } else if (ctx.grenadeCount > 0) {
-            // 投掷物：显示背包里还剩几个（按 4 切换）
-            line += " (" + std::to_string(ctx.grenadeCount) + ")";
-        }
         // 与 CS2DRenderer 的面板对齐：面板高 56*scale、右下留 10*scale
         const float vpH = ImGui::GetIO().DisplaySize.y;
         const float panelH = UI(56.0f);
         const float margin = UI(10.0f);
         const float textX = vpW - UI(160.0f) + UI(50.0f);
-        const float textY = vpH - panelH - margin + UI(18.0f);
-        DrawImGuiText(imGuiUI, line.c_str(), textX, textY, 230, 238, 235, 255, 18);
+        const float panelTop = vpH - panelH - margin;
+
+        // 第一行：武器名
+        DrawImGuiText(imGuiUI, ctx.weaponName.c_str(),
+                      textX, panelTop + UI(7.0f), 225, 232, 228, 255, 15);
+
+        // 第二行：弹夹内子弹数/备弹数（不是弹匣容量）
+        if (ctx.magazineSize > 0) {
+            const std::string ammoLine =
+                std::to_string(ctx.ammo) + "/" + std::to_string(ctx.reserveAmmo);
+            Uint8 ar = 255, ag = 226, ab = 150;
+            if (ctx.ammo <= 0) {
+                ar = 238; ag = 92; ab = 84;          // 空仓：红
+            } else if (ctx.ammo * 4 <= ctx.magazineSize) {
+                ar = 255; ag = 170; ab = 88;         // 低弹：橙
+            }
+            DrawImGuiText(imGuiUI, ammoLine.c_str(),
+                          textX, panelTop + UI(28.0f), ar, ag, ab, 255, 21);
+        } else if (ctx.grenadeCount > 0) {
+            // 投掷物：显示背包里还剩几个（按 4 切换）
+            const std::string ammoLine = "x" + std::to_string(ctx.grenadeCount);
+            DrawImGuiText(imGuiUI, ammoLine.c_str(),
+                          textX, panelTop + UI(28.0f), 255, 226, 150, 255, 18);
+        }
     }
 
     // 提示（换弹等）
@@ -1135,11 +1149,14 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
                     "自由视角 · [空格] 回到队友视角 · [WASD] 移动镜头",
                     yBase, 200, 214, 230, 235, 16);
             } else {
-                char buf[128];
-                snprintf(buf, sizeof(buf),
-                         "观察者 · 跟随 %s · [空格] 自由视角 · [左/右键] 切换队友",
+                char nameBuf[96];
+                snprintf(nameBuf, sizeof(nameBuf), "观战：%s",
                          ctx.spectateTarget.empty() ? "-" : ctx.spectateTarget.c_str());
-                DrawImGuiTextCentered(imGuiUI, buf, yBase, 200, 214, 230, 235, 16);
+                DrawImGuiTextCentered(imGuiUI, nameBuf, yBase - UI(4.0f),
+                                      255, 225, 140, 255, 20);
+                DrawImGuiTextCentered(imGuiUI,
+                    "[空格] 自由视角 · [左/右键] 切换 BOT",
+                    yBase + UI(22.0f), 195, 210, 220, 220, 14);
             }
         } else if (ctx.holdingC4) {
             DrawImGuiTextCentered(imGuiUI, "手持 C4 · [5] 收起 · [G] 丢下",

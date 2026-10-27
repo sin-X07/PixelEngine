@@ -29,6 +29,70 @@ bool CS2DGame::PlayerCanSeeBot(const Player& bot) const {
                                         bot.x, bot.y);
 }
 
+// 拆包安全判定：CT BOT 只有在「没有可见敌人、最近没挨打」时才拆包；
+// 炸弹最后 6 秒进入强制拆包窗口，必须顶着火力尝试。
+bool CS2DGame::BotCanDefuse(size_t i, const Player& bot) const {
+    if (mode_ != MatchMode::BombDefusal || !bombPlanted_) return false;
+    if (!bot.alive || bot.team != Team::CT) return false;
+
+    const float dx = bot.x - bombX_;
+    const float dy = bot.y - bombY_;
+    if (dx * dx + dy * dy > Tuning::DefuseRadius * Tuning::DefuseRadius) return false;
+    if (bombTimer_ <= 0.0f) return false;
+
+    // 时间不够时没有"先反击"的余裕：必须拆。
+    if (bombTimer_ <= 6.0f) return true;
+
+    const BotRuntime& ai = AiAt(i);
+    if (ai.defuseCooldown > 0.0f) return false;  // 刚放弃拆包，先处理威胁
+    if (ai.lastHitTimer > 0.0f) return false;    // 正在挨打：先反击/找掩体
+
+    float enemyDist = 0.0f;
+    if (FindVisibleEnemy(bot, enemyDist)) return false;   // 看得见敌人：先打
+
+    // 团队情报显示 T 还压在包点附近：先清人，不要贴包。
+    if (const EnemyContact* c = FindNearestContact(Team::CT, bombX_, bombY_)) {
+        const float ex = c->x - bombX_;
+        const float ey = c->y - bombY_;
+        if (ex * ex + ey * ey < 240.0f * 240.0f) return false;
+    }
+
+    return true;
+}
+
+// 脚步事件：只让附近「能听到」的敌对 BOT 记住声源，不写入团队情报。
+// 静步（source.stealth）完全不出声；墙和烟雾不阻断声音。
+void CS2DGame::OnFootstepSound(const Player& source, float x, float y) {
+    if (source.stealth) return;
+
+    const float hearR2 = Tuning::FootstepHearRadius * Tuning::FootstepHearRadius;
+    for (size_t i = 0; i < bots_.size(); ++i) {
+        Player& listener = bots_[i];
+        if (!listener.alive || listener.team == source.team) continue;
+
+        const float dx = x - listener.x;
+        const float dy = y - listener.y;
+        const float d2 = dx * dx + dy * dy;
+        if (d2 > hearR2) continue;
+
+        auto& ai = AiAt(i);
+        const float dist = std::sqrt(d2);
+        // 同一时刻只记最近/最新的声源；较远的旧声音不覆盖更近的新声音。
+        if (ai.heardFootstepTimer <= 0.0f || dist <= ai.heardFootstepDist) {
+            ai.heardFootstepX = x;
+            ai.heardFootstepY = y;
+            ai.heardFootstepDist = dist;
+            ai.heardFootstepTimer = Tuning::FootstepMemory;
+            if (ai.heardLogCooldown <= 0.0f) {
+                ai.heardLogCooldown = 2.0f;
+                std::cout << "[Bot] #" << i << " 听到脚步("
+                          << TeamName(source.team) << ") 距离 "
+                          << static_cast<int>(dist) << " → 搜索声源" << std::endl;
+            }
+        }
+    }
+}
+
 // 找最近的存活敌人（玩家或其它 BOT）
 // 已废弃：BOT 不再全图感知，改用 FindVisibleEnemy + 团队情报。
 
@@ -106,11 +170,12 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
                          : (tempo == Tempo::Slow) ? 0.92f : 1.0f;
     const float speed = Tuning::BotMoveSpeed * weaponMul * tempoMul
                       * std::clamp(speedMul, Tuning::SpeedMulMin, 1.0f);
+    const float moveSpeed = bot.stealth ? std::min(speed, Tuning::BotStealthSpeed) : speed;
     // 绕行状态：卡住后沿侧向方向走一小段时间（不再瞬移）
     if (ai.detourTimer > 0.0f) {
         ai.detourTimer -= dt;
-        bot.vx = ai.detourX * speed;
-        bot.vy = ai.detourY * speed;
+        bot.vx = ai.detourX * moveSpeed;
+        bot.vy = ai.detourY * moveSpeed;
         MoveWithCollision(bot, dt);
         return true;
     }
@@ -121,7 +186,7 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     float dirX = dx / d, dirY = dy / d;
     {
         const float half = bot.size * 0.5f;
-        const float probe = std::max(8.0f, speed * dt * 2.0f);
+        const float probe = std::max(8.0f, moveSpeed * dt * 2.0f);
         static const float kOffsets[7] = {
             0.0f,
              0.5235988f, -0.5235988f,   // ±30°
@@ -140,8 +205,8 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
         }
     }
 
-    bot.vx = dirX * speed;
-    bot.vy = dirY * speed;
+    bot.vx = dirX * moveSpeed;
+    bot.vy = dirY * moveSpeed;
 
     // 局部避障：防止多人挤在同一路线上互相卡住
     {
@@ -154,9 +219,9 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
             bot.vx += dx / d * 20.0f;
             bot.vy += dy / d * 20.0f;
             const float s2 = std::sqrt(bot.vx * bot.vx + bot.vy * bot.vy);
-            if (s2 > 60.0f) {
-                bot.vx = bot.vx / s2 * 60.0f;
-                bot.vy = bot.vy / s2 * 60.0f;
+            if (s2 > moveSpeed) {
+                bot.vx = bot.vx / s2 * moveSpeed;
+                bot.vy = bot.vy / s2 * moveSpeed;
             }
         }
     }
@@ -233,6 +298,14 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // BOT 阵亡掉落 / 切换武器读取的都是 ammoSlot，必须保持最新。
         bot.SaveAmmoToSlot();
         auto& ai = AiAt(i);
+        if (ai.heardFootstepTimer > 0.0f) {
+            ai.heardFootstepTimer = std::max(0.0f, ai.heardFootstepTimer - dt);
+            if (ai.heardFootstepTimer <= 0.0f) ai.heardFootstepDist = 1e9f;
+        }
+        if (ai.blindTimer > 0.0f) ai.blindTimer = std::max(0.0f, ai.blindTimer - dt);
+        if (ai.lastHitTimer > 0.0f) ai.lastHitTimer = std::max(0.0f, ai.lastHitTimer - dt);
+        if (ai.defuseCooldown > 0.0f) ai.defuseCooldown = std::max(0.0f, ai.defuseCooldown - dt);
+        if (ai.heardLogCooldown > 0.0f) ai.heardLogCooldown -= dt;
         ai.scanPhase += dt;
         if (ai.wanderTimer > 0.0f) ai.wanderTimer -= dt;
 
@@ -241,10 +314,25 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         SquadOrder order;
         if (i < squad_.size()) order = squad_[i];
 
-        // ---- 正在拆包：原地不动（进度由 UpdateObjective 推进）----
+        // ---- 正在拆包：默认原地不动；一旦看见敌人/挨打就放弃拆包转入反击 ----
         if (ai.defusing) {
-            bot.vx = bot.vy = 0.0f;
-            continue;
+            if (!BotCanDefuse(i, bot)) {
+                std::cout << "[Defuse] #" << i << " abort (fight/cover)" << std::endl;
+                ai.defusing = false;   // 掉到下面的目标选择/开火逻辑
+                ai.defuseCooldown = 2.0f;
+            } else {
+                bot.vx = bot.vy = 0.0f;
+                continue;
+            }
+        }
+
+        // 最近挨打：先把朝向转回威胁来源，否则拆包时被背后打到只会继续贴包。
+        if (!ai.defusing && ai.lastHitTimer > 0.0f) {
+            const float tdx = ai.threatX - bot.x;
+            const float tdy = ai.threatY - bot.y;
+            if (tdx * tdx + tdy * tdy > 1.0f) {
+                bot.aimAngle = std::atan2(tdy, tdx);
+            }
         }
 
         // ---- 原地扫描：没有目标时缓慢转身 ----
@@ -324,6 +412,15 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             }
         }
 
+        // 静步时机：lurk 平时慢走；听到脚步去查时慢走；教练 save 时也尽量不出声。
+        // 有可见目标时解除静步，正常交火/补枪。
+        {
+            const bool saving = GetCoachPlan(bot.team).intent == PlanIntent::Save;
+            bot.stealth = !target &&
+                          (saving || order.canRotate ||
+                           ai.heardFootstepTimer > 0.0f);
+        }
+
         // 首次接火：每队每回合只报一次（教练据此判断主攻方向）
         if (target && CoachFor(bot.team).firstContactArea.empty()) {
             const std::string ca = world_ ? world_->FindAreaAt(bot.x, bot.y) : std::string();
@@ -351,6 +448,30 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                         break;
                     }
                 }
+            }
+        }
+
+        // C4 携带者已经站进包点且没有可见敌人：停下来让 UpdateObjective 推进下包。
+        // 否则教练计划/巡逻会让他反复进出包点，下包进度永远清零。
+        if (bombCarrier_ == static_cast<int>(i) && !bombPlanted_ && !bombDropped_ &&
+            !target && world_ && world_->FindBombSiteAt(bot.x, bot.y)) {
+            bot.vx = bot.vy = 0.0f;
+            continue;
+        }
+
+        // 听到敌人脚步：只有听见的这只 BOT 去查，不写入团队情报。
+        // 优先级高于驻守点，但低于已下包 / C4 掉落等目标。
+        if (!target && ai.heardFootstepTimer > 0.0f && !bombPlanted_ && !bombDropped_) {
+            const float hdx = ai.heardFootstepX - bot.x;
+            const float hdy = ai.heardFootstepY - bot.y;
+            constexpr float kHearArrive = 14.0f;
+            if (hdx * hdx + hdy * hdy <= kHearArrive * kHearArrive) {
+                // 到声源附近：原地压枪警戒，等记忆过期或看到敌人
+                bot.vx = bot.vy = 0.0f;
+                continue;
+            }
+            if (FollowPathTo(bot, ai, ai.heardFootstepX, ai.heardFootstepY, dt, 1.0f)) {
+                continue;
             }
         }
 
@@ -415,10 +536,6 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         } else {
             engageDist = 1e9f;
         }
-
-        // 闪光致盲倒计时
-        if (ai.blindTimer > 0.0f) ai.blindTimer = std::max(0.0f, ai.blindTimer - dt);
-        if (ai.heardLogCooldown > 0.0f) ai.heardLogCooldown -= dt;
 
         // ---- 弹药耗尽：主武器弹匣+备弹全空 → 切副武器，再不行切近战 ----
         // （备弹有限，打光后不能再换弹，必须换枪而不是原地空放）
@@ -519,11 +636,9 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                             const auto& sites = world_->GetBombSites();
                             float bestD2 = 1e18f;
                             for (const auto& s : sites) {
-                                const float cx = s.x + s.width * 0.5f;
-                                const float cy = s.y + s.height * 0.5f;
-                                const float dx = cx - bot.x, dy = cy - bot.y;
+                                const float dx = s.cx - bot.x, dy = s.cy - bot.y;
                                 const float d2 = dx * dx + dy * dy;
-                                if (d2 < bestD2) { bestD2 = d2; destX = cx; destY = cy; hasDest = true; }
+                                if (d2 < bestD2) { bestD2 = d2; destX = s.cx; destY = s.cy; hasDest = true; }
                             }
                             destIsObjective = hasDest;
                         }

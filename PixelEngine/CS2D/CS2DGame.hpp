@@ -79,6 +79,7 @@ public:
         int   health  = 100;
         int   maxHealth = 100;
         Team  team    = Team::CT;
+        std::string name;              // BOT 昵称（玩家实体不使用）
         bool  alive   = true;
         float shootCooldown = 0.0f;
 
@@ -280,11 +281,17 @@ public:
         float retreatTimer = 0.0f;
         float threatX      = 0.0f;
         float threatY      = 0.0f;
+        float lastHitTimer = 0.0f;   // 最近受击：拆包时据此判断是否放弃拆包反击
+        float defuseCooldown = 0.0f; // 放弃拆包后的冷却，避免立刻又贴回去
 
         // 状态标记
         float blindTimer     = 0.0f;   // 闪光致盲剩余秒数
         bool  defusing       = false;  // 正在拆包
         float heardLogCooldown = 0.0f; // 听声扑人日志节流（调试用）
+        // 最近一次听到的敌人脚步（只属于这只 BOT，不共享给队友）
+        float heardFootstepTimer = 0.0f;
+        float heardFootstepX = 0.0f, heardFootstepY = 0.0f;
+        float heardFootstepDist = 1e9f;
         float grenadeCooldown = 0.0f;  // 投掷冷却
         bool  tradePushed     = false; // 本回合是否已补过枪
         bool  hadTarget       = false; // 上一帧是否看得见敌人（决定是否原地扫描）
@@ -430,8 +437,8 @@ public:
         if (!world_) return false;
         const auto& sites = world_->GetBombSites();
         if (index < 0 || index >= static_cast<int>(sites.size())) return false;
-        cx = sites[index].x + sites[index].width * 0.5f;
-        cy = sites[index].y + sites[index].height * 0.5f;
+        cx = sites[index].cx;
+        cy = sites[index].cy;
         return true;
     }
 
@@ -570,6 +577,19 @@ public:
     bool          IsSpectating() const { return specMode_ != SpectateMode::None && !player_.alive; }
     SpectateMode  GetSpectateMode() const { return specMode_; }
     int           GetSpectateTarget() const { return specTarget_; }
+    // 当前被观战的 BOT（自由视角下保留最后跟随目标）；无效返回 nullptr。
+    const Player* GetSpectatedPlayer() const {
+        if (specTarget_ >= 0 && specTarget_ < static_cast<int>(bots_.size())) {
+            return &bots_[static_cast<size_t>(specTarget_)];
+        }
+        return nullptr;
+    }
+    std::string GetSpectatedName() const {
+        const Player* p = GetSpectatedPlayer();
+        if (p && !p->name.empty()) return p->name;
+        if (specTarget_ >= 0) return "BOT#" + std::to_string(specTarget_);
+        return "-";
+    }
     void SpectatorToggle();
     void SpectatorCycle(int dir);
     void SpectatorMoveFree(float dx, float dy, float dt);
@@ -585,6 +605,8 @@ public:
 
     // ---- 经济 / 购买 ----
     int  GetPlayerMoney() const { return player_.money; }
+    // 买枪前经济快照（team 的平均余额；给 LLM digest / 教练用）
+    int  GetRoundStartEconomy(Team t) const;
     // 购买窗口：自回合开始起的前 BuyWindowSeconds 秒（覆盖冻结 + 购买 + 交战初期）
     bool IsBuyPhase() const {
         // 死斗：只有站在出生点的购买区内才能买，离开就关闭
@@ -644,6 +666,7 @@ public:
     // ---- 武器 ----
     void SwitchWeaponSlot(int slot);
     std::string GetWeaponName() const;
+    std::string GetWeaponNameFor(const Player& p) const;   // 观战/记分板用
 
     // BOT 视野半径（发现敌人并交火的距离）
     // 与玩家视野圆共用 Tuning::VisionRadius，避免两边数值漂移
@@ -671,6 +694,7 @@ private:
 
     Player player_;
     std::vector<Player> bots_;
+    int nextBotNameIndex_ = 0;      // 新 BOT 分配昵称的游标（每场重置）
     std::vector<Bullet> bullets_;
     std::vector<Grenade> grenades_;
     std::vector<SmokeCloud> smokes_;
@@ -726,6 +750,7 @@ private:
         // LLM 请求在途
         float planExpiresAt = 0.0f;   // 计划时效（到期回到默认）
         bool  llmPending = false;
+        bool  llmAnswered = false;   // 本轮请求已返回（含失败/超时），购买延迟用
         int   llmGen = 0;
         float llmAt = 0.0f;
         int   llmEventType = 0;
@@ -736,6 +761,11 @@ private:
         bool  stickyLlm = false;
     };
     CoachState coachT_, coachCT_;
+    // 回合开始、任何采购之前的经济快照：save/eco 必须基于「买得起什么」，
+    // 不能因为刚买完枪余额变低就误判为穷局。
+    int  roundStartAvgMoneyT_  = 0;
+    int  roundStartAvgMoneyCT_ = 0;
+    bool roundEconomySnapshotValid_ = false;
 
     CoachLlmFn coachLlm_;
     bool coachLlmEnabled_ = true;
@@ -751,11 +781,13 @@ private:
     void CoachThink(Team t, const CoachEvent& ev);
     TeamPlan RuleCoach(Team t, const CoachEvent& ev);
     void CoachApplyPlan(Team t);
+    void SanitizeCoachPlan(Team t, TeamPlan& plan);   // 防单点/防重复的兜底整形
     void CoachRecordRound(Team t, bool won);
     void CoachResetRound();
     // 回合开始、买枪之前先出计划（save/eco 必须在购买前生效）
     void CoachBeginRound();
     bool LowEconomyAverage(Team t) const;
+    void SnapshotRoundEconomy();                       // 买枪前的经济快照
     bool AreaCenterByName(const std::string& name, float& ox, float& oy) const;
     std::string AreaHint(const std::string& intentTarget) const;
     bool prevInteract_ = false;   // E 键边沿检测
@@ -876,12 +908,15 @@ private:
 
     // ---- 团队情报共享 ----
     void UpdateTeamContacts(float dt);                 // 上报 + 老化
+    void OnFootstepSound(const Player& source, float x, float y);  // 脚步声 → 附近敌对 BOT
     void ReportContact(Team team, int id, float x, float y);
     const EnemyContact* FindNearestContact(Team team, float x, float y) const;
     std::vector<EnemyContact>&       ContactsOf(Team t);
     const std::vector<EnemyContact>& ContactsOf(Team t) const;
     // 找一个「真实可见」的敌人（距离 + 烟雾 + LOS）
     const Player* FindVisibleEnemy(const Player& self, float& outDist) const;
+    // 拆包安全判定：最近受击 / 可见敌人时先放弃拆包反击；炸弹最后 6 秒强制拆。
+    bool BotCanDefuse(size_t i, const Player& bot) const;
     // 目标是否落在以 self 朝向为中心的视野扇形内（玩家/BOT 共用几何）
     bool InViewCone(float fromX, float fromY, float aim,
                     float toX, float toY, float maxDist) const;
@@ -917,6 +952,13 @@ private:
     // carryWeapons: 上一回合存活者保留武器（false=全部重置，用于新开一局）
     void RespawnAllForRound(bool carryWeapons = true);
     void BotBuyLoadout(Player& bot);   // BOT 按经济买枪与护甲
+    void UpdateBotBuy(float dt);        // 回合初延迟购买：等教练 save/eco 决策
+
+    // 回合初 BOT 购买延迟：让 LLM 先给出 save/eco，再决定买不买
+    bool  botBuyPending_ = false;
+    bool  botBuyDoneT_   = false;
+    bool  botBuyDoneCT_  = false;
+    float botBuyTimer_   = 0.0f;
     void CheckWinConditions(class AudioManager* audio);
     void ApplyRoundResult(Team winner, class AudioManager* audio = nullptr);
     // 统一伤害入口：先扣护甲再扣血。返回 true 表示本次伤害致死。

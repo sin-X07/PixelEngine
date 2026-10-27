@@ -82,6 +82,14 @@ constexpr float PatrolHoldSpread = 90.0f;    // 守点时岗位附近的游走�
 // 这两个半径明显大于 BOT_VIEW_RADIUS(100)，体现「听见但还看不见」。
 constexpr float PlantHearRadius  = 300.0f;   // C4 安装声可被听到的半径
 constexpr float DefuseHearRadius = 300.0f;   // 拆包声可被听到的半径
+
+// ---------------- 脚步声 ----------------
+// 普通跑动会暴露位置；静步（玩家 Shift / BOT 的 lurk 慢走）不出声。
+// 脚步声只让「听见的那只 BOT」自己知道，不进入团队情报网。
+constexpr float FootstepHearRadius = 130.0f; // 普通跑动可被听到的半径
+constexpr float FootstepMemory     = 2.5f;   // 听到后记住最后位置的时间
+constexpr float BotStealthSpeed    = 25.0f;  // BOT 静步速度（与玩家潜行一致）
+
 // 听觉触发时略微提高命中率（散布乘数 <1 = 打得更准）
 constexpr float PlantHearSpreadMul  = 0.72f;  // 听到下包 → 散布降到 72%
 constexpr float DefuseHearSpreadMul = 0.72f;  // 听到拆包 → 散布降到 72%

@@ -291,8 +291,8 @@ void CS2DGame::AssignSquadRoles() {
     if (siteCount >= 2) {
         float sx = 0.0f, sy = 0.0f;
         for (const auto& s : sites) {
-            sx += s.x + s.width * 0.5f;
-            sy += s.y + s.height * 0.5f;
+            sx += s.cx;
+            sy += s.cy;
         }
         midX = sx / siteCount;
         midY = sy / siteCount;
@@ -307,8 +307,8 @@ void CS2DGame::AssignSquadRoles() {
                 ++tIdx;
                 squad_[i].site = site;
                 squad_[i].hasHold = true;
-                squad_[i].holdX = sites[site].x + sites[site].width * 0.5f;
-                squad_[i].holdY = sites[site].y + sites[site].height * 0.5f;
+                squad_[i].holdX = sites[site].cx;
+                squad_[i].holdY = sites[site].cy;
             } else {
                 // CT：A / B / 中路 三线轮转
                 const int slot = ctIdx % (siteCount + 1);
@@ -316,8 +316,8 @@ void CS2DGame::AssignSquadRoles() {
                 if (slot < siteCount) {
                     squad_[i].site = slot;
                     squad_[i].hasHold = true;
-                    squad_[i].holdX = sites[slot].x + sites[slot].width * 0.5f;
-                    squad_[i].holdY = sites[slot].y + sites[slot].height * 0.5f;
+                    squad_[i].holdX = sites[slot].cx;
+                    squad_[i].holdY = sites[slot].cy;
                 } else {
                     squad_[i].site = -1;             // 中路
                     squad_[i].hasHold = true;
@@ -329,6 +329,27 @@ void CS2DGame::AssignSquadRoles() {
     }
 
     // 按阵营分别排序：离敌方质心越近 → 越靠前（Entry）
+    {
+        auto isSide = [&](int idx, const char* side) {
+            return idx >= 0 && idx < siteCount && sites[idx].name == side;
+        };
+        int tA = 0, tB = 0, ctA = 0, ctB = 0, ctMid = 0;
+        for (size_t i = 0; i < bots_.size() && i < squad_.size(); ++i) {
+            if (!bots_[i].alive || !squad_[i].hasHold) continue;
+            if (bots_[i].team == Team::T) {
+                if (isSide(squad_[i].site, "A")) ++tA;
+                else if (isSide(squad_[i].site, "B")) ++tB;
+            } else {
+                if (isSide(squad_[i].site, "A")) ++ctA;
+                else if (isSide(squad_[i].site, "B")) ++ctB;
+                else ++ctMid;
+            }
+        }
+        std::cout << "[Squad] T A=" << tA << " B=" << tB
+                  << " | CT A=" << ctA << " B=" << ctB
+                  << " Mid=" << ctMid << std::endl;
+    }
+
     for (int side = 0; side < 2; ++side) {
         const Team t = (side == 0) ? Team::T : Team::CT;
 

@@ -315,6 +315,23 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
         return;
     }
 
+    // T 未下包：主攻侧一旦确定，给 18 秒执行窗口。
+    // 这段时间内 HumanDied / 减员 / 心跳都不能把 T 拉到另一侧；
+    // 只有回合开始、经济崩（save）、时间不足、赛点、下包这些事件可以重规划。
+    if (t == Team::T && !bombPlanted_ && st.plan.valid &&
+        (st.plan.target == "A" || st.plan.target == "B") &&
+        clockSec_ - st.plan.createdAt < 18.0f &&
+        ev.type != CoachEventType::RoundStart &&
+        ev.type != CoachEventType::EconomyLow &&
+        ev.type != CoachEventType::TimeLow &&
+        ev.type != CoachEventType::MatchPoint &&
+        ev.type != CoachEventType::BombPlanted) {
+        if (st.callsThisRound > 0) --st.callsThisRound;
+        std::cout << "[Coach] T 执行锁定 " << st.plan.target
+                  << " (ev#" << static_cast<int>(ev.type) << " no-replan)" << std::endl;
+        return;
+    }
+
     ++st.gen;
     TeamPlan plan = RuleCoach(t, ev);
 
@@ -425,7 +442,7 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
     //   T ：按用途分散守包（拆包角度 / 回防路线 / 延迟 peek），交叉火力；
     //       残局少打多不硬拼，守包等 CT 上手拆包再抓；时间是 T 的盟友。
     //   CT：先集结再进，utility 先清点，两人互换；拆包需队友掩护；
-    //       时间不够（无钳 10s）就强拆。
+    //       时间不够（5 秒拆包）就强拆。
     if (bombPlanted_) {
         std::string lower = siteArea;
         std::transform(lower.begin(), lower.end(), lower.begin(),
@@ -537,10 +554,29 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
         return plan;
     }
     if (ev.type == CoachEventType::TimeLow) {
-        plan.tempo  = Tempo::Fast;
-        plan.intent = isT ? PlanIntent::RushA : PlanIntent::Default;
-        plan.reason = "时间不足，抓紧进攻/占点";
-        assign(aLong, aSite, bLong, bSite, mid);
+        plan.tempo = Tempo::Fast;
+        if (isT) {
+            // 跟随当前主攻侧，不要每次 TimeLow 都硬切 A。
+            std::string side = st.plan.target;
+            if (side != "A" && side != "B") side = st.lastAttackSide;
+            if (side != "A" && side != "B") side = "A";
+            plan.intent = (side == "B") ? PlanIntent::RushB : PlanIntent::RushA;
+            plan.target = side;
+            plan.reason = "时间不足，抓紧进攻" + side;
+            for (auto& sl : plan.slots) {
+                sl = { CoachRole::Entry, side == "B" ? bLong : aLong, true, false };
+            }
+            plan.slots[4] = { CoachRole::Anchor, side == "B" ? bSite : aSite, true, false };
+        } else {
+            // CT 的时间不足是收位守点，不要套用 T 的分路模板。
+            plan.intent = PlanIntent::Default;
+            plan.reason = "时间不足，收位守点";
+            plan.slots[0] = { CoachRole::Anchor,  aSite,  true, false };
+            plan.slots[1] = { CoachRole::Support, aShort, true, false };
+            plan.slots[2] = { CoachRole::Entry,   mid,    true, true  };
+            plan.slots[3] = { CoachRole::Anchor,  bSite,  true, false };
+            plan.slots[4] = { CoachRole::Support, bLong,  true, false };
+        }
         return plan;
     }
 
@@ -598,11 +634,148 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
 }
 
 // ---------------------------------------------------------------------------
+// 计划整形：防止 LLM 连续压同一侧 / CT 默认全堆一点。
+// 只改「默认分兵」和「无情报的 stack」，不碰已下包后的 retake/stack。
+// ---------------------------------------------------------------------------
+void CS2DGame::SanitizeCoachPlan(Team t, TeamPlan& plan) {
+    if (!world_ || bombPlanted_) return;
+
+    auto lowerCopy = [](std::string s) {
+        for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+
+    auto slotSide = [&](const SlotOrder& sl) -> char {
+        if (sl.area.empty()) return 0;
+        const std::string lower = lowerCopy(sl.area);
+        if (lower.find("mid") != std::string::npos) return 0;   // 中路视为中立
+        float x = 0.0f, y = 0.0f;
+        if (!AreaCenterByName(sl.area, x, y)) return 0;
+        const CS2DWorld::BombSiteDef* best = nullptr;
+        float bestD2 = 1e18f;
+        for (const auto& s : world_->GetBombSites()) {
+            const float dx = s.cx - x, dy = s.cy - y;
+            const float d2 = dx * dx + dy * dy;
+            if (d2 < bestD2) { bestD2 = d2; best = &s; }
+        }
+        return best ? best->name[0] : 0;
+    };
+
+    int sideA = 0, sideB = 0;
+    for (const auto& sl : plan.slots) {
+        const char c = slotSide(sl);
+        if (c == 'A') ++sideA;
+        else if (c == 'B') ++sideB;
+    }
+    const bool allOneSide = (sideA > 0 && sideB == 0) || (sideB > 0 && sideA == 0);
+
+    auto reshapeDefault = [&]() {
+        const std::string aSite  = AreaHint("A_Site");
+        const std::string bSite  = AreaHint("B_Site");
+        const std::string mid    = AreaHint("Mid");
+        auto areaOr = [](const std::string& prefer, const std::string& fallback) {
+            return prefer.empty() ? fallback : prefer;
+        };
+        const std::string aLong  = areaOr(AreaHint("Long"),  aSite);
+        const std::string aShort = areaOr(AreaHint("Short"), aSite);
+        const std::string bLong  = areaOr(AreaHint("Tunnel"), bSite);
+
+        if (t == Team::T) {
+            plan.slots[0] = { CoachRole::Entry,   aLong,  true, false };
+            plan.slots[1] = { CoachRole::Support, aSite,  true, false };
+            plan.slots[2] = { CoachRole::Lurk,    mid,    true, true  };
+            plan.slots[3] = { CoachRole::Anchor,  bLong,  true, false };
+            plan.slots[4] = { CoachRole::Support, bSite,  true, false };
+        } else {
+            plan.slots[0] = { CoachRole::Anchor,  aSite,  true, false };
+            plan.slots[1] = { CoachRole::Support, aShort, true, false };
+            plan.slots[2] = { CoachRole::Entry,   mid,    true, true  };
+            plan.slots[3] = { CoachRole::Anchor,  bSite,  true, false };
+            plan.slots[4] = { CoachRole::Support, bLong,  true, false };
+        }
+        plan.intent = PlanIntent::Default;
+        plan.target.clear();
+        plan.tempo = Tempo::Normal;
+        plan.hasBranch = false;
+    };
+
+    CoachState& st = CoachFor(t);
+    const bool isT = (t == Team::T);
+
+    if (isT) {
+        // 1) "default" 但 slots 全在同一侧：改成 A/B 分兵
+        if (plan.intent == PlanIntent::Default && allOneSide) {
+            reshapeDefault();
+            plan.reason += "（默认分兵兜底）";
+            std::cout << "[Coach] T 防单点：default 全在一侧 → A/B 分兵" << std::endl;
+            return;
+        }
+        // 2) 连续两回合压同一侧：这一回合改默认分兵，强制另一侧有人
+        std::string side = plan.target;
+        if (side != "A" && side != "B") {
+            side = (sideA > sideB) ? "A" : (sideB > sideA) ? "B" : "";
+        }
+        const bool aggressive =
+            plan.intent == PlanIntent::RushA  || plan.intent == PlanIntent::RushB ||
+            plan.intent == PlanIntent::SplitA || plan.intent == PlanIntent::SplitB ||
+            plan.intent == PlanIntent::FakeThenOther;
+        if (aggressive && !side.empty() && side == st.lastAttackSide) {
+            reshapeDefault();
+            plan.reason += "（同侧连续，改分兵）";
+            std::cout << "[Coach] T 防重复：连续压 " << side
+                      << " → 改 A/B 分兵" << std::endl;
+        }
+        return;
+    }
+
+    // CT：默认分兵全堆一侧 → 改 A/B/中路
+    if (plan.intent == PlanIntent::Default && allOneSide) {
+        reshapeDefault();
+        plan.reason += "（默认分兵兜底）";
+        std::cout << "[Coach] CT 防单点：default 全在一侧 → A/B/中路" << std::endl;
+        return;
+    }
+
+    // CT：无情报的 stack 不成立，改成默认分兵，避免每回合全堆 A
+    if (plan.intent == PlanIntent::StackA || plan.intent == PlanIntent::StackB) {
+        const std::string side = (plan.intent == PlanIntent::StackA) ? "A" : "B";
+        const std::string other = (side == "A") ? "B" : "A";
+        const float heatSide  = intel_.HeatOfSide(world_.get(), side);
+        const float heatOther = intel_.HeatOfSide(world_.get(), other);
+        if (intel_.ObservationCount() < 2 || heatSide - heatOther < 0.8f) {
+            reshapeDefault();
+            plan.reason += "（无情报不赌点）";
+            std::cout << "[Coach] CT 防单点：stack_" << side
+                      << " 无足够情报 → 改默认分兵" << std::endl;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 计划下发
 // ---------------------------------------------------------------------------
 void CS2DGame::CoachApplyPlan(Team t) {
     CoachState& st = CoachFor(t);
     if (!st.plan.valid) return;
+
+    auto areaSiteIndex = [&](const std::string& area) -> int {
+        if (area.empty() || !world_) return -1;
+        std::string low = area;
+        for (char& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (low.find("mid") != std::string::npos) return -1;   // 中路是独立岗位
+        float x = 0.0f, y = 0.0f;
+        if (!AreaCenterByName(area, x, y)) return -1;
+        int best = -1;
+        float bestD2 = 1e18f;
+        const auto& sites = world_->GetBombSites();
+        for (size_t si = 0; si < sites.size(); ++si) {
+            const float dx = sites[si].cx - x;
+            const float dy = sites[si].cy - y;
+            const float d2 = dx * dx + dy * dy;
+            if (d2 < bestD2) { bestD2 = d2; best = static_cast<int>(si); }
+        }
+        return best;
+    };
 
     int slot = 0;
     int holdOk = 0, holdFail = 0;
@@ -632,6 +805,11 @@ void CS2DGame::CoachApplyPlan(Team t) {
             ai.planHoldX   = cx;
             ai.planHoldY   = cy;
             ai.goalArea    = std::string();
+            // 计划点到达后不要退回默认包点：把小队岗位固定在当前点。
+            squad_[i].site     = -1;
+            squad_[i].hasHold  = true;
+            squad_[i].holdX    = bot.x;
+            squad_[i].holdY    = bot.y;
             ++holdOk;
             detail << " #" << slot << "=(save)";
             squad_[i].canTrade  = false;
@@ -644,10 +822,18 @@ void CS2DGame::CoachApplyPlan(Team t) {
             ai.planHoldX   = cx;
             ai.planHoldY   = cy;
             ai.goalArea    = so.area;
+            // 小队岗位与教练计划保持一致；计划点到达后继续守这个区域，
+            // 而不是被 AssignSquadRoles 的轮转岗位拉回另一侧。
+            squad_[i].site    = areaSiteIndex(so.area);
+            squad_[i].hasHold = true;
+            squad_[i].holdX   = cx;
+            squad_[i].holdY   = cy;
             ++holdOk;
             detail << " #" << slot << "=" << so.area;
         } else {
             ai.hasPlanHold = false;
+            squad_[i].hasHold = false;
+            squad_[i].site = -1;
             ++holdFail;
             detail << " #" << slot << "=" << (so.area.empty() ? "(empty)" : so.area + "!");
         }
@@ -655,6 +841,61 @@ void CS2DGame::CoachApplyPlan(Team t) {
         squad_[i].canRotate = so.canRotate;
         ++slot;
     }
+    // C4 携带者必须跟主攻侧走：否则他可能被分到另一侧/中路，
+    // 队友在 A 打，他一个人在中路或 B 转，永远没人下包。
+    if (t == Team::T && !bombPlanted_ && !bombDropped_ &&
+        st.plan.intent != PlanIntent::Save &&
+        bombCarrier_ >= 0 && bombCarrier_ < static_cast<int>(bots_.size()) &&
+        bots_[static_cast<size_t>(bombCarrier_)].team == Team::T &&
+        bots_[static_cast<size_t>(bombCarrier_)].alive) {
+        std::string side = st.plan.target;
+        if (side != "A" && side != "B") {
+            // default 分兵没有 target：让携带者跟随人数最多/自己槽位所在的一侧。
+            int a = 0, b = 0;
+            const auto& sites = world_->GetBombSites();
+            for (const auto& so : st.plan.slots) {
+                const int idx = areaSiteIndex(so.area);
+                if (idx < 0 || idx >= static_cast<int>(sites.size())) continue;
+                if (sites[static_cast<size_t>(idx)].name == "A") ++a;
+                else if (sites[static_cast<size_t>(idx)].name == "B") ++b;
+            }
+            const int ownSite = squad_[static_cast<size_t>(bombCarrier_)].site;
+            if (ownSite >= 0 && ownSite < static_cast<int>(sites.size())) {
+                side = sites[static_cast<size_t>(ownSite)].name;
+            }
+            if (side != "A" && side != "B") side = (a >= b) ? "A" : "B";
+        }
+
+        const std::string siteArea = AreaHint(side + "_Site");
+        const int siteIdx = areaSiteIndex(siteArea);
+        float cx = 0.0f, cy = 0.0f;
+        bool havePoint = false;
+        if (siteIdx >= 0 && siteIdx < static_cast<int>(world_->GetBombSites().size())) {
+            cx = world_->GetBombSites()[static_cast<size_t>(siteIdx)].cx;
+            cy = world_->GetBombSites()[static_cast<size_t>(siteIdx)].cy;
+            havePoint = true;
+        } else if (AreaCenterByName(siteArea, cx, cy)) {
+            havePoint = true;
+        }
+        if (havePoint) {
+            const size_t ci = static_cast<size_t>(bombCarrier_);
+            auto& cai = AiAt(ci);
+            auto& csq = squad_[ci];
+            cai.hasPlanHold = true;
+            cai.planHoldX   = cx;
+            cai.planHoldY   = cy;
+            cai.goalArea    = siteArea;
+            csq.site        = siteIdx;
+            csq.hasHold     = true;
+            csq.holdX       = cx;
+            csq.holdY       = cy;
+            csq.role        = BotRole::Entry;   // 跟突破组进点，而不是当断后
+            csq.canRotate   = false;
+            std::cout << "[Coach] T C4携带者 #" << bombCarrier_
+                      << " 跟随主攻 " << side << std::endl;
+        }
+    }
+
     std::cout << "[Coach] Apply " << TeamName(t)
               << " holdOk=" << holdOk << " holdFail=" << holdFail
               << detail.str() << std::endl;
@@ -702,6 +943,8 @@ void CS2DGame::CoachResetRound() {
         st.firstContactArea.clear();
         st.timeLowFired    = false;
         st.matchPointFired = false;
+        st.llmPending      = false;
+        st.llmAnswered     = false;
     }
     for (size_t i = 0; i < bots_.size(); ++i) AiAt(i).hasPlanHold = false;
 }
@@ -740,16 +983,38 @@ void CS2DGame::CoachBeginRound() {
 }
 
 
-// 队伍平均余额（含玩家）
-bool CS2DGame::LowEconomyAverage(Team t) const {
+// 队伍平均余额（买枪前快照；没有快照时退回当前值）
+int CS2DGame::GetRoundStartEconomy(Team t) const {
+    if (roundEconomySnapshotValid_ && mode_ != MatchMode::DeathMatch) {
+        return (t == Team::T) ? roundStartAvgMoneyT_ : roundStartAvgMoneyCT_;
+    }
     int sum = 0, n = 0;
     if (player_.team == t) { sum += player_.money; ++n; }
     for (const auto& b : bots_) {
         if (b.team == t) { sum += b.money; ++n; }
     }
+    return (n > 0) ? sum / n : 0;
+}
+
+void CS2DGame::SnapshotRoundEconomy() {
+    auto avg = [&](Team t) {
+        int sum = 0, n = 0;
+        if (player_.team == t) { sum += player_.money; ++n; }
+        for (const auto& b : bots_) {
+            if (b.team == t) { sum += b.money; ++n; }
+        }
+        return (n > 0) ? sum / n : 0;
+    };
+    roundStartAvgMoneyT_  = avg(Team::T);
+    roundStartAvgMoneyCT_ = avg(Team::CT);
+    roundEconomySnapshotValid_ = true;
+}
+
+bool CS2DGame::LowEconomyAverage(Team t) const {
     // 手枪局有自己的节奏，不按 eco 处理；阈值 1800 更接近 CS 的经济线
     if (round_.RoundNumber() <= 1) return false;
-    return (n > 0 && sum / n < 1800);
+    if (mode_ == MatchMode::DeathMatch) return false;
+    return GetRoundStartEconomy(t) < 1800;
 }
 
 // 保枪只在「真的该保」时成立：
@@ -766,12 +1031,7 @@ bool CS2DGame::ShouldSaveNow(Team t) const {
     if (t == Team::T && world_) {
         for (const auto& b : bots_) {
             if (!b.alive || b.team != Team::T) continue;
-            for (const auto& site : world_->GetBombSites()) {
-                if (b.x >= site.x && b.x <= site.x + site.width &&
-                    b.y >= site.y && b.y <= site.y + site.height) {
-                    return false;
-                }
-            }
+            if (world_->FindBombSiteAt(b.x, b.y)) return false;
         }
     }
     return LowEconomyAverage(t);
@@ -787,12 +1047,35 @@ bool CS2DGame::ShouldSaveNow(Team t) const {
 bool CS2DGame::CanRotateNow(Team t) const {
     if (mode_ != MatchMode::BombDefusal) return false;
     if (bombPlanted_) return false;                       // 下包后不转
+    if (bombDropped_) return false;                       // C4 掉了先回收
     if (t != Team::T) return false;                       // 目前只做进攻方转点
     if (!round_.IsLive()) return false;
     if (round_.PhaseRemaining() < 30.0f) return false;    // 留足执行 + 下包时间
     if (AliveCount(t) + 1 < AliveCount(TeamManager::Opponent(t))) return false;  // 少两个不转
     if (clockSec_ - lastRotateAt_ < 8.0f) return false;   // 8 秒冷却，防来回抖
     if (intel_.ObservationCount() < 2) return false;      // 至少两条情报
+
+    // 只有「默认分兵」阶段才允许转点；rush/split/stack/fake/save 都是已承诺的
+    // 执行，不能被情报轻易拉回另一侧，否则会在两点之间来回走。
+    const CoachState& st = CoachFor(t);
+    if (!st.plan.valid) return false;
+    if (st.plan.intent != PlanIntent::Default) return false;
+    if (clockSec_ - st.plan.createdAt < 12.0f) return false;   // 新计划先执行一段
+
+    // 已经有人进包点 / C4 携带者接近包点：优先下包，不转点。
+    if (world_) {
+        for (size_t i = 0; i < bots_.size(); ++i) {
+            const auto& b = bots_[i];
+            if (!b.alive || b.team != Team::T) continue;
+            if (world_->FindBombSiteAt(b.x, b.y)) return false;
+            if (static_cast<int>(i) == bombCarrier_) {
+                for (const auto& s : world_->GetBombSites()) {
+                    const float dx = s.cx - b.x, dy = s.cy - b.y;
+                    if (dx * dx + dy * dy < 140.0f * 140.0f) return false;
+                }
+            }
+        }
+    }
     return true;
 }
 

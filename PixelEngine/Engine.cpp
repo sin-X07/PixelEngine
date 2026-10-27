@@ -815,16 +815,20 @@ void Engine::Render() {
     } else {
         GameUI::InGameCtx ictx;
         ictx.state    = currentState;
-        ictx.weaponName = cs2dGame->GetWeaponName();
-        ictx.ammo     = cs2dGame->GetPlayer().ammo;
-        ictx.magazineSize = (cs2dGame->GetPlayer().weaponSlot == 2)
-                              ? 0 : cs2dGame->GetPlayer().maxAmmo;
-        ictx.reserveAmmo = cs2dGame->GetPlayer().reserve;
-        ictx.hasNoWeaponHint = cs2dGame->GetPlayer().reloading;
+
+        // 观战跟随 BOT 时，右下武器栏与左下血量/护甲显示被观战者的实时状态。
+        const CS2DGame::Player* view = cs2dGame->GetSpectatedPlayer();
+        const CS2DGame::Player& status = view ? *view : cs2dGame->GetPlayer();
+
+        ictx.weaponName = cs2dGame->GetWeaponNameFor(status);
+        ictx.ammo     = status.ammo;
+        ictx.magazineSize = (status.weaponSlot == 2) ? 0 : status.maxAmmo;
+        ictx.reserveAmmo = status.reserve;
+        ictx.hasNoWeaponHint = status.reloading;
         ictx.hintText        = "换弹中...";
         ictx.totalPlayers    = cs2dGame->GetBotCount() + 1;
-        ictx.kills           = cs2dGame->GetPlayerKills();
-        ictx.deaths          = cs2dGame->GetPlayerDeaths();
+        ictx.kills           = view ? status.kills : cs2dGame->GetPlayerKills();
+        ictx.deaths          = view ? status.deaths : cs2dGame->GetPlayerDeaths();
 
         ictx.scoreT           = cs2dGame->GetScoreT();
         ictx.scoreCT          = cs2dGame->GetScoreCT();
@@ -832,16 +836,16 @@ void Engine::Render() {
         ictx.roundRemainingSec = static_cast<int>(cs2dGame->GetRoundRemaining());
         ictx.aliveT           = cs2dGame->AliveCount(Team::T);
         ictx.aliveCT          = cs2dGame->AliveCount(Team::CT);
-        ictx.money            = cs2dGame->GetPlayerMoney();
-        ictx.armor            = cs2dGame->GetPlayerArmor();
-        ictx.grenadeCount     = cs2dGame->GetPlayer().grenadeCount;
-        ictx.health           = cs2dGame->GetPlayerHealth();
-        ictx.maxHealth        = cs2dGame->GetPlayerMaxHealth();
-        ictx.helmet           = cs2dGame->GetPlayerHelmet();
+        ictx.money            = status.money;
+        ictx.armor            = status.armor;
+        ictx.grenadeCount     = status.grenadeCount;
+        ictx.health           = status.health;
+        ictx.maxHealth        = status.maxHealth;
+        ictx.helmet           = status.helmet;
         ictx.matchOver        = cs2dGame->IsMatchOver();
         ictx.matchWinnerIsCT  = (cs2dGame->GetMatchWinner() == Team::CT);
         ictx.matchOverReturn  = 8.0f - cs2dGame->GetMatchOverTimer();
-        ictx.coachReason      = cs2dGame->GetCoachReason(cs2dGame->GetPlayer().team);
+        ictx.coachReason      = cs2dGame->GetCoachReason(status.team);
         ictx.coachFlash       = cs2dGame->GetCoachPlanAge() < 1.5f;
 
         // 目标物
@@ -880,11 +884,7 @@ void Engine::Render() {
         ictx.bombIntel    = cs2dGame->HasBombIntel();
         ictx.plantProgress = cs2dGame->GetPlantProgress() / 3.0f;
         if (ictx.spectating) {
-            char sbuf[64];
-            const int tgt = cs2dGame->GetSpectateTarget();
-            if (tgt >= 0) snprintf(sbuf, sizeof(sbuf), "BOT#%d", tgt);
-            else          snprintf(sbuf, sizeof(sbuf), "-");
-            ictx.spectateTarget = sbuf;
+            ictx.spectateTarget = cs2dGame->GetSpectatedName();
         }
 
         if (showScoreboard_) {

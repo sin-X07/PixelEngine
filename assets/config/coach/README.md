@@ -44,7 +44,7 @@ default | target="" | tempo=normal | ttl=18~25
 `"area":"X"` 的引用也会一起校验。该清单只用于校验，不会原样送进模型
 （送模型的是 prompt 里的「可选区域」）。
 
-当前三张图的 system prompt 约 3.3k~3.5k tokens；llama-server 以
+当前三张图的 system prompt 约 3.3k~3.6k tokens；llama-server 以
 `-c 8192 --parallel 2` 启动，每槽约 4096 tokens。新增内容时优先精简
 few-shot 和重复描述，别把单图文件堆到超过上下文。
 

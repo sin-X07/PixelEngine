@@ -27,6 +27,20 @@
 
 ---
 
+## 脚步声 / 静步
+
+- CSStatLab — Sound Cues and Audio in CS2（可开）
+  https://csstatlab.com/academy/gameplay/sound-cues
+  → 跑动脚步 = 对方正在投入且短期不准备交火；近距离走路脚步 = 正在为 peek 做铺垫；
+  用噪音做假、假设对手也在听。改写为 `_common.txt` 的「脚步与静步」时机。
+
+- Meccha Wiki — Anchor / Lurk（可开）
+  https://meccha.wiki/wikis/counter-strike-2/roles/anchor
+  → T lurk 先等交火噪音再走；CT anchor 以拖延和活到最后为目标。
+  对应引擎里 lurk/save BOT 的静步与「听到脚步再查」行为。
+
+---
+
 ## dust_2
 
 - GamGem — Dust 2 strats: T default, CT setup, executes（可开）  
