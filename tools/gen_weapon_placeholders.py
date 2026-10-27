@@ -21,7 +21,6 @@ SPRITE_DIR = os.path.join(ROOT, 'assets', 'cs2d', 'sprites')
 # 按武器类别决定占位色与形状（世界贴图）
 CLASS_STYLE = {
     'Pistol':     ((180, 180, 190), 'pistol'),
-    'SMG':        ((120, 170, 210), 'smg'),
     'Rifle':      ((150, 200, 140), 'rifle'),
     'Sniper':     ((210, 160, 120), 'sniper'),
     'Shotgun':    ((210, 140, 140), 'shotgun'),
@@ -33,7 +32,6 @@ CLASS_STYLE = {
 # 世界贴图尺寸（宽 x 高）。参考现有素材：手枪约 24x12，步枪约 32x10。
 WORLD_SIZE = {
     'pistol':  (26, 14),
-    'smg':     (30, 12),
     'rifle':   (34, 11),
     'sniper':  (40, 11),
     'shotgun': (34, 11),
@@ -103,9 +101,6 @@ def draw_world(cls, color):
     elif style == 'mg':
         d.rectangle([1, h // 2 - 3, w - 2, h // 2 + 2], fill=body)
         d.rectangle([w // 3, h // 2 + 2, w // 3 + 8, h - 1], fill=dark)
-    elif style == 'smg':
-        d.rectangle([2, h // 2 - 2, w - 4, h // 2 + 1], fill=body)
-        d.rectangle([6, h // 2 + 1, 11, h - 1], fill=dark)
     else:  # rifle
         d.rectangle([1, h // 2 - 2, w - 3, h // 2 + 1], fill=body)
         d.rectangle([w // 2, h // 2 + 1, w // 2 + 5, h - 1], fill=dark)

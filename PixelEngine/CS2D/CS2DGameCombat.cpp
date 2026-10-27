@@ -52,6 +52,32 @@ void CS2DGame::UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bo
     }
 
     MoveWithCollision(player_, dt);
+
+    // 移动扩散目标值 = 当前真实速度 / 该武器「跑动」满速。
+    // 注意不能用本帧的 maxSpeed：按住静步时 maxSpeed 本身会降到 25，
+    // 那样静步速度/静步上限仍然等于 1，准星不会聚合。
+    const float runMaxSpeed = Tuning::PlayerBaseSpeed * player_.CurrentWeapon().moveSpeedMul;
+    const float finalSpeed = std::sqrt(player_.vx * player_.vx + player_.vy * player_.vy);
+    const float target = (runMaxSpeed > 0.001f)
+        ? std::clamp(finalSpeed / runMaxSpeed, 0.0f, 1.0f)
+        : 0.0f;
+    const float targetBloom = (target < 0.02f) ? 0.0f : target;
+
+    // 指数缓动追赶目标：按下静步平滑聚合，松开静步平滑散开。
+    const float rate = (targetBloom > crosshairBloom_)
+        ? Tuning::CrosshairBloomExpandRate
+        : Tuning::CrosshairBloomContractRate;
+    const float k = 1.0f - std::exp(-rate * dt);
+    crosshairBloom_ += (targetBloom - crosshairBloom_) * k;
+    if (std::abs(targetBloom - crosshairBloom_) < 0.002f) {
+        crosshairBloom_ = targetBloom;
+    }
+}
+
+// 平滑后的移动扩散：按下/松开静步不会瞬间跳变。
+// 0=静止，~0.42=静步，1=全速跑动。
+float CS2DGame::GetCrosshairBloom() const {
+    return player_.alive ? crosshairBloom_ : 0.0f;
 }
 
 void CS2DGame::MoveWithCollision(Player& entity, float dt) {
@@ -142,7 +168,12 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     if (player_.ammo <= 0) { StartReload(player_, audio); return; }
 
     // 散布 + 多弹丸（霰弹）
-    std::uniform_real_distribution<float> spreadDist(-def.spreadBase, def.spreadBase);
+    // 静止 = 基础散布；静步/跑动按速度放大，跑动时明显打不准。
+    const float bloom = GetCrosshairBloom();
+    const float moveSpreadMul =
+        1.0f + bloom * (Tuning::MoveSpreadMaxMul - 1.0f);
+    const float shotSpread = def.spreadBase * moveSpreadMul;
+    std::uniform_real_distribution<float> spreadDist(-shotSpread, shotSpread);
     for (int p = 0; p < std::max(1, def.pellets); ++p) {
         const float angle = player_.aimAngle + spreadDist(rng_);
         FireBullet(player_.x, player_.y, angle, def, -1, player_.team);

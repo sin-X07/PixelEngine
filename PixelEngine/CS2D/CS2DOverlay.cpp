@@ -3,6 +3,7 @@
 #include "CS2DRenderer.hpp"
 #include "CS2DGame.hpp"
 #include "CS2DWorld.hpp"
+#include "Tuning.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -36,10 +37,16 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
 
     // 准星
     // 准星尺寸随 UI 缩放（设置里的数值是 1920x1080 基准）
+    float crosshairGap = crosshair.gap * g_uiScale;
+    if (crosshair.dynamic) {
+        // 动态准星：静止最紧，静步小扩散，跑动明显张开。
+        crosshairGap += game->GetCrosshairBloom() *
+                        Tuning::CrosshairBloomMaxPx * g_uiScale;
+    }
     renderer->DrawCrosshair(virtCursorX, virtCursorY,
                             crosshair.r, crosshair.g, crosshair.b, crosshair.a,
                             crosshair.thickness * g_uiScale, crosshair.centerDot,
-                            crosshair.length * g_uiScale, crosshair.gap * g_uiScale);
+                            crosshair.length * g_uiScale, crosshairGap);
 
     // 顶部计分板已由 GameUI（ImGui）统一绘制，此处不再重复绘制
 

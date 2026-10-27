@@ -162,6 +162,10 @@ GameUI::Actions Engine::BuildActions() {
         cs2dOverlay.crosshair.gap = v;
         saveManager->MutableSettings().crossGap = v;
     };
+    a.setCrosshairDynamic = [this](bool v) {
+        cs2dOverlay.crosshair.dynamic = v;
+        saveManager->MutableSettings().crossDynamic = v;
+    };
 
     // 雷达
     a.setRadarPlayerCentered = [this](bool v) {
@@ -388,6 +392,7 @@ void Engine::ApplySavedSettings() {
     cs2dOverlay.crosshair.length    = s.crossLength;
     cs2dOverlay.crosshair.gap       = s.crossGap;
     cs2dOverlay.crosshair.centerDot = s.crossCenterDot;
+    cs2dOverlay.crosshair.dynamic   = s.crossDynamic;
 
     // 雷达
     cs2dOverlay.radar.playerCentered   = s.radarPlayerCentered;
@@ -793,6 +798,7 @@ void Engine::Render() {
         ctx.crosshairCenterDot = cs2dOverlay.crosshair.centerDot;
         ctx.crosshairLength    = cs2dOverlay.crosshair.length;
         ctx.crosshairGap       = cs2dOverlay.crosshair.gap;
+        ctx.crosshairDynamic   = cs2dOverlay.crosshair.dynamic;
 
         ctx.radarPlayerCentered   = cs2dOverlay.radar.playerCentered;
         ctx.radarRotateWithPlayer = cs2dOverlay.radar.rotateWithPlayer;

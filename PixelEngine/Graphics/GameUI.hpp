@@ -39,6 +39,7 @@ public:
         std::function<void(bool)>   setCrosshairCenterDot;
         std::function<void(float)>  setCrosshairLength;
         std::function<void(float)>  setCrosshairGap;
+        std::function<void(bool)>   setCrosshairDynamic;
         // 雷达
         std::function<void(bool)>   setRadarPlayerCentered;
         std::function<void(bool)>   setRadarRotateWithPlayer;
@@ -70,6 +71,7 @@ public:
         bool  crosshairCenterDot = true;
         float crosshairLength    = 12.0f;
         float crosshairGap       = 3.0f;
+        bool  crosshairDynamic   = true;
 
         // 雷达
         bool  radarPlayerCentered   = true;

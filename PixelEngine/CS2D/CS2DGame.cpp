@@ -126,6 +126,9 @@ void CS2DGame::ResetToNewMatch() {
     SnapshotRoundEconomy();
     AssignSquadRoles();
     CoachResetRound();
+    // 首回合也要先定购买档，避免 BotBuyLoadout 用到默认 Full。
+    CoachFor(Team::T).buyPlan  = DecideBuyPlan(Team::T);
+    CoachFor(Team::CT).buyPlan = DecideBuyPlan(Team::CT);
     // 首回合也走同一套延迟购买，等教练先给 save/eco 结论
     botBuyPending_ = true;
     botBuyDoneT_   = false;
@@ -312,6 +315,7 @@ void CS2DGame::SpawnPlayer() {
     player_.health     = 100;
     player_.maxHealth  = 100;
     player_.vx = player_.vy = 0.0f;
+    crosshairBloom_ = 0.0f;
     player_.shootCooldown = 0.0f;
     player_.team       = desiredPlayerTeam_;
     if (mode_ == MatchMode::DeathMatch) player_.money = 16000;

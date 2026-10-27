@@ -992,16 +992,77 @@ void CS2DGame::CoachBeginRound() {
 }
 
 
-// 队伍平均余额（含玩家）
-bool CS2DGame::LowEconomyAverage(Team t) const {
+// 队伍平均余额（买枪前快照；没有快照时退回当前值）
+int CS2DGame::GetRoundStartEconomy(Team t) const {
+    if (roundEconomySnapshotValid_ && mode_ != MatchMode::DeathMatch) {
+        return (t == Team::T) ? roundStartAvgMoneyT_ : roundStartAvgMoneyCT_;
+    }
     int sum = 0, n = 0;
     if (player_.team == t) { sum += player_.money; ++n; }
     for (const auto& b : bots_) {
         if (b.team == t) { sum += b.money; ++n; }
     }
+    return (n > 0) ? sum / n : 0;
+}
+
+void CS2DGame::SnapshotRoundEconomy() {
+    auto avg = [&](Team t) {
+        int sum = 0, n = 0;
+        if (player_.team == t) { sum += player_.money; ++n; }
+        for (const auto& b : bots_) {
+            if (b.team == t) { sum += b.money; ++n; }
+        }
+        return (n > 0) ? sum / n : 0;
+    };
+    roundStartAvgMoneyT_  = avg(Team::T);
+    roundStartAvgMoneyCT_ = avg(Team::CT);
+    roundEconomySnapshotValid_ = true;
+}
+
+// 队伍平均余额（含玩家）
+bool CS2DGame::LowEconomyAverage(Team t) const {
     // 手枪局有自己的节奏，不按 eco 处理；阈值 1800 更接近 CS 的经济线
     if (round_.RoundNumber() <= 1) return false;
-    return (n > 0 && sum / n < 1800);
+    if (mode_ == MatchMode::DeathMatch) return false;
+    return GetRoundStartEconomy(t) < 1800;
+}
+
+// 购买档：按买枪前经济、是否该保枪、敌方经济决定。
+BuyPlan CS2DGame::DecideBuyPlan(Team t) const {
+    if (mode_ != MatchMode::BombDefusal) return BuyPlan::Full;
+
+    const int avg    = GetRoundStartEconomy(t);
+    const int oppAvg = GetRoundStartEconomy(TeamManager::Opponent(t));
+
+    // 手枪局：能买甲/雷就花，别按“穷局”直接空手。
+    if (round_.RoundNumber() <= 1) return BuyPlan::Force;
+
+    // 真正该保枪时优先 Eco；否则再按余额分 Half/Force/Full。
+    if (ShouldSaveNow(t)) return BuyPlan::Eco;
+
+    if (avg >= 3500) {
+        // 我方满钱、敌方穷：SMG + 甲的反 eco 打法。
+        if (oppAvg > 0 && oppAvg < 2200) return BuyPlan::AntiEco;
+        return BuyPlan::Full;
+    }
+    if (avg >= 2600) return BuyPlan::Half;
+    if (avg >= 1800) return BuyPlan::Force;
+    return BuyPlan::Eco;
+}
+
+BuyPlan CS2DGame::GetBuyPlan(Team t) const {
+    return CoachFor(t).buyPlan;
+}
+
+const char* CS2DGame::BuyPlanLabel(BuyPlan p) {
+    switch (p) {
+        case BuyPlan::Eco:     return "Eco";
+        case BuyPlan::Half:    return "Half";
+        case BuyPlan::Force:   return "Force";
+        case BuyPlan::AntiEco: return "AntiEco";
+        case BuyPlan::Full:
+        default:               return "Full";
+    }
 }
 
 // 保枪只在「真的该保」时成立：

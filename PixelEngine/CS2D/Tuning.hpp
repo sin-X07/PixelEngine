@@ -77,6 +77,13 @@ constexpr float AnchorHoldRange  = 260.0f;   // 断后位超出此距离不主�
 constexpr float LowAmmoFraction  = 0.25f;    // 弹匣低于此比例时脱战也要换弹
 constexpr float PatrolHoldSpread = 90.0f;    // 守点时岗位附近的游走半径
 
+// ---------------- 移动散布 / 动态准星 ----------------
+// 静止时散布 = 武器基础值；静步约 42% 速度，跑动 100% 速度。
+constexpr float MoveSpreadMaxMul    = 5.0f;  // 全速跑动时的基础散布倍率
+constexpr float CrosshairBloomMaxPx = 18.0f; // 全速跑动时准星 gap 的最大增量（1080p 基准）
+constexpr float CrosshairBloomExpandRate   = 12.0f;  // 松开静步/加速：散开速度
+constexpr float CrosshairBloomContractRate = 18.0f;  // 按下静步/减速：聚合速度
+
 // ---------------- 下包 / 拆包的「可听」范围 ----------------
 // 声音比视野传得更远：听到下包/拆包声的敌对 BOT 会优先扑向执行者。
 // 这两个半径明显大于 BOT_VIEW_RADIUS(100)，体现「听见但还看不见」。

@@ -530,13 +530,9 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
         o << "未下";
     }
 
-    int sum = 0, n = 0;
-    if (game.GetPlayer().team == team) { sum += game.GetPlayer().money; ++n; }
-    for (const auto& b : game.GetBOTs()) {
-        if (b.team == team) { sum += b.money; ++n; }
-    }
-    const int avg = (n > 0) ? sum / n : 0;
-    o << " 经济" << (avg < 1800 ? "穷" : (avg < 3500 ? "中" : "富"));
+    const int avg = game.GetRoundStartEconomy(team);
+    o << " 经济" << (avg < 1800 ? "穷" : (avg < 3500 ? "中" : "富"))
+      << " 购买=" << CS2DGame::BuyPlanLabel(game.GetBuyPlan(team));
 
 
     // ---- 敌方分布（按包点威胁度；未知 != 空）----
@@ -950,6 +946,9 @@ void CS2DGame::CoachDrainLlm() {
         st.planExpiresAt = plan.expiresAt;
         st.plan   = plan;
         st.reason = plan.reason;
+        st.buyPlan = (plan.intent == PlanIntent::Save)
+                         ? BuyPlan::Eco
+                         : DecideBuyPlan(r.team);
         st.stickyLlm = true;       // LLM owns plan until expiry/critical
 
         {   // 记录上一条指令，供下一次 prompt 使用

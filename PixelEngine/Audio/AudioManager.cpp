@@ -77,7 +77,6 @@ bool AudioManager::Initialize() {
     m4a1FireSound    = loadChunk("assets/audio/m4a1.mp3", "M4A1 射击");
     awpFireSound     = loadChunk("assets/audio/awp.mp3", "AWP 射击");
     shotgunFireSound = loadChunk("assets/audio/shotgun.wav", "霰弹枪射击");
-    smgFireSound     = loadChunk("assets/audio/smg.wav", "SMG 射击");
     galilFireSound   = loadChunk("assets/audio/galir.mp3", "Galil 射击");
     daggerSound = loadChunk("assets/audio/dagger_attack.wav", "匕首攻击");
 
@@ -140,7 +139,6 @@ void AudioManager::Clean() {
     if (m4a1FireSound)    { Mix_FreeChunk(m4a1FireSound);    m4a1FireSound = nullptr; }
     if (awpFireSound)     { Mix_FreeChunk(awpFireSound);     awpFireSound = nullptr; }
     if (shotgunFireSound) { Mix_FreeChunk(shotgunFireSound); shotgunFireSound = nullptr; }
-    if (smgFireSound)     { Mix_FreeChunk(smgFireSound);     smgFireSound = nullptr; }
     if (galilFireSound)   { Mix_FreeChunk(galilFireSound);   galilFireSound = nullptr; }
 
     Mix_CloseAudio();
@@ -222,7 +220,6 @@ Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
         case SoundEffect::M4A1_FIRE:        return m4a1FireSound;
         case SoundEffect::AWP_FIRE:         return awpFireSound;
         case SoundEffect::SHOTGUN_FIRE:     return shotgunFireSound;
-        case SoundEffect::SMG_FIRE:         return smgFireSound;
         case SoundEffect::GALIL_FIRE:       return galilFireSound;
     }
     return nullptr;

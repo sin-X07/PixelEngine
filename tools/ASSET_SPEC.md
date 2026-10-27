@@ -109,7 +109,6 @@
 | `galil` | Galil |
 | `ak47` | AK-47 |
 | `m4a1` | M4A1 |
-| `smg` | SMG |
 | `shotgun` | 霰弹枪 |
 | `awp` | AWP |
 | `grenade_he` / `grenade_flash` / `grenade_smoke` | 三种投掷物 |
@@ -146,7 +145,6 @@
 | `glock.wav` | Glock 射击 |
 | `usp.wav` | USP 射击 |
 | `shotgun.wav` | 霰弹枪射击 |
-| `smg.wav` | SMG 射击 |
 | `dagger_attack.wav` | 匕首攻击 |
 | `ak47_reload.mp3` | AK-47 换弹 |
 | `m4a1_reload.mp3` | M4A1 换弹 |

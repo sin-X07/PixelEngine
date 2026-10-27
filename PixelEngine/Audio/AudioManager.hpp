@@ -104,7 +104,6 @@ private:
     Mix_Chunk* m4a1FireSound    = nullptr;
     Mix_Chunk* awpFireSound     = nullptr;
     Mix_Chunk* shotgunFireSound = nullptr;
-    Mix_Chunk* smgFireSound     = nullptr;
     Mix_Chunk* galilFireSound   = nullptr;
 
     // 效果 → 音频块（两个播放入口共用，避免 switch 重复）

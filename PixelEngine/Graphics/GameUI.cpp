@@ -348,6 +348,13 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
             bool dot = ctx.crosshairCenterDot;
             if (ImGui::Checkbox("显示中心点", &dot)) actions.setCrosshairCenterDot(dot);
         }
+        {
+            ImGui::SetCursorPosX(startX);
+            bool dyn = ctx.crosshairDynamic;
+            if (ImGui::Checkbox("动态准星（随移动扩散）", &dyn)) actions.setCrosshairDynamic(dyn);
+            ImGui::SetCursorPosX(startX);
+            ImGui::TextDisabled("关闭后准星固定；开启后静止最准，静步小扩散，跑动大扩散");
+        }
 
         ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 

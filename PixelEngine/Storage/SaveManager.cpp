@@ -32,6 +32,7 @@ void SaveManager::Load() {
     settings_.crossLength    = ini.GetFloat("crosshair", "length", 12.0f);
     settings_.crossGap       = ini.GetFloat("crosshair", "gap", 3.0f);
     settings_.crossCenterDot = ini.GetBool ("crosshair", "center_dot", true);
+    settings_.crossDynamic   = ini.GetBool ("crosshair", "dynamic", true);
 
     // ---- 雷达 ----
     settings_.radarPlayerCentered   = ini.GetBool ("radar", "player_centered", true);
@@ -62,6 +63,7 @@ void SaveManager::Save() {
     ini.SetFloat("crosshair", "length",     settings_.crossLength);
     ini.SetFloat("crosshair", "gap",        settings_.crossGap);
     ini.SetBool ("crosshair", "center_dot", settings_.crossCenterDot);
+    ini.SetBool ("crosshair", "dynamic",    settings_.crossDynamic);
 
     ini.SetBool ("radar", "player_centered",    settings_.radarPlayerCentered);
     ini.SetBool ("radar", "rotate_with_player", settings_.radarRotateWithPlayer);

@@ -25,6 +25,7 @@ struct GameSettings {
     float crossLength    = 12.0f;
     float crossGap       = 3.0f;
     bool  crossCenterDot = true;
+    bool  crossDynamic   = true;   // true=随移动扩散；false=固定准星
 
     // 雷达
     bool  radarPlayerCentered   = true;

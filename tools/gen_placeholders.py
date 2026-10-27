@@ -35,7 +35,6 @@ WORLD_SPRITES = [
     ("assets/cs2d/sprites/galil.png",         "GALIL",   (120, 90,  60)),
     ("assets/cs2d/sprites/awp.png",           "AWP",     (60,  80, 110)),
     ("assets/cs2d/sprites/shotgun.png",       "SHOTGUN", (110, 70,  70)),
-    ("assets/cs2d/sprites/smg.png",           "SMG",     (70, 110,  90)),
     ("assets/cs2d/sprites/grenade_he.png",    "HE",      (80, 120,  60)),
     ("assets/cs2d/sprites/grenade_flash.png", "FLASH",   (150,150,  60)),
     ("assets/cs2d/sprites/grenade_smoke.png", "SMOKE",   (100,100, 110)),
@@ -50,7 +49,6 @@ HUD_ICONS = [
     ("assets/images/weapons/galil_d.png",         "GALIL",   (120, 90,  60)),
     ("assets/images/weapons/awp_d.png",           "AWP",     (60,  80, 110)),
     ("assets/images/weapons/shotgun_d.png",       "SHOTGUN", (110, 70,  70)),
-    ("assets/images/weapons/smg_d.png",           "SMG",     (70, 110,  90)),
     ("assets/images/weapons/grenade_he_d.png",    "HE",      (80, 120,  60)),
     ("assets/images/weapons/grenade_flash_d.png", "FLASH",   (150,150,  60)),
     ("assets/images/weapons/grenade_smoke_d.png", "SMOKE",   (100,100, 110)),
@@ -60,7 +58,6 @@ HUD_ICONS = [
 SOUNDS = [
     ("assets/audio/glock.wav",          700,  0.10),
     ("assets/audio/shotgun.wav",        180,  0.22),
-    ("assets/audio/smg.wav",            620,  0.09),
     ("assets/audio/grenade_explode.wav", 90,  0.60),
     ("assets/audio/flash.mp3",         1200,  0.35),
     ("assets/audio/smoke.mp3",          300,  0.50),

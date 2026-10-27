@@ -463,6 +463,8 @@ public:
     int GetPlayerDeaths() const { return playerDeaths_; }
     int GetBotCount()     const { return static_cast<int>(bots_.size()); }
     float GetAimAngle()   const { return player_.aimAngle; }
+    // 0=静止，~0.42=静步，1=全速跑动。准星与弹道共用这一份移动扩散。
+    float GetCrosshairBloom() const;
 
     // ---- 阵营 / 回合 ----
     MatchMode  GetMatchMode()   const { return mode_; }
@@ -652,6 +654,7 @@ public:
     // 经济连败档（EconomySystem：胜利时清零，非 CS2「胜后降一档」）
     int  GetLossStreak(Team t) const { return economy_.LossStreak(t); }
     BuyPlan GetBuyPlan(Team t) const;
+    BuyPlan DecideBuyPlan(Team t) const;   // 按买枪前经济/连败/敌方经济分档
     static const char* BuyPlanLabel(BuyPlan p);
     // ---- 敌方威胁度（信息层）----
     const TacticalIntel& Intel() const { return intel_; }
@@ -697,6 +700,7 @@ private:
     std::string mapSourcePath_;    // LoadMap 时的 resolved TMJ 路径
 
     Player player_;
+    float crosshairBloom_ = 0.0f;  // 平滑后的移动扩散（0=静止，1=全速跑动）
     std::vector<Player> bots_;
     int nextBotNameIndex_ = 0;      // 新 BOT 分配昵称的游标（每场重置）
     std::vector<Bullet> bullets_;
@@ -792,6 +796,7 @@ private:
     // 回合开始、买枪之前先出计划（save/eco 必须在购买前生效）
     void CoachBeginRound();
     bool LowEconomyAverage(Team t) const;
+    void SnapshotRoundEconomy();   // 买枪前经济快照（save/eco 依据）
     bool AreaCenterByName(const std::string& name, float& ox, float& oy) const;
     std::string AreaHint(const std::string& intentTarget) const;
     bool prevInteract_ = false;   // E 键边沿检测

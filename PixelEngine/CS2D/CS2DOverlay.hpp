@@ -17,6 +17,7 @@ struct CrosshairCfg {
     bool  centerDot = true;
     float length    = 12.0f;
     float gap       = 3.0f;
+    bool  dynamic   = true;   // true=随移动扩散；false=固定准星
 };
 
 struct RadarCfg {
