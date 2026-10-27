@@ -530,13 +530,38 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
         o << "未下";
     }
 
-    int sum = 0, n = 0;
-    if (game.GetPlayer().team == team) { sum += game.GetPlayer().money; ++n; }
-    for (const auto& b : game.GetBOTs()) {
-        if (b.team == team) { sum += b.money; ++n; }
+    // 经济摘要：精确人均 $ + 穷/中/富 + 购买档(半起/强起拆开中档) + 连败 + 有枪 + 敌经济
+    // 「中」通过 购买=半起|强起 区分；勿再写「强起/半起按穷局打」笼统合并。
+    {
+        const Team enemy = TeamManager::Opponent(team);
+        int sum = 0, n = 0, eSum = 0, eN = 0;
+        int rifleish = 0;
+        auto tally = [&](const Player& p) {
+            if (p.team == team) {
+                sum += p.money; ++n;
+                if (p.weapons[0] != WeaponId::None) {
+                    const WeaponClass cls = WeaponDB::Get(p.weapons[0]).cls;
+                    if (cls == WeaponClass::Rifle || cls == WeaponClass::Sniper) ++rifleish;
+                }
+            } else if (p.team == enemy) {
+                eSum += p.money; ++eN;
+            }
+        };
+        tally(game.GetPlayer());
+        for (const auto& b : game.GetBOTs()) tally(b);
+        const int avg  = (n  > 0) ? sum  / n  : 0;
+        const int eAvg = (eN > 0) ? eSum / eN : 0;
+        const char* band  = (avg  < 1800) ? "穷" : (avg  < 3500 ? "中" : "富");
+        const char* eBand = (eAvg < 1800) ? "敌穷" : (eAvg < 3500 ? "敌中" : "敌富");
+        // 优先用本回合已存的 buyPlan（CoachBeginRound 写入）；否则现算
+        const BuyPlan bp = game.GetBuyPlan(team);
+        const int streak = game.GetLossStreak(team);
+        o << " 经济$" << avg << " " << band
+          << " 购买=" << CS2DGame::BuyPlanLabel(bp)
+          << " 连败" << streak
+          << " 有枪" << rifleish << "/" << n
+          << " 敌$" << eAvg << " " << eBand;
     }
-    const int avg = (n > 0) ? sum / n : 0;
-    o << " 经济" << (avg < 1800 ? "穷" : (avg < 3500 ? "中" : "富"));
 
 
     // ---- 敌方分布（按包点威胁度；未知 != 空）----
@@ -946,6 +971,7 @@ void CS2DGame::CoachDrainLlm() {
         st.plan   = plan;
         st.reason = plan.reason;
         st.stickyLlm = true;       // LLM owns plan until expiry/critical
+        if (plan.intent == PlanIntent::Save) st.buyPlan = BuyPlan::Eco;
 
         {   // 记录上一条指令，供下一次 prompt 使用
             std::ostringstream o;

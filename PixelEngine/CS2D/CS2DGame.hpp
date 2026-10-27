@@ -627,6 +627,10 @@ public:
     void CoachTryDebrief(Team t);
     // 现在是否允许「保枪」：仅回合早段 + 经济崩 + 非人数优势 + 未下包
     bool ShouldSaveNow(Team t) const;
+    // 经济连败档（EconomySystem：胜利时清零，非 CS2「胜后降一档」）
+    int  GetLossStreak(Team t) const { return economy_.LossStreak(t); }
+    BuyPlan GetBuyPlan(Team t) const;
+    static const char* BuyPlanLabel(BuyPlan p);
     // ---- 敌方威胁度（信息层）----
     const TacticalIntel& Intel() const { return intel_; }
     // 转点判定：时间/人数/冷却/证据 都满足才允许
@@ -701,6 +705,7 @@ private:
     // ---- 教练层状态（每队一份）----
     struct CoachState {
         TeamPlan plan;                       // 当前生效计划
+        BuyPlan  buyPlan = BuyPlan::Full;    // 本回合购买档（DecideBuyPlan）
         std::deque<RoundMemo> memory;        // 最近 10 回合
         std::vector<CoachEvent> pending;     // 待处理事件
         float mergeWindow = 0.0f;            // 事件合并窗口
@@ -756,6 +761,12 @@ private:
     // 回合开始、买枪之前先出计划（save/eco 必须在购买前生效）
     void CoachBeginRound();
     bool LowEconomyAverage(Team t) const;
+    int  TeamMoneySum(Team t) const;
+    int  TeamMoneyAvg(Team t) const;
+    int  TeamRifleLikeCount(Team t) const;   // primary = Rifle/Sniper
+    int  TeamPrimaryCount(Team t) const;     // primary slot != None
+    int  TeamMoneyMembers(Team t) const;     // player+bots counted in money avg
+    BuyPlan DecideBuyPlan(Team t) const;
     bool AreaCenterByName(const std::string& name, float& ox, float& oy) const;
     std::string AreaHint(const std::string& intentTarget) const;
     bool prevInteract_ = false;   // E 键边沿检测

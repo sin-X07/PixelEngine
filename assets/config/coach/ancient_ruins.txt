@@ -13,7 +13,8 @@ B侧: B_Site Ramp Cave B_Doors Outside_door_B Outside_B B_Short B_Long Back_Alle
 中路: Mid Elbow Indent Mid_Pit；出生: T_Spawn CT_Spawn
 映射: Elbow≈进Mid口; A_Long/A_Hall≈A Main; Cave/Ramp≈B逼近; Donut/A_Short≈Mid→A夹击; Temple/Back_Alley≈回防路
 
-【T 满钱 / 强起】
+【T 满钱 / 满起】
+# 强起见下「T 强起」；半见「T 半起」；满起用步枪节奏，勿与半起/强起混用
 default | target="" | tempo=normal | ttl=18~25
   站位: 2 Mid/Elbow; 1 A_Hall/A_Long; 1 Cave/Ramp; 1 灵活支援(可听 Outside_B)
   目的: 前段换 Mid/Donut 与 Cave 信息，再定 A split 或 B 压；开局挡 Mid 第一视线
@@ -38,13 +39,23 @@ fake | target=B或A(真打点) | tempo=normal→fast | ttl=14~20
   意图: 2 人在佯攻侧(Mid/Donut 或 Ramp)制造接触，主力转另一点
   时机: CT 早回防、上回合同点被叠；确认回防再转，否则改打佯攻侧；勿穷局/时间不足
 
+【T 半起】
+default | target="" | tempo=slow | ttl=18~25
+  站位: 同满起 default 轻压一侧信息位；不五人无信息 rush
+  目的: 留钱保证败后仍能满起；禁止把半起打成强起掏空
+
+【T 强起】
+rush_a / rush_b / split_a / split_b | tempo=fast | ttl=10~16
+  时机: 中档但赛点/敌穷/连败偏高，或败后仍不能满；全员同档近身赌点
+  勿用: save；远距离 default 对枪；与队友分裂购买
+
 【T 穷 / 强起失败后】
 save | target="" | tempo=slow | ttl=18~25
   站位: 靠近 T_Spawn / Outside_A 外侧，远离 Elbow/Ramp 混战
 default(穷局) | 仅当不允许 save 时
   轻听 Mid/Cave，换枪不主动大战
 
-【CT 满钱】
+【CT 满钱 / 满起】
 default | target="" | tempo=normal | ttl=18~25
   站位: 2-1-2 — A_Site/Temple + Mid/Donut + B_Site/Ramp(或 Cave 支援)
   目的: 前 10~15s 听 Mid/Elbow、Cave、A_Hall，再决定叠边；早挡/拖 Mid
@@ -62,6 +73,14 @@ retake_b | target=B | tempo=fast | ttl=12~18
 【CT 穷】
 save 或 stack_a/stack_b(赌点)：可赌叠 B(Ramp 口易拖)或叠 A(Temple+点内掩体)
 Mid 不正面硬刚；尊重 Cave/Donut 近打，步枪保持距离；CT 无 rush intent
+
+【经济×意图】
+穷: T→save（禁 rush/split/fake）；CT→save 或 stack_a/b 赌点(Temple/A_Site 或 Ramp 口)；Mid/Elbow 不硬刚
+半起: default slow 控 Mid/Donut/Cave 信息；有单点信息可轻压；勿五人无道具冲 A_Hall/Ramp
+强起: T 选近身 rush_b(Cave/Ramp)或 rush_a/split_a；CT stack 近交叉；统一计划，禁 save
+满起: default → 信息到再 split/rush；时间紧直接 execute
+反eco(我富敌穷): 保持距离、成对清近角、杀一人收；CT勿浪推 A_Hall/Cave；T先default再打
+满起输掉后: 优先 eco；笔记写「下回合满起」；勿连强
 
 【局势速查】
 敌早期 Elbow/Mid 强压 → CT: Mid 拖时间后撤交叉，Donut 支援; T: 转 Donut→split_a 或假 Mid 打 B

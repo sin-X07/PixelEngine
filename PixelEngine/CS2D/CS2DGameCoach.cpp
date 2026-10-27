@@ -349,6 +349,8 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
     st.plan   = plan;
     st.reason = plan.reason;
     st.stickyLlm = false;          // rules own this plan
+    // 中段规则重算时同步购买档（Save→Eco；否则按当前金钱再判）
+    st.buyPlan = (plan.intent == PlanIntent::Save) ? BuyPlan::Eco : DecideBuyPlan(t);
     st.lastThinkAt = clockSec_;
     coachPlanChangedAt_ = clockSec_;
     {   // 规则计划也算「上条指令」，让 LLM 知道自己上一手是什么
@@ -730,26 +732,133 @@ void CS2DGame::CoachBeginRound() {
         st.reason        = plan.reason;
         st.planExpiresAt = plan.expiresAt;
         st.stickyLlm     = false; // BeginRound sticky clear
+        // 购买档：在 RuleCoach 定 intent 之后立刻决定，供 BotBuyLoadout / digest 使用
+        st.buyPlan = DecideBuyPlan(t);
+        if (plan.intent == PlanIntent::Save) {
+            st.buyPlan = BuyPlan::Eco;
+        }
+        // Eco + ShouldSaveNow：由 RuleCoach 决定是否 Save；此处不覆盖其 intent（不打架）
         coachPlanChangedAt_ = clockSec_;
 
         std::cout << "[Coach] " << TeamName(t) << " 回合计划 -> "
                   << IntentName(plan.intent)
+                  << " 购买=" << BuyPlanLabel(st.buyPlan)
                   << " | " << plan.reason << std::endl;
         CoachApplyPlan(t);
     }
 }
 
 
+
+// ---------------------------------------------------------------------------
+// 队伍经济统计 + 购买档决策
+//
+// 阈值：穷 <1800 / 中 1800..3499 / 富 >=3500（与 digest 一致）。
+// 注意：EconomySystem 在胜利时将 LossStreak 清零（streak=0），
+//       与现行 CS2「胜后只降一档、不清零」不同——切勿按 CS2 loss-bonus-after-win 建模。
+// ---------------------------------------------------------------------------
+
+int CS2DGame::TeamMoneyMembers(Team t) const {
+    int n = 0;
+    if (player_.team == t) ++n;
+    for (const auto& b : bots_) {
+        if (b.team == t) ++n;
+    }
+    return n;
+}
+
+int CS2DGame::TeamMoneySum(Team t) const {
+    int sum = 0;
+    if (player_.team == t) sum += player_.money;
+    for (const auto& b : bots_) {
+        if (b.team == t) sum += b.money;
+    }
+    return sum;
+}
+
+int CS2DGame::TeamMoneyAvg(Team t) const {
+    const int n = TeamMoneyMembers(t);
+    return (n > 0) ? (TeamMoneySum(t) / n) : 0;
+}
+
+int CS2DGame::TeamRifleLikeCount(Team t) const {
+    int c = 0;
+    auto countOne = [&](const Player& p) {
+        if (p.team != t) return;
+        const WeaponId id = p.weapons[0];
+        if (id == WeaponId::None) return;
+        const WeaponClass cls = WeaponDB::Get(id).cls;
+        if (cls == WeaponClass::Rifle || cls == WeaponClass::Sniper) ++c;
+    };
+    countOne(player_);
+    for (const auto& b : bots_) countOne(b);
+    return c;
+}
+
+int CS2DGame::TeamPrimaryCount(Team t) const {
+    int c = 0;
+    auto countOne = [&](const Player& p) {
+        if (p.team != t) return;
+        if (p.weapons[0] != WeaponId::None) ++c;
+    };
+    countOne(player_);
+    for (const auto& b : bots_) countOne(b);
+    return c;
+}
+
+const char* CS2DGame::BuyPlanLabel(BuyPlan p) {
+    switch (p) {
+        case BuyPlan::Eco:     return "eco";
+        case BuyPlan::Half:    return "半起";
+        case BuyPlan::Force:   return "强起";
+        case BuyPlan::Full:    return "满起";
+        case BuyPlan::AntiEco: return "反eco";
+        default:               return "?";
+    }
+}
+
+BuyPlan CS2DGame::GetBuyPlan(Team t) const {
+    return CoachFor(t).buyPlan;
+}
+
+BuyPlan CS2DGame::DecideBuyPlan(Team t) const {
+    // 手枪局：保持原手枪购买路径（Full → BotBuyLoadout 按高到低能买就买）
+    if (round_.RoundNumber() <= 1) return BuyPlan::Full;
+
+    const int avg = TeamMoneyAvg(t);
+    const Team enemy = TeamManager::Opponent(t);
+    const int enemyAvg = TeamMoneyAvg(enemy);
+    const int streak = economy_.LossStreak(t);
+
+    // 穷
+    if (avg < 1800) return BuyPlan::Eco;
+
+    // 富 / 满起线：对面穷则反 eco 购买叠加，否则满起
+    // AntiEco 是「能 full-buy 且敌穷」时的购买 overlay（优先 SMG），不是独立 intent。
+    if (avg >= 3500) {
+        return (enemyAvg < 1800) ? BuyPlan::AntiEco : BuyPlan::Full;
+    }
+
+    // 中档 1800..3499：半起 vs 强起
+    // 优先强起：赛点、敌穷、或连败偏高且钱不够稳留满起预算
+    const bool matchPoint =
+        (teams_.ScoreT()  == teams_.ScoreToWin() - 1) ||
+        (teams_.ScoreCT() == teams_.ScoreToWin() - 1);
+    // Prefer Force: 赛点 / 敌穷 / 连败偏高且钱不够稳留满起预算
+    // （avg<2500 且连败帮不上忙 → 简化为 streak>=2 && avg<2800）
+    const bool preferForce =
+        matchPoint ||
+        (enemyAvg < 1800) ||
+        (streak >= 2 && avg < 2800);
+
+    return preferForce ? BuyPlan::Force : BuyPlan::Half;
+}
+
 // 队伍平均余额（含玩家）
 bool CS2DGame::LowEconomyAverage(Team t) const {
-    int sum = 0, n = 0;
-    if (player_.team == t) { sum += player_.money; ++n; }
-    for (const auto& b : bots_) {
-        if (b.team == t) { sum += b.money; ++n; }
-    }
     // 手枪局有自己的节奏，不按 eco 处理；阈值 1800 更接近 CS 的经济线
     if (round_.RoundNumber() <= 1) return false;
-    return (n > 0 && sum / n < 1800);
+    return TeamMoneyAvg(t) < 1800;
 }
 
 // 保枪只在「真的该保」时成立：

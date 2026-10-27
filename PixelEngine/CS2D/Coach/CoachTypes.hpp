@@ -27,6 +27,10 @@ enum class PlanIntent {
 // 节奏
 enum class Tempo { Slow = 0, Normal, Fast };
 
+// 购买计划（教练经济四档 + 反 eco 叠加）
+// Eco=不花；Half=半起留钱；Force=强起掏空；Full=满起；AntiEco=我满/富且敌穷时的购买叠加
+enum class BuyPlan { Eco = 0, Half, Force, Full, AntiEco };
+
 // 队员定位（影响移速倍率、补枪资格、远追许可）
 enum class CoachRole { Entry = 0, Support, Lurk, Anchor, Awper };
 
