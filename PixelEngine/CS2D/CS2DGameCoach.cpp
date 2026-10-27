@@ -366,6 +366,8 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
     st.plan   = plan;
     st.reason = plan.reason;
     st.stickyLlm = false;          // rules own this plan
+    // 中段规则重算时同步购买档（Save→Eco；否则按当前金钱再判）
+    st.buyPlan = (plan.intent == PlanIntent::Save) ? BuyPlan::Eco : DecideBuyPlan(t);
     st.lastThinkAt = clockSec_;
     coachPlanChangedAt_ = clockSec_;
     {   // 规则计划也算「上条指令」，让 LLM 知道自己上一手是什么
@@ -973,48 +975,33 @@ void CS2DGame::CoachBeginRound() {
         st.reason        = plan.reason;
         st.planExpiresAt = plan.expiresAt;
         st.stickyLlm     = false; // BeginRound sticky clear
+        // 购买档：在 RuleCoach 定 intent 之后立刻决定，供 BotBuyLoadout / digest 使用
+        st.buyPlan = DecideBuyPlan(t);
+        if (plan.intent == PlanIntent::Save) {
+            st.buyPlan = BuyPlan::Eco;
+        }
+        // Eco + ShouldSaveNow：由 RuleCoach 决定是否 Save；此处不覆盖其 intent（不打架）
         coachPlanChangedAt_ = clockSec_;
 
         std::cout << "[Coach] " << TeamName(t) << " 回合计划 -> "
                   << IntentName(plan.intent)
+                  << " 购买=" << BuyPlanLabel(st.buyPlan)
                   << " | " << plan.reason << std::endl;
         CoachApplyPlan(t);
     }
 }
 
 
-// 队伍平均余额（买枪前快照；没有快照时退回当前值）
-int CS2DGame::GetRoundStartEconomy(Team t) const {
-    if (roundEconomySnapshotValid_ && mode_ != MatchMode::DeathMatch) {
-        return (t == Team::T) ? roundStartAvgMoneyT_ : roundStartAvgMoneyCT_;
-    }
+// 队伍平均余额（含玩家）
+bool CS2DGame::LowEconomyAverage(Team t) const {
     int sum = 0, n = 0;
     if (player_.team == t) { sum += player_.money; ++n; }
     for (const auto& b : bots_) {
         if (b.team == t) { sum += b.money; ++n; }
     }
-    return (n > 0) ? sum / n : 0;
-}
-
-void CS2DGame::SnapshotRoundEconomy() {
-    auto avg = [&](Team t) {
-        int sum = 0, n = 0;
-        if (player_.team == t) { sum += player_.money; ++n; }
-        for (const auto& b : bots_) {
-            if (b.team == t) { sum += b.money; ++n; }
-        }
-        return (n > 0) ? sum / n : 0;
-    };
-    roundStartAvgMoneyT_  = avg(Team::T);
-    roundStartAvgMoneyCT_ = avg(Team::CT);
-    roundEconomySnapshotValid_ = true;
-}
-
-bool CS2DGame::LowEconomyAverage(Team t) const {
     // 手枪局有自己的节奏，不按 eco 处理；阈值 1800 更接近 CS 的经济线
     if (round_.RoundNumber() <= 1) return false;
-    if (mode_ == MatchMode::DeathMatch) return false;
-    return GetRoundStartEconomy(t) < 1800;
+    return (n > 0 && sum / n < 1800);
 }
 
 // 保枪只在「真的该保」时成立：

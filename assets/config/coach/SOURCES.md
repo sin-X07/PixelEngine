@@ -166,4 +166,12 @@
 1. intent 闭集：default / rush_a / rush_b / split_a / split_b / stack_a / stack_b / retake_a / retake_b / save / fake  
 2. 不写像素投掷线；只写何时挡视线/闪进点/拖延  
 3. slots.area 必须是该图 site 层名（dust1/office 为草案名并标待确认）  
-4. 禁止大段粘贴原文；局势表与 few-shot 为引擎可调用短条目  
+4. 禁止大段粘贴原文；局势表与 few-shot 为引擎可调用短条目
+
+---
+
+## 经济把控（附录）
+
+阈值与四档+反eco 文案改写自公开 IGL/经济指南（详见仓库外 `playbook-research/ECONOMY_BRIEF.md` / `ECONOMY_SOURCES.md`）。  
+引擎差异：`EconomySystem` 胜利时连败清零（非 CS2 胜后降一档）；digest 已输出人均$/连败/有枪/敌经济/购买档。
+

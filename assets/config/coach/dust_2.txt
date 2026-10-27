@@ -13,7 +13,8 @@ B侧: B_Site Tunnel Upper Lower Outside_Tunnel Door Car_B Plate_B Big_Box Fence 
 中路: Mid Top_Mid Xbox Double_Doors Suicide；出生: T_Spawn CT_Spawn
 备注: Stairs 属 Tunnel 体系(Upper↔Lower 连接)；Outside 近 Outside_Tunnel；slots 优先用上表常用名
 
-【T 满钱 / 强起】
+【T 满钱 / 满起】
+# 强起见下「T 强起」；半见「T 半起」；满起用步枪节奏，勿与半起/强起混用
 default | target="" | tempo=normal | ttl=18~25
   站位: 2 Long/Outside_Long; 1 Top_Mid; 1 Cat/Short; 1 Tunnel/Upper
   目的: 前 30s 换 Long/Mid 门/B 是否前压的信息，再决定点；开局可挡 Mid/Double_Doors 视线
@@ -38,13 +39,23 @@ fake | target=B或A(真打点) | tempo=normal→fast | ttl=14~20
   意图: 2 人在佯攻侧制造接触/噪音，主力转另一点
   时机: CT 习惯早回防、上回合同点被叠；看到回防再转，否则改打佯攻侧；勿穷局/时间不足
 
+【T 半起】
+default | target="" | tempo=slow | ttl=18~25
+  站位: 同满起 default 轻压一侧信息位；不五人无信息 rush
+  目的: 留钱保证败后仍能满起；禁止把半起打成强起掏空
+
+【T 强起】
+rush_a / rush_b / split_a / split_b | tempo=fast | ttl=10~16
+  时机: 中档但赛点/敌穷/连败偏高，或败后仍不能满；全员同档近身赌点
+  勿用: save；远距离 default 对枪；与队友分裂购买
+
 【T 穷 / 强起失败后】
 save | target="" | tempo=slow | ttl=18~25
   站位: 靠近 T_Spawn / 远离混战，避免白给枪
 default(穷局) | 仅当不允许 save 时
   小心换枪/捡枪，可轻压 Outside_Long 或 Tunnel 口骗接触后撤
 
-【CT 满钱】
+【CT 满钱 / 满起】
 default | target="" | tempo=normal | ttl=18~25
   站位: 2A(Long/Pit + Short/Cat) + 1 Mid + 2B(Door 侧 + B_Site 锚) ≈2-1-2
   目的: 先听前 10~15s 再决定叠边；防早 Cat，B 洞口拖延，Long 被压时后撤 Pit
@@ -62,6 +73,14 @@ retake_b | target=B | tempo=fast | ttl=12~18
 【CT 穷】
 save 或 stack_a/stack_b(赌点)：可赌叠 B(Car_B/Big_Box/Fence)或叠 A(Pit/A_Site)
 中路尽量不正面硬刚；保持距离，清近点前先听，勿盲 peek Long_Door；CT 无 rush intent
+
+【经济×意图】
+穷: T→save（禁 rush/split/fake）；CT→save 或 stack_a/b 赌点(Pit/A_Site 或 Car_B/Big_Box)；中路/Long 不硬刚
+半起: default slow 控 Long/Mid/Tunnel 信息；有单点信息可轻压；勿五人无道具冲 Long_Door/洞口
+强起: T 选近身点 rush_b(Tunnel)或 rush_a/split_a；CT stack 近交叉；统一计划，禁 save
+满起: default → 信息到再 split/rush；时间紧直接 execute
+反eco(我富敌穷): 保持距离、成对清近角、杀一人收；CT勿浪推 Long/Cat；T先default再打
+满起输掉后: 优先 eco；笔记写「下回合满起」；勿连强
 
 【局势速查】
 敌早期 Tunnel 前压 → CT: 暂守 B 交叉，Mid 协助; T: 可改 rush_a 打空档

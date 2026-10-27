@@ -530,7 +530,12 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
         o << "未下";
     }
 
-    const int avg = game.GetRoundStartEconomy(team);
+    int sum = 0, n = 0;
+    if (game.GetPlayer().team == team) { sum += game.GetPlayer().money; ++n; }
+    for (const auto& b : game.GetBOTs()) {
+        if (b.team == team) { sum += b.money; ++n; }
+    }
+    const int avg = (n > 0) ? sum / n : 0;
     o << " 经济" << (avg < 1800 ? "穷" : (avg < 3500 ? "中" : "富"));
 
 
@@ -946,9 +951,6 @@ void CS2DGame::CoachDrainLlm() {
         st.plan   = plan;
         st.reason = plan.reason;
         st.stickyLlm = true;       // LLM owns plan until expiry/critical
-        if (r.team == Team::T && (plan.target == "A" || plan.target == "B")) {
-            st.lastAttackSide = plan.target;
-        }
 
         {   // 记录上一条指令，供下一次 prompt 使用
             std::ostringstream o;
