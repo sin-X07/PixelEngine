@@ -1,4 +1,6 @@
 #include "CS2DGame.hpp"
+#include "MapCatalog.hpp"
+#include <filesystem>
 #include "TMJParser.hpp"
 #include "../Audio/AudioManager.hpp"
 #include <iostream>
@@ -31,6 +33,20 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
     pathFinder_.Build(*world_, Tuning::PathAgentRadius);
     std::cout << "[PathFinder] 网格 " << pathFinder_.Width() << "x" << pathFinder_.Height()
               << " 已构建" << std::endl;
+
+    // 解析 mapId：优先匹配 MapCatalog.tmj，否则用文件名去扩展名
+    mapSourcePath_ = resolvedTMJPath;
+    mapId_.clear();
+    for (int i = 0; i < kMapCatalogCount; ++i) {
+        if (resolvedTMJPath.find(kMapCatalog[i].tmj) != std::string::npos) {
+            mapId_ = kMapCatalog[i].id;
+            break;
+        }
+    }
+    if (mapId_.empty()) {
+        mapId_ = std::filesystem::path(resolvedTMJPath).stem().string();
+    }
+    std::cout << "[Map] mapId=" << mapId_ << " path=" << resolvedTMJPath << std::endl;
 
     ResetToNewMatch();
         intel_.Build(world_.get(), clockSec_);

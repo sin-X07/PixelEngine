@@ -11,6 +11,7 @@
 #include "Navigation/PathFinder.hpp"
 #include "../Core/Types.hpp"
 #include <SDL2/SDL.h>
+#include <string>
 #include <vector>
 #include <deque>
 #include <mutex>
@@ -368,6 +369,9 @@ public:
     bool LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* renderer);
     void Reset();
 
+    // 当前地图 id（与 MapCatalog / coach_playbook_<mapId>.txt 对齐）
+    const std::string& GetMapId() const { return mapId_; }
+
     void Update(float dt, bool mouseLeftDown, float mouseWorldX, float mouseWorldY,
                 bool wPressed, bool aPressed, bool sPressed, bool dPressed,
                 bool shiftPressed, bool rPressed,
@@ -657,6 +661,8 @@ public:
 private:
     std::unique_ptr<CS2DWorld> world_;
     CS2DRenderer* renderer_ = nullptr;
+    std::string mapId_;            // 如 dust_2 / ancient_ruins / mirage
+    std::string mapSourcePath_;    // LoadMap 时的 resolved TMJ 路径
 
     Player player_;
     std::vector<Player> bots_;
