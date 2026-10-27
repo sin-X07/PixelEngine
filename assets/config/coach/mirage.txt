@@ -14,7 +14,8 @@ B侧: B_Site B_Apts Van Bench Marcket Market_door Market_Window Kitchen
 中路: Mid Top_Mid Mid_Box Window Underpass Cat Lader_Room Chair Get_Right TV_Room；出生: T_Spawn CT_Spawn
 备注: 社区名勿写入 slots — Market→Marcket; Ladder Room→Lader_Room; Balcony→Bulcony; Connector→Conn; Apps→B_Apts; Catwalk/Short→Cat; Ticket Booth→Ticket
 
-【T 满钱 / 强起】
+【T 满钱 / 满起】
+# 强起见下「T 强起」；半见「T 半起」；满起用步枪节奏，勿与半起/强起混用
 default | target="" | tempo=normal | ttl=18~25
   站位: 2~3 Mid/Top_Mid(可配 Underpass/Mid_Box) + 1 A 压(Palace/Ramp) + 1 B 听(B_Apts)
   目的: 前 30s 换 Window/Conn 与 Apps 信息，再决定点；Mid 开则威胁双点；开局挡 Window 视线
@@ -39,13 +40,23 @@ fake | target=B或A(真打点) | tempo=normal→fast | ttl=14~20
   意图: 2 人在佯攻侧(B_Apts 或 Ramp/Palace)制造接触，主力转另一点
   时机: CT 习惯早回防、上回合同点被叠；看到回防再转，否则改打佯攻侧；勿穷局/时间不足
 
+【T 半起】
+default | target="" | tempo=slow | ttl=18~25
+  站位: 同满起 default 轻压一侧信息位；不五人无信息 rush
+  目的: 留钱保证败后仍能满起；禁止把半起打成强起掏空
+
+【T 强起】
+rush_a / rush_b / split_a / split_b | tempo=fast | ttl=10~16
+  时机: 中档但赛点/敌穷/连败偏高，或败后仍不能满；全员同档近身赌点
+  勿用: save；远距离 default 对枪；与队友分裂购买
+
 【T 穷 / 强起失败后】
 save | target="" | tempo=slow | ttl=18~25
   站位: 靠近 T_Spawn / 远离混战，避免白给枪
 default(穷局) | 仅当不允许 save 时
   小心换枪/捡枪，可轻听 Mid 口或 B_Apts 口骗接触后撤
 
-【CT 满钱】
+【CT 满钱 / 满起】
 default | target="" | tempo=normal | ttl=18~25
   站位: 2A(Ramp/Palace/Jungle 或 Stairs/Ticket) + Mid/Window + 2B(B_Apts/Van 与 Marcket/Cat) ≈2-1-2
   目的: 先听前 10~15s 再决定叠边；防早 Ramp/Palace，B_Apts 口拖延，Mid 被压时 Window 后撤
@@ -63,6 +74,14 @@ retake_b | target=B | tempo=fast | ttl=12~18
 【CT 穷】
 save 或 stack_a/stack_b(赌点)：可赌叠 B(Van/Bench/Marcket)或叠 A(Stairs/Ticket/Tetris)
 Mid/Window 尽量不正面硬刚；清 Palace/Ramp/B_Apts 近点前先听，勿盲 peek Top_Mid；CT 无 rush intent
+
+【经济×意图】
+穷: T→save（禁 rush/split/fake）；CT→save 或 stack_a/b 赌点(Stairs/Ticket 或 Van/Bench)；Mid/Window 不硬刚
+半起: default slow 控 Mid/Underpass/Apps 信息；有单点信息可轻压；勿五人无道具冲 Ramp/B_Apts
+强起: T 选近身 rush_b(B_Apts)或 rush_a/split_a；CT stack 近交叉；统一计划，禁 save
+满起: default → 信息到再 split/rush；时间紧直接 execute
+反eco(我富敌穷): 保持距离、成对清近角、杀一人收；CT勿浪推 Ramp/Apps；T先default再打
+满起输掉后: 优先 eco；笔记写「下回合满起」；勿连强
 
 【局势速查】
 敌早期 B_Apts 前压 → CT: 守 Van/Bench 交叉，Kitchen/Window 协助; T: 可改 rush_a 打空档

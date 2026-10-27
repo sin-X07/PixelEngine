@@ -183,53 +183,51 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
     lastDeathTimer_ = 0.0f;
 }
 
-// BOT 经济：按余额买武器与护甲（与玩家同一套价格，照抄 CS2）
-// 开局只有起始手枪、无护甲；这里模拟 BOT 在购买阶段的采购顺序：先枪、再甲、再雷
+// BOT 经济：按 BuyPlan 分档采购（与玩家同一套价格，照抄 CS2）
+// 开局只有起始手枪、无护甲；顺序：先枪、再甲、再雷
 // 阵营隔离：只买本阵营可用的武器（WeaponDB::TeamAllowed）
+//
+// BuyPlan 语义：
+//   Eco     — 不花（Save intent 也强制 Eco）
+//   Half    — 半起：主武封顶 Galil/FAMAS/UMP/Nova；甲仅在主武后仍有 >=650；至多 1 雷；禁 AWP/M4/AK
+//   Force   — 强起：掏空；优先甲 + SMG 或廉价步枪；禁 AWP；剩钱 1~2 雷
+//   Full    — 满起：高到低步枪偏好（允许 AWP）
+//   AntiEco — 反 eco overlay：优先 SMG（MAC10/MP9/MP7/UMP）+ 甲 + 轻雷；禁 AWP；已有步枪则保留
 void CS2DGame::BotBuyLoadout(Player& bot) {
-    // 教练选择保枪：本回合不花钱
-    if (GetCoachPlan(bot.team).intent == PlanIntent::Save) return;
+    BuyPlan plan = GetBuyPlan(bot.team);
+    if (GetCoachPlan(bot.team).intent == PlanIntent::Save) plan = BuyPlan::Eco;
+    if (plan == BuyPlan::Eco) return;  // 不花钱
 
     const bool isT = (bot.team == Team::T);
     WeaponId primary = bot.weapons[0];
 
-    // 1) 主武器：按 CS2 常见购买梯度挑本阵营能买的最好的枪
-    if (primary == WeaponId::None) {
-        // 候选清单（价格从高到低），只保留本阵营可用的
-        struct Cand { WeaponId id; int price; };
-        const Cand order[] = {
-            { WeaponId::AWP,    4750 },
-            { WeaponId::M4A4,   3100 },   // CT
-            { WeaponId::AUG,    3300 },   // CT
-            { WeaponId::SG553,  3000 },   // T
-            { WeaponId::AK47,   2700 },   // T
-            { WeaponId::M4A1S,  2900 },   // CT
-            { WeaponId::FAMAS,  2050 },   // CT
-            { WeaponId::GalilAR,1800 },   // T
-            { WeaponId::MP7,    1500 },
-            { WeaponId::UMP45,  1200 },
-            { WeaponId::Nova,   1050 },
-        };
-        for (const auto& c : order) {
+    struct Cand { WeaponId id; int price; };
+
+    auto buyFirstAffordable = [&](const Cand* order, size_t n) {
+        if (primary != WeaponId::None) return;
+        for (size_t i = 0; i < n; ++i) {
+            const Cand& c = order[i];
             if (!WeaponDB::TeamAllowed(c.id, isT)) continue;
             if (bot.money >= c.price) {
                 primary = c.id;
                 bot.money -= c.price;
-                break;
+                return;
             }
         }
-    }
+    };
 
-    // 2) 护甲（买不起就先空着）
-    if (bot.money >= 1000) {
-        bot.armor = 100; bot.helmet = true;  bot.money -= 1000;
-    } else if (bot.money >= 650) {
-        bot.armor = 100; bot.helmet = false; bot.money -= 650;
-    }
+    auto buyArmor = [&](bool requireMoneyAfterPrimary) {
+        // Half：买甲前要求主武后余额仍够 650；其它档有钱就买
+        if (requireMoneyAfterPrimary && bot.money < 650) return;
+        if (bot.armor >= 100 && bot.helmet) return;
+        if (bot.money >= 1000) {
+            bot.armor = 100; bot.helmet = true;  bot.money -= 1000;
+        } else if (bot.money >= 650) {
+            bot.armor = 100; bot.helmet = false; bot.money -= 650;
+        }
+    };
 
-    // 3) 投掷物：最多 4 个，闪光可 2 个，其它每种 1 个
-    {
-        // 偏好顺序：高爆 → 闪光/烟雾（T 更偏闪光，CT 更偏烟雾）→ 另一个
+    auto buyNades = [&](int maxTotal) {
         const WeaponId order[3] = {
             WeaponId::GrenadeHE,
             isT ? WeaponId::GrenadeFlash : WeaponId::GrenadeSmoke,
@@ -240,6 +238,7 @@ void CS2DGame::BotBuyLoadout(Player& bot) {
             const WeaponDef& gd = WeaponDB::Get(gid);
             const int limit = (gid == WeaponId::GrenadeFlash) ? 2 : 1;
             while (bot.grenadeCount < Player::MAX_GRENADES &&
+                   bot.grenadeCount < maxTotal &&
                    bot.CountGrenade(gid) < limit &&
                    gd.price > 0 && bot.money >= gd.price) {
                 bot.grenades[bot.grenadeCount++] = gid;
@@ -247,11 +246,101 @@ void CS2DGame::BotBuyLoadout(Player& bot) {
             }
         }
         bot.SyncActiveGrenade();
+    };
+
+    // ---- 按档选主武 ----
+    switch (plan) {
+        case BuyPlan::Half: {
+            // 封顶廉价步枪 / UMP / Nova；禁 AWP/M4/AK 等满起枪
+            const Cand order[] = {
+                { WeaponId::FAMAS,  2050 },
+                { WeaponId::GalilAR,1800 },
+                { WeaponId::MP7,    1500 },
+                { WeaponId::UMP45,  1200 },
+                { WeaponId::MP9,    1250 },
+                { WeaponId::MAC10,  1050 },
+                { WeaponId::Nova,   1050 },
+            };
+            buyFirstAffordable(order, sizeof(order) / sizeof(order[0]));
+            buyArmor(/*requireMoneyAfterPrimary=*/true);
+            buyNades(/*maxTotal=*/1);
+            break;
+        }
+        case BuyPlan::Force: {
+            // 强起：优先 SMG / 廉价步枪；禁 AWP；甲优先于贵枪
+            // 先留甲预算再选枪，避免买了 Galil 却裸奔
+            const bool canVest = (bot.money >= 650);
+            const int armorReserve = canVest ? ((bot.money >= 1000) ? 1000 : 650) : 0;
+            const int budget = bot.money - armorReserve;
+            if (primary == WeaponId::None) {
+                const Cand order[] = {
+                    { WeaponId::FAMAS,  2050 },
+                    { WeaponId::GalilAR,1800 },
+                    { WeaponId::MP7,    1500 },
+                    { WeaponId::MP9,    1250 },
+                    { WeaponId::UMP45,  1200 },
+                    { WeaponId::MAC10,  1050 },
+                    { WeaponId::Nova,   1050 },
+                };
+                for (const auto& c : order) {
+                    if (!WeaponDB::TeamAllowed(c.id, isT)) continue;
+                    if (budget >= c.price && bot.money >= c.price) {
+                        primary = c.id;
+                        bot.money -= c.price;
+                        break;
+                    }
+                }
+            }
+            buyArmor(false);
+            buyNades(/*maxTotal=*/2);
+            break;
+        }
+        case BuyPlan::AntiEco: {
+            // 反 eco：SMG 优先（刷击杀奖）；已有步枪则保留；禁 AWP
+            if (primary == WeaponId::None) {
+                const Cand order[] = {
+                    { WeaponId::MP7,    1500 },
+                    { WeaponId::MP9,    1250 },
+                    { WeaponId::UMP45,  1200 },
+                    { WeaponId::MAC10,  1050 },
+                    { WeaponId::FAMAS,  2050 },
+                    { WeaponId::GalilAR,1800 },
+                    { WeaponId::M4A1S,  2900 },
+                    { WeaponId::AK47,   2700 },
+                    { WeaponId::M4A4,   3100 },
+                };
+                buyFirstAffordable(order, sizeof(order) / sizeof(order[0]));
+            }
+            buyArmor(false);
+            buyNades(/*maxTotal=*/2);
+            break;
+        }
+        case BuyPlan::Full:
+        default: {
+            // 满起：高到低（允许 AWP）
+            const Cand order[] = {
+                { WeaponId::AWP,    4750 },
+                { WeaponId::AUG,    3300 },
+                { WeaponId::M4A4,   3100 },
+                { WeaponId::SG553,  3000 },
+                { WeaponId::M4A1S,  2900 },
+                { WeaponId::AK47,   2700 },
+                { WeaponId::FAMAS,  2050 },
+                { WeaponId::GalilAR,1800 },
+                { WeaponId::MP7,    1500 },
+                { WeaponId::UMP45,  1200 },
+                { WeaponId::Nova,   1050 },
+            };
+            buyFirstAffordable(order, sizeof(order) / sizeof(order[0]));
+            buyArmor(false);
+            buyNades(/*maxTotal=*/Player::MAX_GRENADES);
+            break;
+        }
     }
 
     bot.weapons[0] = primary;
     if (primary != WeaponId::None) {
-        bot.SetSlotWeapon(0, primary);   // 填满弹匣 + 备弹
+        bot.SetSlotWeapon(0, primary);
         bot.weaponSlot = 0;
         bot.LoadAmmoFromSlot();
     } else {
