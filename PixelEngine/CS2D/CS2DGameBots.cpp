@@ -206,6 +206,26 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
     // 小队协同：刷新集火目标（内部 0.5s 节流）
     UpdateSquadFocus(dt);
 
+    // ---- C4 掉落：预先算出「离掉落点最近的 N 个 T BOT」作为回收者 ----
+    // 每帧重算：回收者阵亡 / 有人更近时，指派会自然转移。
+    // 其余 T 继续原进攻任务，避免全军挤在掉包点暴露。
+    std::vector<int> recoverers;
+    if (mode_ == MatchMode::BombDefusal && !bombPlanted_ && bombDropped_) {
+        std::vector<std::pair<float, int>> cands;
+        cands.reserve(bots_.size());
+        for (size_t k = 0; k < bots_.size(); ++k) {
+            if (!bots_[k].alive || bots_[k].team != Team::T) continue;
+            const float dx = bots_[k].x - bombDropX_;
+            const float dy = bots_[k].y - bombDropY_;
+            cands.emplace_back(dx * dx + dy * dy, static_cast<int>(k));
+        }
+        std::sort(cands.begin(), cands.end());
+        const int n = std::min(static_cast<int>(cands.size()),
+                               Tuning::BombRecoverCount);
+        recoverers.reserve(n);
+        for (int r = 0; r < n; ++r) recoverers.push_back(cands[r].second);
+    }
+
     for (size_t i = 0; i < bots_.size(); ++i) {
         auto& bot = bots_[i];
         if (!bot.alive) continue;
@@ -460,6 +480,30 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 destY = sm.y;
                 hasDest = true;
                 destIsObjective = true;
+            }
+
+            // ---- C4 掉落：回收 / 蹲守（优先级仅次于听声扑人）----
+            if (!hasDest && mode_ == MatchMode::BombDefusal && !bombPlanted_ && bombDropped_) {
+                if (bot.team == Team::T) {
+                    // T：离掉落点最近的 N 个 BOT 去取回 C4（其余继续进攻）
+                    const auto it = std::find(recoverers.begin(), recoverers.end(),
+                                              static_cast<int>(i));
+                    if (it != recoverers.end()) {
+                        destX = bombDropX_;
+                        destY = bombDropY_;
+                        hasDest = true;
+                        destIsObjective = true;   // 回收是任务，断后位也要去
+                    }
+                } else if (bombIntel_) {
+                    // CT：看到掉落 C4 → 环形站位蹲守，形成交叉火力
+                    static const float kGuardRing[8] = { 0.0f, 0.79f, 1.57f, 2.36f,
+                                                         3.14f, 3.93f, 4.71f, 5.50f };
+                    const float ang = kGuardRing[i % 8];
+                    destX = bombIntelX_ + std::cos(ang) * Tuning::BombGuardRing;
+                    destY = bombIntelY_ + std::sin(ang) * Tuning::BombGuardRing;
+                    hasDest = true;
+                    destIsObjective = true;   // 蹲守是任务，断后位也去
+                }
             }
 
             if (!hasDest && mode_ == MatchMode::BombDefusal) {

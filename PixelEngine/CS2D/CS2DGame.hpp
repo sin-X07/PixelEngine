@@ -90,7 +90,7 @@ public:
         float     shootAnimTimer = 0.0f;
 
         // 武器（按槽位）
-        WeaponId  weapons[5] = { WeaponId::None, WeaponId::USP, WeaponId::Knife, WeaponId::GrenadeHE, WeaponId::None };
+        WeaponId  weapons[5] = { WeaponId::None, WeaponId::USP_S, WeaponId::Knife, WeaponId::None, WeaponId::None };
 
         // ---- 投掷物背包 ----
         // 一局最多装备 4 个；闪光可带 2 个，其它每种 1 个；每个只能用一次
@@ -151,6 +151,8 @@ public:
 
         // 备弹总容量：弹匣容量的三倍
         static int ReserveCapacity(const WeaponDef& d) {
+            // 宙斯：CS2 中仅 1 发、无备弹、不能换弹（下回合自动补满）
+            if (d.cls == WeaponClass::ZeusGun) return 0;
             return (d.magazine > 0) ? d.magazine * 3 : 0;
         }
 
@@ -315,6 +317,8 @@ public:
         int   damage   = 25;
         int   ownerIdx  = -1;        // -1=玩家, >=0=BOT索引
         Team  ownerTeam = Team::None;
+        // 发射该子弹的武器：击杀奖励按武器类型发放（照抄 CS2）
+        WeaponId weapon = WeaponId::None;
         bool  active   = true;
     };
 

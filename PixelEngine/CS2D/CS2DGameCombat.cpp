@@ -155,19 +155,57 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     if (audio) audio->PlaySound(FireSoundFor(def.id));
 }
 
-// 武器 → 枪声（近战/投掷物回退到通用音）
+// 武器 → 枪声（照抄 CS2 时新增武器共用现有音效，后续替换真实素材即可）
+// 回退策略：按武器类别映射到最接近的已有音效，避免新武器静音。
 SoundEffect CS2DGame::FireSoundFor(WeaponId id) {
     switch (id) {
-        case WeaponId::Glock:   return SoundEffect::GLOCK_FIRE;
-        case WeaponId::USP:     return SoundEffect::USP_FIRE;
-        case WeaponId::Deagle:  return SoundEffect::DEAGLE_FIRE;
-        case WeaponId::Galil:   return SoundEffect::GALIL_FIRE;
-        case WeaponId::AK47:    return SoundEffect::AK47_FIRE;
-        case WeaponId::M4A1:    return SoundEffect::M4A1_FIRE;
-        case WeaponId::SMG:     return SoundEffect::SMG_FIRE;
-        case WeaponId::Shotgun: return SoundEffect::SHOTGUN_FIRE;
-        case WeaponId::AWP:     return SoundEffect::AWP_FIRE;
-        default:                return SoundEffect::SHOOT;
+        // ---- 手枪：用各自的近亲音效 ----
+        case WeaponId::Glock18:     return SoundEffect::GLOCK_FIRE;
+        case WeaponId::USP_S:
+        case WeaponId::P2000:       return SoundEffect::USP_FIRE;
+        case WeaponId::Deagle:
+        case WeaponId::R8Revolver:  return SoundEffect::DEAGLE_FIRE;
+        case WeaponId::P250:
+        case WeaponId::FiveSeven:
+        case WeaponId::Tec9:
+        case WeaponId::CZ75:
+        case WeaponId::DualBerettas: return SoundEffect::GLOCK_FIRE;
+        case WeaponId::Zeus:        return SoundEffect::SHOTGUN_FIRE;
+
+        // ---- 冲锋枪 ----
+        case WeaponId::MAC10:
+        case WeaponId::MP9:
+        case WeaponId::MP7:
+        case WeaponId::MP5SD:
+        case WeaponId::UMP45:
+        case WeaponId::P90:         return SoundEffect::SMG_FIRE;
+
+        // ---- 步枪 ----
+        case WeaponId::AK47:
+        case WeaponId::SG553:       return SoundEffect::AK47_FIRE;
+        case WeaponId::M4A4:
+        case WeaponId::M4A1S:
+        case WeaponId::AUG:         return SoundEffect::M4A1_FIRE;
+        case WeaponId::GalilAR:
+        case WeaponId::FAMAS:       return SoundEffect::GALIL_FIRE;
+
+        // ---- 狙击枪 ----
+        case WeaponId::AWP:         return SoundEffect::AWP_FIRE;
+        case WeaponId::SSG08:
+        case WeaponId::SCAR20:
+        case WeaponId::G3SG1:       return SoundEffect::AWP_FIRE;
+
+        // ---- 霰弹枪 ----
+        case WeaponId::Nova:
+        case WeaponId::XM1014:
+        case WeaponId::SawedOff:
+        case WeaponId::MAG7:        return SoundEffect::SHOTGUN_FIRE;
+
+        // ---- 机枪 ----
+        case WeaponId::M249:
+        case WeaponId::Negev:       return SoundEffect::AK47_FIRE;
+
+        default:                    return SoundEffect::SHOOT;
     }
 }
 
@@ -184,6 +222,7 @@ void CS2DGame::FireBullet(float x, float y, float angle, const WeaponDef& def,
     b.damage   = static_cast<int>(def.damage);
     b.ownerIdx = ownerIdx;
     b.ownerTeam = ownerTeam;
+    b.weapon   = def.id;      // 记录武器：击杀奖励按武器类型发放
     b.active   = true;
     bullets_.push_back(b);
 }
@@ -236,16 +275,18 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                 if (bullet.ownerIdx == -1) {
                     ++playerKills_;
                     ++player_.kills;
-                    player_.money += economy_.GrantKill();
+                    // 击杀奖励按武器类型发放（照抄 CS2）
+                    player_.money += economy_.GrantKill(WeaponDB::KillReward(bullet.weapon));
                     economy_.Clamp(player_.money);
                     PushKillFeed("你  ▸  击杀 " + std::string(TeamName(bot.team)) + " BOT");
                 } else {
                     PushKillFeed(std::string("BOT#") + std::to_string(bullet.ownerIdx)
                                  + "  ▸  击杀 " + TeamName(bot.team) + " BOT");
-                    // BOT 击杀奖励
+                    // BOT 击杀奖励（同样按武器类型）
                     if (bullet.ownerIdx >= 0 &&
                         bullet.ownerIdx < static_cast<int>(bots_.size())) {
-                        bots_[bullet.ownerIdx].money += economy_.GrantKill();
+                        bots_[bullet.ownerIdx].money +=
+                            economy_.GrantKill(WeaponDB::KillReward(bullet.weapon));
                         economy_.Clamp(bots_[bullet.ownerIdx].money);
                     }
                 }
@@ -294,10 +335,11 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                 if (ApplyDamage(player_, bullet.damage)) {
                     PushKillFeed(std::string("BOT#") + std::to_string(bullet.ownerIdx) + "  ▸  击杀 你");
                     OnCombatantKilled(player_, audio);
-                    // BOT 击杀玩家奖励
+                    // BOT 击杀玩家奖励（按武器类型）
                     if (bullet.ownerIdx >= 0 &&
                         bullet.ownerIdx < static_cast<int>(bots_.size())) {
-                        bots_[bullet.ownerIdx].money += economy_.GrantKill();
+                        bots_[bullet.ownerIdx].money +=
+                            economy_.GrantKill(WeaponDB::KillReward(bullet.weapon));
                         economy_.Clamp(bots_[bullet.ownerIdx].money);
                     }
                 }
@@ -645,19 +687,55 @@ void CS2DGame::StartReload(Player& p, AudioManager* audio) {
     }
 }
 
-// 武器 → 换弹音效（SMG 无独立素材，复用步枪换弹音）
+// 武器 → 换弹音效（新增武器回退到最接近的已有音效，后续替换真实素材）
 SoundEffect CS2DGame::ReloadSoundFor(WeaponId id) {
     switch (id) {
-        case WeaponId::Glock:   return SoundEffect::RELOAD_GLOCK;
-        case WeaponId::USP:     return SoundEffect::RELOAD_USP;
-        case WeaponId::Deagle:  return SoundEffect::RELOAD_DEAGLE;
-        case WeaponId::Galil:   return SoundEffect::RELOAD_GALIL;
-        case WeaponId::AK47:    return SoundEffect::RELOAD_AK47;
-        case WeaponId::M4A1:    return SoundEffect::RELOAD_M4A1;
-        case WeaponId::Shotgun: return SoundEffect::RELOAD_SHOTGUN;
-        case WeaponId::AWP:     return SoundEffect::RELOAD_AWP;
-        case WeaponId::SMG:     return SoundEffect::RELOAD_GALIL;
-        default:                return SoundEffect::CLICK;
+        // 手枪
+        case WeaponId::Glock18:      return SoundEffect::RELOAD_GLOCK;
+        case WeaponId::USP_S:
+        case WeaponId::P2000:        return SoundEffect::RELOAD_USP;
+        case WeaponId::Deagle:
+        case WeaponId::R8Revolver:   return SoundEffect::RELOAD_DEAGLE;
+        case WeaponId::P250:
+        case WeaponId::FiveSeven:
+        case WeaponId::Tec9:
+        case WeaponId::CZ75:
+        case WeaponId::DualBerettas: return SoundEffect::RELOAD_GLOCK;
+
+        // 冲锋枪
+        case WeaponId::MAC10:
+        case WeaponId::MP9:
+        case WeaponId::MP7:
+        case WeaponId::MP5SD:
+        case WeaponId::UMP45:
+        case WeaponId::P90:          return SoundEffect::RELOAD_GALIL;
+
+        // 步枪
+        case WeaponId::AK47:
+        case WeaponId::SG553:        return SoundEffect::RELOAD_AK47;
+        case WeaponId::M4A4:
+        case WeaponId::M4A1S:
+        case WeaponId::AUG:          return SoundEffect::RELOAD_M4A1;
+        case WeaponId::GalilAR:
+        case WeaponId::FAMAS:        return SoundEffect::RELOAD_GALIL;
+
+        // 狙击枪
+        case WeaponId::AWP:
+        case WeaponId::SSG08:
+        case WeaponId::SCAR20:
+        case WeaponId::G3SG1:        return SoundEffect::RELOAD_AWP;
+
+        // 霰弹枪
+        case WeaponId::Nova:
+        case WeaponId::XM1014:
+        case WeaponId::SawedOff:
+        case WeaponId::MAG7:         return SoundEffect::RELOAD_SHOTGUN;
+
+        // 机枪
+        case WeaponId::M249:
+        case WeaponId::Negev:        return SoundEffect::RELOAD_AK47;
+
+        default:                     return SoundEffect::CLICK;
     }
 }
 
@@ -706,10 +784,10 @@ void CS2DGame::DropEquipmentOnDeath(const Player& victim) {
         dropId = victim.weapons[0];
         fromPrimary = true;
     } else {
-        // 优先级 2：副武器（标配手枪不掉落）
-        const WeaponId defaultPistol = (victim.team == Team::CT) ? WeaponId::USP
-                                                                 : WeaponId::Glock;
-        if (victim.weapons[1] != WeaponId::None && victim.weapons[1] != defaultPistol) {
+        // 优先级 2：副武器（起始手枪不掉落）
+        const bool isT = (victim.team == Team::T);
+        if (victim.weapons[1] != WeaponId::None &&
+            !WeaponDB::IsDefaultPistol(victim.weapons[1], isT)) {
             dropId = victim.weapons[1];
         } else if (victim.grenadeCount > 0) {
             // 优先级 3：随机掉一个投掷物

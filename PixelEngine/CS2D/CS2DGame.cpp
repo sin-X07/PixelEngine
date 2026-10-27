@@ -133,6 +133,8 @@ bool CS2DGame::TryBuy(WeaponId id, AudioManager* audio) {
 
     const WeaponDef& def = WeaponDB::Get(id);
     if (def.price <= 0) return false;
+    // 阵营隔离（照抄 CS2）：本阵营不能购买的枪一律拒绝
+    if (!WeaponDB::TeamAllowed(id, player_.team == Team::T)) return false;
     if (player_.money < def.price) return false;
 
     switch (def.slot) {
@@ -272,9 +274,11 @@ void CS2DGame::SpawnPlayer() {
     player_.deathTimer = 0.0f;
     player_.shootAnimTimer = 0.0f;
     player_.spriteKey  = (desiredPlayerTeam_ == Team::CT) ? 0 : 1;
-    // 开局只有手枪（CT = USP），无护甲无投掷物，其余靠购买
+    // 开局只有起始手枪（照抄 CS2）：
+    //   CT = USP-S，T = Glock-18。无护甲无投掷物，其余靠购买。
     player_.weapons[0] = WeaponId::None;
-    player_.weapons[1] = WeaponId::USP;
+    player_.weapons[1] = (desiredPlayerTeam_ == Team::CT) ? WeaponId::USP_S
+                                                          : WeaponId::Glock18;
     player_.weapons[2] = WeaponId::Knife;
     player_.weapons[3] = WeaponId::None;
     player_.grenadeCount = 0;
@@ -321,13 +325,13 @@ void CS2DGame::SpawnBOT(Player& bot, Team team) {
     bot.reloadTimer = 0.0f;
     bot.stealth    = false;
 
-    // 外观与武器：开局只有手枪（CT = USP，T = Glock），无护甲无投掷物
+    // 外观与武器：开局只有起始手枪（照抄 CS2：CT = USP-S，T = Glock-18）
     if (team == Team::CT) {
         bot.spriteKey = 0;
-        bot.weapons[1] = WeaponId::USP;
+        bot.weapons[1] = WeaponId::USP_S;
     } else {
         bot.spriteKey = 1 + static_cast<int>(rng_() % 2);
-        bot.weapons[1] = WeaponId::Glock;
+        bot.weapons[1] = WeaponId::Glock18;
     }
     bot.weapons[0] = WeaponId::None;      // 主武器需购买
     bot.weapons[2] = WeaponId::Knife;

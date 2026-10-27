@@ -82,8 +82,7 @@ void CS2DGame::BeginNewRound(AudioManager* audio) {
 }
 
 void CS2DGame::RespawnAllForRound(bool carryWeapons) {
-    // 玩家：上回合存活 → 保留原有武器/护甲/投掷物；阵亡 → 回到手枪
-    const WeaponDef& pistol = WeaponDB::Get(WeaponId::USP);
+    // 玩家：上回合存活 → 保留原有武器/护甲/投掷物；阵亡 → 回到起始手枪
     const bool playerSurvived = carryWeapons && player_.alive;
 
     const WeaponId keepW0 = player_.weapons[0];
@@ -115,9 +114,11 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
         player_.weaponSlot = (keepW0 != WeaponId::None) ? 0 : 1;
     } else {
         player_.weapons[0] = WeaponId::None;
-        player_.weapons[1] = WeaponId::USP;
+        // 起始手枪按阵营（照抄 CS2）：CT = USP-S，T = Glock-18
+        player_.weapons[1] = (player_.team == Team::CT) ? WeaponId::USP_S
+                                                        : WeaponId::Glock18;
         player_.weapons[2] = WeaponId::Knife;
-        player_.weapons[3] = WeaponId::GrenadeHE;
+        player_.weapons[3] = WeaponId::None;
         player_.grenadeCount = 0;
         player_.armor  = 0;
         player_.helmet = false;
@@ -182,8 +183,9 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
     lastDeathTimer_ = 0.0f;
 }
 
-// BOT 经济：按余额买武器与护甲（与玩家同一套价格）
-// 开局只有手枪、无护甲；这里模拟 BOT 在购买阶段的采购顺序：先枪、再甲、再雷
+// BOT 经济：按余额买武器与护甲（与玩家同一套价格，照抄 CS2）
+// 开局只有起始手枪、无护甲；这里模拟 BOT 在购买阶段的采购顺序：先枪、再甲、再雷
+// 阵营隔离：只买本阵营可用的武器（WeaponDB::TeamAllowed）
 void CS2DGame::BotBuyLoadout(Player& bot) {
     // 教练选择保枪：本回合不花钱
     if (GetCoachPlan(bot.team).intent == PlanIntent::Save) return;
@@ -191,18 +193,30 @@ void CS2DGame::BotBuyLoadout(Player& bot) {
     const bool isT = (bot.team == Team::T);
     WeaponId primary = bot.weapons[0];
 
-    // 1) 主武器
+    // 1) 主武器：按 CS2 常见购买梯度挑本阵营能买的最好的枪
     if (primary == WeaponId::None) {
-        if (bot.money >= 4750) {
-            primary = WeaponId::AWP;                          bot.money -= 4750;
-        } else if (bot.money >= 3100) {
-            primary = isT ? WeaponId::AK47 : WeaponId::M4A1;  bot.money -= 3100;
-        } else if (bot.money >= 2000) {
-            primary = WeaponId::Galil;                        bot.money -= 1800;
-        } else if (bot.money >= 1500) {
-            primary = WeaponId::SMG;                          bot.money -= 1250;
-        } else if (bot.money >= 1200) {
-            primary = WeaponId::Shotgun;                      bot.money -= 1200;
+        // 候选清单（价格从高到低），只保留本阵营可用的
+        struct Cand { WeaponId id; int price; };
+        const Cand order[] = {
+            { WeaponId::AWP,    4750 },
+            { WeaponId::M4A4,   3100 },   // CT
+            { WeaponId::AUG,    3300 },   // CT
+            { WeaponId::SG553,  3000 },   // T
+            { WeaponId::AK47,   2700 },   // T
+            { WeaponId::M4A1S,  2900 },   // CT
+            { WeaponId::FAMAS,  2050 },   // CT
+            { WeaponId::GalilAR,1800 },   // T
+            { WeaponId::MP7,    1500 },
+            { WeaponId::UMP45,  1200 },
+            { WeaponId::Nova,   1050 },
+        };
+        for (const auto& c : order) {
+            if (!WeaponDB::TeamAllowed(c.id, isT)) continue;
+            if (bot.money >= c.price) {
+                primary = c.id;
+                bot.money -= c.price;
+                break;
+            }
         }
     }
 
@@ -215,13 +229,14 @@ void CS2DGame::BotBuyLoadout(Player& bot) {
 
     // 3) 投掷物：最多 4 个，闪光可 2 个，其它每种 1 个
     {
-        // 偏好顺序：高爆 → 闪光 → 烟雾（T 更偏闪光，CT 更偏烟雾）
+        // 偏好顺序：高爆 → 闪光/烟雾（T 更偏闪光，CT 更偏烟雾）→ 另一个
         const WeaponId order[3] = {
             WeaponId::GrenadeHE,
             isT ? WeaponId::GrenadeFlash : WeaponId::GrenadeSmoke,
             isT ? WeaponId::GrenadeSmoke : WeaponId::GrenadeFlash
         };
         for (WeaponId gid : order) {
+            if (!WeaponDB::TeamAllowed(gid, isT)) continue;
             const WeaponDef& gd = WeaponDB::Get(gid);
             const int limit = (gid == WeaponId::GrenadeFlash) ? 2 : 1;
             while (bot.grenadeCount < Player::MAX_GRENADES &&

@@ -84,6 +84,14 @@ constexpr float DefuseHearRadius = 300.0f;   // 拆包声可被听到的半径
 constexpr float PlantHearSpreadMul  = 0.72f;  // 听到下包 → 散布降到 72%
 constexpr float DefuseHearSpreadMul = 0.72f;  // 听到拆包 → 散布降到 72%
 
+// ---------------- C4 掉落：回收 / 蹲守 ----------------
+// T 全队本性知道 C4 掉落位置（该信息对己方始终可见）。
+// 派「离掉落点最近」的少数人去取回，其余继续原任务，避免全军挤在掉包点暴露。
+// 回收半径不做限制：C4 是胜负关键，再远也必须有人回头去捡。
+constexpr int   BombRecoverCount  = 2;        // 最多派几个 T 去回收（就近原则）
+// CT 只有在「看到掉落 C4」（bombIntel_）后才会蹲守；环形站位形成交叉火力
+constexpr float BombGuardRing     = 70.0f;    // CT 蹲守 C4 的环形站位半径
+
 // ---------------- BOT 朝向 ----------------
 constexpr float BotScanSpeed     = 1.0f;   // 无目标时原地扫描的角速度（弧度/秒 ≈ 57°/s）
 constexpr float BotScanAmplitudeRad = 0.45f; // 行进时左右摆头幅度（≈26°）

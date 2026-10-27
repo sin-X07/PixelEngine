@@ -38,22 +38,56 @@
 
 | 文件 | 武器 | 原生朝向 | degOffset |
 |---|---|---|---|
-| `ak47.png` | AK-47 | 朝上 | 90° |
-| `m4a1.png` | M4A1 | 朝上 | 90° |
-| `galil.png` | Galil | 朝上 | 90° |
+| `ak47.png` | AK-47 (T) | 朝上 | 90° |
+| `m4a4.png` | M4A4 (CT) | 朝上 | 90° |
+| `m4a1.png` | M4A1-S (CT) | 朝上 | 90° |
+| `galil.png` | Galil AR (T) | 朝上 | 90° |
+| `famas.png` | FAMAS (CT) | 朝上 | 90° |
+| `sg553.png` | SG 553 (T) | 朝上 | 90° |
+| `aug.png` | AUG (CT) | 朝上 | 90° |
 | `awp.png` | AWP | 朝上 | 90° |
-| `shotgun.png` | 霰弹枪 | 朝上 | 90° |
-| `smg.png` | SMG | 朝上 | 90° |
+| `ssg08.png` | SSG 08 | 朝上 | 90° |
+| `scar20.png` | SCAR-20 (CT) | 朝上 | 90° |
+| `g3sg1.png` | G3SG1 (T) | 朝上 | 90° |
+| `nova.png` | Nova | 朝上 | 90° |
+| `xm1014.png` | XM1014 | 朝上 | 90° |
+| `sawedoff.png` | Sawed-Off (T) | 朝上 | 90° |
+| `mag7.png` | MAG-7 (CT) | 朝上 | 90° |
+| `m249.png` | M249 | 朝上 | 90° |
+| `negev.png` | Negev | 朝上 | 90° |
+| `mac-10.png` | MAC-10 (T) | 朝上 | 90° |
+| `mp9.png` | MP9 (CT) | 朝上 | 90° |
+| `mp7.png` | MP7 | 朝上 | 90° |
+| `mp5sd.png` | MP5-SD | 朝上 | 90° |
+| `ump45.png` | UMP-45 | 朝上 | 90° |
+| `p90.png` | P90 | 朝上 | 90° |
 | `deagle.png` | 沙鹰 | **朝右** | **0°** |
-| `glock.png` | Glock（T 起始手枪） | **朝右** | **0°** |
-| `usp.png` | USP（CT 起始手枪） | **朝右** | **0°** |
+| `glock.png` | Glock-18（T 起始手枪） | **朝右** | **0°** |
+| `usp.png` | USP-S（CT 起始手枪） | **朝右** | **0°** |
+| `p2000.png` | P2000（CT 起始手枪备选） | **朝右** | **0°** |
+| `dualberettas.png` | Dual Berettas | **朝右** | **0°** |
+| `p250.png` | P250 | **朝右** | **0°** |
+| `fn57.png` | Five-SeveN (CT) | **朝右** | **0°** |
+| `tec9.png` | Tec-9 (T) | **朝右** | **0°** |
+| `cz75.png` | CZ75-Auto | **朝右** | **0°** |
+| `r8.png` | R8 Revolver | **朝右** | **0°** |
+| `zeus.png` | Zeus x27 | **朝右** | **0°** |
 | `knife.png` | 匕首 | 朝上 | 90° |
 | `grenade_he.png` | 高爆手雷 | 朝上 | 90° |
 | `grenade_flash.png` | 闪光弹 | 朝上 | 90° |
 | `grenade_smoke.png` | 烟雾弹 | 朝上 | 90° |
+| `grenade_molotov.png` | 燃烧瓶 (T) | 朝上 | 90° |
+| `grenade_incendiary.png` | 燃烧弹 (CT) | 朝上 | 90° |
+| `grenade_decoy.png` | 诱饵弹 | 朝上 | 90° |
 | `c4.png` | C4 炸弹 | 朝上 | 90° |
 | `defuse_kit.png` | 拆弹器 | 朝上 | 90° |
 | `hostage.png` | 人质 | 朝上 | 90° |
+
+> **占位素材说明**：上表中新增的 CS2 武器（标 `(T)` / `(CT)` 及部分通用枪）
+> 当前由 `tools/gen_weapon_placeholders.py` 生成的**占位图**填充。
+> 直接用真实素材覆盖同名文件即可，无需改代码。
+> 重新生成缺失项：`python tools/gen_weapon_placeholders.py`
+> 检查还缺哪些：`python tools/list_missing_sprites.py`
 
 ---
 

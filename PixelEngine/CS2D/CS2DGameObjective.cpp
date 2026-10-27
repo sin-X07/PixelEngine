@@ -201,11 +201,16 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
 
             // CT 拆包：玩家需按住 E；BOT 只要贴近炸弹即自动拆
             bool defusing = false;
+            // 记录拆包者（-1=玩家, >=0=BOT索引, -2=无），拆包成功时给其个人发奖励
+            int defuserIdx = -2;
 
             if (player_.alive && player_.team == Team::CT && interactHeld) {
                 const float dx = player_.x - bombX_;
                 const float dy = player_.y - bombY_;
-                if (std::sqrt(dx * dx + dy * dy) <= Tuning::DefuseRadius) defusing = true;
+                if (std::sqrt(dx * dx + dy * dy) <= Tuning::DefuseRadius) {
+                    defusing = true;
+                    defuserIdx = -1;
+                }
             }
 
             // BOT 拆包（玩家阵亡后也能赢）
@@ -217,6 +222,7 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
                 if (std::sqrt(dx * dx + dy * dy) <= Tuning::DefuseRadius) {
                     defusing = true;
                     AiAt(bi).defusing = true;      // 通知 BOT 停下原地拆包
+                    if (defuserIdx == -2) defuserIdx = static_cast<int>(bi);
                 } else {
                     AiAt(bi).defusing = false;
                 }
@@ -236,6 +242,23 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
                     bombTimer_ = 0.0f;
                     defuseProgress_ = 0.0f;
                     if (audio) audio->PlaySound(SoundEffect::BOMB_DEFUSE);
+
+                    // ---- 拆包奖励：拆包者个人 +$300（照抄 CS2，不给全队）----
+                    {
+                        const int bonus = economy_.GrantDefuse();
+                        if (defuserIdx == -1) {
+                            player_.money += bonus;
+                            economy_.Clamp(player_.money);
+                            std::cout << "[Economy] 玩家拆包 +$" << bonus << std::endl;
+                        } else if (defuserIdx >= 0 &&
+                                   defuserIdx < static_cast<int>(bots_.size())) {
+                            bots_[static_cast<size_t>(defuserIdx)].money += bonus;
+                            economy_.Clamp(bots_[static_cast<size_t>(defuserIdx)].money);
+                            std::cout << "[Economy] BOT#" << defuserIdx
+                                      << " 拆包 +$" << bonus << std::endl;
+                        }
+                    }
+
                     ApplyRoundResult(Team::CT, audio);
                     round_.EndRound(Team::CT);
                 }
@@ -299,6 +322,22 @@ void CS2DGame::PlantBomb(float x, float y, AudioManager* audio) {
     // Set coords before events so FindAreaAt is not fed stale/zero bomb position.
     bombX_ = x;
     bombY_ = y;
+
+    // ---- 下包奖励：T 全员每人 +$300（照抄 CS2）----
+    {
+        const int bonus = economy_.GrantPlant();
+        if (player_.team == Team::T) {
+            player_.money += bonus;
+            economy_.Clamp(player_.money);
+        }
+        for (auto& bot : bots_) {
+            if (bot.team != Team::T) continue;
+            bot.money += bonus;
+            economy_.Clamp(bot.money);
+        }
+        std::cout << "[Economy] C4 下包 → T 全员 +$" << bonus << std::endl;
+    }
+
     {
         const std::string plantArea = world_ ? world_->FindAreaAt(bombX_, bombY_) : std::string();
         CoachOnEvent(Team::T,  CoachEventType::BombPlanted, plantArea);

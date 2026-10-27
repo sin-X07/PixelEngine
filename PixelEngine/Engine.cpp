@@ -1,4 +1,4 @@
-﻿#include "Engine.hpp"
+#include "Engine.hpp"
 #include <cstdlib>
 #include <ctime>
 #include <chrono>
@@ -939,9 +939,13 @@ void Engine::RenderBuyMenu() {
     }
 
     const CS2DGame::Player& p = cs2dGame->GetPlayer();
+    const bool isTerrorist = (p.team == Team::T);
     for (int i = 1; i < static_cast<int>(WeaponId::Count); ++i) {
-        const WeaponDef& def = WeaponDB::Get(static_cast<WeaponId>(i));
+        const WeaponId wid = static_cast<WeaponId>(i);
+        const WeaponDef& def = WeaponDB::Get(wid);
         if (def.price <= 0) continue;
+        // 阵营隔离：只显示本阵营可购买的武器（照抄 CS2）
+        if (!WeaponDB::TeamAllowed(wid, isTerrorist)) continue;
 
         GameUI::BuyItem it;
         it.weaponId   = i;
