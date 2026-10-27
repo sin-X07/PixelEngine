@@ -34,19 +34,30 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
     std::cout << "[PathFinder] 网格 " << pathFinder_.Width() << "x" << pathFinder_.Height()
               << " 已构建" << std::endl;
 
-    // 解析 mapId：优先匹配 MapCatalog.tmj，否则用文件名去扩展名
+    // 解析 mapId / playbookId：优先按文件名匹配 MapCatalog，否则用文件名去扩展名。
+    // 只比较 filename，避免 Windows 反斜杠路径与 catalog 里的正斜杠不匹配。
     mapSourcePath_ = resolvedTMJPath;
     mapId_.clear();
+    playbookId_.clear();
+    const std::string mapFile = std::filesystem::path(resolvedTMJPath).filename().string();
     for (int i = 0; i < kMapCatalogCount; ++i) {
-        if (resolvedTMJPath.find(kMapCatalog[i].tmj) != std::string::npos) {
-            mapId_ = kMapCatalog[i].id;
+        const std::string catalogFile =
+            std::filesystem::path(kMapCatalog[i].tmj).filename().string();
+        if (mapFile == catalogFile) {
+            mapId_      = kMapCatalog[i].id;
+            playbookId_ = MapPlaybookId(kMapCatalog[i]);
             break;
         }
     }
     if (mapId_.empty()) {
-        mapId_ = std::filesystem::path(resolvedTMJPath).stem().string();
+        mapId_      = std::filesystem::path(resolvedTMJPath).stem().string();
+        playbookId_ = mapId_;
     }
-    std::cout << "[Map] mapId=" << mapId_ << " path=" << resolvedTMJPath << std::endl;
+    std::cout << "[Map] mapId=" << mapId_ << " playbook=" << playbookId_
+              << " path=" << resolvedTMJPath << std::endl;
+
+    // 预热战术库：换图即加载 + 校验区域名，不必等到第一次 LLM 请求才报错。
+    CoachWarmupPlaybook();
 
     ResetToNewMatch();
         intel_.Build(world_.get(), clockSec_);

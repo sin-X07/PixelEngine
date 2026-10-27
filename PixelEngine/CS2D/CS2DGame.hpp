@@ -369,8 +369,10 @@ public:
     bool LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* renderer);
     void Reset();
 
-    // 当前地图 id（与 MapCatalog / coach_playbook_<mapId>.txt 对齐）
+    // 当前地图 id（与 MapCatalog / coach/<mapId>.txt 对齐）
     const std::string& GetMapId() const { return mapId_; }
+    // 当前地图使用的战术库 id（MapCatalog.playbook 可覆盖；空时同 mapId_）
+    const std::string& GetPlaybookId() const { return playbookId_; }
 
     void Update(float dt, bool mouseLeftDown, float mouseWorldX, float mouseWorldY,
                 bool wPressed, bool aPressed, bool sPressed, bool dPressed,
@@ -631,6 +633,7 @@ public:
     bool CanRotateNow(Team t) const;
     void CoachTryRotate(Team t);
     void CoachDrainLlm();
+    void CoachWarmupPlaybook();   // 换图后预加载战术库并校验区域名
     // 玩家操作：主动拾取（E）/ 丢弃当前武器（G）
     void TryPickupDrops(bool manual);
     void DropCurrentWeapon();
@@ -643,10 +646,11 @@ public:
     std::string GetWeaponName() const;
 
     // BOT 视野半径（发现敌人并交火的距离）
-    // 玩家视野圆半径 120px；BOT 同样取 120px
-    static constexpr float BOT_VIEW_RADIUS = 120.0f;
+    // 与玩家视野圆共用 Tuning::VisionRadius，避免两边数值漂移
+    static constexpr float BOT_VIEW_RADIUS = Tuning::VisionRadius;
     // 探点距离：超过交火距离但能「看到并上报」的范围（团队情报来源）
-    static constexpr float BOT_SPOT_RADIUS = 240.0f;
+    // 保持旧版 2 倍关系，随视野半径一起收紧
+    static constexpr float BOT_SPOT_RADIUS = 2.0f * Tuning::VisionRadius;
     // 情报保留时长（秒）
     static constexpr float CONTACT_MEMORY  = 6.0f;
 
@@ -662,6 +666,7 @@ private:
     std::unique_ptr<CS2DWorld> world_;
     CS2DRenderer* renderer_ = nullptr;
     std::string mapId_;            // 如 dust_2 / ancient_ruins / mirage
+    std::string playbookId_;       // 战术库文件名（不含 .txt）；空则回退 mapId_
     std::string mapSourcePath_;    // LoadMap 时的 resolved TMJ 路径
 
     Player player_;

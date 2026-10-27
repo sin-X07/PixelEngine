@@ -3,6 +3,8 @@
 // MapCatalog — 可选地图清单（地图选择界面用）
 //
 // 新增地图只需要在这里加一条，界面会自动多一张卡片。
+// 战术库默认按 id 去 assets/config/coach/<id>.txt 找；
+// 需要复用地图形状但换一套战术时，可在 playbook 里覆盖文件名（不含 .txt）。
 // ============================================================================
 
 #include <cstddef>
@@ -15,7 +17,13 @@ struct MapEntry {
     const char* preview;    // 预览图（相对 exe）
     int         bombSites;  // 包点数量（展示用）
     int         areas;      // 战术区域数量（展示用）
+    const char* playbook = nullptr;  // 战术库文件名（不含 .txt）；空=用 id
 };
+
+// 取地图对应的战术库 id：playbook 非空则覆盖，否则回退到地图 id。
+inline const char* MapPlaybookId(const MapEntry& e) {
+    return (e.playbook && e.playbook[0] != '\0') ? e.playbook : e.id;
+}
 
 inline const MapEntry kMapCatalog[] = {
     {

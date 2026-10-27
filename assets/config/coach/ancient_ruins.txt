@@ -1,0 +1,88 @@
+# PixelEngine 主教练战术库 — ancient_ruins
+# 通用规则见 _common.txt；本文件只放本图区域别名与 T/CT/经济模板。
+# 区域名必须与 assets/cs2d/maps/ancient_ruins.tmj 的 site 组子图层完全一致。
+
+[areas]
+A_Site A_Long A_Hall Outside_A Boost Single Double Temple A_Short Donut Catwalk
+B_Site Ramp Cave B_Doors Outside_door_B Outside_B B_Short B_Long Back_Alley VIP B_Connection Sewer
+Mid Elbow Indent Mid_Pit T_Spawn CT_Spawn
+
+【地图区域别名】
+A侧: A_Site A_Long A_Hall Outside_A Boost Single Double Temple A_Short Donut Catwalk
+B侧: B_Site Ramp Cave B_Doors Outside_door_B Outside_B B_Short B_Long Back_Alley VIP B_Connection Sewer
+中路: Mid Elbow Indent Mid_Pit；出生: T_Spawn CT_Spawn
+映射: Elbow≈进Mid口; A_Long/A_Hall≈A Main; Cave/Ramp≈B逼近; Donut/A_Short≈Mid→A夹击; Temple/Back_Alley≈回防路
+
+【T 满钱 / 强起】
+default | target="" | tempo=normal | ttl=18~25
+  站位: 2 Mid/Elbow; 1 A_Hall/A_Long; 1 Cave/Ramp; 1 灵活支援(可听 Outside_B)
+  目的: 前段换 Mid/Donut 与 Cave 信息，再定 A split 或 B 压；开局挡 Mid 第一视线
+
+rush_a | target=A | tempo=fast | ttl=10~14
+  路径: A_Hall/A_Long → A_Site，可留 1 人 A_Short/Donut 晚夹
+  时机: CT 偏 B、时间紧、A 侧人少；进点前挡 Temple，清 Boost/Single/Double；勿连续 A/穷局
+
+rush_b | target=B | tempo=fast | ttl=10~14
+  路径: Cave/Ramp → B_Site，赶在回防前结束
+  时机: CT 偏 A/Mid 或 Cave 已控；上 Ramp 前清近角，挡 Back_Alley 来向；勿中段才出 Ramp
+
+split_a | target=A | tempo=fast | ttl=12~18
+  路径: A_Long/A_Hall + A_Short/Donut 同秒进 A_Site
+  时机: 已控 Mid→Donut、CT 堆 B、A 仅 1~2 人；挡 Temple；勿只有单路
+
+split_b | target=B | tempo=fast | ttl=12~18
+  路径: Ramp/Cave + B_Connection/Outside_B(或 Mid 转 B) 同步夹 B_Site
+  时机: Cave 已控、Mid 拉走 CT；闪 Ramp、挡回防巷；勿两路时间差过大
+
+fake | target=B或A(真打点) | tempo=normal→fast | ttl=14~20
+  意图: 2 人在佯攻侧(Mid/Donut 或 Ramp)制造接触，主力转另一点
+  时机: CT 早回防、上回合同点被叠；确认回防再转，否则改打佯攻侧；勿穷局/时间不足
+
+【T 穷 / 强起失败后】
+save | target="" | tempo=slow | ttl=18~25
+  站位: 靠近 T_Spawn / Outside_A 外侧，远离 Elbow/Ramp 混战
+default(穷局) | 仅当不允许 save 时
+  轻听 Mid/Cave，换枪不主动大战
+
+【CT 满钱】
+default | target="" | tempo=normal | ttl=18~25
+  站位: 2-1-2 — A_Site/Temple + Mid/Donut + B_Site/Ramp(或 Cave 支援)
+  目的: 前 10~15s 听 Mid/Elbow、Cave、A_Hall，再决定叠边；早挡/拖 Mid
+stack_a | target=A | tempo=normal或slow | ttl=12~20
+  意图: 3~4 人偏 A(A_Site/Temple/Donut/A_Hall 口)，留 1 听 B/Cave
+  时机: T 连续 A split、eco 防速 A；勿在已确认 Ramp 大部队/已下包 B 时用
+stack_b | target=B | tempo=normal或slow | ttl=12~20
+  意图: 3~4 人偏 B(B_Site/Ramp/Cave/Back_Alley)，留人看 A/Mid
+  时机: T 连续 B rush、Mid 烟后怀疑 B；勿在已确认 A_Hall 大部队时用
+retake_a | target=A | tempo=fast | ttl=12~18
+  仅已下包@A: CT_Spawn/Temple + Donut/A_Short 两路汇合，禁止单人滴入；先挡入口再进
+retake_b | target=B | tempo=fast | ttl=12~18
+  仅已下包@B: Back_Alley/CT_Spawn 与 Ramp 协同，禁止单人进点；先闪再清近角
+
+【CT 穷】
+save 或 stack_a/stack_b(赌点)：可赌叠 B(Ramp 口易拖)或叠 A(Temple+点内掩体)
+Mid 不正面硬刚；尊重 Cave/Donut 近打，步枪保持距离；CT 无 rush intent
+
+【局势速查】
+敌早期 Elbow/Mid 强压 → CT: Mid 拖时间后撤交叉，Donut 支援; T: 转 Donut→split_a 或假 Mid 打 B
+敌早期 Cave/Ramp 接触 → CT: B 锚拖延等回防; T: rush_b 或 fake→A
+已控 Mid 且 Donut 有人 → T: split_a 优先；已控 Cave → T: rush_b/split_b 优于干冲 A_Hall
+CT 早回防明显 → T: fake 后转另一点；T 连续两轮同点失败 → 换点或 fake
+人数少 1 → tempo 偏 slow，default/stack；TimeLow → T 冲有接触侧，CT 收位勿盲 peek
+拆包中 → CT: retake 对应点; T: stack 对应点；下包残局 → 禁止再选另一点的 rush/stack
+A_Hall 被 Temple 锁 → T: 挡 Temple 或改 Mid/Donut 夹; CT: 活着拖延优于英雄枪
+B Ramp 被火拖死 → T: split_b 或假 B 打 A; CT: 锚点存活报人数
+CT 丢 Mid → CT: 补 Donut/Temple 防 split_a; T: 兑现 split_a 或假压转 B
+
+【few-shot(学格式，勿照抄 reason)】
+T满钱 未下包 敌未知 回合开始
+{"intent":"default","target":"","tempo":"normal","ttl_s":22,"reason":"开局控Mid换信息","slots":[{"slot":0,"role":"entry","area":"Elbow"},{"slot":1,"role":"support","area":"Mid"},{"slot":2,"role":"lurk","area":"A_Hall"},{"slot":3,"role":"lurk","area":"Cave"},{"slot":4,"role":"support","area":"Ramp"}]}
+
+T满钱 Mid已控 欲分A
+{"intent":"split_a","target":"A","tempo":"fast","ttl_s":14,"reason":"Donut夹A","slots":[{"slot":0,"role":"entry","area":"A_Long"},{"slot":1,"role":"entry","area":"Donut"},{"slot":2,"role":"support","area":"A_Site"}]}
+
+CT满钱 未下包 回合开始
+{"intent":"default","target":"","tempo":"normal","ttl_s":20,"reason":"2-1-2听Mid","slots":[{"slot":0,"role":"anchor","area":"A_Site"},{"slot":1,"role":"support","area":"Temple"},{"slot":2,"role":"support","area":"Mid"},{"slot":3,"role":"anchor","area":"B_Site"},{"slot":4,"role":"support","area":"Ramp"}]}
+
+CT 已下包@A_Site
+{"intent":"retake_a","target":"A","tempo":"fast","ttl_s":15,"reason":"回防A","slots":[{"slot":0,"role":"entry","area":"Temple"},{"slot":1,"role":"entry","area":"Donut"}]}

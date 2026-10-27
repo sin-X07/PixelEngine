@@ -60,8 +60,10 @@ int main() {
           "拆包声：超出半径听不到");
 
     // ---- 3. 听觉半径必须大于视野半径（"听见但还看不见"）----
-    check(Tuning::PlantHearRadius  > 120.0f, "下包可听半径 > BOT 视野半径 120");
-    check(Tuning::DefuseHearRadius > 120.0f, "拆包可听半径 > BOT 视野半径 120");
+    check(Tuning::PlantHearRadius  > Tuning::VisionRadius,
+          "下包可听半径 > BOT 视野半径");
+    check(Tuning::DefuseHearRadius > Tuning::VisionRadius,
+          "拆包可听半径 > BOT 视野半径");
 
     // ---- 4. 命中率加成：散布乘数必须 <1（更准），且不能激进到 0 ----
     check(Tuning::PlantHearSpreadMul  < 1.0f, "听下包：散布乘数 < 1（更准）");

@@ -1,6 +1,7 @@
 # 战术库来源说明
 
-本目录下各 `coach_playbook_*.txt` 均由公开 CS/CS2 IGL 与地图指南**改写**为 PixelEngine intent 枚举（非原文粘贴）。  
+本目录下 `_common.txt` 与各 `<mapId>.txt` 均由公开 CS/CS2 IGL 与地图指南**改写**为 PixelEngine intent 枚举（非原文粘贴）。  
+`_common.txt` 只保留与地图无关的总规则；各图文件只写区域别名、T/CT/经济模板与 few-shot。  
 引擎不执行烟雾线，道具细节已压缩为「时机/意图」。查阅日期：2026-10-27（Asia/Shanghai）。
 
 链接状态：已用 WebFetch 核对；标明「可开」或「失效/跳转」；失效者已换备用链。

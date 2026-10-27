@@ -12,8 +12,10 @@
 namespace Tuning {
 
 // ---------------- 视野（玩家与 BOT 共用同一套几何）----------------
-constexpr float VisionRadius      = 120.0f;  // 扇形半径（世界单位）
-constexpr float VisionSoftEdge    = 24.0f;   // 距离软边
+// 半径 100：镜头按「视野圆刚好装进较窄一边」自动拉近；
+// 迷雾、敌人剔除、BOT 视野/探点都从这里取数，改一处即同步生效。
+constexpr float VisionRadius      = 100.0f;  // 扇形半径（世界单位）
+constexpr float VisionSoftEdge    = 20.0f;   // 距离软边（按半径等比收紧）
 constexpr float VisionConeDeg     = 120.0f;  // 扇形总角度
 constexpr float VisionAngleSoftDeg= 14.0f;   // 角度软边（度）
 // 含软边后的有效半角（玩家实际能看到的边缘）：(120 + 14) / 2 = 67°
@@ -77,7 +79,7 @@ constexpr float PatrolHoldSpread = 90.0f;    // 守点时岗位附近的游走�
 
 // ---------------- 下包 / 拆包的「可听」范围 ----------------
 // 声音比视野传得更远：听到下包/拆包声的敌对 BOT 会优先扑向执行者。
-// 这两个半径明显大于 BOT_VIEW_RADIUS(120)，体现「听见但还看不见」。
+// 这两个半径明显大于 BOT_VIEW_RADIUS(100)，体现「听见但还看不见」。
 constexpr float PlantHearRadius  = 300.0f;   // C4 安装声可被听到的半径
 constexpr float DefuseHearRadius = 300.0f;   // 拆包声可被听到的半径
 // 听觉触发时略微提高命中率（散布乘数 <1 = 打得更准）

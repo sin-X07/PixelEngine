@@ -1,0 +1,89 @@
+# PixelEngine 主教练战术库 — dust_2
+# 通用规则见 _common.txt；本文件只放本图区域别名与 T/CT/经济模板。
+# 区域名必须与 assets/cs2d/maps/dust_2.tmj 的 site 组子图层完全一致。
+
+[areas]
+A_Site Long Outside_Long Long_Door Pit Side_Pit A_Car Plate Ramp Cat Short Short_Stairs Blue
+B_Site Tunnel Upper Lower Outside_Tunnel Door Car_B Plate_B Big_Box Fence Dog Jump_Box Titanic
+Mid Top_Mid Xbox Double_Doors Suicide T_Spawn CT_Spawn Outside Stairs
+
+【地图区域别名】
+A侧: A_Site Long Outside_Long Long_Door Pit Side_Pit A_Car Plate Ramp Cat Short Short_Stairs Blue
+B侧: B_Site Tunnel Upper Lower Outside_Tunnel Door Car_B Plate_B Big_Box Fence Dog Jump_Box Titanic
+中路: Mid Top_Mid Xbox Double_Doors Suicide；出生: T_Spawn CT_Spawn
+备注: Stairs 属 Tunnel 体系(Upper↔Lower 连接)；Outside 近 Outside_Tunnel；slots 优先用上表常用名
+
+【T 满钱 / 强起】
+default | target="" | tempo=normal | ttl=18~25
+  站位: 2 Long/Outside_Long; 1 Top_Mid; 1 Cat/Short; 1 Tunnel/Upper
+  目的: 前 30s 换 Long/Mid 门/B 是否前压的信息，再决定点；开局可挡 Mid/Double_Doors 视线
+
+rush_a | target=A | tempo=fast | ttl=10~14
+  路径: 全员经 Long → A_Site，可留 1 人 Cat 晚到夹击
+  时机: CT 未站稳、时间紧、Long 已换到人；进 Long_Door 前闪，清 A_Car/Pit；勿连续 A/穷局
+
+rush_b | target=B | tempo=fast | ttl=10~14
+  路径: Tunnel/Upper → B_Site，约前 15~20s 内出洞
+  时机: CT Mid/A 过早暴露或 Tunnel 可压；出洞前闪，清 Car_B/Big_Box；勿中段才进点
+
+split_a | target=A | tempo=fast | ttl=12~18
+  路径: 3 Long + 2 Cat/Short 同秒进 A
+  时机: 确认 A 仅 1~2 人、CT 堆 B、Long 已控；Long 侧挡 CT 横穿；勿 Mid 全丢且 Cat 被卡死
+
+split_b | target=B | tempo=fast | ttl=12~18
+  路径: Mid 压 Door/Xbox + Tunnel 同步进 B
+  时机: 已拿 Mid 信息、CT 过早回 A；Tunnel 侧闪出洞，夹击后合围 B_Site；勿 Mid 门被死守
+
+fake | target=B或A(真打点) | tempo=normal→fast | ttl=14~20
+  意图: 2 人在佯攻侧制造接触/噪音，主力转另一点
+  时机: CT 习惯早回防、上回合同点被叠；看到回防再转，否则改打佯攻侧；勿穷局/时间不足
+
+【T 穷 / 强起失败后】
+save | target="" | tempo=slow | ttl=18~25
+  站位: 靠近 T_Spawn / 远离混战，避免白给枪
+default(穷局) | 仅当不允许 save 时
+  小心换枪/捡枪，可轻压 Outside_Long 或 Tunnel 口骗接触后撤
+
+【CT 满钱】
+default | target="" | tempo=normal | ttl=18~25
+  站位: 2A(Long/Pit + Short/Cat) + 1 Mid + 2B(Door 侧 + B_Site 锚) ≈2-1-2
+  目的: 先听前 10~15s 再决定叠边；防早 Cat，B 洞口拖延，Long 被压时后撤 Pit
+stack_a | target=A | tempo=normal或slow | ttl=12~20
+  意图: 3~4 人偏 A(Pit/Long/Cat/A_Site)，留 1 听 B/Mid
+  时机: T 连续打 A、eco 防速 A；勿在 B 无人且刚被拆穿时用
+stack_b | target=B | tempo=normal或slow | ttl=12~20
+  意图: 3~4 人偏 B(Upper 口/B_Site/Door/Car_B)，留人看 A
+  时机: T 连续 B 洞、eco 防五人洞、中路烟后怀疑 B；勿在已确认 Long 大部队时用
+retake_a | target=A | tempo=fast | ttl=12~18
+  仅已下包@A: CT_Spawn + Short/Cat 两路汇合，禁止单人滴入；Entry 走 Short/Cat 或 Ramp
+retake_b | target=B | tempo=fast | ttl=12~18
+  仅已下包@B: Door 与 Tunnel/Upper 协同，禁止单人进点；先闪再清 Car_B/Big_Box
+
+【CT 穷】
+save 或 stack_a/stack_b(赌点)：可赌叠 B(Car_B/Big_Box/Fence)或叠 A(Pit/A_Site)
+中路尽量不正面硬刚；保持距离，清近点前先听，勿盲 peek Long_Door；CT 无 rush intent
+
+【局势速查】
+敌早期 Tunnel 前压 → CT: 暂守 B 交叉，Mid 协助; T: 可改 rush_a 打空档
+敌早期 Long 对枪丢失 → T: 转 default/fake 或 rush_b; CT: 可轻度压 Long 信息
+已控 Long 且 Cat 有人 → T: split_a/rush_a；已控 Mid/Door → T: split_b 优先于盲 rush_b
+CT 早回防明显 → T: fake 后转另一点；T 连续两轮同点失败 → 换点或 fake
+人数少 1 → tempo 偏 slow，default/stack；TimeLow → T 冲有接触侧，CT 收位勿盲 peek
+拆包中 → CT: retake 对应点掩护; T: stack 对应点；下包残局 → 禁止再选另一点 rush/stack
+Mid 门对枪丢人 → T: 改 Lower 换信息或转 rush_b; CT: Mid 回落 Cat/Door 听两边
+B 洞口被拖延 → T: split_b 或 fake→A; CT: 锚点活着等回防
+A 长线被 AWP 锁 → T: 挡视线后过或改 rush_b/fake; CT: Pit 被动优于盲 peek Doors
+CT 双 A 偏置 → T: split_b/rush_b; CT: 丢 Mid 时立刻补 Door
+
+【few-shot(学格式，勿照抄 reason)】
+T满钱 未下包 敌未知 回合开始
+{"intent":"default","target":"","tempo":"normal","ttl_s":20,"reason":"开局换信息","slots":[{"slot":0,"role":"entry","area":"Long"},{"slot":1,"role":"support","area":"Outside_Long"},{"slot":2,"role":"lurk","area":"Top_Mid"},{"slot":3,"role":"support","area":"Cat"},{"slot":4,"role":"lurk","area":"Tunnel"}]}
+
+T满钱 Long已控 Cat有人
+{"intent":"split_a","target":"A","tempo":"fast","ttl_s":14,"reason":"Long短夹A","slots":[{"slot":0,"role":"entry","area":"Long"},{"slot":1,"role":"entry","area":"Cat"},{"slot":2,"role":"support","area":"A_Site"}]}
+
+CT满钱 未下包 回合开始
+{"intent":"default","target":"","tempo":"normal","ttl_s":20,"reason":"2-1-2听前段","slots":[{"slot":0,"role":"anchor","area":"Pit"},{"slot":1,"role":"awper","area":"Cat"},{"slot":2,"role":"support","area":"Mid"},{"slot":3,"role":"anchor","area":"B_Site"},{"slot":4,"role":"support","area":"Door"}]}
+
+CT 已下包@B_Site
+{"intent":"retake_b","target":"B","tempo":"fast","ttl_s":15,"reason":"回防B","slots":[{"slot":0,"role":"entry","area":"Door"},{"slot":1,"role":"entry","area":"B_Site"}]}

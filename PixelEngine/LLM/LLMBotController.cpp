@@ -298,7 +298,8 @@ bool LLMBotController::LaunchServer(const std::string& exePath, const std::strin
     // 构造命令行: "llama-server.exe" -m model.gguf -ngl 99 --host 127.0.0.1 --port 9931
     std::ostringstream cmd;
     // 教练层要两队并发请求，单槽会互相挤掉：开 2 个并行槽。
-    // 上下文总和 4096，拆成 2×2048，足够装下 ~1000 token 的教练 prompt + 200 输出。
+    // -c 8192 分给 2 槽 ≈ 每槽 4096 tokens；当前教练 system prompt 约 3.3~3.5k
+    // tokens，留出 user 摘要与 150 输出。加手册内容时先确认别挤爆单槽上下文。
     cmd << "\"" << exePath << "\""
         << " -m \"" << modelPath << "\""
         << " -ngl " << ngl

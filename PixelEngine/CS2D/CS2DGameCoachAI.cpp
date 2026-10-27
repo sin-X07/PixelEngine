@@ -14,8 +14,10 @@
 // ============================================================================
 // 教练层的 LLM 接入（结构化输出 + 短摘要 + TTL + 复盘笔记）
 //
-//   - system prompt 固定（角色 / 词表 / 区域表 / 输出契约），利于前缀缓存
+//   - system prompt 按地图固定（角色 / 输出契约 / 区域表 / _common + 地图手册）
 //   - user 只放「会变的短摘要」，控制在几十 token
+//   - 战术库按 playbookId 缓存；缺地图文件时只用 _common.txt
+//   - 加载时用 world->GetAreas() 校验手册里的区域名，尽早暴露拼写错误
 //   - response_format:json_schema 强制结构化输出，游戏侧再校验一次
 //   - 每条计划带 ttl_s；回包时回合号或炸弹状态变了就丢弃
 //   - 回合结束额外请求一次「一句话复盘」，滚动保留最近 5 条笔记
@@ -224,116 +226,269 @@ std::string ReadPlaybookFile(const std::string& relPath) {
     return cleaned;
 }
 
-// 轻量校验：警告 playbook 里 area="X" / "area":"X" 不在当前地图区域表中的名字（不阻断）
-void WarnUnknownPlaybookAreasOnce(const std::string& mapId,
-                                  const std::string& book,
-                                  const CS2DWorld* world) {
-    if (!world || book.empty() || mapId.empty()) return;
-    static std::unordered_set<std::string> warnedMaps;
-    if (!warnedMaps.insert(mapId).second) return;
-
-    std::unordered_set<std::string> known;
-    for (const auto& a : world->GetAreas()) known.insert(a.name);
-
-    auto extract = [&](const std::string& key) {
-        size_t pos = 0;
-        while ((pos = book.find(key, pos)) != std::string::npos) {
-            pos += key.size();
-            if (pos >= book.size()) break;
-            char q = book[pos];
-            if (q != '"' && q != '\'') continue;
-            size_t end = book.find(q, pos + 1);
-            if (end == std::string::npos) break;
-            const std::string name = book.substr(pos + 1, end - pos - 1);
-            if (!name.empty() && known.find(name) == known.end()) {
-                std::cout << "[Coach] 警告: 战术库 area=\"" << name
-                          << "\" 不在地图 " << mapId << " 的区域表中" << std::endl;
-            }
-            pos = end + 1;
-        }
-    };
-    extract("area=");
-    extract("\"area\":");
+std::string TrimText(const std::string& s) {
+    const size_t b = s.find_first_not_of(" \t\r\n");
+    if (b == std::string::npos) return {};
+    const size_t e = s.find_last_not_of(" \t\r\n");
+    return s.substr(b, e - b + 1);
 }
 
-// 战术库：按 mapId 缓存；路径 assets/config/coach_playbook_<mapId>.txt
-// 缺文件时返回空（绝不回退到其它地图，避免错误区域名）
-const std::string& LoadCoachPlaybook(const std::string& mapId) {
+// 解析地图文件头部的 [areas] 清单。
+// 清单是「引擎区域名」的唯一权威声明，用于加载时校验；格式为空格/逗号分隔。
+std::vector<std::string> ParseAreaManifest(const std::string& book) {
+    std::vector<std::string> out;
+    std::istringstream in(book);
+    std::string line;
+    bool inAreas = false;
+    while (std::getline(in, line)) {
+        const std::string t = TrimText(line);
+        if (t.empty()) continue;
+        if (t.front() == '[') {
+            inAreas = (t == "[areas]" || t == "[area]");
+            continue;
+        }
+        if (!inAreas) continue;
+        if (t.front() == '#' || t.rfind("【", 0) == 0) { inAreas = false; continue; }
+
+        std::string clean = t;
+        const size_t hash = clean.find('#');
+        if (hash != std::string::npos) clean.resize(hash);
+
+        std::string cur;
+        for (char ch : clean) {
+            if (std::isspace(static_cast<unsigned char>(ch)) || ch == ',' || ch == ';') {
+                if (!cur.empty()) { out.push_back(cur); cur.clear(); }
+            } else {
+                cur.push_back(ch);
+            }
+        }
+        if (!cur.empty()) out.push_back(cur);
+    }
+    return out;
+}
+
+// [areas] 只用于加载校验；送进模型前去掉，避免和「可选区域」重复占 token。
+std::string StripAreaManifest(const std::string& book) {
+    std::istringstream in(book);
+    std::ostringstream out;
+    std::string line;
+    bool inAreas = false;
+    while (std::getline(in, line)) {
+        const std::string t = TrimText(line);
+        if (t == "[areas]" || t == "[area]") { inAreas = true; continue; }
+        if (inAreas) {
+            if (t.empty()) continue;
+            if (t.front() != '[' && t.rfind("【", 0) != 0 && t.front() != '#') {
+                continue;   // [areas] 段内的区域 token，不送模型
+            }
+            inAreas = false;   // 遇到下一个 section / 标题，继续正常输出
+        }
+        out << line << '\n';
+    }
+    return out.str();
+}
+
+// 收集手册里 "area":"X" / area="X" 两种写法引用的区域名（few-shot 与模板）。
+void CollectAreaReferences(const std::string& book, const std::string& key,
+                           char sep, std::vector<std::string>& out) {
+    size_t pos = 0;
+    while ((pos = book.find(key, pos)) != std::string::npos) {
+        size_t p = pos + key.size();
+        while (p < book.size() && std::isspace(static_cast<unsigned char>(book[p]))) ++p;
+        if (p >= book.size() || book[p] != sep) { pos = p; continue; }
+        ++p;
+        while (p < book.size() && std::isspace(static_cast<unsigned char>(book[p]))) ++p;
+        if (p >= book.size() || (book[p] != '"' && book[p] != '\'')) { pos = p; continue; }
+        const char quote = book[p++];
+        const size_t end = book.find(quote, p);
+        if (end == std::string::npos) break;
+        out.push_back(book.substr(p, end - p));
+        pos = end + 1;
+    }
+}
+
+// 收集正文里的 snake_case token（A_Site / B_Apts ...），用于抓模板/剧本中的拼写错误。
+// 纯英文单词（Mid/Long/Site）不在此列，避免把社区别名/普通英文误报。
+void CollectSnakeCaseTokens(const std::string& book, std::vector<std::string>& out) {
+    std::string cur;
+    auto flush = [&]() {
+        if (cur.find('_') != std::string::npos) out.push_back(cur);
+        cur.clear();
+    };
+    for (unsigned char c : book) {
+        if (std::isalnum(c) || c == '_') {
+            cur.push_back(static_cast<char>(c));
+        } else {
+            flush();
+        }
+    }
+    flush();
+}
+
+// 加载时校验：手册声明的区域名 / slots 示例引用，必须存在于当前地图。
+// 只警告不阻断；大小写不一致会给出正确写法，方便直接改手册。
+void ValidatePlaybookAreasOnce(const std::string& mapId, const std::string& book,
+                               const CS2DWorld* world) {
+    if (!world || book.empty() || mapId.empty()) return;
+    static std::unordered_set<std::string> validated;
+    if (!validated.insert(mapId).second) return;
+
+    std::unordered_set<std::string> exact;
+    std::unordered_map<std::string, std::string> byLower;
+    for (const auto& a : world->GetAreas()) {
+        exact.insert(a.name);
+        byLower.emplace(Lower(a.name), a.name);
+    }
+
+    const std::vector<std::string> declared = ParseAreaManifest(book);
+    std::vector<std::string> referenced;
+    CollectAreaReferences(book, "\"area\"", ':', referenced);
+    CollectAreaReferences(book, "area=", '=', referenced);
+    std::vector<std::string> proseTokens;
+    CollectSnakeCaseTokens(book, proseTokens);
+
+    if (declared.empty()) {
+        std::cout << "[Coach] 警告: 战术库缺少 [areas] 区域清单，跳过区域名校验 ("
+                  << mapId << ")" << std::endl;
+    }
+
+    std::unordered_set<std::string> reported;
+    int unknown = 0;
+    auto check = [&](const std::string& name, const char* source) {
+        if (name.empty()) return;
+        if (exact.find(name) != exact.end()) return;
+
+        const auto lowerIt = byLower.find(Lower(name));
+        if (lowerIt != byLower.end()) {
+            if (reported.insert("case:" + Lower(name)).second) {
+                std::cout << "[Coach] 警告: 战术库 " << source << " 区域 \""
+                          << name << "\" 大小写不匹配，应为 \""
+                          << lowerIt->second << "\" (" << mapId << ")" << std::endl;
+            }
+            return;
+        }
+        if (!reported.insert(name).second) return;
+        ++unknown;
+        std::cout << "[Coach] 警告: 战术库 " << source << " 区域 \"" << name
+                  << "\" 不在 " << mapId << " 的区域表中" << std::endl;
+    };
+
+    for (const auto& n : declared) check(n, "[areas]");
+    for (const auto& n : referenced) check(n, "slots.area");
+
+    // 模板/剧本正文里的 snake_case token：跳过 intent/字段名，其余按区域名校验。
+    static const std::unordered_set<std::string> kNonAreaTokens = {
+        "ttl_s", "retake_", "retake_a", "retake_b",
+        "rush_", "rush_a", "rush_b", "split_", "split_a", "split_b",
+        "stack_", "stack_a", "stack_b", "rotate_", "rotate_a", "rotate_b",
+        "force_buy", "half_buy", "full_buy", "eco_buy"
+    };
+    for (const auto& n : proseTokens) {
+        if (kNonAreaTokens.find(n) == kNonAreaTokens.end()) check(n, "正文");
+    }
+
+    if (!declared.empty()) {
+        std::cout << "[Coach] 战术库区域校验(" << mapId << "): 清单 "
+                  << declared.size() << " 个, slots 示例 " << referenced.size()
+                  << " 个, 未知 " << unknown << std::endl;
+    }
+}
+
+bool IsSafePlaybookId(const std::string& id) {
+    if (id.empty()) return false;
+    return std::all_of(id.begin(), id.end(), [](unsigned char c) {
+        return std::isalnum(c) || c == '_' || c == '-';
+    });
+}
+
+// 战术库：按 playbookId 缓存，最终内容 = _common.txt + <playbookId>.txt。
+// 路径 assets/config/coach/<playbookId>.txt；某图缺专属文件时只返回通用规则。
+// 缓存只依赖文件内容，不依赖世界状态；一局内 system 前缀因此保持字节稳定。
+const std::string& LoadCoachPlaybook(const std::string& playbookId) {
     static std::unordered_map<std::string, std::string> cache;
     static const std::string kEmpty;
-    if (mapId.empty()) return kEmpty;
 
-    auto it = cache.find(mapId);
+    if (!IsSafePlaybookId(playbookId)) {
+        if (!playbookId.empty()) {
+            std::cout << "[Coach] 非法战术库 id，忽略: " << playbookId << std::endl;
+        }
+        return kEmpty;
+    }
+
+    auto it = cache.find(playbookId);
     if (it != cache.end()) return it->second;
 
+    // 约 10KB 手册 ≈ 3.8k tokens；llama-server 单槽 4096，留出 user 摘要与输出。
+    constexpr size_t kMaxTotalBookBytes = 10000;
     std::string body;
-    // 可选公共规则：仅含优先级 / 下包 / save 等共享条（若存在则前置一次）
-    const std::string common = ReadPlaybookFile("assets/config/coach_playbook_common.txt");
-    if (!common.empty()) body += common;
 
-    const std::string mapRel = "assets/config/coach_playbook_" + mapId + ".txt";
-    std::string mapBody = ReadPlaybookFile(mapRel);
-    // 历史文件名：dust_2 曾用 coach_playbook_dust2.txt（无下划线）
-    if (mapBody.empty() && mapId == "dust_2") {
-        mapBody = ReadPlaybookFile("assets/config/coach_playbook_dust2.txt");
+    const std::string common =
+        ReadPlaybookFile("assets/config/coach/_common.txt");
+    if (common.empty()) {
+        std::cout << "[Coach] 警告: 缺少通用战术库 assets/config/coach/_common.txt"
+                  << std::endl;
+    } else {
+        body += common;
     }
-    if (mapBody.empty()) {
-        const std::string path = PathUtils::ResolveAppPath(mapRel);
-        std::cout << "[Coach] 未找到战术库（不回退其它地图）: " << path << std::endl;
-        cache.emplace(mapId, std::string{});
-        return cache.find(mapId)->second;
+
+    const std::string mapRel = "assets/config/coach/" + playbookId + ".txt";
+    const std::string mapBody = ReadPlaybookFile(mapRel);
+    const bool hasDedicated = !mapBody.empty();
+    if (!hasDedicated) {
+        std::cout << "[Coach] 地图 " << playbookId
+                  << " 无专属战术库，仅使用通用规则: "
+                  << PathUtils::ResolveAppPath(mapRel) << std::endl;
+    } else {
+        if (!body.empty() && body.back() != '\n') body.push_back('\n');
+        body += mapBody;
     }
-    body += mapBody;
-    auto inserted = cache.emplace(mapId, std::move(body));
+
+    if (body.size() > kMaxTotalBookBytes) {
+        size_t cut = body.rfind('\n', kMaxTotalBookBytes);
+        if (cut == std::string::npos) cut = kMaxTotalBookBytes;
+        body.resize(cut);
+        std::cout << "[Coach] 战术库超过 " << kMaxTotalBookBytes
+                  << " 字节，已按行截断 (" << playbookId << ")" << std::endl;
+    }
+
+    auto inserted = cache.emplace(playbookId, std::move(body));
+    std::cout << "[Coach] 战术库就绪(" << playbookId << "): "
+              << inserted.first->second.size() << " bytes"
+              << (hasDedicated ? "" : " [common only]") << std::endl;
     return inserted.first->second;
 }
 
-std::string BuildSystemPrompt(const CS2DWorld* world, const std::string& mapId) {
+// system prompt：角色 / 输出契约 / 当前区域表 + 战术手册。
+// 内容只由 mapId + playbook 决定，一局内字节稳定，cache_prompt 前缀缓存有效。
+std::string BuildSystemPrompt(const CS2DWorld* world,
+                              const std::string& mapId,
+                              const std::string& playbookId) {
     std::ostringstream o;
     o << "你是 CS2D 战队主教练。只做战术决策，不做瞄准与走位。\n"
       << "严格只输出一个 JSON 对象：不要 YAML、不要解释、不要代码块。\n"
       << "示例：{\"intent\":\"rush_b\",\"target\":\"B\",\"tempo\":\"fast\","
          "\"ttl_s\":12,\"reason\":\"敌方减员速推B\","
-         "\"slots\":[{\"slot\":0,\"role\":\"entry\",\"area\":\"Tunnel\"}]}\n"
+         "\"slots\":[{\"slot\":0,\"role\":\"entry\",\"area\":\"A_Site\"}]}\n"
       << "字段含义：\n"
       << " intent: 只能从 user 行「允许:intent=...」中选，不得使用其它值\n"
       << "   retake_* 仅在 C4 已被安装时使用；save 仅在经济崩溃时使用\n"
       << "   rush_*/split_*/fake 是 T 战术；CT 用 default/stack_*/retake_*\n"
-      << " target: A / B / MID / 空\n"
+      << " target: A / B / MID / 空；已下包时必须是包点侧\n"
       << " tempo: slow/normal/fast\n"
       << " ttl_s: 指令有效秒数（3~30），场面易变给小值\n"
-      << " slots: 最多 5 个，slot 0~4，area 必须是下列区域之一\n"
+      << " slots: 最多 5 个，slot 0~4，area 必须是下面「可选区域」之一\n"
       << " reason: 不超过 20 个汉字，只用于日志\n"
-      << "C4 规则：若 C4 掉落在地上，T 方应派最近的队友去拾取后再进攻；"
-         "CT 方若已知掉落位置，应收缩到该区域卡点。\n"
-      << "优先级：当前炸弹状态与经济高于笔记。已下包时必须按包点选择 "
-         "retake_*（CT）或 stack_*（T），禁止因笔记改打另一侧。\n"
-      << "save 的使用条件很窄：仅「回合开始 20 秒内 + 经济崩 + 不占人数优势」。"
-         "已占领包点、已下包、或人多打人少时一律不许 save；"
-         "保枪也不代表跑回出生点，而是就地收缩不交火。\n"
-      << "ttl_s 建议：开局 18~25；已下包 12~20；不要给低于 10 的开局 ttl。\n"
-      << "下包后战术（T）：\n"
-      << "  - 不要全员贴包：按用途分散——1 人看拆包角度、1 人控回防路线、"
-         "1 人延迟 peek，形成交叉火力\n"
-      << "  - 已下包用 stack_<包点侧>（叠点守包）或 default；不要 rush/split\n"
-      << "  - 残局少打多不要硬拼：守包、等 CT 上手拆包再抓；时间站在你这边\n"
-      << "转点战术（T，rotate_a/rotate_b）：\n"
-      << "  - 只有「另一侧明显没人」时才转：未知不等于空，没情报不要转\n"
-      << "  - 时间必须够（剩余 30 秒以上），且不要少打多时转点\n"
-      << "  - 转点后 8 秒内不要来回改主意；转点执行是「先中路收拢再推」\n"
-      << "回防战术（CT）：\n"
-      << "  - 先集结再进，别一个个送；两人同角度互换，utility 先清点\n"
-      << "  - 拆包必须有队友掩护；时间不够（无钳 10s，有钳 5s）就强拆\n"
-      << "  - 已下包用 retake_<包点侧>，target 必须是同一侧；2v4 时可打人数差/武器\n";
+      << "当前地图: " << mapId << "\n";
     if (world) {
         o << "可选区域:";
         for (const auto& a : world->GetAreas()) o << ' ' << a.name;
         o << "\n";
     }
-    const std::string& book = LoadCoachPlaybook(mapId);
-    WarnUnknownPlaybookAreasOnce(mapId, book, world);
+
+    const std::string& book = LoadCoachPlaybook(playbookId);
+    ValidatePlaybookAreasOnce(mapId, book, world);
     if (!book.empty()) {
-        o << "\n" << book;
+        o << "\n【战术手册】\n" << StripAreaManifest(book);
     }
     return o.str();
 }
@@ -518,11 +673,11 @@ bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* worl
                 continue;      // 区域不在合法闭集内：跳过这个 slot
             }
             if (!area.empty() && world) {
-                bool found = false;
+                std::string canonical;
                 for (const auto& a : world->GetAreas()) {
-                    if (Lower(a.name) == Lower(area)) { found = true; break; }
+                    if (Lower(a.name) == Lower(area)) { canonical = a.name; break; }
                 }
-                if (!found) area.clear();
+                area = std::move(canonical);   // 统一成引擎里的精确大小写
             }
             if (area.empty()) continue;      // 没有区域就没有意义
 
@@ -608,6 +763,15 @@ bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* worl
 } // namespace
 
 // ---------------------------------------------------------------------------
+// 换图预热：加载战术库并按当前地图校验区域名
+// ---------------------------------------------------------------------------
+void CS2DGame::CoachWarmupPlaybook() {
+    if (!world_) return;
+    const std::string& book = LoadCoachPlaybook(playbookId_);
+    ValidatePlaybookAreasOnce(mapId_, book, world_.get());
+}
+
+// ---------------------------------------------------------------------------
 // 发起计划请求
 // ---------------------------------------------------------------------------
 void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
@@ -645,7 +809,8 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
 
     const int gen = st.gen;
 
-    coachLlm_(BuildSystemPrompt(world_.get(), mapId_), user, 150, BuildCoachSchema(allow),
+    coachLlm_(BuildSystemPrompt(world_.get(), mapId_, playbookId_), user, 150,
+              BuildCoachSchema(allow),
               [this, t, gen](const std::string& raw) {
                   std::lock_guard<std::mutex> lock(coachLlmMutex_);
                   coachLlmResults_.push_back(CoachLlmResult{t, gen, raw, false});
