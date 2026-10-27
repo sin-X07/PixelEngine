@@ -8,6 +8,8 @@
 #include <fstream>
 #include <sstream>
 #include "../Core/PathUtils.hpp"
+#include <unordered_set>
+#include <unordered_map>
 
 // ============================================================================
 // 教练层的 LLM 接入（结构化输出 + 短摘要 + TTL + 复盘笔记）
@@ -183,38 +185,21 @@ std::string BuildCoachSchema(const CoachAllowSet& allow) {
 }
 
 
-// 战术库：启动后读一次，追加进固定 system 前缀（利于 cache_prompt）
-std::string LoadCoachPlaybook() {
-    static std::string cached;
-    static bool tried = false;
-    if (tried) return cached;
-    tried = true;
-
-    const std::string path =
-        PathUtils::ResolveAppPath("assets/config/coach_playbook_dust2.txt");
-    std::ifstream in(path);
-    if (!in) {
-        std::cout << "[Coach] 未找到战术库: " << path << std::endl;
-        return cached;
-    }
-    // 上限 6000 字节（约 2000 汉字），超出部分按行截断，避免撑爆上下文
+// 去掉 # 注释行，并按行截断到 kMaxBookBytes
+std::string CleanPlaybookText(std::string raw) {
     constexpr size_t kMaxBookBytes = 12000;
-
-    std::ostringstream buf;
-    buf << in.rdbuf();
-    cached = buf.str();
     std::string cleaned;
-    cleaned.reserve(cached.size());
-    std::istringstream lines(cached);
+    cleaned.reserve(raw.size());
+    std::istringstream lines(raw);
     std::string line;
     while (std::getline(lines, line)) {
-        std::string t = line;
-        while (!t.empty() && (t.front() == ' ' || t.front() == '\t')) t.erase(t.begin());
-        if (!t.empty() && t.front() == '#') continue;
+        std::string trimmed = line;
+        while (!trimmed.empty() && (trimmed.front() == ' ' || trimmed.front() == '\t'))
+            trimmed.erase(trimmed.begin());
+        if (!trimmed.empty() && trimmed.front() == '#') continue;
         cleaned.append(line);
         cleaned.push_back('\n');
     }
-    // 超限按行截断（保留完整的行，避免把一句话切成两半）
     if (cleaned.size() > kMaxBookBytes) {
         size_t cut = cleaned.rfind('\n', kMaxBookBytes);
         if (cut == std::string::npos) cut = kMaxBookBytes;
@@ -222,14 +207,88 @@ std::string LoadCoachPlaybook() {
         std::cout << "[Coach] 战术库超过 " << kMaxBookBytes
                   << " 字节，已按行截断" << std::endl;
     }
-
-    cached.swap(cleaned);
-    std::cout << "[Coach] 已加载战术库 (" << cached.size() << " bytes): " << path
-              << std::endl;
-    return cached;
+    return cleaned;
 }
 
-std::string BuildSystemPrompt(const CS2DWorld* world) {
+std::string ReadPlaybookFile(const std::string& relPath) {
+    const std::string path = PathUtils::ResolveAppPath(relPath);
+    std::ifstream in(path);
+    if (!in) return {};
+    std::ostringstream buf;
+    buf << in.rdbuf();
+    std::string cleaned = CleanPlaybookText(buf.str());
+    if (!cleaned.empty()) {
+        std::cout << "[Coach] 已加载战术库 (" << cleaned.size()
+                  << " bytes): " << path << std::endl;
+    }
+    return cleaned;
+}
+
+// 轻量校验：警告 playbook 里 area="X" / "area":"X" 不在当前地图区域表中的名字（不阻断）
+void WarnUnknownPlaybookAreasOnce(const std::string& mapId,
+                                  const std::string& book,
+                                  const CS2DWorld* world) {
+    if (!world || book.empty() || mapId.empty()) return;
+    static std::unordered_set<std::string> warnedMaps;
+    if (!warnedMaps.insert(mapId).second) return;
+
+    std::unordered_set<std::string> known;
+    for (const auto& a : world->GetAreas()) known.insert(a.name);
+
+    auto extract = [&](const std::string& key) {
+        size_t pos = 0;
+        while ((pos = book.find(key, pos)) != std::string::npos) {
+            pos += key.size();
+            if (pos >= book.size()) break;
+            char q = book[pos];
+            if (q != '"' && q != '\'') continue;
+            size_t end = book.find(q, pos + 1);
+            if (end == std::string::npos) break;
+            const std::string name = book.substr(pos + 1, end - pos - 1);
+            if (!name.empty() && known.find(name) == known.end()) {
+                std::cout << "[Coach] 警告: 战术库 area=\"" << name
+                          << "\" 不在地图 " << mapId << " 的区域表中" << std::endl;
+            }
+            pos = end + 1;
+        }
+    };
+    extract("area=");
+    extract("\"area\":");
+}
+
+// 战术库：按 mapId 缓存；路径 assets/config/coach_playbook_<mapId>.txt
+// 缺文件时返回空（绝不回退到其它地图，避免错误区域名）
+const std::string& LoadCoachPlaybook(const std::string& mapId) {
+    static std::unordered_map<std::string, std::string> cache;
+    static const std::string kEmpty;
+    if (mapId.empty()) return kEmpty;
+
+    auto it = cache.find(mapId);
+    if (it != cache.end()) return it->second;
+
+    std::string body;
+    // 可选公共规则：仅含优先级 / 下包 / save 等共享条（若存在则前置一次）
+    const std::string common = ReadPlaybookFile("assets/config/coach_playbook_common.txt");
+    if (!common.empty()) body += common;
+
+    const std::string mapRel = "assets/config/coach_playbook_" + mapId + ".txt";
+    std::string mapBody = ReadPlaybookFile(mapRel);
+    // 历史文件名：dust_2 曾用 coach_playbook_dust2.txt（无下划线）
+    if (mapBody.empty() && mapId == "dust_2") {
+        mapBody = ReadPlaybookFile("assets/config/coach_playbook_dust2.txt");
+    }
+    if (mapBody.empty()) {
+        const std::string path = PathUtils::ResolveAppPath(mapRel);
+        std::cout << "[Coach] 未找到战术库（不回退其它地图）: " << path << std::endl;
+        cache.emplace(mapId, std::string{});
+        return cache.find(mapId)->second;
+    }
+    body += mapBody;
+    auto inserted = cache.emplace(mapId, std::move(body));
+    return inserted.first->second;
+}
+
+std::string BuildSystemPrompt(const CS2DWorld* world, const std::string& mapId) {
     std::ostringstream o;
     o << "你是 CS2D 战队主教练。只做战术决策，不做瞄准与走位。\n"
       << "严格只输出一个 JSON 对象：不要 YAML、不要解释、不要代码块。\n"
@@ -271,7 +330,8 @@ std::string BuildSystemPrompt(const CS2DWorld* world) {
         for (const auto& a : world->GetAreas()) o << ' ' << a.name;
         o << "\n";
     }
-    const std::string& book = LoadCoachPlaybook();
+    const std::string& book = LoadCoachPlaybook(mapId);
+    WarnUnknownPlaybookAreasOnce(mapId, book, world);
     if (!book.empty()) {
         o << "\n" << book;
     }
@@ -585,7 +645,7 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
 
     const int gen = st.gen;
 
-    coachLlm_(BuildSystemPrompt(world_.get()), user, 150, BuildCoachSchema(allow),
+    coachLlm_(BuildSystemPrompt(world_.get(), mapId_), user, 150, BuildCoachSchema(allow),
               [this, t, gen](const std::string& raw) {
                   std::lock_guard<std::mutex> lock(coachLlmMutex_);
                   coachLlmResults_.push_back(CoachLlmResult{t, gen, raw, false});

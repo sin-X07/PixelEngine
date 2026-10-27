@@ -1,0 +1,170 @@
+# PixelEngine 主教练战术库 — mirage
+# 用途：追加进固定 system prompt（利于 cache_prompt）。不要塞进每次会变的 digest。
+# 约束：只使用引擎已有 intent 枚举；区域名须来自地图 site 层。
+# 引擎不执行烟雾线，道具描述仅作「时机/意图」参考，slots.area 才落到站位。
+# 公开 CS2 Mirage 思路已映射到本图 site 名（见别名表）；非原文粘贴。
+# 修订：2026-10 新建完整稿；结构对齐 dust2。
+
+【地图区域别名】
+A侧: A_Site Ramp Palace Tetris Stairs Sandwich Jungle Conn Ticket Triple Bulcony E_Box CT_Spawn
+B侧: B_Site B_Apts Van Bench Marcket Market_door Market_Window Kitchen Ticket E_Box
+中路: Mid Top_Mid Mid_Box Window Underpass Cat Lader_Room Chair Get_Right TV_Room
+出生: T_Spawn CT_Spawn
+备注: slots.area 只能用上表 site 名。社区名对照(勿写入 slots): Market→Marcket; Ladder Room→Lader_Room; Balcony→Bulcony; Connector→Conn; Apartments/Apps→B_Apts; Catwalk/Short→Cat; Ticket Booth→Ticket; Firebox≈E_Box(待确认)
+
+【总规则】
+1) 优先级: 炸弹状态 > 经济 > 减员/人数 > 接触信息 > 笔记
+2) 已下包: CT只用 retake_a/retake_b 且 target=包点侧; T只用 stack_a/stack_b(或default但target=包点侧)
+3) 穷局(!下包): 优先 save; T禁止 rush/split/fake
+4) 连续两回合同 intent+同 target 失败 → 必须换点或改 fake/split/default
+5) 开局约前20s偏 default 换信息; 中段再 execute; 时间不足才 rush
+6) 不要每回合重复同一侧速推; reason≤20字只写当下事实
+
+────────────────────────────────
+T 满钱 / 强起
+────────────────────────────────
+default | target="" | tempo=normal | ttl=18~25
+  站位意图: 压 Mid/Top_Mid(可配 Underpass/Mid_Box) + 控 Palace/Ramp 或 B_Apts/Underpass 一侧; 约 2~3 Mid + 1 A压 + 1 B听
+  目的: 前30s换 Window/Conn 与 Apps 信息，再决定点；Mid 开则威胁双点
+  道具时机: 开局挡 Window 视线以便上 Top_Mid；勿无信息早定死点；轻压 Ramp/Palace 听回防
+  何时: 开局默认; 敌情未知; 换边首回合
+
+rush_a | target=A | tempo=fast | ttl=10~14
+  路径: 经 Ramp/Palace/Tetris 进 A_Site（可留1人 Conn/Jungle 晚到夹击）
+  道具时机: 进点前挡 CT_Spawn/Jungle/Stairs 来向；Palace+Ramp 同步闪；清 Triple/Sandwich/Tetris 近角
+  何时: CT未站稳; 时间不足; A侧人少已确认; 开局打乱
+  勿用: 刚在A连续失败; 经济穷; 已知 Stairs+Ticket 叠人
+
+rush_b | target=B | tempo=fast | ttl=10~14
+  路径: B_Apts/Underpass → B_Site，必须赶在回防前结束(约前15~20s内出公寓)
+  道具时机: 出 B_Apts 前闪；挡 Marcket/Market_Window 与 Van 方向；清 Bench/Van 近角
+  何时: CT Mid/A过早暴露; 时间轴靠前的速攻; 反制 CT 激进出 Kitchen/Apps
+  勿用: 已过回合中段还没进点(回防已到)
+
+split_a | target=A | tempo=fast | ttl=12~18
+  路径: Ramp/Palace + Conn/Jungle(或 Cat 转 A) 同时进 A_Site
+  道具时机: 挡 CT_Spawn/Ticket；隔离 Jungle/Stairs；两侧同秒进点
+  何时: 默认后确认A只有1~2人; 已控 Mid→Conn; CT把人堆在B
+  勿用: Mid完全丢失且无人能补 Conn(变两次单独冲锋)
+
+split_b | target=B | tempo=fast | ttl=12~18
+  路径: B_Apts + Underpass/Marcket 或 Mid→Underpass/Cat 同步夹 B_Site
+  道具时机: Mid/Cat 侧挡回防; Apps 侧闪出公寓; 夹击后合围 Van/Bench
+  何时: 已拿 Mid/Underpass 信息; CT过早回A; 反制单锚死守 Van
+  勿用: Mid门被死守且无人能换下; 两路时间差过大
+
+fake | target=B或A(真打点) | tempo=normal→fast | ttl=14~20
+  意图: 2人在佯攻侧(常 B_Apts 或 Ramp/Palace)制造接触/噪音，主力转另一点
+  何时: CT习惯早回防; 上回合同点被叠防; 有时间完成转点
+  成功条件: 看到回防迹象再转; 否则改打佯攻侧(改 rush/split 同侧)
+  勿用: 时间不足; 穷局; 无人确认回防却空想转点
+
+────────────────────────────────
+T 穷 / 强起失败后
+────────────────────────────────
+save | target="" | tempo=slow | ttl=18~25
+  站位: 靠近 T_Spawn / 远离混战，避免白给枪
+  何时: 开局平均经济穷; 或规则已判定保枪
+
+default(穷局弱默认) | 仅当不允许 save 时
+  小心换枪/捡枪，不主动开大战；可轻听 Mid 口或 B_Apts 口骗接触后撤
+
+────────────────────────────────
+CT 满钱
+────────────────────────────────
+default | target="" | tempo=normal | ttl=18~25
+  站位意图: 2A(Ramp/Palace/Jungle 或 Stairs/Ticket 侧) + Mid/Window + 2B(B_Apts/Van 与 Marcket/Cat 锚) ≈2-1-2
+  目的: 先听前10~15s再决定叠哪边; 避免A/B同时丢控制; Window 报 Mid 动向
+  道具时机: 防早 Ramp/Palace; B_Apts 口拖延; Mid 被压时 Window 后撤 Kitchen 或 Jungle 等换
+  何时: 开局默认; 敌情未知
+
+stack_a | target=A | tempo=normal或slow | ttl=12~20
+  意图: 3~4人偏A (Ramp/Stairs/Jungle/Ticket/A_Site)，留1人听B或Window
+  何时: T连续打A; 经济局防速A; 笔记/近局显示A高频
+  勿用: 刚在A被拆穿且B无人; 已下包在B
+
+stack_b | target=B | tempo=normal或slow | ttl=12~20
+  意图: 3~4人偏B (Van/Bench/Marcket/B_Apts口)，留人看A或Window
+  何时: T连续 Apps; eco防五人公寓; Mid烟后怀疑B
+  勿用: 已确认大部队 Ramp/Palace
+
+retake_a | target=A | tempo=fast | ttl=12~18
+  仅已下包@A: 从 CT_Spawn + Jungle/Conn 两路汇合，禁止单人滴入
+  站位: Entry走 Jungle/Conn 或 Stairs; Anchor清 A_Site；道具先挡 Ramp 再闪进；另路盯 Palace
+
+retake_b | target=B | tempo=fast | ttl=12~18
+  仅已下包@B: Marcket/Ticket/Underpass(或 Kitchen/Market_door) 协同，禁止单人进点
+  站位: 两路同时进 B_Site；先闪再清 Van/Bench；Cat 可补第三路
+
+────────────────────────────────
+CT 穷
+────────────────────────────────
+save 或 stack_a/stack_b(赌点)
+  eco 可赌叠B(掩体多: Van/Bench/Marcket)或叠A(Stairs/Ticket/Tetris); Mid/Window 尽量不正面硬刚
+  勿用 rush 类(CT无 rush intent)
+  反eco: 保持距离，清 Palace/Ramp/B_Apts 近点前先听，勿盲 peek Top_Mid
+
+────────────────────────────────
+局势 → 剧本(预备回答)
+────────────────────────────────
+敌早期 B_Apts 前压 → CT: 暂守 Van/Bench 交叉，Kitchen/Window 协助; T: 可改 rush_a 打空档
+敌早期 Ramp/Palace 对枪丢失 → T: 不要硬A，转 default/fake 或 rush_b; CT: 可轻度压 Ramp 信息
+已控制 Mid/Top_Mid 且 Conn 有人 → T: split_a 或经 Conn 转 A
+已控制 Mid/Underpass → T: split_b 优先于盲 rush_b
+CT早回防明显 → T: fake 后转另一点
+T连续两轮同点失败 → 换点或 fake，禁止第三次同 intent+target
+人数我方少1 → tempo偏 slow，default/stack 等枪，避免 rush
+时间不足(事件TimeLow) → T: rush 有接触的一侧; CT: default收位点，勿盲目 peek
+拆包中 → CT: retake 对应点掩护; T: stack 对应点回防包点
+下包后残局 → 禁止再选另一点的 rush/stack
+Window/Top_Mid 对枪丢人 → T: 改 Underpass 换信息或转 rush_b/Palace压; CT: Window回落 Kitchen/Conn 听两边
+B_Apts 口被拖延 → T: 勿硬冲，改 split_b(配 Cat/Underpass) 或 fake→A; CT: 锚点活着等回防
+A长线被AWP锁(Ramp/Ticket) → T: 道具挡视线后过，或改 rush_b/fake; CT: Stairs/Ticket 被动优于盲 peek Ramp
+CT双A偏置 → T: split_b 或 rush_b; CT: 丢Mid时立刻补 Cat/Marcket
+eco局T噪音在公寓 → CT: stack_b 留1听Ramp; T穷: 仍 save，勿 rush
+Mid控住后 Conn 打开 → T: split_a 优先; CT: Jungle 必须有人能换
+
+────────────────────────────────
+slots 填写提示(可选，最多5)
+────────────────────────────────
+role: entry=第一接触; support=补枪; lurk=远离主力切断; anchor=守点拖延; awper=长线
+area: 必须用地图真实区域名(见上表)。无把握可省略 slots。
+
+────────────────────────────────
+few-shot(学格式，勿机械照抄 reason)
+────────────────────────────────
+T满钱 未下包 敌未知 回合开始
+{"intent":"default","target":"","tempo":"normal","ttl_s":20,"reason":"开局换Mid信息","slots":[{"slot":0,"role":"entry","area":"Top_Mid"},{"slot":1,"role":"support","area":"Mid"},{"slot":2,"role":"lurk","area":"Underpass"},{"slot":3,"role":"support","area":"Ramp"},{"slot":4,"role":"lurk","area":"B_Apts"}]}
+
+T满钱 敌B_Apts接触 首次接火
+{"intent":"rush_b","target":"B","tempo":"fast","ttl_s":12,"reason":"Apps接触转速B","slots":[{"slot":0,"role":"entry","area":"B_Apts"},{"slot":1,"role":"entry","area":"B_Site"}]}
+
+T满钱 Mid已有信息 欲打B
+{"intent":"split_b","target":"B","tempo":"fast","ttl_s":14,"reason":"Mid分B","slots":[{"slot":0,"role":"entry","area":"Underpass"},{"slot":1,"role":"entry","area":"B_Apts"},{"slot":2,"role":"support","area":"Cat"}]}
+
+T满钱 Mid已控 Conn有人
+{"intent":"split_a","target":"A","tempo":"fast","ttl_s":14,"reason":"Ramp连夹A","slots":[{"slot":0,"role":"entry","area":"Ramp"},{"slot":1,"role":"entry","area":"Palace"},{"slot":2,"role":"support","area":"Conn"}]}
+
+T满钱 上回合A被叠 有时间
+{"intent":"fake","target":"B","tempo":"normal","ttl_s":18,"reason":"佯A转B","slots":[{"slot":0,"role":"lurk","area":"Ramp"},{"slot":1,"role":"entry","area":"B_Apts"}]}
+
+T穷 未下包
+{"intent":"save","target":"","tempo":"slow","ttl_s":20,"reason":"经济崩保枪","slots":[{"slot":0,"role":"anchor","area":"T_Spawn"}]}
+
+CT满钱 未下包 回合开始
+{"intent":"default","target":"","tempo":"normal","ttl_s":20,"reason":"2-1-2听前段","slots":[{"slot":0,"role":"anchor","area":"Stairs"},{"slot":1,"role":"support","area":"Jungle"},{"slot":2,"role":"awper","area":"Window"},{"slot":3,"role":"anchor","area":"Van"},{"slot":4,"role":"support","area":"Cat"}]}
+
+CT满钱 T连续打A
+{"intent":"stack_a","target":"A","tempo":"normal","ttl_s":16,"reason":"防连续A","slots":[{"slot":0,"role":"anchor","area":"Ticket"},{"slot":1,"role":"anchor","area":"A_Site"},{"slot":2,"role":"support","area":"Jungle"}]}
+
+CT 已下包@B_Site
+{"intent":"retake_b","target":"B","tempo":"fast","ttl_s":15,"reason":"回防B","slots":[{"slot":0,"role":"entry","area":"Marcket"},{"slot":1,"role":"entry","area":"Underpass"},{"slot":2,"role":"support","area":"Market_door"}]}
+
+CT 已下包@A_Site
+{"intent":"retake_a","target":"A","tempo":"fast","ttl_s":15,"reason":"回防A","slots":[{"slot":0,"role":"entry","area":"Jungle"},{"slot":1,"role":"entry","area":"CT_Spawn"},{"slot":2,"role":"support","area":"Conn"}]}
+
+CT穷 未下包 赌B
+{"intent":"stack_b","target":"B","tempo":"slow","ttl_s":18,"reason":"eco叠B","slots":[{"slot":0,"role":"anchor","area":"B_Site"},{"slot":1,"role":"anchor","area":"Van"},{"slot":2,"role":"support","area":"Bench"}]}
+
+T满钱 时间紧 Ramp有接触
+{"intent":"rush_a","target":"A","tempo":"fast","ttl_s":10,"reason":"时间紧冲A","slots":[{"slot":0,"role":"entry","area":"Ramp"},{"slot":1,"role":"entry","area":"Palace"},{"slot":2,"role":"support","area":"A_Site"}]}

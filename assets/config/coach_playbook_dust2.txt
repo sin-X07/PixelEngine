@@ -2,12 +2,14 @@
 # 用途：追加进固定 system prompt（利于 cache_prompt）。不要塞进每次会变的 digest。
 # 约束：只使用引擎已有 intent 枚举；区域名须来自地图 site 层。
 # 引擎不执行烟雾线，道具描述仅作「时机/意图」参考，slots.area 才落到站位。
+# 修订：2026-10 补强局势条目与 few-shot；结构对齐原版。
 
 【地图区域别名】
 A侧: A_Site Long Outside_Long Long_Door Pit Side_Pit A_Car Plate Ramp Cat Short Short_Stairs Blue
 B侧: B_Site Tunnel Upper Lower Outside_Tunnel Door Car_B Plate_B Big_Box Fence Dog Jump_Box Titanic
 中路: Mid Top_Mid Xbox Double_Doors Suicide
 出生: T_Spawn CT_Spawn
+备注: Stairs 属 Tunnel 体系(Upper↔Lower 连接)；Outside 近 Outside_Tunnel；写 slots 优先用上表常用名
 
 【总规则】
 1) 优先级: 炸弹状态 > 经济 > 减员/人数 > 接触信息 > 笔记
@@ -23,25 +25,30 @@ T 满钱 / 强起
 default | target="" | tempo=normal | ttl=18~25
   站位意图: 2人 Long/Outside_Long; 1人 Top_Mid; 1人 Cat/Short; 1人 Tunnel/Upper
   目的: 前30s换信息(Long谁在、Mid门、B是否前压)，再决定点
+  道具时机: 开局可挡 Mid/Double_Doors 视线；拿Long后进A前挡 Cross/CT_Spawn 向
   何时: 开局默认; 敌情未知; 上回合刚换边后的首回合
 
 rush_a | target=A | tempo=fast | ttl=10~14
   路径: 全员经 Long → A_Site (可留1人 Cat 晚到夹击)
+  道具时机: 进 Long_Door 前闪；过角前挡 CT 横穿；进点清 A_Car/Pit 近角
   何时: CT未站稳; 时间不足; Long已换到人且对方人少; 开局想打乱CT
   勿用: 刚在A连续失败; 经济穷; 已知A叠人
 
 rush_b | target=B | tempo=fast | ttl=10~14
-  路径: 全员 Tunnel/Upper → B_Site，必须赶在回防前结束
+  路径: 全员 Tunnel/Upper → B_Site，必须赶在回防前结束(约前15~20s内出洞)
+  道具时机: 出洞前闪/挡 Window·Door 方向；清近 Car_B/Big_Box
   何时: CT Mid/A过早暴露; 时间轴靠前的速攻; 反制CT激进Tunnel
   勿用: 已过回合中段还没进点(回防已到)
 
 split_a | target=A | tempo=fast | ttl=12~18
   路径: 3 Long + 2 Cat/Short 同时进A (先有 Mid/Cat 接触更好)
+  道具时机: Long侧挡 Cross；Cat侧同步进 Short_Stairs；两侧同秒进点
   何时: 默认后确认A只有1~2人; CT把人堆在B; Long已控制
   勿用: Mid完全丢失且Cat被卡死(变两次单独冲锋)
 
 split_b | target=B | tempo=fast | ttl=12~18
   路径: Mid压 Door/Xbox + Tunnel 同步进B
+  道具时机: Mid侧挡 CT 来向；Tunnel侧闪出洞；夹击后合围 B_Site
   何时: 已拿Mid信息; CT过早回A; 反制双B锚点单独守洞
   勿用: Mid门被死守且无人能换下
 
@@ -59,39 +66,42 @@ save | target="" | tempo=slow | ttl=18~25
   何时: 开局平均经济穷; 或规则已判定保枪
 
 default(穷局弱默认) | 仅当不允许 save 时
-  小心换枪/捡枪，不主动开大战
+  小心换枪/捡枪，不主动开大战；可轻压 Outside_Long 或 Tunnel 口骗接触后撤
 
 ────────────────────────────────
 CT 满钱
 ────────────────────────────────
 default | target="" | tempo=normal | ttl=18~25
-  站位意图: 2A(Long/Pit + Short/Cat) + 1 Mid + 2B(Window/Door侧 + Site锚)
+  站位意图: 2A(Long/Pit + Short/Cat) + 1 Mid + 2B(Door侧 + B_Site锚) ≈2-1-2
   目的: 先听前10~15s再决定叠哪边; 避免A/B同时丢控制
+  道具时机: 防早 Cat 走位; B洞口拖延; Long被压时后撤 Pit 等换
   何时: 开局默认; 敌情未知
 
 stack_a | target=A | tempo=normal或slow | ttl=12~20
-  意图: 3~4人偏A (Pit/Long/Cat/Site)，留1人听B或Mid
+  意图: 3~4人偏A (Pit/Long/Cat/A_Site)，留1人听B或Mid
   何时: T连续打A; 经济局防速A; 笔记/近局显示A高频
   勿用: 刚在A被拆穿且B无人; 已下包在B
 
 stack_b | target=B | tempo=normal或slow | ttl=12~20
-  意图: 3~4人偏B (Tunnel口/Site/Door)，留人看A
+  意图: 3~4人偏B (Upper口/B_Site/Door/Car_B)，留人看A
   何时: T连续B洞; eco防五人洞; 中路烟后怀疑B
   勿用: 已确认大部队Long
 
 retake_a | target=A | tempo=fast | ttl=12~18
   仅已下包@A: 从 CT_Spawn + Short/Cat 两路汇合，禁止单人滴入
-  站位: Entry走 Short/Cat 或 Cross; Anchor清 Site
+  站位: Entry走 Short/Cat 或 Ramp; Anchor清 A_Site；道具先挡/闪再进
 
 retake_b | target=B | tempo=fast | ttl=12~18
-  仅已下包@B: Door/Window 与 Tunnel 方向协同，禁止单人进点
+  仅已下包@B: Door 与 Tunnel/Upper 方向协同，禁止单人进点
+  站位: 两路同时进 B_Site；先闪再清 Car_B/Big_Box
 
 ────────────────────────────────
 CT 穷
 ────────────────────────────────
 save 或 stack_a/stack_b(赌点)
-  eco 可赌叠B(掩体多)或叠A; 中路尽量不正面硬刚
+  eco 可赌叠B(掩体多: Car_B/Big_Box/Fence)或叠A(Pit/A_Site); 中路尽量不正面硬刚
   勿用 rush 类(CT无 rush intent)
+  反eco: 保持距离，清 Goose式近点前先听，勿盲 peek Long_Door
 
 ────────────────────────────────
 局势 → 剧本(预备回答)
@@ -106,6 +116,11 @@ T连续两轮同点失败 → 换点或 fake，禁止第三次同 intent+target
 时间不足(事件TimeLow) → T: rush 有接触的一侧; CT: default收位点，勿盲目 peek
 拆包中 → CT: retake 对应点掩护; T: stack 对应点回防包点
 下包后残局 → 禁止再选另一点的 rush/stack
+Mid门对枪丢人 → T: 改 Lower 换信息或转 rush_b; CT: Mid回落 Cat/Door 听两边
+B洞口被拖延 → T: 勿硬冲，改 split_b 或 fake→A; CT: 锚点活着等回防
+A长线被AWP锁 → T: 道具挡视线后过，或改 rush_b/fake; CT: Pit被动优于盲 peek Doors
+CT双A偏置 → T: split_b 或 rush_b; CT: 丢Mid时立刻补 Door
+eco局T噪音在洞 → CT: stack_b 留1听Long; T穷: 仍 save，勿 rush
 
 ────────────────────────────────
 slots 填写提示(可选，最多5)
@@ -125,6 +140,9 @@ T满钱 敌Tunnel接触 首次接火
 T满钱 Mid已有信息 欲打B
 {"intent":"split_b","target":"B","tempo":"fast","ttl_s":14,"reason":"Mid分B","slots":[{"slot":0,"role":"entry","area":"Door"},{"slot":1,"role":"entry","area":"Tunnel"}]}
 
+T满钱 Long已控 Cat有人
+{"intent":"split_a","target":"A","tempo":"fast","ttl_s":14,"reason":"Long短夹A","slots":[{"slot":0,"role":"entry","area":"Long"},{"slot":1,"role":"entry","area":"Cat"},{"slot":2,"role":"support","area":"A_Site"}]}
+
 T满钱 上回合A被叠 有时间
 {"intent":"fake","target":"B","tempo":"normal","ttl_s":18,"reason":"佯A转B","slots":[{"slot":0,"role":"lurk","area":"Long"},{"slot":1,"role":"entry","area":"Tunnel"}]}
 
@@ -140,5 +158,11 @@ CT满钱 T连续打A
 CT 已下包@B_Site
 {"intent":"retake_b","target":"B","tempo":"fast","ttl_s":15,"reason":"回防B","slots":[{"slot":0,"role":"entry","area":"Door"},{"slot":1,"role":"entry","area":"B_Site"}]}
 
+CT 已下包@A_Site
+{"intent":"retake_a","target":"A","tempo":"fast","ttl_s":15,"reason":"回防A","slots":[{"slot":0,"role":"entry","area":"Short"},{"slot":1,"role":"entry","area":"CT_Spawn"}]}
+
 CT穷 未下包 赌B
 {"intent":"stack_b","target":"B","tempo":"slow","ttl_s":18,"reason":"eco叠B","slots":[{"slot":0,"role":"anchor","area":"B_Site"},{"slot":1,"role":"anchor","area":"Car_B"}]}
+
+T满钱 时间紧 Long有接触
+{"intent":"rush_a","target":"A","tempo":"fast","ttl_s":10,"reason":"时间紧冲A","slots":[{"slot":0,"role":"entry","area":"Long_Door"},{"slot":1,"role":"entry","area":"A_Site"}]}
