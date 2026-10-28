@@ -90,6 +90,7 @@ set(SOURCES
     Input/InputManager.cpp
     Graphics/ImGuiUI.cpp
     Graphics/GameUI.cpp
+    Graphics/Menu3D.cpp
     Storage/SaveManager.cpp
     Storage/MatchHistory.hpp
     Storage/MatchHistory.cpp
@@ -141,6 +142,9 @@ target_link_libraries(EngineApp PRIVATE
     ws2_32
     winhttp
 )
+if(WIN32)
+    target_link_libraries(EngineApp PRIVATE opengl32)
+endif()
 
 # 静态链接 C/C++ 运行库：消除对 libgcc_s_seh-1.dll / libstdc++-6.dll /
 # libwinpthread-1.dll 的运行时依赖，产出可独立运行的单文件 exe。

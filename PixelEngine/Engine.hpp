@@ -4,6 +4,7 @@
 #include "Input/InputManager.hpp"
 #include "Graphics/ImGuiUI.hpp"
 #include "Graphics/GameUI.hpp"
+#include "Graphics/Menu3D.hpp"
 #include "Storage/SaveManager.hpp"
 #include "CS2D/CS2DRenderer.hpp"
 #include "CS2D/CS2DGame.hpp"
@@ -34,6 +35,7 @@ private:
     std::unique_ptr<InputManager> inputManager;
     std::unique_ptr<ImGuiUI>      imGuiUI;
     std::unique_ptr<GameUI>       gameUI;
+    std::unique_ptr<Menu3D>       menu3D;
     std::unique_ptr<SaveManager>  saveManager;
 
     // CS2D 对局

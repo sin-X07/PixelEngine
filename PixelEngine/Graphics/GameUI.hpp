@@ -91,6 +91,7 @@ public:
         // 主菜单背景
         void* backdropTex = nullptr;   // 主菜单背景图（SDL_Texture*）
         int   backdropW = 0, backdropH = 0;
+        bool  backdrop3D = false;      // 实时 3D 背景：使用更轻的压暗
     };
 
     struct InGameCtx {

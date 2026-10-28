@@ -294,10 +294,27 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
     }
 
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+#if defined(_WIN32)
+    // Menu3D 使用独立的隐藏 OpenGL 上下文；主渲染器固定走 D3D11，
+    // 避免两者争用同一个 OpenGL current context。
+    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d11");
+#endif
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+#if defined(_WIN32)
+    if (!renderer) {
+        SDL_SetHint(SDL_HINT_RENDER_DRIVER, "");
+        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    }
+#endif
     if (!renderer) {
         std::cerr << "渲染器创建失败: " << SDL_GetError() << std::endl;
         return false;
+    }
+    {
+        SDL_RendererInfo info{};
+        if (SDL_GetRendererInfo(renderer, &info) == 0 && info.name) {
+            std::cout << "[Renderer] " << info.name << std::endl;
+        }
     }
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
@@ -311,6 +328,25 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
 
     // CS2D 渲染器（地图目录 assets/cs2d/maps）
     cs2dRenderer->Initialize(renderer, "assets/cs2d/maps", logicalW_, logicalH_);
+
+    // 主菜单实时 3D 背景（独立隐藏 OpenGL 上下文；失败时回退静态背景）
+    bool canInitMenu3D = true;
+    {
+        SDL_RendererInfo info{};
+        if (SDL_GetRendererInfo(renderer, &info) == 0 && info.name &&
+            std::string(info.name).find("opengl") != std::string::npos) {
+            canInitMenu3D = false;
+            std::cerr << "[Menu3D] 主渲染器为 OpenGL，跳过独立 3D 上下文" << std::endl;
+        }
+    }
+    if (canInitMenu3D) {
+        menu3D = std::make_unique<Menu3D>();
+        if (!menu3D->Initialize(renderer, 1024, 576)) {
+            std::cerr << "[Menu3D] 初始化失败，回退静态菜单背景: "
+                      << menu3D->LastError() << std::endl;
+            menu3D.reset();
+        }
+    }
 
     // ImGui 后端消费原始 SDL 事件（窗口↔逻辑坐标换算）
     inputManager->SetEventCallback([this](const SDL_Event& e) {
@@ -496,6 +532,7 @@ void Engine::Clean() {
     if (audioManager) audioManager->Clean();
     if (imGuiUI)      imGuiUI->Shutdown();
     if (cs2dRenderer) cs2dRenderer->Clean();
+    if (menu3D)       { menu3D->Shutdown(); menu3D.reset(); }
 
     for (auto& t : sceneTex_) {
         if (t) { SDL_DestroyTexture(t); t = nullptr; }
@@ -1236,6 +1273,17 @@ void Engine::Render() {
         ctx.backdropTex = menuBgTex_;
         ctx.backdropW   = menuBgW_;
         ctx.backdropH   = menuBgH_;
+        ctx.backdrop3D  = false;
+
+        if (currentState == MAIN_MENU && menu3D && menu3D->IsReady()) {
+            menu3D->Render(frameDt);
+            if (menu3D->GetTexture()) {
+                ctx.backdropTex = menu3D->GetTexture();
+                ctx.backdropW   = menu3D->Width();
+                ctx.backdropH   = menu3D->Height();
+                ctx.backdrop3D  = true;
+            }
+        }
 
         gameUI->DrawMenu(ctx, BuildActions());
     } else {

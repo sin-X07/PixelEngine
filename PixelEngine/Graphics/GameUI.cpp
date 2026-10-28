@@ -149,15 +149,19 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                           viewport->WorkPos,
                           ImVec2(viewport->WorkPos.x + sw, viewport->WorkPos.y + sh),
                           uv0, uv1);
-            // 压暗 + 上下渐变，让文字浮出来
+            // 压暗 + 上下渐变，让文字浮出来；实时 3D 背景保留更多细节
+            const float dimTop = ctx.backdrop3D ? 0.50f : 0.88f;
+            const float dimBot = ctx.backdrop3D ? 0.66f : 0.94f;
             mdl->AddRectFilledMultiColor(
                 viewport->WorkPos, ImVec2(viewport->WorkPos.x + sw, viewport->WorkPos.y + sh),
-                Palette::U32(ImVec4(0.02f, 0.03f, 0.045f, 0.88f)),
-                Palette::U32(ImVec4(0.02f, 0.03f, 0.045f, 0.88f)),
-                Palette::U32(ImVec4(0.03f, 0.045f, 0.06f, 0.94f)),
-                Palette::U32(ImVec4(0.03f, 0.045f, 0.06f, 0.94f)));
+                Palette::U32(ImVec4(0.02f, 0.03f, 0.045f, dimTop)),
+                Palette::U32(ImVec4(0.02f, 0.03f, 0.045f, dimTop)),
+                Palette::U32(ImVec4(0.03f, 0.045f, 0.06f, dimBot)),
+                Palette::U32(ImVec4(0.03f, 0.045f, 0.06f, dimBot)));
         }
-        DrawMenuBackdrop(mdl, viewport->WorkPos, viewport->WorkSize);
+        if (!ctx.backdrop3D) {
+            DrawMenuBackdrop(mdl, viewport->WorkPos, viewport->WorkSize);
+        }
         DrawImGuiTextCentered(imGuiUI_, "CS2D", yScreen, 255, 255, 255, 255, 34);
         DrawTitleAccent(ImGui::GetWindowDrawList(), centerX, yScreen + UI(44.0f), UI(46.0f));
         DrawImGuiTextCentered(imGuiUI_, "Counter-Strike 2D 单机版", yScreen + titleH,
