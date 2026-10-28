@@ -282,20 +282,14 @@ void Menu3D::InitChickenState() {
 void Menu3D::PickChickenTarget(int index) {
     std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
     ChickenState& s = chickenState_[index];
-    float minX = -3.4f, maxX = 3.4f;
-    float minZ = 2.0f, maxZ = 4.5f;
-    if (index == 0) {
-        minX = -3.6f; maxX = -1.7f;
-    } else if (index == 2) {
-        minX = 1.7f; maxX = 3.6f;
-    } else {
-        // 中间的小鸡始终在按钮组正下方；近处透视会放大横向位移，所以限制在很小范围
-        minX = -0.12f; maxX = 0.12f;
-        minZ = 6.9f; maxZ = 7.5f;
-    }
-    s.targetX = minX + (maxX - minX) * dist01(chickenRng_);
-    s.targetZ = minZ + (maxZ - minZ) * dist01(chickenRng_);
-    s.repathTimer = 1.6f + 2.4f * dist01(chickenRng_);
+
+    // 全场自由漫游：不再按左/中/右分区。
+    // z 先随机，再按该 z 的可见宽度限制 x，避免小鸡跑出画面。
+    const float z = -2.0f + 8.8f * dist01(chickenRng_);
+    const float visibleHalfWidth = std::min(5.5f, 0.80f * (8.6f - z));
+    s.targetZ = z;
+    s.targetX = -visibleHalfWidth + 2.0f * visibleHalfWidth * dist01(chickenRng_);
+    s.repathTimer = 1.2f + 2.8f * dist01(chickenRng_);
 }
 
 void Menu3D::UpdateChickens(float dt) {
