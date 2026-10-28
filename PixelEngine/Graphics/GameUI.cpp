@@ -89,13 +89,10 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                  ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
                  ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-    if (ctx.state == MAIN_MENU && ctx.focus3D) {
-        DrawFocusWheel(ctx, actions);
-        ImGui::End();
-        ImGui::PopStyleColor();
-        ImGui::PopStyleVar(2);
-        return;
-    }
+    const float mainMenuOpen = std::clamp(ctx.focusProgress, 0.0f, 1.0f);
+    const float mainMenuAlpha = ctx.focus3D
+        ? 1.0f - mainMenuOpen * mainMenuOpen * (3.0f - 2.0f * mainMenuOpen)
+        : 1.0f;
 
     const float vpW = viewport->WorkSize.x;
     const float centerX = vpW * 0.5f;
@@ -122,6 +119,10 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 
     // ---------------- 主菜单 ----------------
     if (ctx.state == MAIN_MENU) {
+        if (ctx.focus3D) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, mainMenuAlpha);
+            ImGui::BeginDisabled(true);
+        }
         // 整块内容（标题 + 副标题 + 按钮组）垂直居中
         const float vpH = viewport->WorkSize.y;
         const float itemSpacing = ImGui::GetStyle().ItemSpacing.y;
@@ -170,10 +171,14 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         if (!ctx.backdrop3D) {
             DrawMenuBackdrop(mdl, viewport->WorkPos, viewport->WorkSize);
         }
-        DrawImGuiTextCentered(imGuiUI_, "CS2D", yScreen, 255, 255, 255, 255, 34);
-        DrawTitleAccent(ImGui::GetWindowDrawList(), centerX, yScreen + UI(44.0f), UI(46.0f));
+        const Uint8 titleAlpha = static_cast<Uint8>(255.0f * mainMenuAlpha);
+        const Uint8 subAlpha = static_cast<Uint8>(255.0f * mainMenuAlpha);
+        DrawImGuiTextCentered(imGuiUI_, "CS2D", yScreen, 255, 255, 255, titleAlpha, 34);
+        if (mainMenuAlpha > 0.02f) {
+            DrawTitleAccent(ImGui::GetWindowDrawList(), centerX, yScreen + UI(44.0f), UI(46.0f));
+        }
         DrawImGuiTextCentered(imGuiUI_, "Counter-Strike 2D 单机版", yScreen + titleH,
-                              160, 190, 210, 255, 20);
+                              160, 190, 210, subAlpha, 20);
 
         ImGui::SetCursorPosY(yLocal + titleH + subH + gap1);
         if (bigButton("团队歼灭")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::TeamElimination)); });
@@ -182,6 +187,10 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         if (bigButton("历史记录")) doClick([&] { actions.goState(HISTORY); });
         if (bigButton("设置"))     doClick([&] { actions.openSettings(MAIN_MENU); });
         if (bigButton("退出游戏")) doClick([&] { actions.quitToDesktop(); });
+        if (ctx.focus3D) {
+            ImGui::EndDisabled();
+            ImGui::PopStyleVar();
+        }
     }
     // ---------------- 暂停 ----------------
     else if (ctx.state == PAUSED) {
@@ -413,6 +422,10 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         if (bigButton("返回")) doClick([&] { actions.goState(ctx.settingsReturnState); });
     }
 
+    if (ctx.state == MAIN_MENU && ctx.focus3D) {
+        DrawFocusWheel(ctx, actions);
+    }
+
     ImGui::End();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
@@ -446,7 +459,9 @@ void GameUI::DrawFocusWheel(const MenuCtx& ctx, const Actions& actions) {
             uv1.y = uv0.y + frac;
         }
         dl->AddImage(reinterpret_cast<ImTextureID>(ctx.backdropTex),
-                     wp, ImVec2(wp.x + ws.x, wp.y + ws.y), uv0, uv1);
+                     wp, ImVec2(wp.x + ws.x, wp.y + ws.y), uv0, uv1,
+                     IM_COL32(255, 255, 255,
+                              static_cast<int>(std::clamp(open, 0.0f, 1.0f) * 255.0f)));
     }
     dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y),
                       IM_COL32(0, 0, 0, static_cast<int>(82.0f * open)));

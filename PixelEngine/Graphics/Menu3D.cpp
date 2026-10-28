@@ -739,6 +739,33 @@ void Menu3D::DrawFocusScene() {
 
     DrawSpotlight();
 
+    // 其他物体随聚焦进度渐隐/渐显，退出时不会突然出现
+    const float otherAlpha = 1.0f - t;
+    if (otherAlpha > 0.01f) {
+        if (tModel_ && focusedObject_ != 0) {
+            glPushMatrix();
+            glTranslatef(-4.4f, 0.0f, 0.0f);
+            tModel_->Draw(1.22f, 0.0f, 0.0f, otherAlpha);
+            glPopMatrix();
+        }
+        if (ctModel_ && focusedObject_ != 1) {
+            glPushMatrix();
+            glTranslatef(4.4f, 0.0f, 0.0f);
+            ctModel_->Draw(1.22f, 0.0f, 0.0f, otherAlpha);
+            glPopMatrix();
+        }
+        for (int i = 0; i < static_cast<int>(chickens_.size()) && i < 3; ++i) {
+            if (focusedObject_ == i + 2) continue;
+            const ChickenState& s = chickenState_[i];
+            const float dist = 8.6f - s.z;
+            const float scaleChicken = std::clamp(0.30f * dist / 6.0f, 0.055f, 0.34f);
+            glPushMatrix();
+            glTranslatef(s.x, 0.0f, s.z);
+            chickens_[i]->Draw(scaleChicken, 0.0f, s.yaw, otherAlpha);
+            glPopMatrix();
+        }
+    }
+
     if (focusedObject_ >= 0 && focusedObject_ < 2) {
         Menu3DModel* model = (focusedObject_ == 0) ? tModel_.get() : ctModel_.get();
         if (model) {

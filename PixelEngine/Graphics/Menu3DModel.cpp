@@ -528,8 +528,14 @@ void Menu3DModel::SkinPrimitives() {
     minY_ = (minY > 1e29f) ? 0.0f : minY;
 }
 
-void Menu3DModel::Draw(float scale, float yOffset, float yawDegrees) const {
-    if (!ready_) return;
+void Menu3DModel::Draw(float scale, float yOffset, float yawDegrees, float opacity) const {
+    if (!ready_ || opacity <= 0.001f) return;
+    const float alpha = std::clamp(opacity, 0.0f, 1.0f);
+    const bool depthWrite = alpha >= 0.999f;
+    if (!depthWrite) {
+        glEnable(GL_BLEND);
+        glDepthMask(GL_FALSE);
+    }
     glPushMatrix();
     // 蒙皮后取最低点贴地，避免走路动画时脚底穿进地面
     glTranslatef(0.0f, yOffset - minY_ * scale, 0.0f);
@@ -557,7 +563,7 @@ void Menu3DModel::Draw(float scale, float yOffset, float yawDegrees) const {
                     r = 0.18f; g = 0.42f; b = 0.85f;
                 }
             }
-            glColor4f(r, g, b, prim.color.w);
+            glColor4f(r, g, b, prim.color.w * alpha);
             glBegin(GL_TRIANGLES);
             for (uint32_t idx : prim.indices) {
                 if (idx >= prim.skinnedPos.size()) continue;
@@ -571,6 +577,7 @@ void Menu3DModel::Draw(float scale, float yOffset, float yawDegrees) const {
     }
     if (unlit_) glEnable(GL_LIGHTING);
     glPopMatrix();
+    if (!depthWrite) glDepthMask(GL_TRUE);
 }
 
 void Menu3DModel::DrawHighlight(float scale, float yOffset, float yawDegrees) const {

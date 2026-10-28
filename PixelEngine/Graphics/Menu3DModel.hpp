@@ -29,7 +29,8 @@ public:
     const std::string& AnimationName() const { return animationName_; }
 
     void Update(float dt);
-    void Draw(float scale, float yOffset = 0.0f, float yawDegrees = 0.0f) const;
+    void Draw(float scale, float yOffset = 0.0f, float yawDegrees = 0.0f,
+              float opacity = 1.0f) const;
     void DrawHighlight(float scale, float yOffset = 0.0f, float yawDegrees = 0.0f) const;
     bool PlayAnimation(const std::string& name);
     void SetClothingTint(float r, float g, float b) { tint_ = Vec4{ r, g, b, 1.0f }; }
