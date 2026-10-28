@@ -15,12 +15,12 @@ constexpr float kPi = 3.14159265358979323846f;
 
 // 主菜单相机：保持原来的高度和俯角，仅略微前移；聚焦页继续使用旧相机参数，
 // 避免物体自定义界面的 3D 排版发生变化。
-constexpr float kMainCamY = 1.25f;
+constexpr float kMainCamY = 1.05f;
 constexpr float kMainCamZ = 8.0f;
-constexpr float kMainLookY = 0.268f;
-constexpr float kFocusCamY = 1.45f;
+constexpr float kMainLookY = 0.95f;
+constexpr float kFocusCamY = 1.10f;
 constexpr float kFocusCamZ = 8.6f;
-constexpr float kFocusLookY = 0.32f;
+constexpr float kFocusLookY = 1.00f;
 constexpr float kFloorFrontZ = 10.0f;
 
 void DrawCube(float cx, float cy, float cz,
