@@ -388,6 +388,25 @@ void Menu3D::ObjectWorldPosition(int index, float& x, float& y, float& z) const 
     }
 }
 
+void Menu3D::FocusCurrentPosition(float& x, float& z) const {
+    const float raw = std::clamp(focusProgress_, 0.0f, 1.0f);
+    const float t = raw * raw * (3.0f - 2.0f * raw);
+    if (focusedObject_ == 0) {
+        x = -4.0f + (focusTargetX_ + 4.0f) * t;
+        z = 0.0f;
+    } else if (focusedObject_ == 1) {
+        x = 4.0f + (focusTargetX_ - 4.0f) * t;
+        z = 0.0f;
+    } else if (focusedObject_ >= 2 && focusedObject_ - 2 < static_cast<int>(chickenState_.size())) {
+        const ChickenState& s = chickenState_[focusedObject_ - 2];
+        x = s.x + (focusTargetX_ - s.x) * t;
+        z = s.z + (focusTargetZ_ - s.z) * t;
+    } else {
+        x = focusTargetX_;
+        z = focusTargetZ_;
+    }
+}
+
 void Menu3D::SetFocusedObject(int index) {
     if (index < -1 || index >= kObjectCount) index = -1;
     if (focusedObject_ == index) return;
@@ -505,8 +524,7 @@ int Menu3D::HitTestNormalized(float u, float v) const {
 void Menu3D::UpdateSpotlight(float dt) {
     float tx = 0.0f, tz = 0.0f;
     if (focusedObject_ >= 0) {
-        tx = focusTargetX_;
-        tz = focusTargetZ_;
+        FocusCurrentPosition(tx, tz);
     } else if (hoveredObject_ >= 0) {
         float x, y, z;
         ObjectWorldPosition(hoveredObject_, x, y, z);
@@ -612,7 +630,7 @@ void Menu3D::DrawSpotlight() {
     if (hoveredObject_ >= 0 || focusedObject_ >= 0) {
         const int idx = focusedObject_ >= 0 ? focusedObject_ : hoveredObject_;
         float x, y, z;
-        if (focusedObject_ >= 0) { x = focusTargetX_; z = focusTargetZ_; }
+        if (focusedObject_ >= 0) { FocusCurrentPosition(x, z); }
         else ObjectWorldPosition(idx, x, y, z);
         const float r = (idx < 2) ? 0.82f : 0.30f;
         const float pulse = 0.65f + 0.35f * std::sin(animationTime_ * 5.0f);
@@ -705,7 +723,7 @@ void Menu3D::DrawFocusScene() {
         normalX = s.x;
         normalZ = s.z;
         normalScale = std::clamp(0.30f * (8.6f - s.z) / 6.0f, 0.055f, 0.34f);
-        targetScale = 0.95f;
+        targetScale = 1.5f;
     }
     const float x = normalX + (focusTargetX_ - normalX) * t;
     const float z = normalZ + (focusTargetZ_ - normalZ) * t;

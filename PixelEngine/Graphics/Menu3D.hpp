@@ -60,6 +60,7 @@ private:
     void UpdateSpotlight(float dt);
     void UpdateObjectScreenPositions();
     void ObjectWorldPosition(int index, float& x, float& y, float& z) const;
+    void FocusCurrentPosition(float& x, float& z) const;
     void ReadbackToTexture();
 
     SDL_Window*   glWindow_ = nullptr;
