@@ -108,6 +108,12 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
             ImGui::GetWindowDrawList()->AddImage(
                 reinterpret_cast<ImTextureID>(ctx.backdropTex),
                 wp, ImVec2(wp.x + ws.x, wp.y + ws.y), uv0, uv1);
+            ImGui::GetWindowDrawList()->AddRectFilledMultiColor(
+                wp, ImVec2(wp.x + ws.x, wp.y + ws.y),
+                Palette::U32(ImVec4(0.02f, 0.03f, 0.045f, 0.50f)),
+                Palette::U32(ImVec4(0.02f, 0.03f, 0.045f, 0.50f)),
+                Palette::U32(ImVec4(0.03f, 0.045f, 0.06f, 0.66f)),
+                Palette::U32(ImVec4(0.03f, 0.045f, 0.06f, 0.66f)));
         }
         ImGui::End();
         ImGui::PopStyleColor();
@@ -477,7 +483,7 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
     const float fade = std::clamp(ctx.mapOverlayFade, 0.0f, 1.0f);
     const bool interactive = (fade > 0.5f && !ctx.mapOverlayClosing);
     ImVec2 beamTarget = ImGui::GetIO().MousePos;
-    bool beamTargetLocked = false;
+    bool beamOverInteractive = false;
 
     if (ctx.backdropTex && ctx.backdropW > 0 && ctx.backdropH > 0) {
         const float texAspect = static_cast<float>(ctx.backdropW) / static_cast<float>(ctx.backdropH);
@@ -495,8 +501,10 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
         dl->AddImage(reinterpret_cast<ImTextureID>(ctx.backdropTex),
                      wp, ImVec2(wp.x + ws.x, wp.y + ws.y), uv0, uv1);
     }
-    dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y),
-                      IM_COL32(4, 8, 12, static_cast<int>(78.0f * fade)));
+    dl->AddRectFilledMultiColor(
+        wp, ImVec2(wp.x + ws.x, wp.y + ws.y),
+        IM_COL32(5, 8, 12, 128), IM_COL32(5, 8, 12, 128),
+        IM_COL32(8, 11, 15, 168), IM_COL32(8, 11, 15, 168));
 
     const int count = std::max(1, ctx.mapOverlayCount);
     const float cardW = UI(250.0f);
@@ -534,8 +542,7 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
                                  : IM_COL32(18, 24, 32, static_cast<int>(205 * fade));
         dl->AddRectFilled(cp, cp2, bg, UI(10.0f));
         if (hovered) {
-            beamTarget = ImVec2((cp.x + cp2.x) * 0.5f, (cp.y + cp2.y) * 0.5f);
-            beamTargetLocked = true;
+            beamOverInteractive = true;
             dl->AddRectFilled(cp, cp2, IM_COL32(110, 190, 255, static_cast<int>(26 * fade)), UI(10.0f));
         }
         dl->AddRect(cp, cp2,
@@ -590,8 +597,7 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
         if (ImGui::IsItemHovered()) {
             const ImVec2 a = ImGui::GetItemRectMin();
             const ImVec2 b = ImGui::GetItemRectMax();
-            beamTarget = ImVec2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
-            beamTargetLocked = true;
+            beamOverInteractive = true;
             dl->AddRect(ImVec2(a.x - 3, a.y - 3), ImVec2(b.x + 3, b.y + 3),
                         IM_COL32(150, 215, 255, a255), UI(8.0f), 0, UI(2.0f));
         }
@@ -605,28 +611,27 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
         if (ImGui::IsItemHovered()) {
             const ImVec2 a = ImGui::GetItemRectMin();
             const ImVec2 b = ImGui::GetItemRectMax();
-            beamTarget = ImVec2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
-            beamTargetLocked = true;
+            beamOverInteractive = true;
             dl->AddRect(ImVec2(a.x - 3, a.y - 3), ImVec2(b.x + 3, b.y + 3),
                         IM_COL32(150, 215, 255, a255), UI(8.0f), 0, UI(2.0f));
         }
     }
 
-    // 俯视选图页的探照灯：端点固定在屏幕正下方中心，光束指向鼠标/悬停项
+    // 俯视选图页的探照灯：灯源从顶部逐帧移到屏幕正下方，光束始终跟随鼠标
     if (fade > 0.02f) {
-        const ImVec2 origin(wp.x + ws.x * 0.5f, wp.y + ws.y - UI(4.0f));
+        const float lp = std::clamp(ctx.mapOverlayLightProgress, 0.0f, 1.0f);
+        const ImVec2 origin(wp.x + ws.x * 0.5f,
+                            wp.y + (ws.y - UI(8.0f)) * lp + UI(4.0f));
         ImVec2 target = beamTarget;
-        if (!beamTargetLocked) {
-            target.x = std::clamp(target.x, wp.x + UI(12.0f), wp.x + ws.x - UI(12.0f));
-            target.y = std::clamp(target.y, wp.y + UI(12.0f), wp.y + ws.y - UI(24.0f));
-        }
+        target.x = std::clamp(target.x, wp.x + UI(12.0f), wp.x + ws.x - UI(12.0f));
+        target.y = std::clamp(target.y, wp.y + UI(12.0f), wp.y + ws.y - UI(24.0f));
         ImVec2 dir(target.x - origin.x, target.y - origin.y);
         const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
         if (len > 1.0f) {
             dir.x /= len; dir.y /= len;
             const ImVec2 perp(-dir.y, dir.x);
             const float halfNear = UI(5.0f);
-            const float halfFar = UI(34.0f);
+            const float halfFar = UI(beamOverInteractive ? 42.0f : 34.0f);
             const ImU32 beamCol = IM_COL32(150, 215, 255, static_cast<int>(34 * fade));
             dl->AddQuadFilled(
                 ImVec2(origin.x + perp.x * halfNear, origin.y + perp.y * halfNear),
@@ -634,9 +639,7 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
                 ImVec2(target.x - perp.x * halfFar, target.y - perp.y * halfFar),
                 ImVec2(target.x + perp.x * halfFar, target.y + perp.y * halfFar),
                 beamCol);
-            dl->AddLine(ImVec2(origin.x, origin.y), target,
-                        IM_COL32(190, 230, 255, static_cast<int>(150 * fade)), UI(1.5f));
-            dl->AddCircleFilled(target, UI(beamTargetLocked ? 22.0f : 12.0f),
+            dl->AddCircleFilled(target, UI(beamOverInteractive ? 26.0f : 12.0f),
                                 IM_COL32(170, 225, 255, static_cast<int>(50 * fade)), 24);
         }
         dl->AddCircleFilled(origin, UI(10.0f),

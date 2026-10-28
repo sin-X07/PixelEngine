@@ -848,6 +848,7 @@ void Engine::OpenMapOverlay(MatchMode mode) {
     mapOverlayClosing_ = false;
     mapOverlayStartMs_ = SDL_GetTicks64();
     mapOverlayFade_ = 0.0f;
+    mapOverlayLightProgress_ = 0.0f;
     mapPreviewRectValid_ = false;
     currentState = MAIN_MENU;
 }
@@ -1423,16 +1424,21 @@ void Engine::Render() {
                     const float t = raw * raw * (3.0f - 2.0f * raw);
                     menu3D->SetCameraTopDownProgress(1.0f - t);
                     mapOverlayFade_ = 1.0f - t;
+                    mapOverlayLightProgress_ = 1.0f - t;
                     if (raw >= 1.0f) {
                         mapOverlayOpen_ = false;
                         mapOverlayClosing_ = false;
                         mapOverlayFade_ = 0.0f;
+                        mapOverlayLightProgress_ = 0.0f;
                         menu3D->SetCameraTopDownProgress(0.0f);
                     }
                 } else {
                     menu3D->SetCameraTopDownProgress(1.0f);
                     mapOverlayFade_ = std::clamp(
                         static_cast<float>(SDL_GetTicks64() - mapOverlayStartMs_) / 350.0f,
+                        0.0f, 1.0f);
+                    mapOverlayLightProgress_ = std::clamp(
+                        static_cast<float>(SDL_GetTicks64() - mapOverlayStartMs_) / 650.0f,
                         0.0f, 1.0f);
                 }
             } else {
@@ -1490,6 +1496,7 @@ void Engine::Render() {
             ctx.mapOverlayOpen = mapOverlayOpen_;
             ctx.mapOverlayClosing = mapOverlayClosing_;
             ctx.mapOverlayFade = mapOverlayFade_;
+            ctx.mapOverlayLightProgress = mapOverlayLightProgress_;
             ctx.mapOverlaySelected = mapOverlaySelected_;
             ctx.mapOverlayCount = mapOverlayCount_;
             if (mapOverlayMode_ == MatchMode::BombDefusal) {
