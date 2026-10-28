@@ -22,6 +22,11 @@ namespace {
 // CS2D 启动地图
 constexpr const char* kStartMap = "assets/cs2d/maps/ancient_ruins.tmj";
 
+// 统一菜单黑场转场的归一化时间点：
+// [0, outEnd) 旧页淡出；[outEnd, inStart) 纯黑且不刷新新页；[inStart, 1] 新页淡入。
+constexpr float kMenuFadeOutEnd  = 0.45f;
+constexpr float kMenuFadeInStart = 0.56f;
+
 } // anonymous namespace
 
 // ============================================================================
@@ -79,28 +84,47 @@ GameUI::Actions Engine::BuildActions() {
         currentState = s;
     };
     a.openSettings = [this](GameState ret) { settingsReturnState = ret; currentState = SETTINGS; };
-    a.startMatch     = [this] { StartMatch(currentMatchMode_); };
-    a.startMatchMode = [this](int m) { StartMatch(static_cast<MatchMode>(m)); };
+    a.startMatch     = [this] { RestartCurrentMatch(); };
+    a.startMatchMode = [this](int m) {
+        const MatchMode mode = static_cast<MatchMode>(m);
+        if (mode == MatchMode::DeathMatch) {
+            BeginMatchLoad(mode, "assets/cs2d/maps/cs_office.tmj", pendingPlayerTeam_);
+        } else if (mode == MatchMode::TeamElimination) {
+            BeginMatchLoad(mode, "assets/cs2d/maps/ancient_ruins.tmj", pendingPlayerTeam_);
+        } else {
+            StartMatch(mode);
+        }
+    };
     // 选择阵营（爆破模式）：0 = T, 1 = CT
     a.chooseSide = [this](int side) {
-        pendingPlayerTeam_ = (side == 0) ? Team::T : Team::CT;
-        std::string mapRel = pendingSideMapRel_;
-        if (mapRel.empty() && currentMatchMode_ == MatchMode::BombDefusal) {
-            mapRel = "assets/cs2d/maps/ancient_ruins.tmj";
-        }
-        if (mapRel.empty()) mapRel = "assets/cs2d/maps/ancient_ruins.tmj";
-        StartMatchWithMap(currentMatchMode_, mapRel, pendingPlayerTeam_);
+        if (!sidePopupOpen_) return;
+        const Team chosen = (side == 0) ? Team::T : Team::CT;
+        pendingPlayerTeam_ = chosen;
+        cs2dGame->RestartMatchWithTeam(chosen);
+        matchStartMs_ = static_cast<long long>(SDL_GetTicks64());
+        sidePopupOpen_ = false;
+        sideChoicePending_ = false;
+        currentState = PLAYING;
+        buyMenuOpen_ = false;
+        SDL_SetRelativeMouseMode(SDL_TRUE);
+        SDL_ShowCursor(SDL_DISABLE);
     };
 
     a.startMatchOnMap = [this](int idx) {
         if (idx < 0 || idx >= kMapCatalogCount) return;
-        // 爆破模式：先进入阵营选择界面
-        pendingSideMapRel_ = kMapCatalog[idx].tmj;
+        // 地图选择后直接进入加载/对局；阵营在进入游戏后由弹窗选择。
+        const std::string mapRel = kMapCatalog[idx].tmj;
+        pendingPlayerTeam_ = Team::CT;   // 占位，选阵营后会重建对局
         currentMatchMode_ = MatchMode::BombDefusal;
-        currentState = SIDE_SELECT;
+        BeginMatchLoad(MatchMode::BombDefusal, mapRel, pendingPlayerTeam_);
     };
     a.selectMap = [this](int idx) {
         if (idx >= 0 && idx < kMapCatalogCount) mapSelectIndex_ = idx;
+    };
+    a.setMapPreviewRect = [this](float x0, float y0, float x1, float y1) {
+        mapPreviewRect_[0] = x0; mapPreviewRect_[1] = y0;
+        mapPreviewRect_[2] = x1; mapPreviewRect_[3] = y1;
+        mapPreviewRectValid_ = true;
     };
     a.resumeGame   = [this] {
         currentState = PLAYING;
@@ -246,6 +270,7 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
     openMapSelectOnStart_ = openMapSelect;
 
     coachLlmEnabled_ = coachLlm;
+    llmInitialized_ = !coachLlmEnabled_;   // --coach=rule 不初始化/拉起 LLM
     cleaned = false;
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0) {
@@ -306,8 +331,7 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
         }
     });
 
-    // LLM BOT
-    InitLLM();
+    // LLM BOT 延迟到首次开局加载（黑屏加载阶段），避免启动菜单前阻塞。
 
     // 若存档要求全屏
     if (saveManager->GetSettings().fullscreen && !isFullscreen) {
@@ -528,7 +552,8 @@ void Engine::HandleInput() {
     if (inputManager->IsFullscreenToggleRequested()) ToggleFullscreen();
     if (inputManager->IsMuteToggleRequested()) audioManager->ToggleMute();
 
-    if (inputManager->IsPauseToggleRequested() && !IsTransitionActive()) {
+    if (inputManager->IsPauseToggleRequested() && !IsTransitionActive() &&
+        !sidePopupOpen_ && !sideChoicePending_) {
         if (currentState == PLAYING) {
             currentState = PAUSED;
             SDL_SetRelativeMouseMode(SDL_FALSE);
@@ -543,8 +568,6 @@ void Engine::HandleInput() {
             currentState = settingsReturnState;
         } else if (currentState == EXIT_CONFIRM) {
             currentState = PAUSED;
-        } else if (currentState == SIDE_SELECT) {
-            currentState = MAP_SELECT;
         } else if (currentState == MAP_SELECT || currentState == HISTORY) {
             currentState = MAIN_MENU;
         } else {
@@ -556,6 +579,12 @@ void Engine::HandleInput() {
 
     // 转场期间锁住对局输入，避免进入对局时第一帧误开枪/误移动。
     if (IsTransitionActive()) {
+        cs2dMouseDown = false;
+        cs2dKeyW = cs2dKeyA = cs2dKeyS = cs2dKeyD = false;
+        cs2dKeyShift = cs2dKeyR = false;
+        return;
+    }
+    if (sideChoicePending_ || sidePopupOpen_) {
         cs2dMouseDown = false;
         cs2dKeyW = cs2dKeyA = cs2dKeyS = cs2dKeyD = false;
         cs2dKeyShift = cs2dKeyR = false;
@@ -633,6 +662,32 @@ void Engine::HandleInput() {
 // 开始对局
 // ============================================================================
 
+void Engine::RestartCurrentMatch() {
+    if (!cs2dGame) return;
+
+    // 重新开始 = 回到“进入游戏后的选阵营”阶段：
+    // 不立刻重置对局；选完阵营后再重建首回合，保证回合数从 1 开始。
+    if (currentMapRel_.empty()) {
+        StartMatch(currentMatchMode_);
+        return;
+    }
+
+    sideChoicePending_ = true;
+    sidePopupOpen_ = false;   // 等转场进入纯黑窗口后再显示
+    matchLoadPhase_ = MatchLoadPhase::None;
+    matchLoadElapsed_ = 0.0f;
+    transitionKind_ = TransitionKind::None;
+    transitionElapsed_ = 0.0f;
+    buyMenuOpen_ = false;
+    showScoreboard_ = false;
+
+    currentState = PLAYING;
+    SDL_SetRelativeMouseMode(SDL_FALSE);
+    SDL_ShowCursor(SDL_ENABLE);
+    cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
+    cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
+}
+
 void Engine::StartMatch(MatchMode mode) {
     // 模式 → 默认地图（爆破模式可由地图选择界面指定）
     //   死斗         → cs_office（老图，节奏快）
@@ -654,6 +709,7 @@ void Engine::StartMatch(MatchMode mode) {
 }
 
 void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team playerTeam) {
+    EnsureLlmInitialized();
     audioManager->StopMusic();
     currentMatchMode_ = mode;
 
@@ -722,6 +778,7 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
 
 void Engine::Update(float dt) {
     if (currentState != PLAYING) return;
+    if (sideChoicePending_ || sidePopupOpen_) return;   // 等待游戏内选阵营
 
     // E 键用于拆包（按住）
     const Uint8* kbNow = SDL_GetKeyboardState(nullptr);
@@ -753,6 +810,76 @@ void Engine::Update(float dt) {
 }
 
 // ============================================================================
+// 地图选择 → 加载 → 进入对局
+// ============================================================================
+
+void Engine::BeginMatchLoad(MatchMode mode, const std::string& mapRel, Team team) {
+    pendingMatchMapRel_ = mapRel;
+    pendingPlayerTeam_ = team;
+    currentMatchMode_ = mode;
+    sideChoicePending_ = (mode == MatchMode::BombDefusal);
+    sidePopupOpen_ = false;
+
+    matchLoadPhase_ = MatchLoadPhase::Zoom;
+    matchLoadElapsed_ = 0.0f;
+    matchLoadMapStarted_ = false;
+    matchZoomTex_ = nullptr;
+    matchZoomRectValid_ = (mode == MatchMode::BombDefusal && mapPreviewRectValid_);
+
+    if (mode == MatchMode::BombDefusal &&
+        mapSelectIndex_ >= 0 && mapSelectIndex_ < kMapCatalogCount) {
+        matchZoomTex_ = static_cast<SDL_Texture*>(mapPreviewTex_[mapSelectIndex_]);
+    }
+    if (matchZoomRectValid_) {
+        for (int i = 0; i < 4; ++i) matchZoomRect_[i] = mapPreviewRect_[i];
+    } else {
+        // 没有回调到卡片矩形时，从屏幕中部的小窗口放大，避免直接硬切。
+        matchZoomRect_[0] = logicalW_ * 0.36f;
+        matchZoomRect_[1] = logicalH_ * 0.30f;
+        matchZoomRect_[2] = logicalW_ * 0.64f;
+        matchZoomRect_[3] = logicalH_ * 0.62f;
+        matchZoomRectValid_ = true;
+    }
+
+    // 这里只是开始动画，真正 LoadMap/初始化对局放到黑屏阶段。
+    transitionKind_ = TransitionKind::None;
+    transitionElapsed_ = 0.0f;
+    buyMenuOpen_ = false;
+    SDL_SetRelativeMouseMode(SDL_FALSE);
+    SDL_ShowCursor(SDL_ENABLE);
+}
+
+void Engine::DrawMatchZoomOverlay() {
+    if (matchLoadPhase_ != MatchLoadPhase::Zoom || !matchZoomRectValid_) return;
+
+    const float raw = std::clamp(matchLoadElapsed_ / matchLoadZoomDuration_, 0.0f, 1.0f);
+    const float ease = 1.0f - std::pow(1.0f - raw, 3.0f);
+    const float W = static_cast<float>(logicalW_);
+    const float H = static_cast<float>(logicalH_);
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, static_cast<Uint8>(ease * 170.0f));
+    SDL_Rect full = { 0, 0, logicalW_, logicalH_ };
+    SDL_RenderFillRect(renderer, &full);
+
+    if (matchZoomTex_) {
+        const float x0 = matchZoomRect_[0] + (0.0f - matchZoomRect_[0]) * ease;
+        const float y0 = matchZoomRect_[1] + (0.0f - matchZoomRect_[1]) * ease;
+        const float x1 = matchZoomRect_[2] + (W - matchZoomRect_[2]) * ease;
+        const float y1 = matchZoomRect_[3] + (H - matchZoomRect_[3]) * ease;
+
+        SDL_FRect dst = { x0, y0, x1 - x0, y1 - y0 };
+        SDL_SetTextureBlendMode(matchZoomTex_, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureAlphaMod(matchZoomTex_, 255);
+        SDL_RenderCopyF(renderer, matchZoomTex_, nullptr, &dst);
+    }
+
+    // 放大尾声压到全黑，给加载阶段留出纯黑底。
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, static_cast<Uint8>(ease * 255.0f));
+    SDL_RenderFillRect(renderer, &full);
+}
+
+// ============================================================================
 // 页面转场：双离屏纹理 + 上一帧快照合成
 // ============================================================================
 
@@ -780,52 +907,20 @@ bool Engine::EnsureSceneTextures(int w, int h) {
             return false;
         }
         SDL_SetTextureBlendMode(sceneTex_[i], SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(sceneTex_[i], SDL_ScaleModeLinear);
     }
     return true;
 }
 
 void Engine::BeginTransition(GameState from, GameState to) {
+    (void)from;
+    (void)to;
+    // 菜单/结算等所有普通页面统一使用同一套黑场软切。
+    // 地图选择后的加载转场由 MatchLoadPhase 单独处理。
     transitionElapsed_ = 0.0f;
     transitionSlideDir_ = 1;
-
-    auto menuDepth = [](GameState s) {
-        switch (s) {
-            case MAIN_MENU:    return 0;
-            case MAP_SELECT:   return 1;
-            case SIDE_SELECT:  return 2;
-            default:           return 1;
-        }
-    };
-
-    if (to == PLAYING && (from == SIDE_SELECT || from == MAP_SELECT)) {
-        transitionKind_ = TransitionKind::GoldWipe;
-        transitionDuration_ = 0.30f;
-    } else if ((from == PLAYING && to == PAUSED) ||
-               (from == PAUSED && to == PLAYING)) {
-        transitionKind_ = TransitionKind::PauseFreeze;
-        transitionDuration_ = 0.16f;
-    } else if (from == MAP_SELECT && to == SIDE_SELECT) {
-        transitionKind_ = TransitionKind::MapZoom;
-        transitionDuration_ = 0.28f;
-    } else if (to == SETTINGS || to == HISTORY) {
-        // 设置 / 历史记录从右侧抽屉式进入
-        transitionKind_ = TransitionKind::Slide;
-        transitionDuration_ = 0.20f;
-        transitionSlideDir_ = 1;
-    } else if (from == SETTINGS || from == HISTORY) {
-        transitionKind_ = TransitionKind::Slide;
-        transitionDuration_ = 0.20f;
-        transitionSlideDir_ = -1;
-    } else if ((from == MAIN_MENU || from == MAP_SELECT || from == SIDE_SELECT) &&
-               (to == MAIN_MENU || to == MAP_SELECT || to == SIDE_SELECT) &&
-               from != to) {
-        transitionKind_ = TransitionKind::Slide;
-        transitionDuration_ = 0.22f;
-        transitionSlideDir_ = (menuDepth(to) >= menuDepth(from)) ? 1 : -1;
-    } else {
-        transitionKind_ = TransitionKind::Fade;
-        transitionDuration_ = 0.20f;
-    }
+    transitionKind_ = TransitionKind::Fade;
+    transitionDuration_ = 0.9f;
 }
 
 void Engine::DrawTransition(SDL_Texture* oldTex, SDL_Texture* newTex) {
@@ -836,7 +931,7 @@ void Engine::DrawTransition(SDL_Texture* oldTex, SDL_Texture* newTex) {
     const float raw = (transitionDuration_ > 0.0f)
         ? std::clamp(transitionElapsed_ / transitionDuration_, 0.0f, 1.0f)
         : 1.0f;
-    const float ease = 1.0f - std::pow(1.0f - raw, 3.0f);
+    const float ease = raw * raw * (3.0f - 2.0f * raw);   // smoothstep：首尾更柔
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
@@ -856,9 +951,28 @@ void Engine::DrawTransition(SDL_Texture* oldTex, SDL_Texture* newTex) {
 
     switch (transitionKind_) {
         case TransitionKind::Fade: {
-            // 新页面轻微放大浮入，旧页面淡出
-            drawScene(newTex, 1.0f, 0.985f + 0.015f * ease, 0.0f, 0.0f);
-            drawScene(oldTex, 1.0f - ease, 1.0f, 0.0f, 0.0f);
+            // 先完全压到纯黑并保持一小段，再切到新页面；
+            // 避免“还没黑透就露出下一页”。
+            SDL_Rect full = { 0, 0, W, H };
+
+            if (raw < kMenuFadeOutEnd) {
+                drawScene(oldTex, 1.0f, 1.0f, 0.0f, 0.0f);
+                const float t = raw / kMenuFadeOutEnd;
+                const float a = t * t * (3.0f - 2.0f * t);
+                SDL_SetRenderDrawColor(renderer, 0, 0, 0,
+                    static_cast<Uint8>(std::clamp(a, 0.0f, 1.0f) * 255.0f));
+                SDL_RenderFillRect(renderer, &full);
+            } else if (raw < kMenuFadeInStart) {
+                SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+                SDL_RenderFillRect(renderer, &full);
+            } else {
+                drawScene(newTex, 1.0f, 1.0f, 0.0f, 0.0f);
+                const float t = (raw - kMenuFadeInStart) / (1.0f - kMenuFadeInStart);
+                const float a = 1.0f - t * t * (3.0f - 2.0f * t);
+                SDL_SetRenderDrawColor(renderer, 0, 0, 0,
+                    static_cast<Uint8>(std::clamp(a, 0.0f, 1.0f) * 255.0f));
+                SDL_RenderFillRect(renderer, &full);
+            }
             break;
         }
         case TransitionKind::Slide: {
@@ -924,15 +1038,60 @@ void Engine::Render() {
     lastRenderTicks_ = nowTicks;
     frameDt = std::clamp(frameDt, 0.0f, 0.05f);
 
+    // 进对局前的三段式：地图卡放大压黑 → 黑屏加载 → 游戏淡入
+    if (matchLoadPhase_ == MatchLoadPhase::Zoom) {
+        matchLoadElapsed_ += frameDt;
+        if (matchLoadElapsed_ >= matchLoadZoomDuration_) {
+            matchLoadPhase_ = MatchLoadPhase::Loading;
+            matchLoadElapsed_ = 0.0f;
+        }
+    } else if (matchLoadPhase_ == MatchLoadPhase::Loading) {
+        matchLoadElapsed_ += frameDt;
+    } else if (matchLoadPhase_ == MatchLoadPhase::FadeIn) {
+        matchLoadElapsed_ += frameDt;
+        if (matchLoadElapsed_ >= matchLoadFadeDuration_) {
+            matchLoadPhase_ = MatchLoadPhase::None;
+            matchLoadElapsed_ = 0.0f;
+            if (sideChoicePending_) {
+                sidePopupOpen_ = true;
+                // 弹窗需要绝对鼠标和可见光标
+                SDL_SetRelativeMouseMode(SDL_FALSE);
+                SDL_ShowCursor(SDL_ENABLE);
+            }
+        }
+    }
+
+    // 纯黑窗口前不要渲染新页面；旧页面快照继续显示。
+    // 这样新页面的首帧刷新发生在 [kMenuFadeOutEnd, kMenuFadeInStart) 的纯黑阶段。
+    const float menuProgress = (transitionDuration_ > 0.0f)
+        ? std::clamp(transitionElapsed_ / transitionDuration_, 0.0f, 1.0f)
+        : 1.0f;
+
+    // 重新开始的选阵营弹窗也属于“下一页”：等转场进入纯黑段才打开/绘制。
+    if (sideChoicePending_ && !sidePopupOpen_ &&
+        transitionKind_ != TransitionKind::None &&
+        menuProgress >= kMenuFadeOutEnd) {
+        sidePopupOpen_ = true;
+        SDL_SetRelativeMouseMode(SDL_FALSE);
+        SDL_ShowCursor(SDL_ENABLE);
+    }
+
+    const bool holdOldPage =
+        (matchLoadPhase_ == MatchLoadPhase::None &&
+         transitionKind_ == TransitionKind::Fade &&
+         menuProgress < kMenuFadeOutEnd);
+
     // 记录本帧实际绘制的是哪个页面；按钮在绘制过程中触发切页时，
     // 下一帧才会用旧页面快照开始转场。
     const GameState renderedState = currentState;
     const bool sceneReady = EnsureSceneTextures(logicalW_, logicalH_);
 
-    if (sceneReady && sceneValid_ && renderedState != lastRenderedState_) {
+    if (matchLoadPhase_ == MatchLoadPhase::None &&
+        sceneReady && sceneValid_ && renderedState != lastRenderedState_) {
         BeginTransition(lastRenderedState_, renderedState);
     }
-    if (transitionKind_ != TransitionKind::None) {
+    if (matchLoadPhase_ == MatchLoadPhase::None &&
+        transitionKind_ != TransitionKind::None) {
         transitionElapsed_ += frameDt;
         if (transitionElapsed_ >= transitionDuration_) {
             transitionKind_ = TransitionKind::None;
@@ -940,6 +1099,12 @@ void Engine::Render() {
     }
 
     const bool transitioning = IsTransitionActive();
+    const bool matchLoading = (matchLoadPhase_ == MatchLoadPhase::Loading);
+    if (sidePopupOpen_) {
+        // 弹窗期间持续保证绝对鼠标 + 可见光标（对局开始时会切到相对鼠标）
+        SDL_SetRelativeMouseMode(SDL_FALSE);
+        SDL_ShowCursor(SDL_ENABLE);
+    }
     ImGuiIO& io = ImGui::GetIO();
     if (transitioning) {
         io.ConfigFlags |= ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoKeyboard;
@@ -950,31 +1115,31 @@ void Engine::Render() {
     if (sceneReady) {
         SDL_SetRenderTarget(renderer, sceneTex_[sceneWrite_]);
     }
-    SDL_SetRenderDrawColor(renderer, 18, 26, 36, 255);
+    if (matchLoading) {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    } else {
+        SDL_SetRenderDrawColor(renderer, 18, 26, 36, 255);
+    }
     SDL_RenderClear(renderer);
 
     const bool gameplayVisible = (currentState == PLAYING || currentState == PAUSED ||
                                   currentState == EXIT_CONFIRM);
 
-    if (gameplayVisible) {
+    if (gameplayVisible && !holdOldPage) {
         cs2dGame->Render(logicalW_, logicalH_);
         cs2dOverlay.Render(cs2dRenderer.get(), cs2dGame.get(), logicalW_, logicalH_);
     }
 
     imGuiUI->BeginFrame();
 
-    if (currentState == SIDE_SELECT) {
-        GameUI::SideSelectCtx sctx;
-        // 用地图目录里的显示名
-        sctx.mapName = "古代遗迹";
-        for (int i = 0; i < kMapCatalogCount; ++i) {
-            if (pendingSideMapRel_.find(kMapCatalog[i].tmj) != std::string::npos ||
-                std::string(kMapCatalog[i].tmj) == pendingSideMapRel_) {
-                sctx.mapName = kMapCatalog[i].name;
-                break;
-            }
-        }
-        gameUI->DrawSideSelect(sctx, BuildActions());
+    if (!holdOldPage) {
+    if (matchLoading) {
+        const bool llmWaiting =
+            !llmInitialized_ || (llmController_ && !llmController_->IsReady());
+        gameUI->DrawLoadingOverlay(
+            llmWaiting ? "正在加载战术服务器..." : "正在准备战场...",
+            llmWaiting ? "首次启动需要等待模型加载，请稍候"
+                       : "正在同步地图、出生点与战术计划");
     } else if (currentState == HISTORY) {
         GameUI::HistoryCtx hctx;
         hctx.records = &history_;
@@ -1112,13 +1277,30 @@ void Engine::Render() {
             }
         }
 
-        gameUI->DrawInGame(ictx, imGuiUI.get());
+        if (!sideChoicePending_ && !sidePopupOpen_) {
+            gameUI->DrawInGame(ictx, imGuiUI.get());
+        }
+    }
+
+    // 进入游戏后的阵营选择弹窗（游戏画面在背后，HUD 暂时隐藏）
+    if (sidePopupOpen_) {
+        GameUI::SideSelectCtx sctx;
+        sctx.mapName = "古代遗迹";
+        for (int i = 0; i < kMapCatalogCount; ++i) {
+            if (currentMapRel_.find(kMapCatalog[i].tmj) != std::string::npos ||
+                std::string(kMapCatalog[i].tmj) == currentMapRel_) {
+                sctx.mapName = kMapCatalog[i].name;
+                break;
+            }
+        }
+        gameUI->DrawSidePopup(sctx, BuildActions());
     }
 
     // 买枪菜单（覆盖在 HUD 之上）
-    if (buyMenuOpen_ && currentState == PLAYING) {
+    if (buyMenuOpen_ && currentState == PLAYING && !sidePopupOpen_ && !sideChoicePending_) {
         RenderBuyMenu();
     }
+    }   // !holdOldPage
 
     imGuiUI->EndFrame();
 
@@ -1129,14 +1311,45 @@ void Engine::Render() {
         SDL_RenderClear(renderer);
         SDL_Texture* oldTex = sceneValid_ ? sceneTex_[1 - sceneWrite_] : nullptr;
         DrawTransition(oldTex, sceneTex_[sceneWrite_]);
+
+        if (matchLoadPhase_ == MatchLoadPhase::Zoom) {
+            DrawMatchZoomOverlay();
+        } else if (matchLoadPhase_ == MatchLoadPhase::FadeIn) {
+            const float raw = (matchLoadFadeDuration_ > 0.0f)
+                ? std::clamp(matchLoadElapsed_ / matchLoadFadeDuration_, 0.0f, 1.0f)
+                : 1.0f;
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0,
+                static_cast<Uint8>((1.0f - raw) * 255.0f));
+            SDL_Rect full = { 0, 0, logicalW_, logicalH_ };
+            SDL_RenderFillRect(renderer, &full);
+        }
     }
 
     SDL_RenderPresent(renderer);
 
     lastRenderedState_ = renderedState;
-    if (sceneReady) {
+    const bool holdTransitionSnapshot =
+        (matchLoadPhase_ == MatchLoadPhase::None &&
+         transitionKind_ != TransitionKind::None);
+    if (sceneReady && !holdTransitionSnapshot) {
         sceneValid_ = true;
         sceneWrite_ ^= 1;
+    }
+
+    // 黑屏阶段结束后才真正加载地图/进入对局；blocking 加载期间画面保持黑屏。
+    if (matchLoadPhase_ == MatchLoadPhase::Loading && !matchLoadMapStarted_) {
+        if (matchLoadElapsed_ >= matchLoadMinHold_) {
+            matchLoadMapStarted_ = true;
+            EnsureLlmInitialized();
+            StartMatchWithMap(currentMatchMode_, pendingMatchMapRel_, pendingPlayerTeam_);
+            if (currentState == PLAYING) {
+                matchLoadPhase_ = MatchLoadPhase::FadeIn;
+                matchLoadElapsed_ = 0.0f;
+                lastRenderedState_ = PLAYING;
+            } else {
+                matchLoadPhase_ = MatchLoadPhase::None;
+            }
+        }
     }
 
     SDL_Delay(1000 / std::max(1, targetFPS_));
@@ -1228,6 +1441,16 @@ void Engine::RenderBuyMenu() {
             cs2dGame->TryBuy(static_cast<WeaponId>(id), audioManager.get());
         }
     });
+}
+
+void Engine::EnsureLlmInitialized() {
+    if (llmInitialized_) return;
+    llmInitialized_ = true;
+
+    // --coach=rule 时不需要拉起 LLM，避免白白占用显存/启动时间。
+    if (!coachLlmEnabled_) return;
+
+    InitLLM();
 }
 
 void Engine::InitLLM() {

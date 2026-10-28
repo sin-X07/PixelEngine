@@ -23,6 +23,7 @@ public:
         std::function<void(int)>           startMatchOnMap;    // 指定地图开局（kMapCatalog 索引）
         std::function<void(int)>           chooseSide;         // 0=T, 1=CT（爆破模式）
         std::function<void(int)>           selectMap;          // 地图选择光标移动
+        std::function<void(float,float,float,float)> setMapPreviewRect; // 当前选中地图预览图矩形
         std::function<void()>              resumeGame;        // 暂停页继续
         std::function<void(bool)>          confirmExit;       // 退出游戏(false) / 退出桌面(true)
         std::function<void()>              quitApp;           // 确认框"退出"
@@ -173,10 +174,15 @@ public:
     };
     void DrawHistory(const HistoryCtx& ctx, const Actions& actions);
 
-    // 阵营选择界面（爆破模式）
+    // 阵营选择弹窗（爆破模式，进入游戏后弹出）
     struct SideSelectCtx { std::string mapName; };
+    // 旧版独立选阵营页；当前流程不再进入，仅保留兼容实现。
     void DrawSideSelect(const SideSelectCtx& ctx, const Actions& actions);
+    // 进入游戏后的阵营选择弹窗（半透明遮罩 + 居中面板）
+    void DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions);
     void DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI);
+    // 进入对局前的黑屏加载提示（地图 / LLM server）
+    void DrawLoadingOverlay(const char* title, const char* subtitle);
 
     // ---- 买枪菜单 ----
     struct BuyItem {

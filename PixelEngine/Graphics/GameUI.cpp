@@ -9,6 +9,7 @@
 #include "ImGuiUI.hpp"
 #include "../CS2D/CS2DGame.hpp"   // MatchMode
 #include <cstdio>
+#include <cmath>
 
 // ============================================================================
 // 私有 helper
@@ -209,7 +210,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                               viewport->WorkPos.y + yLocal, 255, 255, 255, 255, 26);
         DrawTitleAccent(ImGui::GetWindowDrawList(), centerX,
                         viewport->WorkPos.y + yLocal + UI(34.0f), UI(36.0f));
-        DrawImGuiTextCentered(imGuiUI_, "当前对局进度将会被保存",
+        DrawImGuiTextCentered(imGuiUI_, "当前对局进度将不会被保存",
                               viewport->WorkPos.y + yLocal + titleH, 200, 200, 200, 255, 18);
 
         const float btnY = yLocal + titleH + subH + gap1 + gap2;
@@ -488,6 +489,9 @@ void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
             dl->AddImage(reinterpret_cast<ImTextureID>(ctx.previewTex[i]), img0, img1);
         } else {
             dl->AddRectFilled(img0, img1, IM_COL32(34, 44, 56, 255), 6.0f);
+        }
+        if (selected && actions.setMapPreviewRect) {
+            actions.setMapPreviewRect(img0.x, img0.y, img1.x, img1.y);
         }
         // 预览图暗角 + 描边
         dl->AddRect(img0, img1, IM_COL32(255, 255, 255, 28), 6.0f, 0, 1.0f);
@@ -837,6 +841,119 @@ void GameUI::DrawSideSelect(const SideSelectCtx& ctx, const Actions& actions) {
     ImGui::End();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
+}
+
+void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+
+    // 游戏画面仍然可见，只压暗；弹窗在窗口层，HUD 在弹窗期间隐藏。
+    ImGui::GetBackgroundDrawList()->AddRectFilled(
+        vp->WorkPos, ImVec2(vp->WorkPos.x + vp->WorkSize.x,
+                            vp->WorkPos.y + vp->WorkSize.y),
+        IM_COL32(4, 7, 10, 178));
+
+    const float w = UI(680.0f);
+    const float h = UI(330.0f);
+    ImGui::SetNextWindowPos(
+        ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
+               vp->WorkPos.y + vp->WorkSize.y * 0.5f),
+        ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.043f, 0.059f, 0.078f, 0.97f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.90f, 0.72f, 0.30f, 0.85f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, UI(10.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, UI(1.5f));
+    ImGui::Begin("##sidePopup", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings);
+
+    const char* title = "选择阵营";
+    ImFont* titleFont = imGuiUI_ ? imGuiUI_->GetFont(static_cast<int>(UI(28.0f))) : nullptr;
+    if (titleFont) ImGui::PushFont(titleFont);
+    const float titleW = ImGui::CalcTextSize(title).x;
+    ImGui::SetCursorPos(ImVec2((w - titleW) * 0.5f, UI(20.0f)));
+    ImGui::TextColored(ImVec4(0.96f, 0.93f, 0.82f, 1.0f), "%s", title);
+    if (titleFont) ImGui::PopFont();
+
+    if (!ctx.mapName.empty()) {
+        const std::string sub = "地图：" + ctx.mapName;
+        const float subW = ImGui::CalcTextSize(sub.c_str()).x;
+        ImGui::SetCursorPos(ImVec2((w - subW) * 0.5f, UI(62.0f)));
+        ImGui::TextDisabled("%s", sub.c_str());
+    }
+
+    const float btnW = (w - UI(72.0f)) * 0.5f;
+    const float btnH = UI(112.0f);
+    const float btnY = UI(116.0f);
+
+    auto sideCard = [&](int side, const char* name, const char* role,
+                        const char* desc, ImVec4 accent, float x) {
+        ImGui::SetCursorPos(ImVec2(x, btnY));
+        ImGui::BeginGroup();
+        ImGui::TextColored(accent, "%s", name);
+        ImGui::TextDisabled("%s", role);
+        ImGui::TextWrapped("%s", desc);
+        ImGui::Dummy(ImVec2(0.0f, UI(8.0f)));
+        ImGui::PushStyleColor(ImGuiCol_Button, accent);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                              ImVec4(accent.x + 0.08f, accent.y + 0.08f, accent.z + 0.08f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, accent);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.06f, 0.08f, 0.10f, 1.0f));
+        char label[64];
+        snprintf(label, sizeof(label), "以 %s 开始", side == 0 ? "T" : "CT");
+        if (ImGui::Button(label, ImVec2(btnW, UI(40.0f)))) {
+            if (actions.playClick) actions.playClick();
+            if (actions.chooseSide) actions.chooseSide(side);
+        }
+        ImGui::PopStyleColor(4);
+        ImGui::EndGroup();
+    };
+
+    sideCard(0, "T  恐怖分子", "进攻方 · 携带 C4",
+             "拿到炸弹后按住 E 在包点安装", ImVec4(0.94f, 0.67f, 0.27f, 1.0f),
+             UI(24.0f));
+    sideCard(1, "CT  反恐精英", "防守方 · 拆除 C4",
+             "阻止下包，或在包点按住 E 拆弹", ImVec4(0.35f, 0.67f, 0.96f, 1.0f),
+             UI(24.0f) + btnW + UI(24.0f));
+
+    ImGui::SetCursorPos(ImVec2(0.0f, h - UI(24.0f)));
+    const char* hint = "选择后将重建首回合（不重新加载地图）";
+    const float hintW = ImGui::CalcTextSize(hint).x;
+    ImGui::SetCursorPosX((w - hintW) * 0.5f);
+    ImGui::TextDisabled("%s", hint);
+
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
+}
+
+void GameUI::DrawLoadingOverlay(const char* title, const char* subtitle) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const float cx = vp->WorkPos.x + vp->WorkSize.x * 0.5f;
+    const float cy = vp->WorkPos.y + vp->WorkSize.y * 0.5f;
+
+    DrawImGuiTextCentered(imGuiUI_, title, cy - UI(20.0f),
+                          232, 238, 234, 255, 24);
+    DrawImGuiTextCentered(imGuiUI_, subtitle, cy + UI(18.0f),
+                          145, 170, 190, 240, 15);
+
+    // 缓慢扫过的金色细线，避免黑屏看起来像卡死
+    const float barW = UI(210.0f);
+    const float barX = cx - barW * 0.5f;
+    const float barY = cy + UI(44.0f);
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    dl->AddRectFilled(ImVec2(barX, barY), ImVec2(barX + barW, barY + UI(3.0f)),
+                      IM_COL32(255, 255, 255, 26), UI(2.0f));
+
+    const float segW = UI(64.0f);
+    const float p = std::fmod(static_cast<float>(ImGui::GetTime()) * 0.65f, 1.0f);
+    const float segX = barX + (barW + segW) * p - segW;
+    const float x0 = std::max(barX, segX);
+    const float x1 = std::min(barX + barW, segX + segW);
+    if (x1 > x0) {
+        dl->AddRectFilled(ImVec2(x0, barY), ImVec2(x1, barY + UI(3.0f)),
+                          IM_COL32(230, 185, 80, 220), UI(2.0f));
+    }
 }
 
 void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {

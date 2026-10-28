@@ -479,6 +479,8 @@ public:
     bool IsMatchOver()   const { return teams_.MatchOver(); }
     // ---- 玩家阵营（爆破模式可选 T / CT）----
     void SetPlayerTeam(Team t) { desiredPlayerTeam_ = t; }
+    // 选阵营后重建首回合（地图保持已加载，不重新 LoadMap）
+    void RestartMatchWithTeam(Team t);
     Team GetPlayerTeam() const { return desiredPlayerTeam_; }
     bool PlayerHasC4() const {
         return bombCarrier_ == -1 && player_.team == Team::T &&

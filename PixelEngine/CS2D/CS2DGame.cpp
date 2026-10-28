@@ -144,6 +144,11 @@ void CS2DGame::ResetToNewMatch() {
     }
 }
 
+void CS2DGame::RestartMatchWithTeam(Team t) {
+    desiredPlayerTeam_ = t;
+    ResetToNewMatch();
+}
+
 void CS2DGame::Reset() {
     ResetToNewMatch();
 }

@@ -86,14 +86,36 @@ private:
     void BeginTransition(GameState from, GameState to);
     void DrawTransition(SDL_Texture* oldTex, SDL_Texture* newTex);
     bool IsTransitionActive() const {
-        return transitionKind_ != TransitionKind::None &&
-               transitionElapsed_ < transitionDuration_;
+        return (transitionKind_ != TransitionKind::None &&
+                transitionElapsed_ < transitionDuration_) ||
+               matchLoadPhase_ != MatchLoadPhase::None;
     }
+
+    // ---- 地图选择 → 加载 → 进入对局 ----
+    // 以地图卡预览图为起点放大到全屏，压黑；LLM 就绪/至少一帧黑屏后再淡入游戏。
+    enum class MatchLoadPhase { None, Zoom, Loading, FadeIn };
+    MatchLoadPhase matchLoadPhase_ = MatchLoadPhase::None;
+    float        matchLoadElapsed_ = 0.0f;
+    float        matchLoadZoomDuration_ = 0.55f;
+    float        matchLoadFadeDuration_ = 0.35f;
+    float        matchLoadMinHold_ = 0.30f;
+    bool         matchLoadMapStarted_ = false;
+    SDL_Texture* matchZoomTex_ = nullptr;
+    float        matchZoomRect_[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    bool         matchZoomRectValid_ = false;
+    float        mapPreviewRect_[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    bool         mapPreviewRectValid_ = false;
+    std::string  pendingMatchMapRel_;
+    bool         sideChoicePending_ = false;
+    bool         sidePopupOpen_ = false;
+    void BeginMatchLoad(MatchMode mode, const std::string& mapRel, Team team);
+    void DrawMatchZoomOverlay();
 
     // 内部方法
     void HandleInput();
     GameUI::Actions BuildActions();
     void StartMatch(MatchMode mode);   // 按模式加载对应地图并开局
+    void RestartCurrentMatch();        // 暂停菜单“重新开始”：沿用地图，重置回合
     void StartMatchWithMap(MatchMode mode, const std::string& mapRel,
                            Team playerTeam = Team::CT);  // 指定地图开局
     // 对局历史
@@ -104,7 +126,6 @@ private:
     void RecordMatchHistory(bool abandoned);
     int  mapSelectIndex_ = 0;                                            // 地图选择光标
     std::string pendingStartMap_;        // --map=<id> 指定的地图
-    std::string pendingSideMapRel_;      // 选阵营时记住待开局地图
     std::string currentMapRel_;          // 当前对局地图（重新开始时沿用）
     Team        pendingPlayerTeam_ = Team::CT;
     bool openMapSelectOnStart_ = false;  // --mapselect
@@ -114,6 +135,8 @@ private:
                              nullptr, nullptr, nullptr, nullptr};  // 地图预览图
     void LoadAudioConfig();
     void InitLLM();
+    void EnsureLlmInitialized();
+    bool llmInitialized_ = false;
     void ApplySavedSettings();   // 把保存的设置应用到运行时对象
     void Update(float dt);
     void Render();

@@ -11,7 +11,6 @@ enum GameState {
     MAIN_MENU,      // 主菜单
     MAP_SELECT,     // 选择地图（爆破模式）
     HISTORY,        // 历史记录
-    SIDE_SELECT,    // 选择阵营（爆破模式）
     SETTINGS,       // 设置
     PLAYING,        // 对局中
     PAUSED,         // 暂停
