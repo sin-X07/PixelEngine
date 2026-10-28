@@ -632,11 +632,11 @@ void Menu3D::DrawSpotlight() {
     const float targetY = (targetIndex < 0) ? 0.05f
                         : (targetIndex < 2) ? 1.15f : 0.55f;
 
-    // 发射源固定在场景上方中央，只让光锥/聚光灯方向跟随目标。
-    const GLfloat pos[] = { 0.0f, 6.4f, 0.0f, 1.0f };
+    // 发射源在 3D 空间中保持高于地面，选图过场时沿屏幕竖直方向移动
+    const GLfloat pos[] = { 0.0f, 6.4f, spotSourceZ_, 1.0f };
     float dirX = spotX_;
     float dirY = targetY - 6.4f;
-    float dirZ = spotZ_;
+    float dirZ = spotZ_ - spotSourceZ_;
     const float dirLen = std::sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
     if (dirLen > 1e-5f) { dirX /= dirLen; dirY /= dirLen; dirZ /= dirLen; }
     const GLfloat dir[] = { dirX, dirY, dirZ };
@@ -653,14 +653,14 @@ void Menu3D::DrawSpotlight() {
     glDepthMask(GL_FALSE);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 
-    // 可见光锥：顶端固定在 (0, 6.2, 0)，底端跟随目标
+    // 可见光锥：顶端跟随灯源，底端跟随目标
     glColor4f(0.72f, 0.86f, 1.0f, 0.24f * si);
     glBegin(GL_QUAD_STRIP);
     constexpr int kSegments = 24;
     for (int i = 0; i <= kSegments; ++i) {
         const float a = 2.0f * kPi * static_cast<float>(i) / kSegments;
         const float topR = 0.045f;
-        glVertex3f(std::cos(a) * topR, 6.2f, std::sin(a) * topR);
+        glVertex3f(std::cos(a) * topR, 6.2f, spotSourceZ_ + std::sin(a) * topR);
         glVertex3f(spotX_ + std::cos(a) * targetRadius, 0.02f,
                    spotZ_ + std::sin(a) * targetRadius);
     }

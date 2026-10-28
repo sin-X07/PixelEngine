@@ -1422,6 +1422,7 @@ void Engine::Render() {
                 mapOverlayLightProgress_ = cameraProgress;
                 cameraBeamFade_ = 0.0f;
                 menu3D->SetSpotlightIntensity(1.0f);
+                menu3D->SetSpotlightSourceProgress(cameraProgress);
             } else if (mapOverlayOpen_) {
                 menu3D->SetFocusedObject(-1);
                 menu3D->SetHoveredObject(-1);
@@ -1432,6 +1433,7 @@ void Engine::Render() {
                     const float t = raw * raw * (3.0f - 2.0f * raw);
                     menu3D->SetCameraTopDownProgress(1.0f - t);
                     menu3D->SetSpotlightIntensity(1.0f);
+                    menu3D->SetSpotlightSourceProgress(1.0f - t);
                     mapOverlayFade_ = 1.0f - t;
                     mapOverlayBeamFade_ = 0.0f;
                     mapOverlayLightProgress_ = 1.0f - t;
@@ -1444,11 +1446,13 @@ void Engine::Render() {
                         mapOverlayLightProgress_ = 0.0f;
                         menu3D->SetCameraTopDownProgress(0.0f);
                         menu3D->SetSpotlightIntensity(1.0f);
+                        menu3D->SetSpotlightSourceProgress(0.0f);
                         menu3D->SetOverlayMouse(0.0f, 0.0f, false);
                     }
                 } else {
                     menu3D->SetCameraTopDownProgress(1.0f);
                     menu3D->SetSpotlightIntensity(1.0f);
+                    menu3D->SetSpotlightSourceProgress(1.0f);
                     mapOverlayBeamFade_ = 0.0f;
                     cameraBeamFade_ = 0.0f;
                     mapOverlayFade_ = std::clamp(
@@ -1459,6 +1463,7 @@ void Engine::Render() {
             } else {
                 menu3D->SetCameraTopDownProgress(0.0f);
                 menu3D->SetSpotlightIntensity(1.0f);
+                menu3D->SetSpotlightSourceProgress(0.0f);
                 menu3D->SetOverlayMouse(0.0f, 0.0f, false);
                 cameraBeamFade_ = 0.0f;
                 mapOverlayBeamFade_ = 0.0f;
