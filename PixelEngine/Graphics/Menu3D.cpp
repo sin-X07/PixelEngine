@@ -284,9 +284,9 @@ void Menu3D::PickChickenTarget(int index) {
     } else if (index == 2) {
         minX = 1.7f; maxX = 3.6f;
     } else {
-        // 中间的小鸡始终在按钮组下方，避免被按钮遮挡
-        minX = -0.8f; maxX = 0.8f;
-        minZ = 6.7f; maxZ = 7.5f;
+        // 中间的小鸡始终在按钮组正下方；近处透视会放大横向位移，所以限制在很小范围
+        minX = -0.12f; maxX = 0.12f;
+        minZ = 6.9f; maxZ = 7.5f;
     }
     s.targetX = minX + (maxX - minX) * dist01(chickenRng_);
     s.targetZ = minZ + (maxZ - minZ) * dist01(chickenRng_);
