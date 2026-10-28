@@ -848,7 +848,8 @@ void Engine::OpenMapOverlay(MatchMode mode) {
     mapOverlayClosing_ = false;
     mapOverlayStartMs_ = SDL_GetTicks64();
     mapOverlayFade_ = 0.0f;
-    mapOverlayLightProgress_ = 0.0f;
+    // 相机过场期间光源已经移动到底部，浮层打开时保持在底部。
+    mapOverlayLightProgress_ = 1.0f;
     mapPreviewRectValid_ = false;
     currentState = MAIN_MENU;
 }
@@ -1414,6 +1415,7 @@ void Engine::Render() {
                 menu3D->SetCameraTopDownProgress(cameraProgress);
                 menu3D->SetFocusedObject(-1);
                 menu3D->SetHoveredObject(-1);
+                mapOverlayLightProgress_ = cameraProgress;
             } else if (mapOverlayOpen_) {
                 menu3D->SetFocusedObject(-1);
                 menu3D->SetHoveredObject(-1);
@@ -1437,9 +1439,7 @@ void Engine::Render() {
                     mapOverlayFade_ = std::clamp(
                         static_cast<float>(SDL_GetTicks64() - mapOverlayStartMs_) / 350.0f,
                         0.0f, 1.0f);
-                    mapOverlayLightProgress_ = std::clamp(
-                        static_cast<float>(SDL_GetTicks64() - mapOverlayStartMs_) / 650.0f,
-                        0.0f, 1.0f);
+                    mapOverlayLightProgress_ = 1.0f;
                 }
             } else {
                 menu3D->SetCameraTopDownProgress(0.0f);
@@ -1473,7 +1473,7 @@ void Engine::Render() {
                 menu3D->SetFocusedObject(-1);
             }
             }
-            menu3D->SetSpotlightSuppressed(mapOverlayOpen_);
+            menu3D->SetSpotlightSuppressed(menuCameraTransition_ || mapOverlayOpen_);
             menu3D->Render(frameDt);
             if (menu3D->GetTexture()) {
                 ctx.backdropTex = menu3D->GetTexture();

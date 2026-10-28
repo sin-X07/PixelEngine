@@ -75,6 +75,70 @@ void DrawTitleAccent(ImDrawList* dl, float centerX, float y, float halfW) {
                       Palette::U32(Palette::Accent()));
 }
 
+// 选图浮层的体积光：灯源随进度上下移动，目标处用多层光斑融合，
+// 不绘制中心细线，也不吸附到卡片/按钮。
+void DrawMapBeam(ImDrawList* dl, float lightProgress,
+                 const ImVec2& wp, const ImVec2& ws,
+                 float fade, bool overInteractive) {
+    if (fade <= 0.02f) return;
+    const float lp = std::clamp(lightProgress, 0.0f, 1.0f);
+    const ImVec2 origin(wp.x + ws.x * 0.5f,
+                        wp.y + (ws.y - UI(8.0f)) * lp + UI(4.0f));
+    ImVec2 target = ImGui::GetIO().MousePos;
+    target.x = std::clamp(target.x, wp.x + UI(12.0f), wp.x + ws.x - UI(12.0f));
+    target.y = std::clamp(target.y, wp.y + UI(12.0f), wp.y + ws.y - UI(24.0f));
+
+    ImVec2 dir(target.x - origin.x, target.y - origin.y);
+    const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+    if (len > 1.0f) {
+        dir.x /= len;
+        dir.y /= len;
+        const ImVec2 perp(-dir.y, dir.x);
+        const float farBase = overInteractive ? UI(44.0f) : UI(34.0f);
+
+        // 多层锥体：越靠近中心越亮，形成体积感
+        for (int layer = 0; layer < 3; ++layer) {
+            const float nearHalf = UI(3.5f + layer * 2.0f);
+            const float farHalf = farBase * (1.0f + layer * 0.16f);
+            ImU32 col = IM_COL32(185, 225, 255, static_cast<int>(18 * fade));
+            if (layer == 0) col = IM_COL32(70, 110, 180, static_cast<int>(9 * fade));
+            else if (layer == 1) col = IM_COL32(110, 170, 230, static_cast<int>(14 * fade));
+            dl->AddQuadFilled(
+                ImVec2(origin.x + perp.x * nearHalf, origin.y + perp.y * nearHalf),
+                ImVec2(origin.x - perp.x * nearHalf, origin.y - perp.y * nearHalf),
+                ImVec2(target.x - perp.x * farHalf, target.y - perp.y * farHalf),
+                ImVec2(target.x + perp.x * farHalf, target.y + perp.y * farHalf),
+                col);
+        }
+
+        // 目标处多层柔光，而不是一个生硬实心圆
+        const float baseR = overInteractive ? UI(34.0f) : UI(19.0f);
+        for (int i = 0; i < 6; ++i) {
+            const float t = static_cast<float>(i) / 5.0f;
+            const float r = baseR * (1.0f - t * 0.62f);
+            const int alpha = static_cast<int>((7.0f + t * 34.0f) * fade);
+            const int rr = static_cast<int>(125 + t * 90);
+            const int gg = static_cast<int>(185 + t * 65);
+            const int bb = static_cast<int>(235 + t * 20);
+            dl->AddCircleFilled(target, r, IM_COL32(rr, gg, bb, alpha), 28);
+        }
+        dl->AddCircle(target, baseR * 0.96f,
+                      IM_COL32(170, 220, 255, static_cast<int>(48 * fade)),
+                      32, UI(1.2f));
+    }
+
+    // 灯源本体的多层光晕
+    for (int i = 0; i < 4; ++i) {
+        const float t = static_cast<float>(i) / 3.0f;
+        const float r = UI(18.0f - t * 10.0f);
+        const int alpha = static_cast<int>((8.0f + t * 28.0f) * fade);
+        dl->AddCircleFilled(origin, r, IM_COL32(150, 205, 245, alpha), 24);
+    }
+    dl->AddCircle(origin, UI(19.0f),
+                  IM_COL32(160, 215, 255, static_cast<int>(66 * fade)),
+                  24, UI(1.5f));
+}
+
 } // namespace
 
 void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
@@ -114,6 +178,8 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 Palette::U32(ImVec4(0.02f, 0.03f, 0.045f, 0.50f)),
                 Palette::U32(ImVec4(0.03f, 0.045f, 0.06f, 0.66f)),
                 Palette::U32(ImVec4(0.03f, 0.045f, 0.06f, 0.66f)));
+            DrawMapBeam(ImGui::GetWindowDrawList(), ctx.mapOverlayLightProgress,
+                        wp, ws, 1.0f, false);
         }
         ImGui::End();
         ImGui::PopStyleColor();
@@ -482,7 +548,6 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float fade = std::clamp(ctx.mapOverlayFade, 0.0f, 1.0f);
     const bool interactive = (fade > 0.5f && !ctx.mapOverlayClosing);
-    ImVec2 beamTarget = ImGui::GetIO().MousePos;
     bool beamOverInteractive = false;
 
     if (ctx.backdropTex && ctx.backdropW > 0 && ctx.backdropH > 0) {
@@ -618,35 +683,7 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
     }
 
     // 俯视选图页的探照灯：灯源从顶部逐帧移到屏幕正下方，光束始终跟随鼠标
-    if (fade > 0.02f) {
-        const float lp = std::clamp(ctx.mapOverlayLightProgress, 0.0f, 1.0f);
-        const ImVec2 origin(wp.x + ws.x * 0.5f,
-                            wp.y + (ws.y - UI(8.0f)) * lp + UI(4.0f));
-        ImVec2 target = beamTarget;
-        target.x = std::clamp(target.x, wp.x + UI(12.0f), wp.x + ws.x - UI(12.0f));
-        target.y = std::clamp(target.y, wp.y + UI(12.0f), wp.y + ws.y - UI(24.0f));
-        ImVec2 dir(target.x - origin.x, target.y - origin.y);
-        const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
-        if (len > 1.0f) {
-            dir.x /= len; dir.y /= len;
-            const ImVec2 perp(-dir.y, dir.x);
-            const float halfNear = UI(5.0f);
-            const float halfFar = UI(beamOverInteractive ? 42.0f : 34.0f);
-            const ImU32 beamCol = IM_COL32(150, 215, 255, static_cast<int>(34 * fade));
-            dl->AddQuadFilled(
-                ImVec2(origin.x + perp.x * halfNear, origin.y + perp.y * halfNear),
-                ImVec2(origin.x - perp.x * halfNear, origin.y - perp.y * halfNear),
-                ImVec2(target.x - perp.x * halfFar, target.y - perp.y * halfFar),
-                ImVec2(target.x + perp.x * halfFar, target.y + perp.y * halfFar),
-                beamCol);
-            dl->AddCircleFilled(target, UI(beamOverInteractive ? 26.0f : 12.0f),
-                                IM_COL32(170, 225, 255, static_cast<int>(50 * fade)), 24);
-        }
-        dl->AddCircleFilled(origin, UI(10.0f),
-                            IM_COL32(190, 230, 255, static_cast<int>(110 * fade)), 20);
-        dl->AddCircle(origin, UI(18.0f),
-                      IM_COL32(150, 215, 255, static_cast<int>(90 * fade)), 24, UI(2.0f));
-    }
+    DrawMapBeam(dl, ctx.mapOverlayLightProgress, wp, ws, fade, beamOverInteractive);
 
     DrawImGuiTextCentered(imGuiUI_, "← → 切换地图      Enter 开始      Esc 返回",
                           btnY + btnH + UI(18.0f), 130, 154, 176,
