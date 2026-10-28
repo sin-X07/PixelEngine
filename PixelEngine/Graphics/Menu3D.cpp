@@ -342,8 +342,8 @@ void Menu3D::UpdateChickens(float dt) {
 
 void Menu3D::DrawModels() {
     // 接地阴影
-    DrawShadow(-4.0f, 0.0f, 0.62f, 0.38f, 0.46f);
-    DrawShadow( 4.0f, 0.0f, 0.62f, 0.38f, 0.46f);
+    DrawShadow(-4.4f, 0.0f, 0.66f, 0.40f, 0.46f);
+    DrawShadow( 4.4f, 0.0f, 0.66f, 0.40f, 0.46f);
     for (int i = 0; i < static_cast<int>(chickens_.size()) && i < 3; ++i) {
         const ChickenState& s = chickenState_[i];
         const float dist = 8.6f - s.z;
@@ -353,13 +353,13 @@ void Menu3D::DrawModels() {
 
     // 角色
     glPushMatrix();
-    glTranslatef(-4.0f, 0.0f, 0.0f);
+    glTranslatef(-4.4f, 0.0f, 0.0f);
     if (hoveredObject_ == 0) tModel_->DrawHighlight(1.22f, 0.0f, 0.0f);
     tModel_->Draw(1.22f, 0.0f, 0.0f);
     glPopMatrix();
 
     glPushMatrix();
-    glTranslatef(4.0f, 0.0f, 0.0f);
+    glTranslatef(4.4f, 0.0f, 0.0f);
     if (hoveredObject_ == 1) ctModel_->DrawHighlight(1.22f, 0.0f, 0.0f);
     ctModel_->Draw(1.22f, 0.0f, 0.0f);
     glPopMatrix();
@@ -380,8 +380,8 @@ void Menu3D::DrawModels() {
 
 void Menu3D::ObjectWorldPosition(int index, float& x, float& y, float& z) const {
     x = 0.0f; y = 1.2f; z = 0.0f;
-    if (index == 0) { x = -4.0f; }
-    else if (index == 1) { x = 4.0f; }
+    if (index == 0) { x = -4.4f; }
+    else if (index == 1) { x = 4.4f; }
     else if (index >= 2 && index < 5 && index - 2 < static_cast<int>(chickenState_.size())) {
         const ChickenState& s = chickenState_[index - 2];
         x = s.x; y = 0.7f; z = s.z;
@@ -392,10 +392,10 @@ void Menu3D::FocusCurrentPosition(float& x, float& z) const {
     const float raw = std::clamp(focusProgress_, 0.0f, 1.0f);
     const float t = raw * raw * (3.0f - 2.0f * raw);
     if (focusedObject_ == 0) {
-        x = -4.0f + (focusTargetX_ + 4.0f) * t;
+        x = -4.4f + (focusTargetX_ + 4.4f) * t;
         z = 0.0f;
     } else if (focusedObject_ == 1) {
-        x = 4.0f + (focusTargetX_ - 4.0f) * t;
+        x = 4.4f + (focusTargetX_ - 4.4f) * t;
         z = 0.0f;
     } else if (focusedObject_ >= 2 && focusedObject_ - 2 < static_cast<int>(chickenState_.size())) {
         const ChickenState& s = chickenState_[focusedObject_ - 2];
@@ -483,7 +483,7 @@ void Menu3D::UpdateObjectScreenPositions() {
         ObjectWorldPosition(i, x, y, z);
         const float bottomY = 0.0f;
         const float topY = (i < 2) ? 2.55f : 1.55f;
-        const float width = (i < 2) ? 1.35f : 1.05f;
+        const float width = (i < 2) ? 2.20f : 1.05f;
         const float midY = (bottomY + topY) * 0.5f;
 
         float ub = 0, vb = 0, ut = 0, vt = 0;
@@ -495,6 +495,9 @@ void Menu3D::UpdateObjectScreenPositions() {
 
         // 使用覆盖脚底到头顶的屏幕包围盒，鼠标落在身体任意位置都能命中。
         screenU_[i] = (ul + ur) * 0.5f;
+        // T/CT 的可选中区域再向外侧扩一点，避免点击角色边缘时落空
+        if (i == 0) screenU_[i] -= 0.018f;
+        else if (i == 1) screenU_[i] += 0.018f;
         screenV_[i] = (vb + vt) * 0.5f;
         screenRU_[i] = std::max(0.018f, std::fabs(ur - ul) * 0.5f * 1.30f);
         screenRV_[i] = std::max(0.024f, std::fabs(vt - vb) * 0.5f * 1.20f);
@@ -502,23 +505,28 @@ void Menu3D::UpdateObjectScreenPositions() {
 }
 
 int Menu3D::HitTestNormalized(float u, float v) const {
-    int best = -1;
-    float bestD = 1e9f;
+    int bestCharacter = -1;
+    int bestChicken = -1;
+    float bestCharacterD = 1e9f;
+    float bestChickenD = 1e9f;
     for (int i = 0; i < kObjectCount; ++i) {
         const float rx = std::max(screenRU_[i], 0.005f);
         const float ry = std::max(screenRV_[i], 0.005f);
         const float dx = (u - screenU_[i]) / rx;
         const float dy = (v - screenV_[i]) / ry;
-        // 矩形命中区域比椭圆更宽容，符合“鼠标在身体上即可选中”
         if (std::fabs(dx) <= 1.0f && std::fabs(dy) <= 1.0f) {
             const float d = dx * dx + dy * dy;
-            if (d < bestD) {
-                bestD = d;
-                best = i;
+            if (i < 2) {
+                // T/CT 的命中盒更大、更靠外；与跑过的小鸡重叠时优先角色，
+                // 避免玩家明明点在角色身上却选中前方小鸡。
+                if (d < bestCharacterD) { bestCharacterD = d; bestCharacter = i; }
+            } else if (d < bestChickenD) {
+                bestChickenD = d;
+                bestChicken = i;
             }
         }
     }
-    return best;
+    return bestCharacter >= 0 ? bestCharacter : bestChicken;
 }
 
 void Menu3D::UpdateSpotlight(float dt) {
@@ -715,9 +723,9 @@ void Menu3D::DrawFocusScene() {
     float normalX = 0.0f, normalZ = 0.0f, normalScale = 1.22f;
     float targetScale = 1.9f;
     if (focusedObject_ == 0) {
-        normalX = -4.0f;
+        normalX = -4.4f;
     } else if (focusedObject_ == 1) {
-        normalX = 4.0f;
+        normalX = 4.4f;
     } else if (focusedObject_ >= 2 && focusedObject_ - 2 < static_cast<int>(chickenState_.size())) {
         const ChickenState& s = chickenState_[focusedObject_ - 2];
         normalX = s.x;
