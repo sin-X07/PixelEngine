@@ -91,6 +91,7 @@ set(SOURCES
     Graphics/ImGuiUI.cpp
     Graphics/GameUI.cpp
     Graphics/Menu3D.cpp
+    Graphics/Menu3DModel.cpp
     Storage/SaveManager.cpp
     Storage/MatchHistory.hpp
     Storage/MatchHistory.cpp

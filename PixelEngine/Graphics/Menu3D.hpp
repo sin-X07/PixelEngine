@@ -1,8 +1,11 @@
 #pragma once
 #include <SDL2/SDL.h>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
+
+#include "Menu3DModel.hpp"
 
 // ============================================================================
 // Menu3D — 主菜单实时 3D 背景
@@ -50,4 +53,10 @@ private:
     uint64_t lastRenderTicks_ = 0;
     float animationTime_ = 0.0f;
     std::string lastError_;
+
+    std::unique_ptr<Menu3DModel> tModel_;
+    std::unique_ptr<Menu3DModel> ctModel_;
+    std::vector<std::unique_ptr<Menu3DModel>> chickens_;
+    bool LoadModels();
+    void DrawModels();
 };
