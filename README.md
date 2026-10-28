@@ -298,7 +298,7 @@ PixelEngine/
     Navigation/PathFinder   网格 A* 寻路（含视线拉直、卡墙自恢复）
     CS2DWorld/Renderer/Overlay/TMJParser/MiniJSON
   LLM/                      llama-server 异步客户端（仅服务教练层）
-  Graphics/                 GameUI（ImGui 菜单/HUD）、ImGuiUI
+  Graphics/                 GameUI（ImGui 菜单/HUD）、ImGuiUI、Menu3D（隐藏 GL + glTF CPU 蒙皮）
   Audio/ Input/ Storage/
 tools/                      素材规格与占位生成脚本
 ```
