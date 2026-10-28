@@ -95,18 +95,28 @@ void DrawMapBeam(ImDrawList* dl, float lightProgress,
     dir.x /= len;
     dir.y /= len;
     const ImVec2 perp(-dir.y, dir.x);
+    const float maxDim = std::max(ws.x, ws.y);
+    const float distance01 = std::clamp(len / maxDim, 0.0f, 1.0f);
     const float nearHalf = UI(1.2f);
-    const float farHalf = overInteractive ? UI(44.0f) : UI(34.0f);
+    const float farHalf = UI(26.0f + 34.0f * distance01) *
+                          (overInteractive ? 1.18f : 1.0f);
     const ImU32 col = IM_COL32(184, 219, 255, static_cast<int>(84 * fade));
 
-    // 主页面光锥射到地面后的柔和光斑
-    const float poolR = overInteractive ? UI(68.0f) : UI(48.0f);
-    dl->AddEllipseFilled(target, ImVec2(poolR * 1.55f, poolR * 0.53f),
-                         IM_COL32(115, 180, 245, static_cast<int>(14 * fade)), 0.0f, 32);
-    dl->AddEllipseFilled(target, ImVec2(poolR * 1.10f, poolR * 0.38f),
-                         IM_COL32(145, 205, 255, static_cast<int>(22 * fade)), 0.0f, 32);
-    dl->AddEllipseFilled(target, ImVec2(poolR * 0.64f, poolR * 0.24f),
-                         IM_COL32(195, 230, 255, static_cast<int>(30 * fade)), 0.0f, 28);
+    // 把当前俯视图当成地面：光斑随光源到鼠标的距离缩放，
+    // 并沿光束方向压扁成椭圆，形成透视景深。
+    const float angle = std::atan2(dir.y, dir.x);
+    const float longR = UI(52.0f) * (0.55f + 1.25f * distance01) *
+                        (overInteractive ? 1.22f : 1.0f);
+    const float shortR = longR * 0.42f;
+    dl->AddEllipseFilled(target, ImVec2(longR * 1.35f, shortR * 1.35f),
+                         IM_COL32(86, 145, 220, static_cast<int>(11 * fade)),
+                         angle, 36);
+    dl->AddEllipseFilled(target, ImVec2(longR, shortR),
+                         IM_COL32(132, 194, 255, static_cast<int>(19 * fade)),
+                         angle, 36);
+    dl->AddEllipseFilled(target, ImVec2(longR * 0.64f, shortR * 0.64f),
+                         IM_COL32(196, 231, 255, static_cast<int>(28 * fade)),
+                         angle, 32);
 
     dl->AddQuadFilled(
         ImVec2(origin.x + perp.x * nearHalf, origin.y + perp.y * nearHalf),
