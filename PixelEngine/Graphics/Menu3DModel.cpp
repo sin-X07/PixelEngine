@@ -383,6 +383,22 @@ void Menu3DModel::ComputeWorld(int nodeIndex, const Mat4& parent) {
     for (int c : node.children) ComputeWorld(c, node.world);
 }
 
+bool Menu3DModel::PlayAnimation(const std::string& name) {
+    if (name.empty()) return false;
+    for (size_t i = 0; i < animations_.size(); ++i) {
+        if (ContainsNoCase(animations_[i].name, name)) {
+            animationIndex_ = static_cast<int>(i);
+            animationName_ = animations_[i].name;
+            animationTime_ = 0.0f;
+            SampleAnimation(0.0f);
+            for (int r : roots_) ComputeWorld(r, Identity());
+            SkinPrimitives();
+            return true;
+        }
+    }
+    return false;
+}
+
 void Menu3DModel::SampleAnimation(float time) {
     for (Node& n : nodes_) {
         n.curT = n.baseT;

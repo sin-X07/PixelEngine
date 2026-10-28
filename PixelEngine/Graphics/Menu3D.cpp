@@ -256,6 +256,22 @@ bool Menu3D::LoadModels() {
         chickens_.push_back(std::move(chicken));
     }
 
+    focusWeapons_.clear();
+    const char* weaponPaths[3] = {
+        "assets/models/quaternius/Guns/AK.gltf",
+        "assets/models/quaternius/Guns/Pistol.gltf",
+        "assets/models/quaternius/Guns/Knife_1.gltf"
+    };
+    for (int i = 0; i < 3; ++i) {
+        auto weapon = std::make_unique<Menu3DModel>();
+        if (!weapon->Load(weaponPaths[i])) {
+            std::cerr << "[Menu3D] 武器模型加载失败: " << weaponPaths[i]
+                      << " " << weapon->LastError() << std::endl;
+            weapon.reset();
+        }
+        focusWeapons_.push_back(std::move(weapon));
+    }
+
     if (tModel_ && ctModel_) {
         std::cout << "[Menu3D] glTF 角色已加载: T=" << tModel_->AnimationName()
                   << " CT=" << ctModel_->AnimationName()
@@ -359,6 +375,314 @@ void Menu3D::DrawModels() {
     }
 }
 
+void Menu3D::ObjectWorldPosition(int index, float& x, float& y, float& z) const {
+    x = 0.0f; y = 1.2f; z = 0.0f;
+    if (index == 0) { x = -4.0f; }
+    else if (index == 1) { x = 4.0f; }
+    else if (index >= 2 && index < 5 && index - 2 < static_cast<int>(chickenState_.size())) {
+        const ChickenState& s = chickenState_[index - 2];
+        x = s.x; y = 0.7f; z = s.z;
+    }
+}
+
+void Menu3D::SetFocusedObject(int index) {
+    if (index < -1 || index >= kObjectCount) index = -1;
+    if (focusedObject_ == index) return;
+    focusedObject_ = index;
+    spotScanTimer_ = 0.0f;
+}
+
+void Menu3D::SetObjectColor(int index, int option) {
+    Menu3DModel* model = nullptr;
+    if (index == 0) model = tModel_.get();
+    else if (index == 1) model = ctModel_.get();
+    else if (index >= 2 && index < 5 && index - 2 < static_cast<int>(chickens_.size())) {
+        model = chickens_[index - 2].get();
+    }
+    if (!model) return;
+
+    model->SetClothingTint(1.0f, 1.0f, 1.0f);
+    model->SetBluePalette(index == 1 && option == 0);
+    if (option == 1) model->SetClothingTint(1.0f, 0.82f, 0.30f);
+    else if (option == 2) model->SetClothingTint(1.0f, 0.48f, 0.42f);
+    else if (option == 3) model->SetClothingTint(0.50f, 0.72f, 1.15f);
+}
+
+void Menu3D::SetObjectPose(int index, int option) {
+    Menu3DModel* model = nullptr;
+    if (index == 0) model = tModel_.get();
+    else if (index == 1) model = ctModel_.get();
+    else if (index >= 2 && index < 5 && index - 2 < static_cast<int>(chickens_.size())) {
+        model = chickens_[index - 2].get();
+    }
+    if (!model) return;
+
+    if (index < 2) {
+        if (option == 0) model->PlayAnimation("Idle");
+        else if (option == 1) model->PlayAnimation("Idle_Shoot");
+        else if (option == 2) model->PlayAnimation("Wave");
+    } else {
+        if (option == 0) model->PlayAnimation("walk");
+        else if (option == 1) model->PlayAnimation("idle");
+        else if (option == 2) model->PlayAnimation("run");
+    }
+}
+
+void Menu3D::UpdateObjectScreenPositions() {
+    double mv[16], pr[16];
+    int vp[4];
+    glGetDoublev(GL_MODELVIEW_MATRIX, mv);
+    glGetDoublev(GL_PROJECTION_MATRIX, pr);
+    glGetIntegerv(GL_VIEWPORT, vp);
+
+    auto project = [&](float x, float y, float z, float& u, float& v) -> bool {
+        const double in[4] = { x, y, z, 1.0 };
+        double a[4] = { 0, 0, 0, 0 };
+        double clip[4] = { 0, 0, 0, 0 };
+        for (int row = 0; row < 4; ++row) {
+            for (int k = 0; k < 4; ++k) a[row] += mv[k * 4 + row] * in[k];
+        }
+        for (int row = 0; row < 4; ++row) {
+            for (int k = 0; k < 4; ++k) clip[row] += pr[k * 4 + row] * a[k];
+        }
+        if (std::fabs(clip[3]) < 1e-6) return false;
+        const double nx = clip[0] / clip[3];
+        const double ny = clip[1] / clip[3];
+        u = static_cast<float>(nx * 0.5 + 0.5);
+        v = static_cast<float>(1.0 - (ny * 0.5 + 0.5));
+        return true;
+    };
+
+    for (int i = 0; i < kObjectCount; ++i) {
+        float x, y, z;
+        ObjectWorldPosition(i, x, y, z);
+        const float topY = (i < 2) ? 2.55f : 1.55f;
+        float u0 = 0, v0 = 0, u1 = 0, v1 = 0;
+        if (!project(x, y, z, u0, v0)) continue;
+        if (!project(x, topY, z, u1, v1)) continue;
+        screenU_[i] = u0;
+        screenV_[i] = v0;
+        const float pixelRadius = std::max(24.0f, std::fabs(v1 - v0) * static_cast<float>(height_) * 0.62f);
+        screenRU_[i] = pixelRadius / static_cast<float>(width_);
+        screenRV_[i] = pixelRadius / static_cast<float>(height_);
+    }
+}
+
+int Menu3D::HitTestNormalized(float u, float v) const {
+    int best = -1;
+    float bestD = 1e9f;
+    for (int i = 0; i < kObjectCount; ++i) {
+        const float rx = std::max(screenRU_[i], 0.005f);
+        const float ry = std::max(screenRV_[i], 0.005f);
+        const float dx = (u - screenU_[i]) / rx;
+        const float dy = (v - screenV_[i]) / ry;
+        const float d = dx * dx + dy * dy;
+        if (d <= 1.0f && d < bestD) {
+            bestD = d;
+            best = i;
+        }
+    }
+    return best;
+}
+
+void Menu3D::UpdateSpotlight(float dt) {
+    float tx = 0.0f, tz = 0.0f;
+    if (focusedObject_ >= 0) {
+        tx = 0.0f;
+        tz = 0.0f;
+    } else if (hoveredObject_ >= 0) {
+        float x, y, z;
+        ObjectWorldPosition(hoveredObject_, x, y, z);
+        tx = x;
+        tz = z;
+    } else {
+        spotScanTimer_ -= dt;
+        if (spotScanTimer_ <= 0.0f) {
+            std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
+            spotTargetX_ = -4.0f + 8.0f * dist01(chickenRng_);
+            spotTargetZ_ = 0.5f + 5.5f * dist01(chickenRng_);
+            spotScanTimer_ = 1.8f + 2.8f * dist01(chickenRng_);
+        }
+        tx = spotTargetX_;
+        tz = spotTargetZ_;
+    }
+
+    const float speed = (focusedObject_ >= 0) ? 14.0f
+                      : (hoveredObject_ >= 0) ? 10.0f : 2.2f;
+    const float a = 1.0f - std::exp(-speed * dt);
+    spotX_ += (tx - spotX_) * a;
+    spotZ_ += (tz - spotZ_) * a;
+}
+
+void Menu3D::DrawObjectRing(float x, float z, float radius, float alpha) {
+    glDisable(GL_LIGHTING);
+    glDepthMask(GL_FALSE);
+    glColor4f(1.0f, 0.78f, 0.32f, alpha);
+    glLineWidth(2.0f);
+    glBegin(GL_LINE_LOOP);
+    constexpr int kSegments = 40;
+    for (int i = 0; i < kSegments; ++i) {
+        const float a = 2.0f * kPi * static_cast<float>(i) / kSegments;
+        glVertex3f(x + std::cos(a) * radius, 0.018f, z + std::sin(a) * radius);
+    }
+    glEnd();
+    glLineWidth(1.0f);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_LIGHTING);
+}
+
+void Menu3D::DrawSpotlight() {
+    // 固定使用一个暖色聚光灯，位置跟随平滑后的 spot 坐标。
+    const GLfloat pos[] = { spotX_, 6.2f, spotZ_, 1.0f };
+    const GLfloat dir[] = { 0.0f, -1.0f, 0.0f };
+    const GLfloat diff[] = { 1.0f, 0.78f, 0.34f, 1.0f };
+    GLfloat cutoff = (focusedObject_ >= 0) ? 22.0f : 30.0f;
+    glEnable(GL_LIGHT1);
+    glLightfv(GL_LIGHT1, GL_POSITION, pos);
+    glLightfv(GL_LIGHT1, GL_DIFFUSE, diff);
+    glLightfv(GL_LIGHT1, GL_SPOT_DIRECTION, dir);
+    glLightf(GL_LIGHT1, GL_SPOT_CUTOFF, cutoff);
+    glLightf(GL_LIGHT1, GL_SPOT_EXPONENT, 7.0f);
+
+    glDisable(GL_LIGHTING);
+    glDepthMask(GL_FALSE);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+
+    // 可见光锥
+    glColor4f(1.0f, 0.62f, 0.14f, 0.26f);
+    glBegin(GL_QUAD_STRIP);
+    constexpr int kSegments = 24;
+    for (int i = 0; i <= kSegments; ++i) {
+        const float a = 2.0f * kPi * static_cast<float>(i) / kSegments;
+        const float topR = 0.08f;
+        const float bottomR = (focusedObject_ >= 0) ? 0.55f : 1.05f;
+        glVertex3f(spotX_ + std::cos(a) * topR, 6.2f, spotZ_ + std::sin(a) * topR);
+        glVertex3f(spotX_ + std::cos(a) * bottomR, 0.02f, spotZ_ + std::sin(a) * bottomR);
+    }
+    glEnd();
+
+    // 地面光斑
+    glColor4f(1.0f, 0.76f, 0.30f, 0.30f);
+    glBegin(GL_TRIANGLE_FAN);
+    glVertex3f(spotX_, 0.008f, spotZ_);
+    for (int i = 0; i <= kSegments; ++i) {
+        const float a = 2.0f * kPi * static_cast<float>(i) / kSegments;
+        const float r = (focusedObject_ >= 0) ? 0.55f : 1.05f;
+        glVertex3f(spotX_ + std::cos(a) * r, 0.008f, spotZ_ + std::sin(a) * r);
+    }
+    glEnd();
+
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_LIGHTING);
+
+    // 随机探照时也画一个小光圈，明确灯在扫地面
+    if (hoveredObject_ < 0 && focusedObject_ < 0) {
+        DrawObjectRing(spotX_, spotZ_, 0.36f, 0.50f);
+    }
+
+    if (hoveredObject_ >= 0 || focusedObject_ >= 0) {
+        const int idx = focusedObject_ >= 0 ? focusedObject_ : hoveredObject_;
+        float x, y, z;
+        if (focusedObject_ >= 0) { x = 0.0f; z = 0.0f; }
+        else ObjectWorldPosition(idx, x, y, z);
+        const float r = (idx < 2) ? 0.75f : 0.28f;
+        const float pulse = 0.65f + 0.35f * std::sin(animationTime_ * 5.0f);
+        DrawObjectRing(x, z, r, 0.85f * pulse);
+        DrawObjectRing(x, z, r * 0.72f, 0.45f * pulse);
+    }
+}
+
+void Menu3D::DrawWeaponProp(float x, float y, float z) {
+    if (focusWeapon_ >= 0 && focusWeapon_ < static_cast<int>(focusWeapons_.size()) &&
+        focusWeapons_[focusWeapon_] && focusWeapons_[focusWeapon_]->IsReady()) {
+        glPushMatrix();
+        glTranslatef(x, y, z);
+        glRotatef(focusWeapon_ == 2 ? 35.0f : -20.0f, 0.0f, 1.0f, 0.0f);
+        focusWeapons_[focusWeapon_]->Draw(
+            focusWeapon_ == 0 ? 0.28f : (focusWeapon_ == 1 ? 0.38f : 0.50f),
+            0.0f, 0.0f);
+        glPopMatrix();
+        return;
+    }
+
+    glDisable(GL_LIGHTING);
+    if (focusWeapon_ == 0) {
+        // 步枪
+        DrawCube(x, y, z, 0.95f, 0.10f, 0.10f, 0.10f, 0.11f, 0.13f);
+        DrawCube(x - 0.35f, y - 0.02f, z, 0.36f, 0.22f, 0.18f, 0.22f, 0.18f, 0.13f);
+        DrawCube(x + 0.25f, y, z - 0.06f, 0.30f, 0.06f, 0.06f, 0.38f, 0.32f, 0.22f);
+    } else if (focusWeapon_ == 1) {
+        // 手枪
+        DrawCube(x, y, z, 0.38f, 0.12f, 0.10f, 0.10f, 0.11f, 0.13f);
+        DrawCube(x - 0.06f, y - 0.20f, z, 0.12f, 0.32f, 0.10f, 0.18f, 0.16f, 0.14f);
+    } else if (focusWeapon_ == 2) {
+        // 匕首
+        DrawCube(x, y, z, 0.52f, 0.06f, 0.04f, 0.72f, 0.74f, 0.78f);
+        DrawCube(x - 0.30f, y, z, 0.16f, 0.10f, 0.08f, 0.20f, 0.16f, 0.10f);
+    }
+    glEnable(GL_LIGHTING);
+}
+
+void Menu3D::DrawFocusScene() {
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    const float aspect = static_cast<float>(width_) / static_cast<float>(height_);
+    const float nearZ = 0.1f;
+    const float top = nearZ * std::tan(28.0f * kPi / 180.0f);
+    const float right = top * aspect;
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glFrustum(-right, right, -top, top, nearZ, 40.0f);
+
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glTranslatef(-2.0f, -1.05f, -6.6f);
+    glRotatef(-5.0f, 1.0f, 0.0f, 0.0f);
+
+    // 聚焦平台
+    glDisable(GL_LIGHTING);
+    glColor4f(0.16f, 0.14f, 0.105f, 1.0f);
+    glBegin(GL_QUADS);
+    glVertex3f(-8.0f, 0.0f, -4.0f);
+    glVertex3f( 8.0f, 0.0f, -4.0f);
+    glVertex3f( 8.0f, 0.0f,  7.0f);
+    glVertex3f(-8.0f, 0.0f,  7.0f);
+    glEnd();
+    glColor4f(0.50f, 0.39f, 0.20f, 0.45f);
+    glBegin(GL_LINES);
+    for (int i = -8; i <= 8; ++i) {
+        glVertex3f(static_cast<float>(i), 0.006f, -4.0f);
+        glVertex3f(static_cast<float>(i), 0.006f, 7.0f);
+    }
+    for (int i = -4; i <= 7; ++i) {
+        glVertex3f(-8.0f, 0.006f, static_cast<float>(i));
+        glVertex3f( 8.0f, 0.006f, static_cast<float>(i));
+    }
+    glEnd();
+    glEnable(GL_LIGHTING);
+
+    DrawSpotlight();
+
+    if (focusedObject_ >= 0 && focusedObject_ < 2) {
+        Menu3DModel* model = (focusedObject_ == 0) ? tModel_.get() : ctModel_.get();
+        if (model) {
+            model->Draw(1.75f, 0.0f, 0.0f);
+            DrawWeaponProp(0.95f, 1.25f, 0.0f);
+        }
+    } else if (focusedObject_ >= 2 && focusedObject_ - 2 < static_cast<int>(chickens_.size())) {
+        Menu3DModel* model = chickens_[focusedObject_ - 2].get();
+        if (model) {
+            model->Draw(0.9f, 0.0f, 0.0f);
+            DrawWeaponProp(0.32f, 0.45f, 0.1f);
+        }
+    }
+
+    DrawObjectRing(0.0f, 0.0f, focusedObject_ < 2 ? 0.95f : 0.40f, 0.8f);
+}
+
+
 void Menu3D::Render(float dt) {
     if (!ready_ || !glContext_) return;
 
@@ -374,9 +698,15 @@ void Menu3D::Render(float dt) {
     if (tModel_) tModel_->Update(animDt);
     if (ctModel_) ctModel_->Update(animDt);
     for (auto& chicken : chickens_) chicken->Update(animDt);
-    UpdateChickens(animDt);
+    if (focusedObject_ < 0) UpdateChickens(animDt);
+    UpdateSpotlight(animDt);
 
-    DrawScene(animationTime_);
+    if (focusedObject_ >= 0) {
+        DrawFocusScene();
+    } else {
+        DrawScene(animationTime_);
+        UpdateObjectScreenPositions();
+    }
     ReadbackToTexture();
     SDL_GL_SwapWindow(glWindow_);
 }
@@ -436,6 +766,8 @@ void Menu3D::DrawScene(float timeSec) {
     glEnd();
     glEnable(GL_LIGHTING);
 
+    DrawSpotlight();
+
     const float bobT = std::sin(timeSec * 1.7f) * 0.035f;
     if (tModel_ && ctModel_ && chickens_.size() == 3) {
         DrawModels();
@@ -447,6 +779,15 @@ void Menu3D::DrawScene(float timeSec) {
         DrawChicken(-1.6f, 2.2f, timeSec * 2.4f);
         DrawChicken( 0.0f, 2.8f, timeSec * 2.4f + 1.7f);
         DrawChicken( 1.55f, 2.1f, timeSec * 2.4f + 3.4f);
+    }
+
+    if (hoveredObject_ >= 0) {
+        float x, y, z;
+        ObjectWorldPosition(hoveredObject_, x, y, z);
+        const float r = (hoveredObject_ < 2) ? 0.78f : 0.30f;
+        const float pulse = 0.65f + 0.35f * std::sin(animationTime_ * 5.0f);
+        DrawObjectRing(x, z, r, 0.95f * pulse);
+        DrawObjectRing(x, z, r * 0.72f, 0.55f * pulse);
     }
 }
 

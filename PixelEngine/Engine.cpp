@@ -105,6 +105,27 @@ GameUI::Actions Engine::BuildActions() {
         sidePopupCloseElapsed_ = 0.0f;
     };
 
+    a.close3DFocus = [this] {
+        focused3D_ = -1;
+        hovered3D_ = -1;
+        if (menu3D) menu3D->SetFocusedObject(-1);
+        SDL_SetRelativeMouseMode(SDL_FALSE);
+        SDL_ShowCursor(SDL_ENABLE);
+    };
+    a.focus3DSelect = [this](int category, int option) {
+        if (focused3D_ < 0 || !menu3D) return;
+        if (category == 0) {
+            focusWeapon_ = option;
+            menu3D->SetFocusWeapon(option);
+        } else if (category == 1) {
+            focusColor_ = option;
+            menu3D->SetObjectColor(focused3D_, option);
+        } else if (category == 2) {
+            focusPose_ = option;
+            menu3D->SetObjectPose(focused3D_, option);
+        }
+    };
+
     a.startMatchOnMap = [this](int idx) {
         if (idx < 0 || idx >= kMapCatalogCount) return;
         // 地图选择后直接进入加载/对局；阵营在进入游戏后由弹窗选择。
@@ -1276,6 +1297,14 @@ void Engine::Render() {
         ctx.backdrop3D  = false;
 
         if (currentState == MAIN_MENU && menu3D && menu3D->IsReady()) {
+            if (focused3D_ >= 0) {
+                menu3D->SetHoveredObject(-1);
+                menu3D->SetFocusedObject(focused3D_);
+                menu3D->SetFocusWeapon(focusWeapon_);
+            } else {
+                menu3D->SetHoveredObject(hovered3D_);
+                menu3D->SetFocusedObject(-1);
+            }
             menu3D->Render(frameDt);
             if (menu3D->GetTexture()) {
                 ctx.backdropTex = menu3D->GetTexture();
@@ -1283,9 +1312,67 @@ void Engine::Render() {
                 ctx.backdropH   = menu3D->Height();
                 ctx.backdrop3D  = true;
             }
+
+            ctx.focus3D     = (focused3D_ >= 0);
+            ctx.focusObject = focused3D_;
+            ctx.focusChicken = (focused3D_ >= 2);
+            ctx.focusName   = (focused3D_ == 0) ? "恐怖分子 T"
+                            : (focused3D_ == 1) ? "反恐精英 CT"
+                            : "装饰小鸡";
+            ctx.focusWeapon = focusWeapon_;
+            ctx.focusColor  = focusColor_;
+            ctx.focusPose   = focusPose_;
         }
 
         gameUI->DrawMenu(ctx, BuildActions());
+
+        if (currentState == MAIN_MENU && menu3D && menu3D->IsReady()) {
+            if (focused3D_ < 0) {
+                const ImGuiIO& io = ImGui::GetIO();
+                const ImGuiViewport* vp = ImGui::GetMainViewport();
+                const float scrW = std::max(1.0f, vp->WorkSize.x);
+                const float scrH = std::max(1.0f, vp->WorkSize.y);
+                float u = (io.MousePos.x - vp->WorkPos.x) / scrW;
+                float v = (io.MousePos.y - vp->WorkPos.y) / scrH;
+
+                // 与 GameUI 的背景等比裁切一致，把屏幕坐标换算成 3D 纹理坐标
+                const float texAspect = static_cast<float>(menu3D->Width()) /
+                                        static_cast<float>(menu3D->Height());
+                const float scrAspect = scrW / scrH;
+                if (texAspect > scrAspect) {
+                    const float frac = scrAspect / texAspect;
+                    u = (u - (1.0f - frac) * 0.5f) / frac;
+                } else {
+                    const float frac = texAspect / scrAspect;
+                    v = (v - (1.0f - frac) * 0.5f) / frac;
+                }
+
+                const bool uiHovered = ImGui::IsAnyItemHovered();
+                int hit = -1;
+                if (!uiHovered && u >= 0.0f && u <= 1.0f && v >= 0.0f && v <= 1.0f) {
+                    hit = menu3D->HitTestNormalized(u, v);
+                }
+                hovered3D_ = hit;
+
+                if (hit >= 0 && !uiHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    focused3D_ = hit;
+                    focusWeapon_ = 0;
+                    focusColor_ = 0;
+                    focusPose_ = 0;
+                    menu3D->SetFocusWeapon(0);
+                    menu3D->SetObjectColor(hit, 0);
+                    menu3D->SetObjectPose(hit, 0);
+                    SDL_SetRelativeMouseMode(SDL_FALSE);
+                    SDL_ShowCursor(SDL_ENABLE);
+                }
+            } else {
+                hovered3D_ = -1;
+                if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                    focused3D_ = -1;
+                    menu3D->SetFocusedObject(-1);
+                }
+            }
+        }
     } else {
         GameUI::InGameCtx ictx;
         ictx.state    = currentState;

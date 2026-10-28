@@ -36,9 +36,28 @@ public:
     int Height() const { return height_; }
     const std::string& LastError() const { return lastError_; }
 
+    // ---- 主菜单 3D 交互 ----
+    // 索引：0=T, 1=CT, 2/3/4=三只小鸡
+    static constexpr int kObjectCount = 5;
+    int HitTestNormalized(float u, float v) const;   // u/v 为 3D 纹理坐标，左上原点
+    void SetHoveredObject(int index) { hoveredObject_ = index; }
+    int  HoveredObject() const { return hoveredObject_; }
+    void SetFocusedObject(int index);
+    int  FocusedObject() const { return focusedObject_; }
+    void SetObjectColor(int index, int option);
+    void SetObjectPose(int index, int option);
+    void SetFocusWeapon(int option) { focusWeapon_ = option; }
+
 private:
     bool InitGL();
     void DrawScene(float timeSec);
+    void DrawFocusScene();
+    void DrawWeaponProp(float x, float y, float z);
+    void DrawSpotlight();
+    void DrawObjectRing(float x, float z, float radius, float alpha);
+    void UpdateSpotlight(float dt);
+    void UpdateObjectScreenPositions();
+    void ObjectWorldPosition(int index, float& x, float& y, float& z) const;
     void ReadbackToTexture();
 
     SDL_Window*   glWindow_ = nullptr;
@@ -59,6 +78,7 @@ private:
     std::unique_ptr<Menu3DModel> tModel_;
     std::unique_ptr<Menu3DModel> ctModel_;
     std::vector<std::unique_ptr<Menu3DModel>> chickens_;
+    std::vector<std::unique_ptr<Menu3DModel>> focusWeapons_;   // AK / 手枪 / 匕首
     struct ChickenState {
         float x = 0.0f;
         float z = 0.0f;
@@ -76,4 +96,17 @@ private:
     void PickChickenTarget(int index);
     bool LoadModels();
     void DrawModels();
+
+    int hoveredObject_ = -1;
+    int focusedObject_ = -1;
+    int focusWeapon_ = 0;
+    float spotX_ = 0.0f;
+    float spotZ_ = 0.0f;
+    float spotTargetX_ = 0.0f;
+    float spotTargetZ_ = 0.0f;
+    float spotScanTimer_ = 0.0f;
+    std::array<float, kObjectCount> screenU_{};
+    std::array<float, kObjectCount> screenV_{};
+    std::array<float, kObjectCount> screenRU_{};
+    std::array<float, kObjectCount> screenRV_{};
 };

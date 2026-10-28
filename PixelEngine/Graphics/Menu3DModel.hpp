@@ -30,6 +30,7 @@ public:
 
     void Update(float dt);
     void Draw(float scale, float yOffset = 0.0f, float yawDegrees = 0.0f) const;
+    bool PlayAnimation(const std::string& name);
     void SetClothingTint(float r, float g, float b) { tint_ = Vec4{ r, g, b, 1.0f }; }
     void SetBluePalette(bool enabled) { bluePalette_ = enabled; }
     void SetUnlit(bool enabled) { unlit_ = enabled; }

@@ -3,10 +3,11 @@
 ## Quaternius — Toon Shooter Game Kit
 
 - 文件：`quaternius/Character_Enemy.gltf`、`quaternius/Character_Soldier.gltf`
+- 文件：`quaternius/Guns/AK.gltf`、`Pistol.gltf`、`Knife_1.gltf`（轮盘武器预览）
 - 作者：Quaternius
 - 来源：https://quaternius.com/packs/toonshootergamekit.html
 - 授权：CC0 1.0（公共领域）
-- 修改：仅重命名为 T/CT 装饰角色；未修改网格、骨骼或动画。
+- 修改：仅重命名/组合为 T/CT 装饰角色与轮盘武器预览；未修改网格、骨骼或动画。
 
 ## Chickensoft — Chicken mascot
 

@@ -113,6 +113,11 @@ private:
     bool         sidePopupClosing_ = false;
     float        sidePopupAlpha_ = 0.0f;
     float        sidePopupCloseElapsed_ = 0.0f;
+    int          hovered3D_ = -1;
+    int          focused3D_ = -1;
+    int          focusWeapon_ = 0;
+    int          focusColor_ = 0;
+    int          focusPose_ = 0;
     void FinalizeSideChoice();
     void UpdateSidePopupFade(float dt);
     void BeginMatchLoad(MatchMode mode, const std::string& mapRel, Team team);

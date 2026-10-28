@@ -22,6 +22,8 @@ public:
         std::function<void(int)>           startMatchMode;    // 按模式开始 (MatchMode 枚举值)
         std::function<void(int)>           startMatchOnMap;    // 指定地图开局（kMapCatalog 索引）
         std::function<void(int)>           chooseSide;         // 0=T, 1=CT（爆破模式）
+        std::function<void()>              close3DFocus;      // 退出主菜单 3D 聚焦
+        std::function<void(int,int)>       focus3DSelect;     // (category, option)
         std::function<void(int)>           selectMap;          // 地图选择光标移动
         std::function<void(float,float,float,float)> setMapPreviewRect; // 当前选中地图预览图矩形
         std::function<void()>              resumeGame;        // 暂停页继续
@@ -92,6 +94,15 @@ public:
         void* backdropTex = nullptr;   // 主菜单背景图（SDL_Texture*）
         int   backdropW = 0, backdropH = 0;
         bool  backdrop3D = false;      // 实时 3D 背景：使用更轻的压暗
+
+        // 3D 聚焦 + 右侧轮盘
+        bool        focus3D = false;
+        int         focusObject = 0;
+        bool        focusChicken = false;
+        std::string focusName;
+        int         focusWeapon = 0;   // 0=步枪 1=手枪 2=匕首 3=空手
+        int         focusColor = 0;    // 0=原色 1=金色 2=赤红 3=冰蓝
+        int         focusPose = 0;     // 0=待机 1=警戒 2=挥手
     };
 
     struct InGameCtx {
@@ -161,6 +172,7 @@ public:
 };
 
     void DrawMenu(const MenuCtx& ctx, const Actions& actions);
+    void DrawFocusWheel(const MenuCtx& ctx, const Actions& actions);
 
     // 地图选择界面（爆破模式）
     struct MapSelectCtx {

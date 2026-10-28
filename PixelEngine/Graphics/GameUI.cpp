@@ -89,6 +89,14 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                  ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
                  ImGuiWindowFlags_NoBringToFrontOnFocus);
 
+    if (ctx.state == MAIN_MENU && ctx.focus3D) {
+        DrawFocusWheel(ctx, actions);
+        ImGui::End();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
+        return;
+    }
+
     const float vpW = viewport->WorkSize.x;
     const float centerX = vpW * 0.5f;
     const float buttonW = UI(300.0f);
@@ -408,6 +416,125 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
     ImGui::End();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
+}
+
+// ============================================================================
+// 主菜单 3D 聚焦 + 半圆装备轮盘
+// ============================================================================
+
+void GameUI::DrawFocusWheel(const MenuCtx& ctx, const Actions& actions) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const ImVec2 wp = vp->WorkPos;
+    const ImVec2 ws = vp->WorkSize;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    // 左半屏留给 3D 聚焦模型，只压暗右侧轮盘区域
+    if (ctx.backdropTex && ctx.backdropW > 0 && ctx.backdropH > 0) {
+        const float texAspect = static_cast<float>(ctx.backdropW) / static_cast<float>(ctx.backdropH);
+        const float scrAspect = ws.x / ws.y;
+        ImVec2 uv0(0.0f, 0.0f), uv1(1.0f, 1.0f);
+        if (texAspect > scrAspect) {
+            const float frac = scrAspect / texAspect;
+            uv0.x = (1.0f - frac) * 0.5f;
+            uv1.x = uv0.x + frac;
+        } else {
+            const float frac = texAspect / scrAspect;
+            uv0.y = (1.0f - frac) * 0.5f;
+            uv1.y = uv0.y + frac;
+        }
+        dl->AddImage(reinterpret_cast<ImTextureID>(ctx.backdropTex),
+                     wp, ImVec2(wp.x + ws.x, wp.y + ws.y), uv0, uv1);
+    }
+    dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y),
+                      IM_COL32(0, 0, 0, 82));
+    dl->AddRectFilled(ImVec2(wp.x + ws.x * 0.48f, wp.y),
+                      ImVec2(wp.x + ws.x, wp.y + ws.y),
+                      IM_COL32(4, 7, 10, 150));
+
+    // 左侧标题
+    const char* kind = ctx.focusChicken ? "小鸡" : (ctx.focusObject == 0 ? "T" : "CT");
+    dl->AddText(ImVec2(wp.x + UI(54.0f), wp.y + UI(44.0f)),
+                IM_COL32(240, 216, 156, 255), kind);
+    dl->AddText(ImVec2(wp.x + UI(54.0f), wp.y + UI(72.0f)),
+                IM_COL32(168, 190, 208, 230), "自定义装备");
+    dl->AddText(ImVec2(wp.x + UI(54.0f), wp.y + ws.y - UI(54.0f)),
+                IM_COL32(150, 166, 180, 210), "点击右侧轮盘选项 · ESC 返回");
+
+    const ImVec2 center(wp.x + ws.x * 0.79f, wp.y + ws.y * 0.54f);
+    const float baseR = UI(205.0f);
+    const float radii[3] = { baseR * 0.55f, baseR * 0.78f, baseR * 1.02f };
+    const char* categoryNames[3] = { "武器", "颜色", "姿势" };
+    const int optionCounts[3] = { 4, 4, 3 };
+    const char* options[3][4] = {
+        { "步枪", "手枪", "匕首", "空手" },
+        { "原色", "金色", "赤红", "冰蓝" },
+        { "待机", "警戒", "挥手" }
+    };
+    const int selected[3] = { ctx.focusWeapon, ctx.focusColor, ctx.focusPose };
+
+    // 半圆轮盘底
+    dl->PathClear();
+    dl->PathArcTo(center, baseR * 1.14f, -1.42f, 1.42f, 36);
+    dl->PathFillConvex(IM_COL32(9, 13, 18, 225));
+    dl->PathClear();
+    dl->PathArcTo(center, baseR * 1.14f, -1.42f, 1.42f, 36);
+    dl->PathStroke(IM_COL32(226, 185, 92, 190), false, UI(2.0f));
+
+    for (int category = 0; category < 3; ++category) {
+        dl->PathClear();
+        dl->PathArcTo(center, radii[category], -1.34f, 1.34f, 28);
+        dl->PathStroke(IM_COL32(160, 132, 70, 120), false, UI(1.0f));
+
+        dl->AddText(ImVec2(center.x - UI(16.0f), center.y - radii[category] - UI(15.0f)),
+                    IM_COL32(190, 168, 108, 230), categoryNames[category]);
+
+        ImGui::PushID(category);
+        for (int option = 0; option < optionCounts[category]; ++option) {
+            const float t = (optionCounts[category] <= 1)
+                ? 0.0f
+                : static_cast<float>(option) / static_cast<float>(optionCounts[category] - 1);
+            const float angle = -1.18f + 2.36f * t;
+            const ImVec2 pos(center.x + std::cos(angle) * radii[category],
+                             center.y + std::sin(angle) * radii[category]);
+            const float bw = UI(74.0f), bh = UI(34.0f);
+            ImGui::SetCursorScreenPos(ImVec2(pos.x - bw * 0.5f, pos.y - bh * 0.5f));
+            const bool clicked = ImGui::InvisibleButton("##opt", ImVec2(bw, bh));
+            const bool hovered = ImGui::IsItemHovered();
+            const bool isSelected = (selected[category] == option);
+
+            const ImU32 bg = isSelected
+                ? IM_COL32(160, 122, 48, 245)
+                : (hovered ? IM_COL32(62, 76, 92, 245) : IM_COL32(20, 28, 38, 225));
+            const ImU32 border = isSelected
+                ? IM_COL32(255, 218, 128, 255)
+                : IM_COL32(112, 126, 142, 170);
+            dl->AddRectFilled(ImVec2(pos.x - bw * 0.5f, pos.y - bh * 0.5f),
+                              ImVec2(pos.x + bw * 0.5f, pos.y + bh * 0.5f),
+                              bg, UI(5.0f));
+            dl->AddRect(ImVec2(pos.x - bw * 0.5f, pos.y - bh * 0.5f),
+                        ImVec2(pos.x + bw * 0.5f, pos.y + bh * 0.5f),
+                        border, UI(5.0f), 0, UI(1.0f));
+            const ImVec2 textSize = ImGui::CalcTextSize(options[category][option]);
+            dl->AddText(ImVec2(pos.x - textSize.x * 0.5f, pos.y - textSize.y * 0.5f),
+                        isSelected ? IM_COL32(20, 16, 9, 255) : IM_COL32(224, 230, 238, 245),
+                        options[category][option]);
+
+            if (clicked) {
+                if (actions.playClick) actions.playClick();
+                if (actions.focus3DSelect) actions.focus3DSelect(category, option);
+            }
+        }
+        ImGui::PopID();
+    }
+
+    // 关闭
+    const float closeW = UI(130.0f), closeH = UI(38.0f);
+    ImGui::SetCursorScreenPos(ImVec2(center.x - closeW * 0.5f,
+                                     center.y + baseR * 1.14f + UI(18.0f)));
+    if (ImGui::Button("返回大厅", ImVec2(closeW, closeH))) {
+        if (actions.playClick) actions.playClick();
+        if (actions.close3DFocus) actions.close3DFocus();
+    }
 }
 
 // ============================================================================
