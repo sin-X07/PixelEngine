@@ -81,8 +81,7 @@ GameUI::Actions Engine::BuildActions() {
         if (s == MAP_SELECT && currentState == MAIN_MENU &&
             menu3D && menu3D->IsReady()) {
             BeginMenuCameraTransition([this] {
-                LoadMapPreviews(renderer, mapPreviewTex_, kMapCatalogCount);
-                currentState = MAP_SELECT;
+                OpenMapOverlay(MatchMode::BombDefusal);
             });
             return;
         }
@@ -95,21 +94,19 @@ GameUI::Actions Engine::BuildActions() {
     a.startMatch     = [this] { RestartCurrentMatch(); };
     a.startMatchMode = [this](int m) {
         const MatchMode mode = static_cast<MatchMode>(m);
-        auto startNow = [this, mode] {
-            if (mode == MatchMode::DeathMatch) {
-                BeginMatchLoad(mode, "assets/cs2d/maps/cs_office.tmj", pendingPlayerTeam_);
-            } else if (mode == MatchMode::TeamElimination) {
-                BeginMatchLoad(mode, "assets/cs2d/maps/ancient_ruins.tmj", pendingPlayerTeam_);
-            } else {
-                StartMatch(mode);
-            }
-        };
-        if (currentState == MAIN_MENU && menu3D && menu3D->IsReady() &&
-            (mode == MatchMode::DeathMatch || mode == MatchMode::TeamElimination)) {
-            BeginMenuCameraTransition(startNow);
+        if (currentState == MAIN_MENU && menu3D && menu3D->IsReady()) {
+            BeginMenuCameraTransition([this, mode] {
+                OpenMapOverlay(mode);
+            });
             return;
         }
-        startNow();
+        if (mode == MatchMode::DeathMatch) {
+            BeginMatchLoad(mode, "assets/cs2d/maps/cs_office.tmj", pendingPlayerTeam_);
+        } else if (mode == MatchMode::TeamElimination) {
+            BeginMatchLoad(mode, "assets/cs2d/maps/ancient_ruins.tmj", pendingPlayerTeam_);
+        } else {
+            StartMatch(mode);
+        }
     };
     // 选择阵营（爆破模式）：0 = T, 1 = CT, <0 = 随机
     a.chooseSide = [this](int side) {
@@ -139,6 +136,36 @@ GameUI::Actions Engine::BuildActions() {
             focusPose_ = option;
             menu3D->SetObjectPose(focused3D_, option);
         }
+    };
+
+    a.selectMapChoice = [this](int index) {
+        if (index < 0 || index >= mapOverlayCount_) return;
+        mapOverlaySelected_ = index;
+        mapPreviewRectValid_ = false;
+        const int catalogIndex = mapOverlayCatalogIndex_[index];
+        if (catalogIndex >= 0 && catalogIndex < kMapCatalogCount) {
+            mapSelectIndex_ = catalogIndex;
+        } else {
+            mapSelectIndex_ = -1;
+        }
+    };
+    a.startMatchOnChoice = [this](int index) {
+        if (index < 0 || index >= mapOverlayCount_) return;
+        const MatchMode mode = mapOverlayMode_;
+        const std::string path = mapOverlayPaths_[index];
+        pendingZoomPreviewTex_ = static_cast<SDL_Texture*>(mapOverlayPreviews_[index]);
+        const int catalogIndex = mapOverlayCatalogIndex_[index];
+        mapSelectIndex_ = (catalogIndex >= 0 && catalogIndex < kMapCatalogCount)
+            ? catalogIndex : -1;
+        mapOverlayOpen_ = false;
+        mapOverlayFade_ = 0.0f;
+        if (menu3D) menu3D->SetCameraTopDownProgress(0.0f);
+        BeginMatchLoad(mode, path, pendingPlayerTeam_);
+    };
+    a.closeMapOverlay = [this] {
+        mapOverlayOpen_ = false;
+        mapOverlayFade_ = 0.0f;
+        if (menu3D) menu3D->SetCameraTopDownProgress(0.0f);
     };
 
     a.startMatchOnMap = [this](int idx) {
@@ -776,6 +803,51 @@ void Engine::BeginMenuCameraTransition(std::function<void()> action) {
     focus3DClosing_ = false;
 }
 
+void Engine::OpenMapOverlay(MatchMode mode) {
+    mapOverlayMode_ = mode;
+    mapOverlayCount_ = 0;
+    mapOverlaySelected_ = 0;
+    mapOverlayNames_.fill({});
+    mapOverlayTaglines_.fill({});
+    mapOverlayPaths_.fill({});
+    mapOverlayPreviews_.fill(nullptr);
+    mapOverlayCatalogIndex_.fill(-1);
+
+    auto add = [&](const std::string& name, const std::string& tagline,
+                   const std::string& path, void* preview, int catalogIndex) {
+        if (mapOverlayCount_ >= 8) return;
+        const int i = mapOverlayCount_++;
+        mapOverlayNames_[i] = name;
+        mapOverlayTaglines_[i] = tagline;
+        mapOverlayPaths_[i] = path;
+        mapOverlayPreviews_[i] = preview;
+        mapOverlayCatalogIndex_[i] = catalogIndex;
+    };
+
+    if (mode == MatchMode::BombDefusal) {
+        for (int i = 0; i < kMapCatalogCount; ++i) {
+            add(kMapCatalog[i].name, kMapCatalog[i].tagline, kMapCatalog[i].tmj,
+                mapPreviewTex_[i], i);
+        }
+    } else if (mode == MatchMode::TeamElimination) {
+        add(kMapCatalog[0].name, kMapCatalog[0].tagline, kMapCatalog[0].tmj,
+            mapPreviewTex_[0], 0);
+    } else {
+        if (!officePreviewTex_) {
+            const std::string preview = PathUtils::ResolveAppPath("assets/cs2d/tilesets/cs_office_bg.png");
+            officePreviewTex_ = IMG_LoadTexture(renderer, preview.c_str());
+        }
+        add("办公室", "近距交火 · 室内攻防 · 快速接敌",
+            "assets/cs2d/maps/cs_office.tmj", officePreviewTex_, -1);
+    }
+
+    mapOverlayOpen_ = true;
+    mapOverlayStartMs_ = SDL_GetTicks64();
+    mapOverlayFade_ = 0.0f;
+    mapPreviewRectValid_ = false;
+    currentState = MAIN_MENU;
+}
+
 void Engine::RestartCurrentMatch() {
     if (!cs2dGame) return;
 
@@ -940,12 +1012,15 @@ void Engine::BeginMatchLoad(MatchMode mode, const std::string& mapRel, Team team
     matchLoadPhase_ = MatchLoadPhase::Zoom;
     matchLoadElapsed_ = 0.0f;
     matchLoadMapStarted_ = false;
-    matchZoomTex_ = nullptr;
-    matchZoomRectValid_ = (mode == MatchMode::BombDefusal && mapPreviewRectValid_);
+    matchZoomTex_ = pendingZoomPreviewTex_;
+    pendingZoomPreviewTex_ = nullptr;
+    matchZoomRectValid_ = mapPreviewRectValid_;
 
     if (mode == MatchMode::BombDefusal &&
         mapSelectIndex_ >= 0 && mapSelectIndex_ < kMapCatalogCount) {
-        matchZoomTex_ = static_cast<SDL_Texture*>(mapPreviewTex_[mapSelectIndex_]);
+        if (!matchZoomTex_) {
+            matchZoomTex_ = static_cast<SDL_Texture*>(mapPreviewTex_[mapSelectIndex_]);
+        }
     }
     if (matchZoomRectValid_) {
         for (int i = 0; i < 4; ++i) matchZoomRect_[i] = mapPreviewRect_[i];
@@ -1334,6 +1409,13 @@ void Engine::Render() {
                 menu3D->SetCameraTopDownProgress(cameraProgress);
                 menu3D->SetFocusedObject(-1);
                 menu3D->SetHoveredObject(-1);
+            } else if (mapOverlayOpen_) {
+                menu3D->SetCameraTopDownProgress(1.0f);
+                menu3D->SetFocusedObject(-1);
+                menu3D->SetHoveredObject(-1);
+                mapOverlayFade_ = std::clamp(
+                    static_cast<float>(SDL_GetTicks64() - mapOverlayStartMs_) / 350.0f,
+                    0.0f, 1.0f);
             } else {
                 menu3D->SetCameraTopDownProgress(0.0f);
                 if (focused3D_ >= 0) {
@@ -1385,6 +1467,25 @@ void Engine::Render() {
             ctx.focusPose   = focusPose_;
             ctx.focusProgress = focus3DProgress_;
             ctx.cameraTransition = cameraTransition;
+            ctx.mapOverlayOpen = mapOverlayOpen_;
+            ctx.mapOverlayFade = mapOverlayFade_;
+            ctx.mapOverlaySelected = mapOverlaySelected_;
+            ctx.mapOverlayCount = mapOverlayCount_;
+            if (mapOverlayMode_ == MatchMode::BombDefusal) {
+                ctx.mapOverlayTitle = "选择地图";
+                ctx.mapOverlaySubtitle = "爆破模式 · 选好战场后开始";
+            } else if (mapOverlayMode_ == MatchMode::TeamElimination) {
+                ctx.mapOverlayTitle = "选择地图";
+                ctx.mapOverlaySubtitle = "团队歼灭 · 当前可用战场";
+            } else {
+                ctx.mapOverlayTitle = "选择地图";
+                ctx.mapOverlaySubtitle = "死斗模式 · 当前可用战场";
+            }
+            for (int i = 0; i < 8; ++i) {
+                ctx.mapOverlayNames[i] = mapOverlayNames_[i];
+                ctx.mapOverlayTaglines[i] = mapOverlayTaglines_[i];
+                ctx.mapOverlayPreviews[i] = mapOverlayPreviews_[i];
+            }
         }
 
         gameUI->DrawMenu(ctx, BuildActions());
@@ -1399,7 +1500,7 @@ void Engine::Render() {
         }
 
         if (currentState == MAIN_MENU && menu3D && menu3D->IsReady() &&
-            !menuCameraTransition_) {
+            !menuCameraTransition_ && !mapOverlayOpen_) {
             if (focused3D_ < 0) {
                 const ImGuiIO& io = ImGui::GetIO();
                 const ImGuiViewport* vp = ImGui::GetMainViewport();

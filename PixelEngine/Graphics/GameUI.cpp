@@ -115,6 +115,14 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         return;
     }
 
+    if (ctx.mapOverlayOpen) {
+        DrawMapOverlay(ctx, actions);
+        ImGui::End();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
+        return;
+    }
+
     const float mainMenuOpen = std::clamp(ctx.focusProgress, 0.0f, 1.0f);
     const float mainMenuAlpha = ctx.focus3D
         ? 1.0f - mainMenuOpen * mainMenuOpen * (3.0f - 2.0f * mainMenuOpen)
@@ -455,6 +463,145 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
     ImGui::End();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
+}
+
+// ============================================================================
+// 俯视地图浮层
+// ============================================================================
+
+void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const ImVec2 wp = vp->WorkPos;
+    const ImVec2 ws = vp->WorkSize;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float fade = std::clamp(ctx.mapOverlayFade, 0.0f, 1.0f);
+
+    if (ctx.backdropTex && ctx.backdropW > 0 && ctx.backdropH > 0) {
+        const float texAspect = static_cast<float>(ctx.backdropW) / static_cast<float>(ctx.backdropH);
+        const float scrAspect = ws.x / ws.y;
+        ImVec2 uv0(0.0f, 0.0f), uv1(1.0f, 1.0f);
+        if (texAspect > scrAspect) {
+            const float frac = scrAspect / texAspect;
+            uv0.x = (1.0f - frac) * 0.5f;
+            uv1.x = uv0.x + frac;
+        } else {
+            const float frac = texAspect / scrAspect;
+            uv0.y = (1.0f - frac) * 0.5f;
+            uv1.y = uv0.y + frac;
+        }
+        dl->AddImage(reinterpret_cast<ImTextureID>(ctx.backdropTex),
+                     wp, ImVec2(wp.x + ws.x, wp.y + ws.y), uv0, uv1);
+    }
+    dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y),
+                      IM_COL32(4, 8, 12, static_cast<int>(78.0f * fade)));
+
+    const int count = std::max(1, ctx.mapOverlayCount);
+    const float cardW = UI(300.0f);
+    const float cardH = UI(356.0f);
+    const float gap = UI(26.0f);
+    const float totalW = count * cardW + (count - 1) * gap;
+    const float startX = wp.x + (ws.x - totalW) * 0.5f;
+    const float cardY = wp.y + UI(150.0f);
+    const int a255 = static_cast<int>(fade * 255.0f);
+
+    DrawImGuiTextCentered(imGuiUI_, ctx.mapOverlayTitle.c_str(), wp.y + UI(42.0f),
+                          240, 246, 255, a255, 32);
+    DrawImGuiTextCentered(imGuiUI_, ctx.mapOverlaySubtitle.c_str(), wp.y + UI(86.0f),
+                          170, 196, 212, a255, 18);
+
+    for (int i = 0; i < count; ++i) {
+        const ImVec2 cp(startX + i * (cardW + gap), cardY);
+        const ImVec2 cp2(cp.x + cardW, cp.y + cardH);
+        const bool selected = (ctx.mapOverlaySelected == i);
+
+        ImGui::SetCursorScreenPos(cp);
+        ImGui::PushID(i);
+        if (fade > 0.5f) {
+            ImGui::InvisibleButton("card", ImVec2(cardW, cardH));
+            if (ImGui::IsItemClicked()) {
+                if (actions.playClick) actions.playClick();
+                if (actions.selectMapChoice) actions.selectMapChoice(i);
+            }
+        }
+        ImGui::PopID();
+
+        const ImU32 bg = selected ? IM_COL32(28, 38, 50, static_cast<int>(225 * fade))
+                                 : IM_COL32(18, 24, 32, static_cast<int>(205 * fade));
+        dl->AddRectFilled(cp, cp2, bg, UI(10.0f));
+        dl->AddRect(cp, cp2,
+                    selected ? IM_COL32(235, 190, 85, a255)
+                             : IM_COL32(255, 255, 255, static_cast<int>(30 * fade)),
+                    UI(10.0f), 0, selected ? UI(2.5f) : UI(1.0f));
+
+        const float pad = UI(10.0f);
+        const ImVec2 img0(cp.x + pad, cp.y + pad);
+        const ImVec2 img1(cp2.x - pad, cp.y + UI(166.0f));
+        if (i < 8 && ctx.mapOverlayPreviews[i]) {
+            dl->AddImage(reinterpret_cast<ImTextureID>(ctx.mapOverlayPreviews[i]), img0, img1);
+        } else {
+            dl->AddRectFilled(img0, img1, IM_COL32(34, 44, 56, static_cast<int>(230 * fade)), UI(6.0f));
+        }
+        dl->AddRect(img0, img1, IM_COL32(255, 255, 255, static_cast<int>(30 * fade)), UI(6.0f), 0, UI(1.0f));
+        if (selected && actions.setMapPreviewRect) {
+            actions.setMapPreviewRect(img0.x, img0.y, img1.x, img1.y);
+        }
+
+        if (i < 8) {
+            DrawImGuiText(imGuiUI_, ctx.mapOverlayNames[i].c_str(),
+                          cp.x + pad + UI(2.0f), cp.y + UI(184.0f),
+                          236, 242, 250, a255, 23);
+            DrawImGuiText(imGuiUI_, ctx.mapOverlayTaglines[i].c_str(),
+                          cp.x + pad + UI(2.0f), cp.y + UI(220.0f),
+                          156, 182, 202, a255, 14);
+        }
+        if (selected) {
+            dl->AddRectFilled(ImVec2(cp.x + pad, cp2.y - UI(34.0f)),
+                              ImVec2(cp.x + pad + UI(58.0f), cp2.y - UI(14.0f)),
+                              IM_COL32(235, 190, 85, static_cast<int>(235 * fade)), UI(4.0f));
+            DrawImGuiText(imGuiUI_, "已选", cp.x + pad + UI(12.0f), cp2.y - UI(32.0f),
+                          20, 24, 30, a255, 14);
+        }
+    }
+
+    const float btnW = UI(180.0f), btnH = UI(42.0f);
+    const float btnY = cardY + cardH + UI(24.0f);
+    if (fade > 0.5f) {
+        ImGui::SetCursorScreenPos(ImVec2(wp.x + ws.x * 0.5f - btnW - UI(12.0f), btnY));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.90f, 0.72f, 0.30f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.00f, 0.82f, 0.42f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.78f, 0.62f, 0.24f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.08f, 0.09f, 0.11f, 1.0f));
+        if (ImGui::Button("开始对局", ImVec2(btnW, btnH))) {
+            if (actions.playClick) actions.playClick();
+            if (actions.startMatchOnChoice) actions.startMatchOnChoice(ctx.mapOverlaySelected);
+        }
+        ImGui::PopStyleColor(4);
+
+        ImGui::SetCursorScreenPos(ImVec2(wp.x + ws.x * 0.5f + UI(12.0f), btnY));
+        if (ImGui::Button("返回主菜单", ImVec2(btnW, btnH))) {
+            if (actions.playClick) actions.playClick();
+            if (actions.closeMapOverlay) actions.closeMapOverlay();
+        }
+    }
+
+    DrawImGuiTextCentered(imGuiUI_, "← → 切换地图      Enter 开始      Esc 返回",
+                          btnY + btnH + UI(18.0f), 130, 154, 176,
+                          static_cast<int>(235 * fade), 14);
+
+    if (fade > 0.8f) {
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && ctx.mapOverlaySelected > 0) {
+            if (actions.selectMapChoice) actions.selectMapChoice(ctx.mapOverlaySelected - 1);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) && ctx.mapOverlaySelected + 1 < count) {
+            if (actions.selectMapChoice) actions.selectMapChoice(ctx.mapOverlaySelected + 1);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+            if (actions.startMatchOnChoice) actions.startMatchOnChoice(ctx.mapOverlaySelected);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            if (actions.closeMapOverlay) actions.closeMapOverlay();
+        }
+    }
 }
 
 // ============================================================================

@@ -1,6 +1,7 @@
 #pragma once
 #include "../Core/Types.hpp"
 #include "../Storage/MatchHistory.hpp"
+#include <array>
 #include <functional>
 #include <string>
 #include <vector>
@@ -24,6 +25,9 @@ public:
         std::function<void(int)>           chooseSide;         // 0=T, 1=CT（爆破模式）
         std::function<void()>              close3DFocus;      // 退出主菜单 3D 聚焦
         std::function<void(int,int)>       focus3DSelect;     // (category, option)
+        std::function<void(int)>           selectMapChoice;    // 俯视地图浮层选择
+        std::function<void(int)>           startMatchOnChoice; // 俯视地图浮层确认
+        std::function<void()>              closeMapOverlay;    // 返回主菜单
         std::function<void(int)>           selectMap;          // 地图选择光标移动
         std::function<void(float,float,float,float)> setMapPreviewRect; // 当前选中地图预览图矩形
         std::function<void()>              resumeGame;        // 暂停页继续
@@ -105,6 +109,15 @@ public:
         int         focusPose = 0;     // 0=待机 1=警戒 2=挥手
         float       focusProgress = 1.0f;  // 聚焦放大 / 轮盘开屏进度
         bool        cameraTransition = false; // 主菜单到模式页的相机弧线转场
+        bool        mapOverlayOpen = false;
+        float       mapOverlayFade = 0.0f;
+        std::string mapOverlayTitle;
+        std::string mapOverlaySubtitle;
+        int         mapOverlaySelected = 0;
+        int         mapOverlayCount = 0;
+        std::array<std::string, 8> mapOverlayNames;
+        std::array<std::string, 8> mapOverlayTaglines;
+        std::array<void*, 8> mapOverlayPreviews{};
     };
 
     struct InGameCtx {
@@ -175,6 +188,7 @@ public:
 
     void DrawMenu(const MenuCtx& ctx, const Actions& actions);
     void DrawFocusWheel(const MenuCtx& ctx, const Actions& actions);
+    void DrawMapOverlay(const MenuCtx& ctx, const Actions& actions);
 
     // 地图选择界面（爆破模式）
     struct MapSelectCtx {

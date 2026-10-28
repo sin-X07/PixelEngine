@@ -11,6 +11,7 @@
 #include "CS2D/CS2DOverlay.hpp"
 #include "LLM/LLMBotController.hpp"
 #include <SDL2/SDL.h>
+#include <array>
 #include <memory>
 #include "Storage/MatchHistory.hpp"
 
@@ -127,6 +128,21 @@ private:
     uint64_t     menuCameraStartMs_ = 0;
     std::function<void()> pendingMenuAction_;
     void BeginMenuCameraTransition(std::function<void()> action);
+
+    bool         mapOverlayOpen_ = false;
+    uint64_t     mapOverlayStartMs_ = 0;
+    float        mapOverlayFade_ = 0.0f;
+    MatchMode    mapOverlayMode_ = MatchMode::BombDefusal;
+    int          mapOverlaySelected_ = 0;
+    int          mapOverlayCount_ = 0;
+    std::array<std::string, 8> mapOverlayNames_;
+    std::array<std::string, 8> mapOverlayTaglines_;
+    std::array<std::string, 8> mapOverlayPaths_;
+    std::array<void*, 8> mapOverlayPreviews_{};
+    std::array<int, 8> mapOverlayCatalogIndex_{};
+    SDL_Texture* officePreviewTex_ = nullptr;
+    SDL_Texture* pendingZoomPreviewTex_ = nullptr;
+    void OpenMapOverlay(MatchMode mode);
     void FinalizeSideChoice();
     void UpdateSidePopupFade(float dt);
     void BeginMatchLoad(MatchMode mode, const std::string& mapRel, Team team);
