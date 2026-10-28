@@ -257,36 +257,95 @@ bool Menu3D::LoadModels() {
                   << " CT=" << ctModel_->AnimationName()
                   << " 小鸡=" << chickens_.size() << std::endl;
     }
+    InitChickenState();
     return tModel_ && ctModel_;
+}
+
+void Menu3D::InitChickenState() {
+    const float xs[3] = { -2.35f, 0.0f, 2.25f };
+    const float zs[3] = { 3.2f, 7.0f, 3.0f };
+    for (int i = 0; i < 3; ++i) {
+        ChickenState& s = chickenState_[i];
+        s.x = xs[i];
+        s.z = zs[i];
+        s.yaw = 0.0f;
+        s.speed = 0.75f + (chickenRng_() % 100) / 200.0f;
+        PickChickenTarget(i);
+    }
+}
+
+void Menu3D::PickChickenTarget(int index) {
+    std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
+    ChickenState& s = chickenState_[index];
+    float minX = -3.4f, maxX = 3.4f;
+    float minZ = 2.0f, maxZ = 4.5f;
+    if (index == 0) {
+        minX = -3.6f; maxX = -1.7f;
+    } else if (index == 2) {
+        minX = 1.7f; maxX = 3.6f;
+    } else {
+        // 中间的小鸡始终在按钮组下方，避免被按钮遮挡
+        minX = -0.8f; maxX = 0.8f;
+        minZ = 6.7f; maxZ = 7.5f;
+    }
+    s.targetX = minX + (maxX - minX) * dist01(chickenRng_);
+    s.targetZ = minZ + (maxZ - minZ) * dist01(chickenRng_);
+    s.repathTimer = 1.6f + 2.4f * dist01(chickenRng_);
+}
+
+void Menu3D::UpdateChickens(float dt) {
+    for (int i = 0; i < static_cast<int>(chickens_.size()) && i < 3; ++i) {
+        ChickenState& s = chickenState_[i];
+        s.repathTimer -= dt;
+        if (s.repathTimer <= 0.0f) PickChickenTarget(i);
+
+        const float dx = s.targetX - s.x;
+        const float dz = s.targetZ - s.z;
+        const float dist = std::sqrt(dx * dx + dz * dz);
+        if (dist > 0.06f) {
+            const float step = std::min(dist, s.speed * dt);
+            s.x += dx / dist * step;
+            s.z += dz / dist * step;
+            // 模型正面朝 +Z：yaw=0 面向镜头，移动时朝目标方向
+            s.yaw = std::atan2(dx, dz) * 180.0f / kPi;
+        } else {
+            // 到点后停一小会儿，再换下一个随机点
+            s.yaw = 0.0f;
+        }
+    }
 }
 
 void Menu3D::DrawModels() {
     // 接地阴影
-    DrawShadow(-3.6f, 0.0f, 0.55f, 0.34f, 0.42f);
-    DrawShadow( 3.6f, 0.0f, 0.55f, 0.34f, 0.42f);
-    DrawShadow(-2.35f, 3.2f, 0.22f, 0.16f, 0.34f);
-    DrawShadow( 0.0f, 6.2f, 0.20f, 0.15f, 0.30f);
-    DrawShadow( 2.25f, 3.0f, 0.22f, 0.16f, 0.34f);
+    DrawShadow(-4.0f, 0.0f, 0.62f, 0.38f, 0.46f);
+    DrawShadow( 4.0f, 0.0f, 0.62f, 0.38f, 0.46f);
+    for (int i = 0; i < static_cast<int>(chickens_.size()) && i < 3; ++i) {
+        const ChickenState& s = chickenState_[i];
+        const float dist = 8.6f - s.z;
+        const float shadowScale = std::max(0.04f, dist / 6.0f);
+        DrawShadow(s.x, s.z, 0.20f * shadowScale, 0.15f * shadowScale, 0.34f);
+    }
 
     // 角色
     glPushMatrix();
-    glTranslatef(-3.6f, 0.0f, 0.0f);
-    tModel_->Draw(0.92f, 0.0f, 0.0f);
+    glTranslatef(-4.0f, 0.0f, 0.0f);
+    tModel_->Draw(1.22f, 0.0f, 0.0f);
     glPopMatrix();
 
     glPushMatrix();
-    glTranslatef(3.6f, 0.0f, 0.0f);
-    ctModel_->Draw(0.92f, 0.0f, 0.0f);
+    glTranslatef(4.0f, 0.0f, 0.0f);
+    ctModel_->Draw(1.22f, 0.0f, 0.0f);
     glPopMatrix();
 
-    // 三只鸡，位置/朝向/动画相位都不同
-    const float xs[3] = { -2.35f, 0.0f, 2.25f };
-    const float zs[3] = { 3.2f, 7.0f, 3.0f };
-    const float yaw[3] = { 155.0f, 205.0f, 175.0f };
-    for (size_t i = 0; i < chickens_.size() && i < 3; ++i) {
+    // 三只鸡：左侧、按钮下方、右侧，各自在区域内随机跑动
+    for (int i = 0; i < static_cast<int>(chickens_.size()) && i < 3; ++i) {
+        const ChickenState& s = chickenState_[i];
+        const float dist = 8.6f - s.z;
+        // 透视下用距离补偿世界缩放，让三只鸡在屏幕上大小接近
+        const float scale = std::clamp(0.30f * dist / 6.0f, 0.055f, 0.34f);
         glPushMatrix();
-        glTranslatef(xs[i], 0.0f, zs[i]);
-        chickens_[i]->Draw(i == 1 ? 0.24f : 0.30f, 0.0f, yaw[i]);
+        glTranslatef(s.x, 0.0f, s.z);
+        chickens_[i]->Draw(scale, 0.0f, s.yaw);
         glPopMatrix();
     }
 }
@@ -306,6 +365,7 @@ void Menu3D::Render(float dt) {
     if (tModel_) tModel_->Update(animDt);
     if (ctModel_) ctModel_->Update(animDt);
     for (auto& chicken : chickens_) chicken->Update(animDt);
+    UpdateChickens(animDt);
 
     DrawScene(animationTime_);
     ReadbackToTexture();
@@ -330,9 +390,9 @@ void Menu3D::DrawScene(float timeSec) {
     glTranslatef(0.0f, -1.25f, -8.6f);
     glRotatef(-7.0f, 1.0f, 0.0f, 0.0f);
 
-    // 地面
+    // 地面：暖灰褐色，和上方深蓝黑背景形成明确分界
     glDisable(GL_LIGHTING);
-    glColor4f(0.055f, 0.075f, 0.085f, 0.82f);
+    glColor4f(0.135f, 0.125f, 0.105f, 1.0f);
     glBegin(GL_QUADS);
     glVertex3f(-13.0f, 0.0f, -5.0f);
     glVertex3f( 13.0f, 0.0f, -5.0f);
@@ -340,15 +400,29 @@ void Menu3D::DrawScene(float timeSec) {
     glVertex3f(-13.0f, 0.0f,  8.0f);
     glEnd();
 
-    glColor4f(0.20f, 0.17f, 0.12f, 0.35f);
+    // 轻微棋盘格，让地面有材质感
+    glColor4f(0.19f, 0.165f, 0.12f, 0.55f);
+    glBegin(GL_QUADS);
+    for (int iz = -5; iz < 8; ++iz) {
+        for (int ix = -13; ix < 13; ++ix) {
+            if (((ix + iz) & 1) == 0) continue;
+            glVertex3f(static_cast<float>(ix), 0.003f, static_cast<float>(iz));
+            glVertex3f(static_cast<float>(ix + 1), 0.003f, static_cast<float>(iz));
+            glVertex3f(static_cast<float>(ix + 1), 0.003f, static_cast<float>(iz + 1));
+            glVertex3f(static_cast<float>(ix), 0.003f, static_cast<float>(iz + 1));
+        }
+    }
+    glEnd();
+
+    glColor4f(0.52f, 0.40f, 0.22f, 0.42f);
     glBegin(GL_LINES);
     for (int i = -12; i <= 12; ++i) {
-        glVertex3f(static_cast<float>(i), 0.002f, -5.0f);
-        glVertex3f(static_cast<float>(i), 0.002f, 8.0f);
+        glVertex3f(static_cast<float>(i), 0.006f, -5.0f);
+        glVertex3f(static_cast<float>(i), 0.006f, 8.0f);
     }
     for (int i = -5; i <= 8; ++i) {
-        glVertex3f(-13.0f, 0.002f, static_cast<float>(i));
-        glVertex3f( 13.0f, 0.002f, static_cast<float>(i));
+        glVertex3f(-13.0f, 0.006f, static_cast<float>(i));
+        glVertex3f( 13.0f, 0.006f, static_cast<float>(i));
     }
     glEnd();
     glEnable(GL_LIGHTING);

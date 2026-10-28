@@ -1,7 +1,9 @@
 #pragma once
 #include <SDL2/SDL.h>
+#include <array>
 #include <cstdint>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -57,6 +59,20 @@ private:
     std::unique_ptr<Menu3DModel> tModel_;
     std::unique_ptr<Menu3DModel> ctModel_;
     std::vector<std::unique_ptr<Menu3DModel>> chickens_;
+    struct ChickenState {
+        float x = 0.0f;
+        float z = 0.0f;
+        float yaw = 0.0f;
+        float targetX = 0.0f;
+        float targetZ = 0.0f;
+        float repathTimer = 0.0f;
+        float speed = 0.8f;
+    };
+    std::array<ChickenState, 3> chickenState_{};
+    std::mt19937 chickenRng_{ std::random_device{}() };
+    void InitChickenState();
+    void UpdateChickens(float dt);
+    void PickChickenTarget(int index);
     bool LoadModels();
     void DrawModels();
 };
