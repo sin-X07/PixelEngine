@@ -354,11 +354,13 @@ void Menu3D::DrawModels() {
     // 角色
     glPushMatrix();
     glTranslatef(-4.0f, 0.0f, 0.0f);
+    if (hoveredObject_ == 0) tModel_->DrawHighlight(1.22f, 0.0f, 0.0f);
     tModel_->Draw(1.22f, 0.0f, 0.0f);
     glPopMatrix();
 
     glPushMatrix();
     glTranslatef(4.0f, 0.0f, 0.0f);
+    if (hoveredObject_ == 1) ctModel_->DrawHighlight(1.22f, 0.0f, 0.0f);
     ctModel_->Draw(1.22f, 0.0f, 0.0f);
     glPopMatrix();
 
@@ -370,6 +372,7 @@ void Menu3D::DrawModels() {
         const float scale = std::clamp(0.30f * dist / 6.0f, 0.055f, 0.34f);
         glPushMatrix();
         glTranslatef(s.x, 0.0f, s.z);
+        if (hoveredObject_ == i + 2) chickens_[i]->DrawHighlight(scale, 0.0f, s.yaw);
         chickens_[i]->Draw(scale, 0.0f, s.yaw);
         glPopMatrix();
     }
@@ -389,6 +392,9 @@ void Menu3D::SetFocusedObject(int index) {
     if (index < -1 || index >= kObjectCount) index = -1;
     if (focusedObject_ == index) return;
     focusedObject_ = index;
+    focusProgress_ = 0.0f;
+    focusTargetX_ = (index < 2) ? -2.4f : -1.8f;
+    focusTargetZ_ = 0.0f;
     spotScanTimer_ = 0.0f;
 }
 
@@ -456,15 +462,23 @@ void Menu3D::UpdateObjectScreenPositions() {
     for (int i = 0; i < kObjectCount; ++i) {
         float x, y, z;
         ObjectWorldPosition(i, x, y, z);
+        const float bottomY = 0.0f;
         const float topY = (i < 2) ? 2.55f : 1.55f;
-        float u0 = 0, v0 = 0, u1 = 0, v1 = 0;
-        if (!project(x, y, z, u0, v0)) continue;
-        if (!project(x, topY, z, u1, v1)) continue;
-        screenU_[i] = u0;
-        screenV_[i] = v0;
-        const float pixelRadius = std::max(24.0f, std::fabs(v1 - v0) * static_cast<float>(height_) * 0.62f);
-        screenRU_[i] = pixelRadius / static_cast<float>(width_);
-        screenRV_[i] = pixelRadius / static_cast<float>(height_);
+        const float width = (i < 2) ? 1.35f : 1.05f;
+        const float midY = (bottomY + topY) * 0.5f;
+
+        float ub = 0, vb = 0, ut = 0, vt = 0;
+        float ul = 0, vl = 0, ur = 0, vr = 0;
+        if (!project(x, bottomY, z, ub, vb)) continue;
+        if (!project(x, topY, z, ut, vt)) continue;
+        if (!project(x - width * 0.5f, midY, z, ul, vl)) continue;
+        if (!project(x + width * 0.5f, midY, z, ur, vr)) continue;
+
+        // 使用覆盖脚底到头顶的屏幕包围盒，鼠标落在身体任意位置都能命中。
+        screenU_[i] = (ul + ur) * 0.5f;
+        screenV_[i] = (vb + vt) * 0.5f;
+        screenRU_[i] = std::max(0.018f, std::fabs(ur - ul) * 0.5f * 1.30f);
+        screenRV_[i] = std::max(0.024f, std::fabs(vt - vb) * 0.5f * 1.20f);
     }
 }
 
@@ -476,10 +490,13 @@ int Menu3D::HitTestNormalized(float u, float v) const {
         const float ry = std::max(screenRV_[i], 0.005f);
         const float dx = (u - screenU_[i]) / rx;
         const float dy = (v - screenV_[i]) / ry;
-        const float d = dx * dx + dy * dy;
-        if (d <= 1.0f && d < bestD) {
-            bestD = d;
-            best = i;
+        // 矩形命中区域比椭圆更宽容，符合“鼠标在身体上即可选中”
+        if (std::fabs(dx) <= 1.0f && std::fabs(dy) <= 1.0f) {
+            const float d = dx * dx + dy * dy;
+            if (d < bestD) {
+                bestD = d;
+                best = i;
+            }
         }
     }
     return best;
@@ -488,8 +505,8 @@ int Menu3D::HitTestNormalized(float u, float v) const {
 void Menu3D::UpdateSpotlight(float dt) {
     float tx = 0.0f, tz = 0.0f;
     if (focusedObject_ >= 0) {
-        tx = 0.0f;
-        tz = 0.0f;
+        tx = focusTargetX_;
+        tz = focusTargetZ_;
     } else if (hoveredObject_ >= 0) {
         float x, y, z;
         ObjectWorldPosition(hoveredObject_, x, y, z);
@@ -517,7 +534,7 @@ void Menu3D::UpdateSpotlight(float dt) {
 void Menu3D::DrawObjectRing(float x, float z, float radius, float alpha) {
     glDisable(GL_LIGHTING);
     glDepthMask(GL_FALSE);
-    glColor4f(1.0f, 0.78f, 0.32f, alpha);
+    glColor4f(0.68f, 0.88f, 1.0f, alpha);
     glLineWidth(2.0f);
     glBegin(GL_LINE_LOOP);
     constexpr int kSegments = 40;
@@ -532,11 +549,22 @@ void Menu3D::DrawObjectRing(float x, float z, float radius, float alpha) {
 }
 
 void Menu3D::DrawSpotlight() {
-    // 固定使用一个暖色聚光灯，位置跟随平滑后的 spot 坐标。
-    const GLfloat pos[] = { spotX_, 6.2f, spotZ_, 1.0f };
-    const GLfloat dir[] = { 0.0f, -1.0f, 0.0f };
-    const GLfloat diff[] = { 1.0f, 0.78f, 0.34f, 1.0f };
-    GLfloat cutoff = (focusedObject_ >= 0) ? 22.0f : 30.0f;
+    const int targetIndex = (focusedObject_ >= 0) ? focusedObject_ : hoveredObject_;
+    const float targetRadius = (targetIndex < 0) ? 0.72f
+                             : (targetIndex < 2) ? 1.05f : 0.34f;
+    const float targetY = (targetIndex < 0) ? 0.05f
+                        : (targetIndex < 2) ? 1.15f : 0.55f;
+
+    // 发射源固定在场景上方中央，只让光锥/聚光灯方向跟随目标。
+    const GLfloat pos[] = { 0.0f, 6.4f, 0.0f, 1.0f };
+    float dirX = spotX_;
+    float dirY = targetY - 6.4f;
+    float dirZ = spotZ_;
+    const float dirLen = std::sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
+    if (dirLen > 1e-5f) { dirX /= dirLen; dirY /= dirLen; dirZ /= dirLen; }
+    const GLfloat dir[] = { dirX, dirY, dirZ };
+    const GLfloat diff[] = { 0.86f, 0.93f, 1.0f, 1.0f };
+    const float cutoff = (targetIndex >= 2) ? 20.0f : 31.0f;
     glEnable(GL_LIGHT1);
     glLightfv(GL_LIGHT1, GL_POSITION, pos);
     glLightfv(GL_LIGHT1, GL_DIFFUSE, diff);
@@ -548,27 +576,27 @@ void Menu3D::DrawSpotlight() {
     glDepthMask(GL_FALSE);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 
-    // 可见光锥
-    glColor4f(1.0f, 0.62f, 0.14f, 0.26f);
+    // 可见光锥：顶端固定在 (0, 6.2, 0)，底端跟随目标
+    glColor4f(0.72f, 0.86f, 1.0f, 0.24f);
     glBegin(GL_QUAD_STRIP);
     constexpr int kSegments = 24;
     for (int i = 0; i <= kSegments; ++i) {
         const float a = 2.0f * kPi * static_cast<float>(i) / kSegments;
-        const float topR = 0.08f;
-        const float bottomR = (focusedObject_ >= 0) ? 0.55f : 1.05f;
-        glVertex3f(spotX_ + std::cos(a) * topR, 6.2f, spotZ_ + std::sin(a) * topR);
-        glVertex3f(spotX_ + std::cos(a) * bottomR, 0.02f, spotZ_ + std::sin(a) * bottomR);
+        const float topR = 0.045f;
+        glVertex3f(std::cos(a) * topR, 6.2f, std::sin(a) * topR);
+        glVertex3f(spotX_ + std::cos(a) * targetRadius, 0.02f,
+                   spotZ_ + std::sin(a) * targetRadius);
     }
     glEnd();
 
     // 地面光斑
-    glColor4f(1.0f, 0.76f, 0.30f, 0.30f);
+    glColor4f(0.78f, 0.90f, 1.0f, 0.27f);
     glBegin(GL_TRIANGLE_FAN);
     glVertex3f(spotX_, 0.008f, spotZ_);
     for (int i = 0; i <= kSegments; ++i) {
         const float a = 2.0f * kPi * static_cast<float>(i) / kSegments;
-        const float r = (focusedObject_ >= 0) ? 0.55f : 1.05f;
-        glVertex3f(spotX_ + std::cos(a) * r, 0.008f, spotZ_ + std::sin(a) * r);
+        glVertex3f(spotX_ + std::cos(a) * targetRadius, 0.008f,
+                   spotZ_ + std::sin(a) * targetRadius);
     }
     glEnd();
 
@@ -578,18 +606,18 @@ void Menu3D::DrawSpotlight() {
 
     // 随机探照时也画一个小光圈，明确灯在扫地面
     if (hoveredObject_ < 0 && focusedObject_ < 0) {
-        DrawObjectRing(spotX_, spotZ_, 0.36f, 0.50f);
+        DrawObjectRing(spotX_, spotZ_, 0.36f, 0.45f);
     }
 
     if (hoveredObject_ >= 0 || focusedObject_ >= 0) {
         const int idx = focusedObject_ >= 0 ? focusedObject_ : hoveredObject_;
         float x, y, z;
-        if (focusedObject_ >= 0) { x = 0.0f; z = 0.0f; }
+        if (focusedObject_ >= 0) { x = focusTargetX_; z = focusTargetZ_; }
         else ObjectWorldPosition(idx, x, y, z);
-        const float r = (idx < 2) ? 0.75f : 0.28f;
+        const float r = (idx < 2) ? 0.82f : 0.30f;
         const float pulse = 0.65f + 0.35f * std::sin(animationTime_ * 5.0f);
-        DrawObjectRing(x, z, r, 0.85f * pulse);
-        DrawObjectRing(x, z, r * 0.72f, 0.45f * pulse);
+        DrawObjectRing(x, z, r, 0.95f * pulse);
+        DrawObjectRing(x, z, r * 0.72f, 0.55f * pulse);
     }
 }
 
@@ -636,50 +664,78 @@ void Menu3D::DrawFocusScene() {
     glLoadIdentity();
     glFrustum(-right, right, -top, top, nearZ, 40.0f);
 
+    // 与主场景保持同一个相机，只让被选中的模型逐帧移动到左侧并放大
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
-    glTranslatef(-2.0f, -1.05f, -6.6f);
-    glRotatef(-5.0f, 1.0f, 0.0f, 0.0f);
+    glTranslatef(0.0f, -1.25f, -8.6f);
+    glRotatef(-7.0f, 1.0f, 0.0f, 0.0f);
 
-    // 聚焦平台
     glDisable(GL_LIGHTING);
-    glColor4f(0.16f, 0.14f, 0.105f, 1.0f);
+    glColor4f(0.135f, 0.125f, 0.105f, 1.0f);
     glBegin(GL_QUADS);
-    glVertex3f(-8.0f, 0.0f, -4.0f);
-    glVertex3f( 8.0f, 0.0f, -4.0f);
-    glVertex3f( 8.0f, 0.0f,  7.0f);
-    glVertex3f(-8.0f, 0.0f,  7.0f);
+    glVertex3f(-13.0f, 0.0f, -5.0f);
+    glVertex3f( 13.0f, 0.0f, -5.0f);
+    glVertex3f( 13.0f, 0.0f,  8.0f);
+    glVertex3f(-13.0f, 0.0f,  8.0f);
     glEnd();
-    glColor4f(0.50f, 0.39f, 0.20f, 0.45f);
+    glColor4f(0.52f, 0.40f, 0.22f, 0.42f);
     glBegin(GL_LINES);
-    for (int i = -8; i <= 8; ++i) {
-        glVertex3f(static_cast<float>(i), 0.006f, -4.0f);
-        glVertex3f(static_cast<float>(i), 0.006f, 7.0f);
+    for (int i = -12; i <= 12; ++i) {
+        glVertex3f(static_cast<float>(i), 0.006f, -5.0f);
+        glVertex3f(static_cast<float>(i), 0.006f, 8.0f);
     }
-    for (int i = -4; i <= 7; ++i) {
-        glVertex3f(-8.0f, 0.006f, static_cast<float>(i));
-        glVertex3f( 8.0f, 0.006f, static_cast<float>(i));
+    for (int i = -5; i <= 8; ++i) {
+        glVertex3f(-13.0f, 0.006f, static_cast<float>(i));
+        glVertex3f( 13.0f, 0.006f, static_cast<float>(i));
     }
     glEnd();
     glEnable(GL_LIGHTING);
+
+    const float raw = std::clamp(focusProgress_, 0.0f, 1.0f);
+    const float t = raw * raw * (3.0f - 2.0f * raw);
+
+    float normalX = 0.0f, normalZ = 0.0f, normalScale = 1.22f;
+    float targetScale = 1.9f;
+    if (focusedObject_ == 0) {
+        normalX = -4.0f;
+    } else if (focusedObject_ == 1) {
+        normalX = 4.0f;
+    } else if (focusedObject_ >= 2 && focusedObject_ - 2 < static_cast<int>(chickenState_.size())) {
+        const ChickenState& s = chickenState_[focusedObject_ - 2];
+        normalX = s.x;
+        normalZ = s.z;
+        normalScale = std::clamp(0.30f * (8.6f - s.z) / 6.0f, 0.055f, 0.34f);
+        targetScale = 0.95f;
+    }
+    const float x = normalX + (focusTargetX_ - normalX) * t;
+    const float z = normalZ + (focusTargetZ_ - normalZ) * t;
+    const float scale = normalScale + (targetScale - normalScale) * t;
 
     DrawSpotlight();
 
     if (focusedObject_ >= 0 && focusedObject_ < 2) {
         Menu3DModel* model = (focusedObject_ == 0) ? tModel_.get() : ctModel_.get();
         if (model) {
-            model->Draw(1.75f, 0.0f, 0.0f);
-            DrawWeaponProp(0.95f, 1.25f, 0.0f);
+            glPushMatrix();
+            glTranslatef(x, 0.0f, z);
+            model->DrawHighlight(scale, 0.0f, 0.0f);
+            model->Draw(scale, 0.0f, 0.0f);
+            glPopMatrix();
+            if (t > 0.45f) DrawWeaponProp(x + 0.95f, 1.25f, z);
         }
     } else if (focusedObject_ >= 2 && focusedObject_ - 2 < static_cast<int>(chickens_.size())) {
         Menu3DModel* model = chickens_[focusedObject_ - 2].get();
         if (model) {
-            model->Draw(0.9f, 0.0f, 0.0f);
-            DrawWeaponProp(0.32f, 0.45f, 0.1f);
+            glPushMatrix();
+            glTranslatef(x, 0.0f, z);
+            model->DrawHighlight(scale, 0.0f, 0.0f);
+            model->Draw(scale, 0.0f, 0.0f);
+            glPopMatrix();
+            if (t > 0.45f) DrawWeaponProp(x + 0.32f, 0.45f, z + 0.1f);
         }
     }
 
-    DrawObjectRing(0.0f, 0.0f, focusedObject_ < 2 ? 0.95f : 0.40f, 0.8f);
+    DrawObjectRing(x, z, focusedObject_ < 2 ? 0.95f : 0.40f, 0.8f);
 }
 
 

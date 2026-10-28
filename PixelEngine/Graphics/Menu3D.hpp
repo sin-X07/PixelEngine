@@ -47,6 +47,8 @@ public:
     void SetObjectColor(int index, int option);
     void SetObjectPose(int index, int option);
     void SetFocusWeapon(int option) { focusWeapon_ = option; }
+    void SetFocusProgress(float progress) { focusProgress_ = progress < 0.0f ? 0.0f : (progress > 1.0f ? 1.0f : progress); }
+    float FocusProgress() const { return focusProgress_; }
 
 private:
     bool InitGL();
@@ -100,6 +102,9 @@ private:
     int hoveredObject_ = -1;
     int focusedObject_ = -1;
     int focusWeapon_ = 0;
+    float focusProgress_ = 1.0f;
+    float focusTargetX_ = -2.4f;
+    float focusTargetZ_ = 0.0f;
     float spotX_ = 0.0f;
     float spotZ_ = 0.0f;
     float spotTargetX_ = 0.0f;

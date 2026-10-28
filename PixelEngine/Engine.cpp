@@ -108,6 +108,7 @@ GameUI::Actions Engine::BuildActions() {
     a.close3DFocus = [this] {
         focused3D_ = -1;
         hovered3D_ = -1;
+        focus3DProgress_ = 0.0f;
         if (menu3D) menu3D->SetFocusedObject(-1);
         SDL_SetRelativeMouseMode(SDL_FALSE);
         SDL_ShowCursor(SDL_ENABLE);
@@ -1298,6 +1299,11 @@ void Engine::Render() {
 
         if (currentState == MAIN_MENU && menu3D && menu3D->IsReady()) {
             if (focused3D_ >= 0) {
+                const float p = std::clamp(
+                    static_cast<float>(SDL_GetTicks64() - focusAnimStartMs_) / 380.0f,
+                    0.0f, 1.0f);
+                focus3DProgress_ = p;
+                menu3D->SetFocusProgress(p);
                 menu3D->SetHoveredObject(-1);
                 menu3D->SetFocusedObject(focused3D_);
                 menu3D->SetFocusWeapon(focusWeapon_);
@@ -1322,6 +1328,7 @@ void Engine::Render() {
             ctx.focusWeapon = focusWeapon_;
             ctx.focusColor  = focusColor_;
             ctx.focusPose   = focusPose_;
+            ctx.focusProgress = focus3DProgress_;
         }
 
         gameUI->DrawMenu(ctx, BuildActions());
@@ -1356,6 +1363,8 @@ void Engine::Render() {
 
                 if (hit >= 0 && !uiHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     focused3D_ = hit;
+                    focusAnimStartMs_ = SDL_GetTicks64();
+                    focus3DProgress_ = 0.0f;
                     focusWeapon_ = 0;
                     focusColor_ = 0;
                     focusPose_ = 0;

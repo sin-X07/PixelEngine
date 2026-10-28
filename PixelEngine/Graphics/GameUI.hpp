@@ -103,6 +103,7 @@ public:
         int         focusWeapon = 0;   // 0=步枪 1=手枪 2=匕首 3=空手
         int         focusColor = 0;    // 0=原色 1=金色 2=赤红 3=冰蓝
         int         focusPose = 0;     // 0=待机 1=警戒 2=挥手
+        float       focusProgress = 1.0f;  // 聚焦放大 / 轮盘开屏进度
     };
 
     struct InGameCtx {

@@ -572,3 +572,38 @@ void Menu3DModel::Draw(float scale, float yOffset, float yawDegrees) const {
     if (unlit_) glEnable(GL_LIGHTING);
     glPopMatrix();
 }
+
+void Menu3DModel::DrawHighlight(float scale, float yOffset, float yawDegrees) const {
+    if (!ready_) return;
+    glPushMatrix();
+    glTranslatef(0.0f, yOffset - minY_ * scale * 1.045f, 0.0f);
+    glRotatef(yawDegrees, 0.0f, 1.0f, 0.0f);
+    glScalef(scale * 1.045f, scale * 1.045f, scale * 1.045f);
+
+    glDisable(GL_LIGHTING);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT);
+    glColor4f(0.55f, 0.86f, 1.0f, 0.72f);
+
+    for (const Node& node : nodes_) {
+        if (node.mesh < 0 || node.mesh >= static_cast<int>(meshes_.size())) continue;
+        const Mesh& mesh = meshes_[node.mesh];
+        for (const Primitive& prim : mesh.primitives) {
+            if (prim.indices.empty()) continue;
+            glBegin(GL_TRIANGLES);
+            for (uint32_t idx : prim.indices) {
+                if (idx >= prim.skinnedPos.size()) continue;
+                const Vec3& p = prim.skinnedPos[idx];
+                glVertex3f(p.x, p.y, p.z);
+            }
+            glEnd();
+        }
+    }
+
+    glCullFace(GL_BACK);
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_LIGHTING);
+    glPopMatrix();
+}

@@ -427,6 +427,9 @@ void GameUI::DrawFocusWheel(const MenuCtx& ctx, const Actions& actions) {
     const ImVec2 wp = vp->WorkPos;
     const ImVec2 ws = vp->WorkSize;
     ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float p = std::clamp(ctx.focusProgress, 0.0f, 1.0f);
+    const float open = p * p * (3.0f - 2.0f * p);
+    const float contentAlpha = std::clamp((open - 0.45f) / 0.55f, 0.0f, 1.0f);
 
     // 左半屏留给 3D 聚焦模型，只压暗右侧轮盘区域
     if (ctx.backdropTex && ctx.backdropW > 0 && ctx.backdropH > 0) {
@@ -446,10 +449,10 @@ void GameUI::DrawFocusWheel(const MenuCtx& ctx, const Actions& actions) {
                      wp, ImVec2(wp.x + ws.x, wp.y + ws.y), uv0, uv1);
     }
     dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y),
-                      IM_COL32(0, 0, 0, 82));
+                      IM_COL32(0, 0, 0, static_cast<int>(82.0f * open)));
     dl->AddRectFilled(ImVec2(wp.x + ws.x * 0.48f, wp.y),
                       ImVec2(wp.x + ws.x, wp.y + ws.y),
-                      IM_COL32(4, 7, 10, 150));
+                      IM_COL32(4, 7, 10, static_cast<int>(150.0f * open)));
 
     // 左侧标题
     const char* kind = ctx.focusChicken ? "小鸡" : (ctx.focusObject == 0 ? "T" : "CT");
@@ -461,8 +464,8 @@ void GameUI::DrawFocusWheel(const MenuCtx& ctx, const Actions& actions) {
                 IM_COL32(150, 166, 180, 210), "点击右侧轮盘选项 · ESC 返回");
 
     const ImVec2 center(wp.x + ws.x * 0.79f, wp.y + ws.y * 0.54f);
-    const float baseR = UI(205.0f);
-    const float radii[3] = { baseR * 0.55f, baseR * 0.78f, baseR * 1.02f };
+    const float baseR = UI(205.0f) * (0.15f + 0.85f * open);
+    const float arcSpan = 1.34f * open;
     const char* categoryNames[3] = { "武器", "颜色", "姿势" };
     const int optionCounts[3] = { 4, 4, 3 };
     const char* options[3][4] = {
@@ -472,42 +475,57 @@ void GameUI::DrawFocusWheel(const MenuCtx& ctx, const Actions& actions) {
     };
     const int selected[3] = { ctx.focusWeapon, ctx.focusColor, ctx.focusPose };
 
-    // 半圆轮盘底
-    dl->PathClear();
-    dl->PathArcTo(center, baseR * 1.14f, -1.42f, 1.42f, 36);
-    dl->PathFillConvex(IM_COL32(9, 13, 18, 225));
-    dl->PathClear();
-    dl->PathArcTo(center, baseR * 1.14f, -1.42f, 1.42f, 36);
-    dl->PathStroke(IM_COL32(226, 185, 92, 190), false, UI(2.0f));
+    // 半圆轮盘底：随 open 从物体后方展开
+    if (open > 0.02f) {
+        dl->PathClear();
+        dl->PathArcTo(center, baseR * 1.14f, -1.42f * open, 1.42f * open, 36);
+        dl->PathFillConvex(IM_COL32(9, 13, 18, static_cast<int>(225.0f * open)));
+        dl->PathClear();
+        dl->PathArcTo(center, baseR * 1.14f, -1.42f * open, 1.42f * open, 36);
+        dl->PathStroke(IM_COL32(226, 185, 92, static_cast<int>(190.0f * open)),
+                       false, UI(2.0f));
+    }
 
     for (int category = 0; category < 3; ++category) {
+        const float radius = baseR * (0.55f + 0.47f * static_cast<float>(category));
         dl->PathClear();
-        dl->PathArcTo(center, radii[category], -1.34f, 1.34f, 28);
-        dl->PathStroke(IM_COL32(160, 132, 70, 120), false, UI(1.0f));
+        dl->PathArcTo(center, radius, -arcSpan, arcSpan, 28);
+        dl->PathStroke(IM_COL32(160, 132, 70, static_cast<int>(120.0f * open)),
+                       false, UI(1.0f));
 
-        dl->AddText(ImVec2(center.x - UI(16.0f), center.y - radii[category] - UI(15.0f)),
-                    IM_COL32(190, 168, 108, 230), categoryNames[category]);
+        if (contentAlpha > 0.05f) {
+            dl->AddText(ImVec2(center.x - UI(16.0f), center.y - radius - UI(15.0f)),
+                        IM_COL32(190, 168, 108, static_cast<int>(230.0f * contentAlpha)),
+                        categoryNames[category]);
+        }
 
+        if (contentAlpha <= 0.05f) continue;
         ImGui::PushID(category);
         for (int option = 0; option < optionCounts[category]; ++option) {
             const float t = (optionCounts[category] <= 1)
                 ? 0.0f
                 : static_cast<float>(option) / static_cast<float>(optionCounts[category] - 1);
-            const float angle = -1.18f + 2.36f * t;
-            const ImVec2 pos(center.x + std::cos(angle) * radii[category],
-                             center.y + std::sin(angle) * radii[category]);
+            const float angle = -arcSpan + 2.0f * arcSpan * t;
+            const ImVec2 pos(center.x + std::cos(angle) * radius,
+                             center.y + std::sin(angle) * radius);
             const float bw = UI(74.0f), bh = UI(34.0f);
-            ImGui::SetCursorScreenPos(ImVec2(pos.x - bw * 0.5f, pos.y - bh * 0.5f));
-            const bool clicked = ImGui::InvisibleButton("##opt", ImVec2(bw, bh));
-            const bool hovered = ImGui::IsItemHovered();
+            bool clicked = false;
+            bool hovered = false;
+            if (open > 0.72f) {
+                ImGui::SetCursorScreenPos(ImVec2(pos.x - bw * 0.5f, pos.y - bh * 0.5f));
+                clicked = ImGui::InvisibleButton("##opt", ImVec2(bw, bh));
+                hovered = ImGui::IsItemHovered();
+            }
             const bool isSelected = (selected[category] == option);
+            const int a = static_cast<int>(contentAlpha * 255.0f);
 
             const ImU32 bg = isSelected
-                ? IM_COL32(160, 122, 48, 245)
-                : (hovered ? IM_COL32(62, 76, 92, 245) : IM_COL32(20, 28, 38, 225));
+                ? IM_COL32(160, 122, 48, static_cast<int>(245 * contentAlpha))
+                : (hovered ? IM_COL32(62, 76, 92, static_cast<int>(245 * contentAlpha))
+                           : IM_COL32(20, 28, 38, static_cast<int>(225 * contentAlpha)));
             const ImU32 border = isSelected
-                ? IM_COL32(255, 218, 128, 255)
-                : IM_COL32(112, 126, 142, 170);
+                ? IM_COL32(255, 218, 128, a)
+                : IM_COL32(112, 126, 142, static_cast<int>(170 * contentAlpha));
             dl->AddRectFilled(ImVec2(pos.x - bw * 0.5f, pos.y - bh * 0.5f),
                               ImVec2(pos.x + bw * 0.5f, pos.y + bh * 0.5f),
                               bg, UI(5.0f));
@@ -516,7 +534,8 @@ void GameUI::DrawFocusWheel(const MenuCtx& ctx, const Actions& actions) {
                         border, UI(5.0f), 0, UI(1.0f));
             const ImVec2 textSize = ImGui::CalcTextSize(options[category][option]);
             dl->AddText(ImVec2(pos.x - textSize.x * 0.5f, pos.y - textSize.y * 0.5f),
-                        isSelected ? IM_COL32(20, 16, 9, 255) : IM_COL32(224, 230, 238, 245),
+                        isSelected ? IM_COL32(20, 16, 9, a)
+                                   : IM_COL32(224, 230, 238, a),
                         options[category][option]);
 
             if (clicked) {
@@ -528,12 +547,14 @@ void GameUI::DrawFocusWheel(const MenuCtx& ctx, const Actions& actions) {
     }
 
     // 关闭
-    const float closeW = UI(130.0f), closeH = UI(38.0f);
-    ImGui::SetCursorScreenPos(ImVec2(center.x - closeW * 0.5f,
-                                     center.y + baseR * 1.14f + UI(18.0f)));
-    if (ImGui::Button("返回大厅", ImVec2(closeW, closeH))) {
-        if (actions.playClick) actions.playClick();
-        if (actions.close3DFocus) actions.close3DFocus();
+    if (open > 0.80f) {
+        const float closeW = UI(130.0f), closeH = UI(38.0f);
+        ImGui::SetCursorScreenPos(ImVec2(wp.x + ws.x - closeW - UI(28.0f),
+                                         wp.y + ws.y - closeH - UI(28.0f)));
+        if (ImGui::Button("返回大厅", ImVec2(closeW, closeH))) {
+            if (actions.playClick) actions.playClick();
+            if (actions.close3DFocus) actions.close3DFocus();
+        }
     }
 }
 

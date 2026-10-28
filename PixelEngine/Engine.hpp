@@ -118,6 +118,8 @@ private:
     int          focusWeapon_ = 0;
     int          focusColor_ = 0;
     int          focusPose_ = 0;
+    uint64_t     focusAnimStartMs_ = 0;
+    float        focus3DProgress_ = 0.0f;
     void FinalizeSideChoice();
     void UpdateSidePopupFade(float dt);
     void BeginMatchLoad(MatchMode mode, const std::string& mapRel, Team team);
