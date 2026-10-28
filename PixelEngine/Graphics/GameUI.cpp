@@ -843,14 +843,16 @@ void GameUI::DrawSideSelect(const SideSelectCtx& ctx, const Actions& actions) {
     ImGui::PopStyleVar(2);
 }
 
-void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions) {
+void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
+                           float alpha) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
+    alpha = std::clamp(alpha, 0.0f, 1.0f);
 
     // 游戏画面仍然可见，只压暗；弹窗在窗口层，HUD 在弹窗期间隐藏。
     ImGui::GetBackgroundDrawList()->AddRectFilled(
         vp->WorkPos, ImVec2(vp->WorkPos.x + vp->WorkSize.x,
                             vp->WorkPos.y + vp->WorkSize.y),
-        IM_COL32(4, 7, 10, 178));
+        IM_COL32(4, 7, 10, static_cast<int>(178.0f * alpha)));
 
     const float w = UI(680.0f);
     const float h = UI(330.0f);
@@ -859,6 +861,7 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions) {
                vp->WorkPos.y + vp->WorkSize.y * 0.5f),
         ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.043f, 0.059f, 0.078f, 0.97f));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.90f, 0.72f, 0.30f, 0.85f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, UI(10.0f));
@@ -916,14 +919,26 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions) {
              "阻止下包，或在包点按住 E 拆弹", ImVec4(0.35f, 0.67f, 0.96f, 1.0f),
              UI(24.0f) + btnW + UI(24.0f));
 
-    ImGui::SetCursorPos(ImVec2(0.0f, h - UI(24.0f)));
+    const float rndW = UI(190.0f);
+    const float rndH = UI(36.0f);
+    ImGui::SetCursorPos(ImVec2((w - rndW) * 0.5f, UI(246.0f)));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.22f, 0.28f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.33f, 0.41f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.18f, 0.23f, 1.0f));
+    if (ImGui::Button("随机分配", ImVec2(rndW, rndH))) {
+        if (actions.playClick) actions.playClick();
+        if (actions.chooseSide) actions.chooseSide(-1);
+    }
+    ImGui::PopStyleColor(3);
+
+    ImGui::SetCursorPos(ImVec2(0.0f, h - UI(22.0f)));
     const char* hint = "选择后将重建首回合（不重新加载地图）";
     const float hintW = ImGui::CalcTextSize(hint).x;
     ImGui::SetCursorPosX((w - hintW) * 0.5f);
     ImGui::TextDisabled("%s", hint);
 
     ImGui::End();
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar(3);
     ImGui::PopStyleColor(2);
 }
 

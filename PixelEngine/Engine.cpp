@@ -95,19 +95,14 @@ GameUI::Actions Engine::BuildActions() {
             StartMatch(mode);
         }
     };
-    // 选择阵营（爆破模式）：0 = T, 1 = CT
+    // 选择阵营（爆破模式）：0 = T, 1 = CT, <0 = 随机
     a.chooseSide = [this](int side) {
-        if (!sidePopupOpen_) return;
-        const Team chosen = (side == 0) ? Team::T : Team::CT;
-        pendingPlayerTeam_ = chosen;
-        cs2dGame->RestartMatchWithTeam(chosen);
-        matchStartMs_ = static_cast<long long>(SDL_GetTicks64());
-        sidePopupOpen_ = false;
-        sideChoicePending_ = false;
-        currentState = PLAYING;
-        buyMenuOpen_ = false;
-        SDL_SetRelativeMouseMode(SDL_TRUE);
-        SDL_ShowCursor(SDL_DISABLE);
+        if (!sidePopupOpen_ || sidePopupClosing_) return;
+        if (side < 0) side = std::rand() % 2;
+        pendingPlayerTeam_ = (side == 0) ? Team::T : Team::CT;
+        // 先淡出弹窗，淡出结束后再重建首回合。
+        sidePopupClosing_ = true;
+        sidePopupCloseElapsed_ = 0.0f;
     };
 
     a.startMatchOnMap = [this](int idx) {
@@ -662,6 +657,39 @@ void Engine::HandleInput() {
 // 开始对局
 // ============================================================================
 
+void Engine::FinalizeSideChoice() {
+    if (!sideChoicePending_ || !cs2dGame) return;
+
+    cs2dGame->RestartMatchWithTeam(pendingPlayerTeam_);
+    matchStartMs_ = static_cast<long long>(SDL_GetTicks64());
+    sidePopupOpen_ = false;
+    sidePopupClosing_ = false;
+    sidePopupAlpha_ = 0.0f;
+    sidePopupCloseElapsed_ = 0.0f;
+    sideChoicePending_ = false;
+    currentState = PLAYING;
+    buyMenuOpen_ = false;
+    SDL_SetRelativeMouseMode(SDL_TRUE);
+    SDL_ShowCursor(SDL_DISABLE);
+}
+
+void Engine::UpdateSidePopupFade(float dt) {
+    if (!sidePopupOpen_) return;
+
+    if (sidePopupClosing_) {
+        constexpr float kFadeOut = 0.16f;
+        sidePopupCloseElapsed_ += dt;
+        sidePopupAlpha_ = std::clamp(1.0f - sidePopupCloseElapsed_ / kFadeOut,
+                                     0.0f, 1.0f);
+        if (sidePopupCloseElapsed_ >= kFadeOut) {
+            FinalizeSideChoice();
+        }
+    } else {
+        constexpr float kFadeIn = 0.18f;
+        sidePopupAlpha_ = std::min(1.0f, sidePopupAlpha_ + dt / kFadeIn);
+    }
+}
+
 void Engine::RestartCurrentMatch() {
     if (!cs2dGame) return;
 
@@ -674,6 +702,9 @@ void Engine::RestartCurrentMatch() {
 
     sideChoicePending_ = true;
     sidePopupOpen_ = false;   // 等转场进入纯黑窗口后再显示
+    sidePopupClosing_ = false;
+    sidePopupAlpha_ = 0.0f;
+    sidePopupCloseElapsed_ = 0.0f;
     matchLoadPhase_ = MatchLoadPhase::None;
     matchLoadElapsed_ = 0.0f;
     transitionKind_ = TransitionKind::None;
@@ -1038,6 +1069,15 @@ void Engine::Render() {
     lastRenderTicks_ = nowTicks;
     frameDt = std::clamp(frameDt, 0.0f, 0.05f);
 
+    // 从对局/暂停回到大厅时，游戏音乐会停在 StartMatchWithMap 的 StopMusic。
+    // 统一在大厅状态切换时补播菜单音乐；已在播放则不重启。
+    if (currentState == MAIN_MENU && lastRenderedState_ != MAIN_MENU &&
+        audioManager && !audioManager->IsMusicPlaying()) {
+        audioManager->PlayMusic("assets/audio/menu.wav");
+    }
+
+    UpdateSidePopupFade(frameDt);
+
     // 进对局前的三段式：地图卡放大压黑 → 黑屏加载 → 游戏淡入
     if (matchLoadPhase_ == MatchLoadPhase::Zoom) {
         matchLoadElapsed_ += frameDt;
@@ -1054,6 +1094,9 @@ void Engine::Render() {
             matchLoadElapsed_ = 0.0f;
             if (sideChoicePending_) {
                 sidePopupOpen_ = true;
+                sidePopupClosing_ = false;
+                sidePopupAlpha_ = 0.0f;
+                sidePopupCloseElapsed_ = 0.0f;
                 // 弹窗需要绝对鼠标和可见光标
                 SDL_SetRelativeMouseMode(SDL_FALSE);
                 SDL_ShowCursor(SDL_ENABLE);
@@ -1072,6 +1115,9 @@ void Engine::Render() {
         transitionKind_ != TransitionKind::None &&
         menuProgress >= kMenuFadeOutEnd) {
         sidePopupOpen_ = true;
+        sidePopupClosing_ = false;
+        sidePopupAlpha_ = 0.0f;
+        sidePopupCloseElapsed_ = 0.0f;
         SDL_SetRelativeMouseMode(SDL_FALSE);
         SDL_ShowCursor(SDL_ENABLE);
     }
@@ -1293,7 +1339,7 @@ void Engine::Render() {
                 break;
             }
         }
-        gameUI->DrawSidePopup(sctx, BuildActions());
+        gameUI->DrawSidePopup(sctx, BuildActions(), sidePopupAlpha_);
     }
 
     // 买枪菜单（覆盖在 HUD 之上）

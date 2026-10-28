@@ -179,7 +179,8 @@ public:
     // 旧版独立选阵营页；当前流程不再进入，仅保留兼容实现。
     void DrawSideSelect(const SideSelectCtx& ctx, const Actions& actions);
     // 进入游戏后的阵营选择弹窗（半透明遮罩 + 居中面板）
-    void DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions);
+    void DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
+                       float alpha = 1.0f);
     void DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI);
     // 进入对局前的黑屏加载提示（地图 / LLM server）
     void DrawLoadingOverlay(const char* title, const char* subtitle);

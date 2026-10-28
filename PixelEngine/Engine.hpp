@@ -108,6 +108,11 @@ private:
     std::string  pendingMatchMapRel_;
     bool         sideChoicePending_ = false;
     bool         sidePopupOpen_ = false;
+    bool         sidePopupClosing_ = false;
+    float        sidePopupAlpha_ = 0.0f;
+    float        sidePopupCloseElapsed_ = 0.0f;
+    void FinalizeSideChoice();
+    void UpdateSidePopupFade(float dt);
     void BeginMatchLoad(MatchMode mode, const std::string& mapRel, Team team);
     void DrawMatchZoomOverlay();
 

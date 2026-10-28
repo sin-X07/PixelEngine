@@ -128,6 +128,9 @@ public:
     void PauseMusic();
     void ResumeMusic();
     void StopMusic();
+    bool IsMusicPlaying() const {
+        return audioInitialized && Mix_PlayingMusic() != 0;
+    }
 
     void PlaySound(SoundEffect effect);
     // 3D 音效：声像由声源的世界位置相对听者决定（与听者朝向无关）
