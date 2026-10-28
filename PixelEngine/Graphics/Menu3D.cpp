@@ -438,6 +438,16 @@ void Menu3D::FocusCurrentPosition(float& x, float& z) const {
     }
 }
 
+void Menu3D::SetOverlayMouse(float u, float v, bool active) {
+    overlaySpotlightActive_ = active;
+    if (!active) return;
+    // 俯视相机：地面 y=0，相机高度约 9.45；用视锥范围把纹理坐标换到地面坐标。
+    const float halfH = std::tan(28.0f * kPi / 180.0f) * 9.45f;
+    const float halfW = halfH * (static_cast<float>(width_) / static_cast<float>(height_));
+    overlayTargetX_ = (std::clamp(u, 0.0f, 1.0f) - 0.5f) * 2.0f * halfW;
+    overlayTargetZ_ = (std::clamp(v, 0.0f, 1.0f) - 0.5f) * 2.0f * halfH;
+}
+
 void Menu3D::SetFocusedObject(int index) {
     if (index < -1 || index >= kObjectCount) index = -1;
     if (focusedObject_ == index) return;
@@ -562,7 +572,10 @@ int Menu3D::HitTestNormalized(float u, float v) const {
 
 void Menu3D::UpdateSpotlight(float dt) {
     float tx = 0.0f, tz = 0.0f;
-    if (focusedObject_ >= 0) {
+    if (overlaySpotlightActive_) {
+        tx = overlayTargetX_;
+        tz = overlayTargetZ_;
+    } else if (focusedObject_ >= 0) {
         FocusCurrentPosition(tx, tz);
     } else if (hoveredObject_ >= 0) {
         float x, y, z;
@@ -581,7 +594,8 @@ void Menu3D::UpdateSpotlight(float dt) {
         tz = spotTargetZ_;
     }
 
-    const float speed = (focusedObject_ >= 0) ? 14.0f
+    const float speed = overlaySpotlightActive_ ? 16.0f
+                      : (focusedObject_ >= 0) ? 14.0f
                       : (hoveredObject_ >= 0) ? 10.0f : 2.2f;
     const float a = 1.0f - std::exp(-speed * dt);
     spotX_ += (tx - spotX_) * a;
@@ -612,7 +626,8 @@ void Menu3D::DrawSpotlight() {
     }
     const float si = std::clamp(spotlightIntensity_, 0.0f, 1.0f);
     const int targetIndex = (focusedObject_ >= 0) ? focusedObject_ : hoveredObject_;
-    const float targetRadius = (targetIndex < 0) ? 0.72f
+    const float targetRadius = overlaySpotlightActive_ ? 0.95f
+                             : (targetIndex < 0) ? 0.72f
                              : (targetIndex < 2) ? 1.05f : 0.34f;
     const float targetY = (targetIndex < 0) ? 0.05f
                         : (targetIndex < 2) ? 1.15f : 0.55f;

@@ -56,6 +56,8 @@ public:
     void SetSpotlightIntensity(float intensity) {
         spotlightIntensity_ = intensity < 0.0f ? 0.0f : (intensity > 1.0f ? 1.0f : intensity);
     }
+    // 选图浮层：用真实 3D 聚光灯打在俯视地面上，u/v 为 3D 纹理坐标。
+    void SetOverlayMouse(float u, float v, bool active);
 
 private:
     bool InitGL();
@@ -116,6 +118,9 @@ private:
     float cameraTopDown_ = 0.0f;
     bool spotlightSuppressed_ = false;
     float spotlightIntensity_ = 1.0f;
+    bool overlaySpotlightActive_ = false;
+    float overlayTargetX_ = 0.0f;
+    float overlayTargetZ_ = 0.0f;
     float spotX_ = 0.0f;
     float spotZ_ = 0.0f;
     float spotTargetX_ = 0.0f;

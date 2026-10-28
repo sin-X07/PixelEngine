@@ -850,7 +850,7 @@ void Engine::OpenMapOverlay(MatchMode mode) {
     mapOverlayClosing_ = false;
     mapOverlayStartMs_ = SDL_GetTicks64();
     mapOverlayFade_ = 0.0f;
-    mapOverlayBeamFade_ = 1.0f;
+    mapOverlayBeamFade_ = 0.0f;
     cameraBeamFade_ = 0.0f;
     // 相机过场期间光源已经移动到底部，浮层打开时保持在底部。
     mapOverlayLightProgress_ = 1.0f;
@@ -1420,12 +1420,8 @@ void Engine::Render() {
                 menu3D->SetFocusedObject(-1);
                 menu3D->SetHoveredObject(-1);
                 mapOverlayLightProgress_ = cameraProgress;
-                const float rawFade = std::clamp(
-                    static_cast<float>(SDL_GetTicks64() - menuCameraStartMs_) / 260.0f,
-                    0.0f, 1.0f);
-                const float beamIn = rawFade * rawFade * (3.0f - 2.0f * rawFade);
-                cameraBeamFade_ = beamIn;
-                menu3D->SetSpotlightIntensity(1.0f - beamIn);
+                cameraBeamFade_ = 0.0f;
+                menu3D->SetSpotlightIntensity(1.0f);
             } else if (mapOverlayOpen_) {
                 menu3D->SetFocusedObject(-1);
                 menu3D->SetHoveredObject(-1);
@@ -1435,9 +1431,9 @@ void Engine::Render() {
                         0.0f, 1.0f);
                     const float t = raw * raw * (3.0f - 2.0f * raw);
                     menu3D->SetCameraTopDownProgress(1.0f - t);
-                    menu3D->SetSpotlightIntensity(t);
+                    menu3D->SetSpotlightIntensity(1.0f);
                     mapOverlayFade_ = 1.0f - t;
-                    mapOverlayBeamFade_ = 1.0f - t;
+                    mapOverlayBeamFade_ = 0.0f;
                     mapOverlayLightProgress_ = 1.0f - t;
                     cameraBeamFade_ = 0.0f;
                     if (raw >= 1.0f) {
@@ -1448,11 +1444,12 @@ void Engine::Render() {
                         mapOverlayLightProgress_ = 0.0f;
                         menu3D->SetCameraTopDownProgress(0.0f);
                         menu3D->SetSpotlightIntensity(1.0f);
+                        menu3D->SetOverlayMouse(0.0f, 0.0f, false);
                     }
                 } else {
                     menu3D->SetCameraTopDownProgress(1.0f);
-                    menu3D->SetSpotlightIntensity(0.0f);
-                    mapOverlayBeamFade_ = 1.0f;
+                    menu3D->SetSpotlightIntensity(1.0f);
+                    mapOverlayBeamFade_ = 0.0f;
                     cameraBeamFade_ = 0.0f;
                     mapOverlayFade_ = std::clamp(
                         static_cast<float>(SDL_GetTicks64() - mapOverlayStartMs_) / 350.0f,
@@ -1462,6 +1459,7 @@ void Engine::Render() {
             } else {
                 menu3D->SetCameraTopDownProgress(0.0f);
                 menu3D->SetSpotlightIntensity(1.0f);
+                menu3D->SetOverlayMouse(0.0f, 0.0f, false);
                 cameraBeamFade_ = 0.0f;
                 mapOverlayBeamFade_ = 0.0f;
                 if (focused3D_ >= 0) {
@@ -1493,6 +1491,25 @@ void Engine::Render() {
                 menu3D->SetHoveredObject(hovered3D_);
                 menu3D->SetFocusedObject(-1);
             }
+            }
+            if (mapOverlayOpen_ && !mapOverlayClosing_) {
+                const ImGuiIO& mio = ImGui::GetIO();
+                const ImGuiViewport* mvp = ImGui::GetMainViewport();
+                const float sw = std::max(1.0f, mvp->WorkSize.x);
+                const float sh = std::max(1.0f, mvp->WorkSize.y);
+                float u = (mio.MousePos.x - mvp->WorkPos.x) / sw;
+                float v = (mio.MousePos.y - mvp->WorkPos.y) / sh;
+                const float texAspect = static_cast<float>(menu3D->Width()) /
+                                        static_cast<float>(menu3D->Height());
+                const float scrAspect = sw / sh;
+                if (texAspect > scrAspect) {
+                    const float frac = scrAspect / texAspect;
+                    u = (u - (1.0f - frac) * 0.5f) / frac;
+                } else {
+                    const float frac = texAspect / scrAspect;
+                    v = (v - (1.0f - frac) * 0.5f) / frac;
+                }
+                menu3D->SetOverlayMouse(u, v, true);
             }
             menu3D->Render(frameDt);
             if (menu3D->GetTexture()) {
