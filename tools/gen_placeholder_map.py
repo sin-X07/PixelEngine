@@ -5,7 +5,6 @@
 
 产出:
   assets/cs2d/maps/de_5v5_placeholder.tmj   爆破模式 5v5
-  assets/cs2d/maps/cs_hostage_placeholder.tmj 人质模式
 
 幂等: 目标已存在则跳过 (--force 强制重写)。
 """
@@ -215,42 +214,11 @@ def make_defusal_map():
 
 
 # ---------------------------------------------------------------------------
-# 人质模式
-# ---------------------------------------------------------------------------
-
-def make_hostage_map():
-    W = H = 100
-    walls = border_walls(W, H)
-
-    walls |= rect_walls(30, 30, 34, 40)
-    walls |= rect_walls(64, 30, 68, 40)
-    walls |= rect_walls(30, 60, 34, 70)
-    walls |= rect_walls(64, 60, 68, 70)
-    walls |= rect_walls(44, 44, 56, 47)      # 中央掩体
-
-    entities = []
-    entities += spawns("spawn_ct", [
-        (72, 700), (96, 716), (120, 700), (72, 736), (96, 744),
-    ])
-    entities += spawns("spawn_t", [
-        (728, 72), (704, 88), (752, 96), (728, 112), (704, 120),
-    ])
-    # 4 名人质
-    for i, (x, y) in enumerate([(240, 240), (400, 240), (240, 400), (400, 400)]):
-        entities.append(obj("hostage", f"h{i}", x, y))
-    entities.append(obj("buy_zone", "CT", 40, 664, 152, 112, {"team": "ct"}))
-    entities.append(obj("buy_zone", "T", 664, 40, 152, 96, {"team": "t"}))
-
-    return build_map(W, H, walls, entities, "cs_hostage_placeholder")
-
-
-# ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
 
 MAPS = [
     ("assets/cs2d/maps/de_5v5_placeholder.tmj", make_defusal_map),
-    ("assets/cs2d/maps/cs_hostage_placeholder.tmj", make_hostage_map),
 ]
 
 

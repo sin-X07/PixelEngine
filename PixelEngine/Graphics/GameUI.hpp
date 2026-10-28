@@ -124,13 +124,10 @@ public:
         bool  coachFlash = false;         // 计划刚变更 → 高亮
 
         // 目标物
-        int   objective = 0;          // 0=无 1=爆破 2=人质
+        int   objective = 0;          // 0=无 1=爆破
         bool  bombPlanted = false;
         float bombTimer = 0.0f;
         float defuseProgress = 0.0f;
-        int   hostagesRescued = 0;
-        int   hostagesTotal = 0;
-        float rescueProgress = 0.0f;
 
         // 击杀播报 / 记分板
         std::vector<std::string> killFeed;

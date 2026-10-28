@@ -5,23 +5,14 @@
 #include <algorithm>
 
 // ============================================================================
-// 目标物：爆破（下包/拆包）与人质营救
+// 目标物：爆破（下包/拆包）
 // ============================================================================
 
 namespace {
 constexpr float BOMB_FUSE        = 40.0f;   // 下包后倒计时
 constexpr float PLANT_TIME       = 2.0f;    // T 在包点停留多久完成下包
 constexpr float DEFUSE_TIME      = 5.0f;    // CT 拆包耗时
-constexpr float RESCUE_TIME      = 2.5f;    // 营救一名人质耗时
-constexpr float INTERACT_RADIUS  = 55.0f;   // 交互半径
-constexpr float HOSTAGE_RADIUS   = 45.0f;
 } // namespace
-
-int CS2DGame::GetHostagesRescued() const {
-    int n = 0;
-    for (const auto& h : hostages_) if (h.rescued) ++n;
-    return n;
-}
 
 void CS2DGame::PushKillFeed(const std::string& text) {
     killFeed_.insert(killFeed_.begin(), KillFeedEntry{ text, 4.0f });
@@ -63,10 +54,8 @@ std::vector<CS2DGame::ScoreRow> CS2DGame::BuildScoreboard() const {
 
 // 按模式初始化目标物
 void CS2DGame::SetupObjective() {
-    hostages_.clear();
-
-        AssignBombCarrier();
-bombPlanted_   = false;
+    AssignBombCarrier();
+    bombPlanted_   = false;
     bombTimer_     = 0.0f;
     defuseProgress_ = 0.0f;
 
@@ -81,34 +70,12 @@ bombPlanted_   = false;
     playerHoldingC4_ = false;
     player_.weapons[4] = WeaponId::None;
     if (player_.weaponSlot == 4) player_.weaponSlot = 1;
-    rescueProgress_ = 0.0f;
-    hostageNearIdx_ = -1;
     bombX_ = bombY_ = 0.0f;
-
-    if (mode_ != MatchMode::HostageRescue) return;
-
-    // 优先使用地图 hostge 对象；缺失则在地图四角放 4 个占位人质
-    const auto& objs = world_->GetHostages();
-    if (!objs.empty()) {
-        for (const auto& o : objs) {
-            hostages_.push_back({ o.x, o.y, false });
-        }
-    } else {
-        const float w = world_->GetMapPixelW();
-        const float h = world_->GetMapPixelH();
-        hostages_.push_back({ w * 0.30f, h * 0.30f, false });
-        hostages_.push_back({ w * 0.70f, h * 0.30f, false });
-        hostages_.push_back({ w * 0.30f, h * 0.70f, false });
-        hostages_.push_back({ w * 0.70f, h * 0.70f, false });
-        std::cout << "[CS2D] 地图无人质对象, 使用 4 个默认人质点" << std::endl;
-    }
-
-    std::cout << "[CS2D] 人质模式: 共 " << hostages_.size() << " 名人质" << std::endl;
 }
 
 // 每帧推进目标物（仅交战期）
 void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio) {
-    if (mode_ != MatchMode::BombDefusal && mode_ != MatchMode::HostageRescue) return;
+    if (mode_ != MatchMode::BombDefusal) return;
     if (!round_.IsLive()) return;
 
     // ---------------- 爆破 ----------------
@@ -279,45 +246,6 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
             }
         }
         return;
-    }
-
-    // ---------------- 人质 ----------------
-    if (mode_ == MatchMode::HostageRescue) {
-        // 找最近的可营救人质
-        int   nearIdx = -1;
-        float nearD   = 1e18f;
-        for (size_t i = 0; i < hostages_.size(); ++i) {
-            if (hostages_[i].rescued) continue;
-            const float dx = player_.x - hostages_[i].x;
-            const float dy = player_.y - hostages_[i].y;
-            const float d  = std::sqrt(dx * dx + dy * dy);
-            if (d <= HOSTAGE_RADIUS && d < nearD) { nearD = d; nearIdx = static_cast<int>(i); }
-        }
-
-        // 换目标则进度重置
-        if (nearIdx != hostageNearIdx_) {
-            hostageNearIdx_ = nearIdx;
-            rescueProgress_ = 0.0f;
-        }
-
-        if (nearIdx >= 0 && interactHeld && player_.alive) {
-            rescueProgress_ += dt / RESCUE_TIME;
-            if (rescueProgress_ >= 1.0f) {
-                hostages_[nearIdx].rescued = true;
-                std::cout << "[CS2D] 已营救人质 " << (GetHostagesRescued())
-                          << "/" << hostages_.size() << std::endl;
-                rescueProgress_ = 0.0f;
-                hostageNearIdx_ = -1;
-
-                if (GetHostagesRescued() >= GetHostagesTotal()) {
-                    std::cout << "[CS2D] 全部人质获救!" << std::endl;
-                    ApplyRoundResult(Team::CT, audio);
-                    round_.EndRound(Team::CT);
-                }
-            }
-        } else {
-            rescueProgress_ = std::max(0.0f, rescueProgress_ - dt * 0.6f);
-        }
     }
 }
 

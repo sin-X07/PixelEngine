@@ -14,7 +14,6 @@ bool CS2DWorld::Build(const CS2DMapData& data) {
     spawnPoints_.clear();
     bombSites_.clear();
     areas_.clear();
-    hostages_.clear();
     buyZones_.clear();
     visibleLayerNames_.clear();
     visibleLayerData_.clear();
@@ -96,7 +95,6 @@ bool CS2DWorld::Build(const CS2DMapData& data) {
             n == "spawnpoints" || n == "entities_spawn")               return "spawn";
         if (n == "bomb_site" || n == "bombsites" || n == "bombsite" ||
             n == "bomb_sites" || n == "site")                          return "bomb_site";
-        if (n == "hostage" || n == "hostages")                         return "hostage";
         if (n == "buy_zone" || n == "buyzone" || n == "buy_zones" ||
             n == "buyzones")                                           return "buy_zone";
         return "";
@@ -128,8 +126,6 @@ bool CS2DWorld::Build(const CS2DMapData& data) {
             } else if (kind == "bomb_site" || kind == "bombsites" || kind == "bombsite") {
                 // 同一对象层里的所有矩形属于同一个包点；不能把每个矩形都当成包点。
                 layerBombRects.push_back(obj);
-            } else if (kind == "hostage" || kind == "hostages") {
-                hostages_.push_back(obj);
             } else if (kind == "buy_zone" || kind == "buyzone") {
                 buyZones_.push_back(obj);
             }
@@ -255,7 +251,6 @@ bool CS2DWorld::Build(const CS2DMapData& data) {
               << (spawnGeneric > 0 ? "/通用" + std::to_string(spawnGeneric) : "")
               << ")"
               << ", " << bombSites_.size() << " 个包点"
-              << ", " << hostages_.size() << " 名人质"
               << ", " << buyZones_.size() << " 个购买区" << std::endl;
     return true;
 }

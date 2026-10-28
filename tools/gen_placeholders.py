@@ -40,7 +40,6 @@ WORLD_SPRITES = [
     ("assets/cs2d/sprites/grenade_smoke.png", "SMOKE",   (100,100, 110)),
     ("assets/cs2d/sprites/c4.png",            "C4",      (140, 60,  60)),
     ("assets/cs2d/sprites/defuse_kit.png",    "KIT",     (60, 110, 120)),
-    ("assets/cs2d/sprites/hostage.png",       "HOSTAGE", (160,140, 100)),
 ]
 
 # HUD 武器图标: (相对路径, 标签, RGB), 尺寸 75x64

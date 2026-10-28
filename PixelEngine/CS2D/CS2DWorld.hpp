@@ -82,7 +82,6 @@ public:
     };
 
     const std::vector<BombSiteDef>& GetBombSites()  const { return bombSites_; }
-    const std::vector<ObjectDef>& GetHostages()   const { return hostages_; }
     const std::vector<ObjectDef>& GetBuyZones()   const { return buyZones_; }
 
     // ---- 战术区域（Tiled 组图层 "site" 下的每个对象层 = 一个命名区域）----
@@ -133,6 +132,5 @@ private:
     // 目标物 / 购买区
     std::vector<BombSiteDef> bombSites_;
     std::vector<AreaDef>     areas_;
-    std::vector<ObjectDef>   hostages_;
     std::vector<ObjectDef>   buyZones_;
 };

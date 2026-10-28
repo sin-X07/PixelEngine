@@ -74,7 +74,6 @@ void Append(const std::string& path, const MatchRecord& rec) {
 const char* ModeLabel(const std::string& modeId) {
     if (modeId == "bomb")    return "爆破";
     if (modeId == "elim")    return "团队歼灭";
-    if (modeId == "hostage") return "人质营救";
     if (modeId == "dm")      return "死斗";
     return "未知";
 }

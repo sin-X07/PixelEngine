@@ -719,16 +719,6 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                     hasDest = true;
                     destIsObjective = true;
                 }
-            } else if (mode_ == MatchMode::HostageRescue && bot.team == Team::CT) {
-                // 最近的未救出人质
-                float bestD2 = 1e18f;
-                for (const auto& h : hostages_) {
-                    if (h.rescued) continue;
-                    const float dx = h.x - bot.x, dy = h.y - bot.y;
-                    const float d2 = dx * dx + dy * dy;
-                    if (d2 < bestD2) { bestD2 = d2; destX = h.x; destY = h.y; hasDest = true; }
-                }
-                destIsObjective = hasDest;
             }
 
             // 无任务目标时：优先去核实团队情报点，其次才追可见敌人

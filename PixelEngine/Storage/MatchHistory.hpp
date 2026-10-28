@@ -11,7 +11,7 @@
 
 struct MatchRecord {
     std::string time;        // 2026-10-23 19:20
-    std::string modeId;      // bomb / elim / hostage / dm
+    std::string modeId;      // bomb / elim / dm
     std::string mapId;       // ancient_ruins / dust_2 / cs_office
     int         scoreT = 0;
     int         scoreCT = 0;

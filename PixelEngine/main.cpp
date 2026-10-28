@@ -24,7 +24,7 @@ int main(int argc, char* argv[]) {
 
     // --autostart：跳过菜单直接进入对局（调试 / 回归验证用）
     // --fastround：使用短回合时长（配合 --autostart 验证回合状态机）
-    // --mode=N  ：0=死斗 1=团队歼灭 2=爆破 3=人质
+    // --mode=N  ：0=死斗 1=团队歼灭 2=爆破
     bool autostart = false;
     bool fastRound = false;
     int  startMode = 1;

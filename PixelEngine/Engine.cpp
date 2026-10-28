@@ -347,7 +347,7 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
         LoadMapPreviews(renderer, mapPreviewTex_, kMapCatalogCount);
         currentState = MAP_SELECT;
     } else if (autostart) {
-        const int m = (startMode >= 0 && startMode <= 3) ? startMode : 1;
+        const int m = (startMode >= 0 && startMode <= 2) ? startMode : 1;
         if (!pendingStartMap_.empty()) {
             // --map=<id>：按 id 在目录里找地图
             const char* chosen = nullptr;
@@ -622,8 +622,8 @@ void Engine::HandleInput() {
 
 void Engine::StartMatch(MatchMode mode) {
     // 模式 → 默认地图（爆破模式可由地图选择界面指定）
-    //   死斗               → cs_office（老图，节奏快）
-    //   团队歼灭/爆破/人质  → ancient_ruins（5v5 主战图）
+    //   死斗         → cs_office（老图，节奏快）
+    //   团队歼灭/爆破 → ancient_ruins（5v5 主战图）
     // 已经在某张地图里 → 重新开始沿用该地图，而不是回到默认地图
     if (!currentMapRel_.empty()) {
         StartMatchWithMap(mode, currentMapRel_, pendingPlayerTeam_);
@@ -634,8 +634,7 @@ void Engine::StartMatch(MatchMode mode) {
     switch (mode) {
         case MatchMode::DeathMatch:      mapRel = "assets/cs2d/maps/cs_office.tmj"; break;
         case MatchMode::TeamElimination:
-        case MatchMode::BombDefusal:
-        case MatchMode::HostageRescue:   mapRel = "assets/cs2d/maps/ancient_ruins.tmj"; break;
+        case MatchMode::BombDefusal:     mapRel = "assets/cs2d/maps/ancient_ruins.tmj"; break;
         default:                         mapRel = "assets/cs2d/maps/ancient_ruins.tmj"; break;
     }
     StartMatchWithMap(mode, mapRel, pendingPlayerTeam_);
@@ -711,7 +710,7 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
 void Engine::Update(float dt) {
     if (currentState != PLAYING) return;
 
-    // E 键用于拆包 / 营救人质（按住）
+    // E 键用于拆包（按住）
     const Uint8* kbNow = SDL_GetKeyboardState(nullptr);
     const bool interactHeld = kbNow[SDL_SCANCODE_E];
 
@@ -857,15 +856,11 @@ void Engine::Render() {
         // 目标物
         switch (cs2dGame->GetMatchMode()) {
             case MatchMode::BombDefusal:   ictx.objective = 1; break;
-            case MatchMode::HostageRescue: ictx.objective = 2; break;
             default:                       ictx.objective = 0; break;
         }
         ictx.bombPlanted      = cs2dGame->IsBombPlanted();
         ictx.bombTimer        = cs2dGame->GetBombTimer();
         ictx.defuseProgress   = cs2dGame->GetDefuseProgress();
-        ictx.hostagesRescued  = cs2dGame->GetHostagesRescued();
-        ictx.hostagesTotal    = cs2dGame->GetHostagesTotal();
-        ictx.rescueProgress   = cs2dGame->GetRescueProgress();
 
         // 击杀播报
         for (const auto& e : cs2dGame->GetKillFeed()) {
@@ -1059,7 +1054,6 @@ void Engine::RecordMatchHistory(bool abandoned) {
     switch (cs2dGame->GetMatchMode()) {
         case MatchMode::BombDefusal:    r.modeId = "bomb";    break;
         case MatchMode::TeamElimination: r.modeId = "elim";    break;
-        case MatchMode::HostageRescue:  r.modeId = "hostage"; break;
         case MatchMode::DeathMatch:     r.modeId = "dm";      break;
         default:                        r.modeId = "bomb";    break;
     }

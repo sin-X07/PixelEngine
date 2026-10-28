@@ -59,7 +59,7 @@ void CS2DGame::BeginNewRound(AudioManager* audio) {
     SnapshotRoundEconomy();   // 必须在任何采购之前：save/eco 看的是买枪前经济
     CoachBeginRound();      // 必须在买枪之前：save/eco 要拦得住 BotBuyLoadout
     RespawnAllForRound();
-    SetupObjective();   // 每回合重置包点 / 人质
+    SetupObjective();   // 每回合重置包点 / C4
     AssignSquadRoles(); // 每回合按新的相对位置重新分工
     // 购买延迟：等本轮教练（尤其 LLM save/eco）先给结论，再决定是否采购。
     botBuyPending_ = true;
@@ -425,16 +425,6 @@ void CS2DGame::CheckWinConditions(AudioManager* audio) {
                 decided = true; winner = Team::CT;            // T 全灭且未下包
             } else if (round_.IsTimeUp() && !bombPlanted_) {
                 decided = true; winner = Team::CT;            // 守方胜
-            }
-            break;
-
-        case MatchMode::HostageRescue:
-            if (aliveCT == 0 && aliveT > 0) {
-                decided = true; winner = Team::T;
-            } else if (aliveT == 0) {
-                decided = true; winner = Team::CT;
-            } else if (round_.IsTimeUp()) {
-                decided = true; winner = Team::T;             // 人质模式超时由 T 守成功
             }
             break;
 

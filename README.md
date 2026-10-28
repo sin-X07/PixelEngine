@@ -11,7 +11,6 @@ C++17 / SDL2 的俯视角 2D 战术射击游戏，玩法对标 Steam 的 **CS2D*
 |---|---|
 | **团队歼灭** | 回合制 T/CT 对抗，歼灭对方全部成员或时间到守方胜 |
 | **爆破** | T 在包点下包，C4 40 秒倒计时；CT 需拆包 |
-| **人质营救** | CT 营救全部人质，T 需阻止 |
 | **死斗** | 自由击杀，即时重生，无回合 |
 
 ### 核心系统
@@ -95,7 +94,7 @@ C++17 / SDL2 的俯视角 2D 战术射击游戏，玩法对标 Steam 的 **CS2D*
 - **脚步声**：玩家与所有 BOT 都有脚步声（3D 定位），潜行时不发声。
 - **护甲**：护甲吸收 50% 伤害（配头盔 60%），护甲按吸收量消耗，耗尽后头盔失效。
   在买枪菜单「护甲」分组购买（$650 / $1000）。
-- **目标物**：C4 下包/拆包、人质营救。玩家按住 `E` 拆包/救人；
+- **目标物**：C4 下包/拆包。玩家按住 `E` 拆包；
    **CT BOT 会评估拆包风险**：安全时派一人拆包，看到敌人/挨打会放弃拆包先反击。
   已安装的 C4 有红色脉冲标记，并画出**拆包有效范围（半径 26，必须贴身）**；
   下包后 **T BOT 会围绕包点环形站位死守**，并优先集火靠近包点的 CT。
@@ -174,7 +173,7 @@ C++17 / SDL2 的俯视角 2D 战术射击游戏，玩法对标 Steam 的 **CS2D*
 | `R` | 换弹 |
 | `Shift` | 潜行（减速、降低被发现概率） |
 | `B` | 买枪菜单（仅购买期） |
-| `E` | 拆包 / 营救人质（按住）；靠近掉落物按一下拾取 |
+| `E` | 拆包（按住）；靠近掉落物按一下拾取 |
 | `G` | 丢弃当前武器（近战不可丢） |
 | `Tab` | 记分板（按住） |
 | `Esc` | 暂停 |
@@ -199,7 +198,7 @@ cmake --build build
 ```powershell
 EngineApp.exe --autostart             # 跳过菜单直接开局
 EngineApp.exe --autostart --fastround # 短回合，快速验证回合状态机
-EngineApp.exe --autostart --mode=2    # 0=死斗 1=歼灭 2=爆破 3=人质
+EngineApp.exe --autostart --mode=2    # 0=死斗 1=歼灭 2=爆破
 ```
 
 ---
@@ -242,7 +241,7 @@ kill_on_exit=1         ; 退出时关闭本程序拉起的 server 以释放显�
 
 ```powershell
 python tools/gen_placeholders.py         # 补齐缺失的图片/音效占位
-python tools/gen_placeholder_map.py      # 生成爆破/人质占位地图
+python tools/gen_placeholder_map.py      # 生成爆破占位地图
 python tools/split_spawns.py <map.tmj>   # 通用出生点拆成 spawn_t / spawn_ct
 python tools/scale_map.py <map.tmj> --div 2   # 地图整体缩小（每条轴 ÷2 = 面积 ÷4）
 ```
@@ -255,7 +254,7 @@ python tools/scale_map.py <map.tmj> --div 2   # 地图整体缩小（每条轴 �
 | 模式 | 地图 |
 |---|---|
 | 死斗 | `cs_office.tmj` |
-| 团队歼灭 / 爆破 / 人质 | `ancient_ruins.tmj`（5v5 主战图） |
+| 团队歼灭 / 爆破 | `ancient_ruins.tmj`（5v5 主战图） |
 | 爆破（地图选择可选） | `ancient_ruins.tmj` / `dust_2.tmj` / `mirage.tmj` |
 
 爆破模式的地图清单由 `CS2D/MapCatalog.hpp` 定义，新增地图只需在该目录加一条
@@ -264,8 +263,8 @@ python tools/scale_map.py <map.tmj> --div 2   # 地图整体缩小（每条轴 �
 Tiled 导出的 `.tmj`，放在 `assets/cs2d/maps/`。对象层支持两种写法（可混用）：
 
 - **写法 A**：一个 `Entities` 层，对象带 `type` =
-  `spawn_t` / `spawn_ct` / `bomb_site` / `hostage` / `buy_zone`
-- **写法 B**：每类一个对象层（`spawn_t` / `spawn_ct` / `bomb_site` / `buy_zone` / `hostage`），
+  `spawn_t` / `spawn_ct` / `bomb_site` / `buy_zone`
+- **写法 B**：每类一个对象层（`spawn_t` / `spawn_ct` / `bomb_site` / `buy_zone`），
   对象 `type` 留空。同名图层可以有多层，会累加。
 
 `Collisions` 层的所有矩形一律视为阻挡。背景图若引用了工程外的路径，引擎会按文件名

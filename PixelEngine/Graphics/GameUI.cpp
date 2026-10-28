@@ -165,7 +165,6 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         ImGui::SetCursorPosY(yLocal + titleH + subH + gap1);
         if (bigButton("团队歼灭")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::TeamElimination)); });
         if (bigButton("爆破模式")) doClick([&] { actions.goState(MAP_SELECT); });
-        if (bigButton("人质营救")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::HostageRescue)); });
         if (bigButton("死斗模式")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::DeathMatch)); });
         if (bigButton("历史记录")) doClick([&] { actions.goState(HISTORY); });
         if (bigButton("设置"))     doClick([&] { actions.openSettings(MAIN_MENU); });
@@ -987,16 +986,6 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
                 snprintf(db, sizeof(db), "拆包中 %d%%", static_cast<int>(ctx.defuseProgress * 100));
                 DrawImGuiTextCentered(imGuiUI, db, UI(118.0f), 120, 220, 255, 255, 18);
             }
-        }
-    } else if (ctx.objective == 2) {   // 人质
-        char buf[64];
-        snprintf(buf, sizeof(buf), "人质 %d / %d",
-                 ctx.hostagesRescued, ctx.hostagesTotal);
-        DrawImGuiTextCentered(imGuiUI, buf, UI(92.0f), 120, 220, 255, 255, 22);
-        if (ctx.rescueProgress > 0.0f) {
-            char rb[64];
-            snprintf(rb, sizeof(rb), "营救中 %d%%", static_cast<int>(ctx.rescueProgress * 100));
-            DrawImGuiTextCentered(imGuiUI, rb, UI(118.0f), 230, 240, 160, 255, 18);
         }
     }
 

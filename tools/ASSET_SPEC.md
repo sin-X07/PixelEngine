@@ -81,7 +81,6 @@
 | `grenade_decoy.png` | 诱饵弹 | 朝上 | 90° |
 | `c4.png` | C4 炸弹 | 朝上 | 90° |
 | `defuse_kit.png` | 拆弹器 | 朝上 | 90° |
-| `hostage.png` | 人质 | 朝上 | 90° |
 
 > **占位素材说明**：上表中新增的 CS2 武器（标 `(T)` / `(CT)` 及部分通用枪）
 > 当前由 `tools/gen_weapon_placeholders.py` 生成的**占位图**填充。
@@ -209,7 +208,6 @@
 | `spawn_ct` | 点 | — | CT 阵营出生点 |
 | `spawnpoint` | 点 | — | 通用出生点（无阵营区分时使用） |
 | `bomb_site` | 矩形 | `name = "A"` 或 `"B"` | 爆破点 |
-| `hostage` | 点或矩形 | — | 人质 |
 | `buy_zone` | 矩形 | 属性 `team = t / ct / both` | 购买区 |
 
 **写法 B：每类一个对象层，对象 `type` 留空**（`ancient_ruins.tmj` 采用此写法）
@@ -219,11 +217,9 @@
 | `spawn_t` | 空 | 点 | T 出生点 |
 | `spawn_ct` | 空 | 点 | CT 出生点 |
 | `bomb_site` | 空 | 矩形 | 爆破点（**可以有多层，会累加**） |
-| `hostage` | 空 | 点或矩形 | 人质 |
 | `buy_zone` | 空 | 矩形 | 购买区（可以有多层，会累加） |
 
-> 图层名大小写不敏感；`spawns` / `bombsites` / `buyzones` / `hostages` 等等价写法都认。
-> 若地图没有 `hostage` 层，人质模式会退化为 4 个默认人质点并打日志提示。
+> 图层名大小写不敏感；`spawns` / `bombsites` / `buyzones` 等等价写法都认。
 
 `Collisions` 层中**所有矩形对象**一律视为完全阻挡，不区分 `type`。
 

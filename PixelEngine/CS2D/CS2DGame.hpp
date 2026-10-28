@@ -27,8 +27,7 @@ class AudioManager;
 enum class MatchMode {
     DeathMatch,        // 自由击杀，即时重生，无回合
     TeamElimination,   // 回合制，T/CT 歼灭，先到 N 分获胜
-    BombDefusal,       // 爆破：T 下包 / CT 拆包
-    HostageRescue      // 人质：CT 营救全部人质
+    BombDefusal        // 爆破：T 下包 / CT 拆包
 };
 
 // 武器 → 枪声（近战/投掷物回退到通用音）
@@ -347,12 +346,6 @@ public:
         float life = 12.0f;
     };
 
-    // 人质
-    struct Hostage {
-        float x = 0.0f, y = 0.0f;
-        bool  rescued = false;
-    };
-
     // 击杀播报条目
     struct KillFeedEntry {
         std::string text;
@@ -449,15 +442,12 @@ public:
     size_t AiIndexOf(const Player& p) const;
     void   ResetBotAi(size_t i);
 
-    // ---- 目标物（爆破 / 人质）----
+    // ---- 目标物（爆破）----
     bool  IsBombPlanted()   const { return bombPlanted_; }
     float GetBombTimer()    const { return bombTimer_; }
     float GetBombX()        const { return bombX_; }
     float GetBombY()        const { return bombY_; }
     float GetDefuseProgress() const { return defuseProgress_; }
-    int   GetHostagesTotal()   const { return static_cast<int>(hostages_.size()); }
-    int   GetHostagesRescued() const;
-    float GetRescueProgress()  const { return rescueProgress_; }
 
     int GetPlayerKills()  const { return playerKills_; }
     int GetPlayerDeaths() const { return playerDeaths_; }
@@ -809,7 +799,6 @@ private:
     float damageFlashTimer_ = 0.0f; // 玩家受伤反馈
 
     // 目标物状态
-    std::vector<Hostage> hostages_;
     bool  bombPlanted_   = false;
     float bombX_ = 0.0f, bombY_ = 0.0f;
     float bombTimer_     = 0.0f;   // 倒计时（<=0 爆炸）
@@ -826,8 +815,6 @@ private:
     Team  lastDeathTeam_ = Team::None;
     float lastDeathTimer_ = 0.0f;
     float defuseProgress_ = 0.0f;  // 0..1
-    float rescueProgress_ = 0.0f;  // 0..1（当前人质）
-    int   hostageNearIdx_ = -1;    // 玩家当前靠近的人质索引
 
     std::vector<KillFeedEntry> killFeed_;
 
@@ -977,7 +964,7 @@ private:
     void GrantRoundEndMoney(Team winner);   // 发放回合金钱并重置本回合装备
 
     // 目标物
-    void SetupObjective();                  // 按模式初始化包点/人质
+    void SetupObjective();                  // 按模式初始化包点 / C4
     void UpdateObjective(float dt, bool interactHeld, class AudioManager* audio);
     void PlantBomb(float x, float y, class AudioManager* audio);
     void DetonateBomb(class AudioManager* audio);

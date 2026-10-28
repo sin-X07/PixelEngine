@@ -106,31 +106,6 @@
 
 ---
 
-## cs_office（人质图草案）
-
-- Chilldebrand CS2 Guide — Office（可开，推荐）  
-  https://chilldebrand.github.io/CS2-Guide/maps/office/index.html  
-  → 进攻清房+护送；防守交叉拖延；救人走廊为胜负轴。
-
-- Clash.gg Blog — Office callouts（可开）  
-  https://blog.clash.gg/callouts/office  
-  → Front/Main/Garage/Paper/Kitchen 等称呼表。
-
-- BloodyCase — CS2 Office callouts full guide（可开）  
-  https://bloodycase.com/blog/cs2-office-callouts-full-guide/  
-  → 人质图角色；T 守 Paper/Kitchen/Projector；CT 推 Front/Main/Garage。
-
-- SkinLords — CS2 Office guide（**失效**：301 跳转到站首页赌博列表，勿用）  
-  https://skinlords.com/blog/cs2-office-guide-strategies-to-master/  
-  → 已改用 chilldebrand + bloodycase + clash.gg。
-
-- Profilerr — Office callouts（检索可见，作 callout 备份）  
-  https://profilerr.net/cs-office-callouts/
-
-说明: 引擎无人质 intent；已用 A≈人质区、B/MID≈车库/走廊 的 hack 映射并写入 UNCERTAINTIES。
-
----
-
 ## mirage（公开 Mirage → 本图 site 名）
 
 - GamGem — Mirage strats: T default, CT setup, executes（可开）  
