@@ -926,6 +926,8 @@ private:
     const Player* FindVisibleEnemy(const Player& self, float& outDist) const;
     // 拆包安全判定：最近受击 / 可见敌人时先放弃拆包反击；炸弹最后 6 秒强制拆。
     bool BotCanDefuse(size_t i, const Player& bot) const;
+    // 下包后指定一个 CT 拆包手：优先安全、离炸弹最近；其余 CT 清点/掩护。
+    int  PickDefuseBot() const;
     // 目标是否落在以 self 朝向为中心的视野扇形内（玩家/BOT 共用几何）
     bool InViewCone(float fromX, float fromY, float aim,
                     float toX, float toY, float maxDist) const;

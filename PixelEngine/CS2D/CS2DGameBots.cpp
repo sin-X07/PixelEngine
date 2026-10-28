@@ -50,14 +50,45 @@ bool CS2DGame::BotCanDefuse(size_t i, const Player& bot) const {
     float enemyDist = 0.0f;
     if (FindVisibleEnemy(bot, enemyDist)) return false;   // 看得见敌人：先打
 
-    // 团队情报显示 T 还压在包点附近：先清人，不要贴包。
-    if (const EnemyContact* c = FindNearestContact(Team::CT, bombX_, bombY_)) {
-        const float ex = c->x - bombX_;
-        const float ey = c->y - bombY_;
-        if (ex * ex + ey * ey < 240.0f * 240.0f) return false;
+    // 不再因为「团队情报里包点附近有 T」就直接禁止拆包：
+    // 那会让 CT 全部站在炸弹上等到最后 6 秒。现在由拆包手尝试，
+    // 其他 CT 去清情报点/架枪；拆包手被看见或挨打时会自动放弃。
+    return true;
+}
+
+// 下包后指定拆包手：优先选「当前没挨打、没在冷却、没看见敌人」的最近 CT；
+// 最后 6 秒退化为最近的存活 CT（必须强拆）。
+int CS2DGame::PickDefuseBot() const {
+    if (mode_ != MatchMode::BombDefusal || !bombPlanted_) return -2;
+
+    const bool mustDefuse = (bombTimer_ <= 6.0f);
+    int   best        = -2;
+    int   fallback    = -2;
+    float bestD2      = 1e36f;
+    float fallbackD2  = 1e36f;
+
+    for (size_t i = 0; i < bots_.size(); ++i) {
+        const Player& b = bots_[i];
+        if (!b.alive || b.team != Team::CT) continue;
+
+        const float dx = b.x - bombX_;
+        const float dy = b.y - bombY_;
+        const float d2 = dx * dx + dy * dy;
+        if (d2 < fallbackD2) { fallbackD2 = d2; fallback = static_cast<int>(i); }
+
+        if (!mustDefuse) {
+            const BotRuntime& ai = AiAt(i);
+            if (ai.lastHitTimer > 0.0f || ai.defuseCooldown > 0.0f) continue;
+
+            float enemyDist = 0.0f;
+            if (FindVisibleEnemy(b, enemyDist)) continue;
+        }
+
+        if (d2 < bestD2) { bestD2 = d2; best = static_cast<int>(i); }
     }
 
-    return true;
+    if (best >= 0) return best;
+    return mustDefuse ? fallback : -2;
 }
 
 // 脚步事件：只让附近「能听到」的敌对 BOT 记住声源，不写入团队情报。
@@ -653,7 +684,32 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                         destIsObjective = true;
                     }
                 } else if (bombPlanted_) {
-                    destX = bombX_; destY = bombY_;      // 前往拆包
+                    // 下包后：只让拆包手去炸弹；其他人去清包点附近的情报，
+                    // 没有情报就在炸弹外围架枪，不再全员堆在炸弹上。
+                    const int defuser = PickDefuseBot();
+                    if (defuser == static_cast<int>(i)) {
+                        destX = bombX_;
+                        destY = bombY_;
+                    } else {
+                        const EnemyContact* c = FindNearestContact(Team::CT, bombX_, bombY_);
+                        const float cdx = c ? (c->x - bombX_) : 0.0f;
+                        const float cdy = c ? (c->y - bombY_) : 0.0f;
+                        if (c && cdx * cdx + cdy * cdy < 260.0f * 260.0f) {
+                            static const float kApproach[8] = {
+                                0.0f, 0.79f, 1.57f, 2.36f, 3.14f, 3.93f, 4.71f, 5.50f
+                            };
+                            const float ang = kApproach[i % 8];
+                            destX = c->x + std::cos(ang) * 34.0f;
+                            destY = c->y + std::sin(ang) * 34.0f;
+                        } else {
+                            static const float kCover[8] = {
+                                0.0f, 0.79f, 1.57f, 2.36f, 3.14f, 3.93f, 4.71f, 5.50f
+                            };
+                            const float ang = kCover[i % 8];
+                            destX = bombX_ + std::cos(ang) * Tuning::DefuseCoverRing;
+                            destY = bombY_ + std::sin(ang) * Tuning::DefuseCoverRing;
+                        }
+                    }
                     hasDest = true;
                     destIsObjective = true;
                 } else if (order.hasHold) {
