@@ -166,7 +166,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 Palette::U32(ImVec4(0.03f, 0.045f, 0.06f, 0.66f)),
                 Palette::U32(ImVec4(0.03f, 0.045f, 0.06f, 0.66f)));
             DrawMapBeam(ImGui::GetWindowDrawList(), ctx.mapOverlayLightProgress,
-                        wp, ws, 1.0f, false);
+                        wp, ws, ctx.cameraBeamFade, false);
         }
         ImGui::End();
         ImGui::PopStyleColor();
@@ -670,7 +670,8 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
     }
 
     // 俯视选图页的探照灯：灯源从顶部逐帧移到屏幕正下方，光束始终跟随鼠标
-    DrawMapBeam(dl, ctx.mapOverlayLightProgress, wp, ws, fade, beamOverInteractive);
+    DrawMapBeam(dl, ctx.mapOverlayLightProgress, wp, ws,
+                ctx.mapOverlayBeamFade, beamOverInteractive);
 
     DrawImGuiTextCentered(imGuiUI_, "← → 切换地图      Enter 开始      Esc 返回",
                           btnY + btnH + UI(18.0f), 130, 154, 176,

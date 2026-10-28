@@ -160,6 +160,8 @@ GameUI::Actions Engine::BuildActions() {
         mapOverlayOpen_ = false;
         mapOverlayClosing_ = false;
         mapOverlayFade_ = 0.0f;
+        mapOverlayBeamFade_ = 0.0f;
+        cameraBeamFade_ = 0.0f;
         if (menu3D) menu3D->SetCameraTopDownProgress(0.0f);
         BeginMatchLoad(mode, path, pendingPlayerTeam_);
     };
@@ -848,6 +850,8 @@ void Engine::OpenMapOverlay(MatchMode mode) {
     mapOverlayClosing_ = false;
     mapOverlayStartMs_ = SDL_GetTicks64();
     mapOverlayFade_ = 0.0f;
+    mapOverlayBeamFade_ = 1.0f;
+    cameraBeamFade_ = 0.0f;
     // 相机过场期间光源已经移动到底部，浮层打开时保持在底部。
     mapOverlayLightProgress_ = 1.0f;
     mapPreviewRectValid_ = false;
@@ -1416,6 +1420,12 @@ void Engine::Render() {
                 menu3D->SetFocusedObject(-1);
                 menu3D->SetHoveredObject(-1);
                 mapOverlayLightProgress_ = cameraProgress;
+                const float rawFade = std::clamp(
+                    static_cast<float>(SDL_GetTicks64() - menuCameraStartMs_) / 260.0f,
+                    0.0f, 1.0f);
+                const float beamIn = rawFade * rawFade * (3.0f - 2.0f * rawFade);
+                cameraBeamFade_ = beamIn;
+                menu3D->SetSpotlightIntensity(1.0f - beamIn);
             } else if (mapOverlayOpen_) {
                 menu3D->SetFocusedObject(-1);
                 menu3D->SetHoveredObject(-1);
@@ -1425,17 +1435,25 @@ void Engine::Render() {
                         0.0f, 1.0f);
                     const float t = raw * raw * (3.0f - 2.0f * raw);
                     menu3D->SetCameraTopDownProgress(1.0f - t);
+                    menu3D->SetSpotlightIntensity(t);
                     mapOverlayFade_ = 1.0f - t;
+                    mapOverlayBeamFade_ = 1.0f - t;
                     mapOverlayLightProgress_ = 1.0f - t;
+                    cameraBeamFade_ = 0.0f;
                     if (raw >= 1.0f) {
                         mapOverlayOpen_ = false;
                         mapOverlayClosing_ = false;
                         mapOverlayFade_ = 0.0f;
+                        mapOverlayBeamFade_ = 0.0f;
                         mapOverlayLightProgress_ = 0.0f;
                         menu3D->SetCameraTopDownProgress(0.0f);
+                        menu3D->SetSpotlightIntensity(1.0f);
                     }
                 } else {
                     menu3D->SetCameraTopDownProgress(1.0f);
+                    menu3D->SetSpotlightIntensity(0.0f);
+                    mapOverlayBeamFade_ = 1.0f;
+                    cameraBeamFade_ = 0.0f;
                     mapOverlayFade_ = std::clamp(
                         static_cast<float>(SDL_GetTicks64() - mapOverlayStartMs_) / 350.0f,
                         0.0f, 1.0f);
@@ -1443,6 +1461,9 @@ void Engine::Render() {
                 }
             } else {
                 menu3D->SetCameraTopDownProgress(0.0f);
+                menu3D->SetSpotlightIntensity(1.0f);
+                cameraBeamFade_ = 0.0f;
+                mapOverlayBeamFade_ = 0.0f;
                 if (focused3D_ >= 0) {
                 if (focus3DClosing_) {
                     const float elapsed = std::clamp(
@@ -1473,7 +1494,6 @@ void Engine::Render() {
                 menu3D->SetFocusedObject(-1);
             }
             }
-            menu3D->SetSpotlightSuppressed(menuCameraTransition_ || mapOverlayOpen_);
             menu3D->Render(frameDt);
             if (menu3D->GetTexture()) {
                 ctx.backdropTex = menu3D->GetTexture();
@@ -1497,6 +1517,8 @@ void Engine::Render() {
             ctx.mapOverlayClosing = mapOverlayClosing_;
             ctx.mapOverlayFade = mapOverlayFade_;
             ctx.mapOverlayLightProgress = mapOverlayLightProgress_;
+            ctx.mapOverlayBeamFade = mapOverlayBeamFade_;
+            ctx.cameraBeamFade = cameraBeamFade_;
             ctx.mapOverlaySelected = mapOverlaySelected_;
             ctx.mapOverlayCount = mapOverlayCount_;
             if (mapOverlayMode_ == MatchMode::BombDefusal) {

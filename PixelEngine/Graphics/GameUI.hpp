@@ -113,6 +113,8 @@ public:
         bool        mapOverlayClosing = false;
         float       mapOverlayFade = 0.0f;
         float       mapOverlayLightProgress = 1.0f;
+        float       mapOverlayBeamFade = 1.0f;
+        float       cameraBeamFade = 0.0f;
         std::string mapOverlayTitle;
         std::string mapOverlaySubtitle;
         int         mapOverlaySelected = 0;

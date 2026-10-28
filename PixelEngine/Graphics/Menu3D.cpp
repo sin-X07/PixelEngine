@@ -606,10 +606,11 @@ void Menu3D::DrawObjectRing(float x, float z, float radius, float alpha) {
 }
 
 void Menu3D::DrawSpotlight() {
-    if (spotlightSuppressed_) {
+    if (spotlightSuppressed_ || spotlightIntensity_ <= 0.001f) {
         glDisable(GL_LIGHT1);
         return;
     }
+    const float si = std::clamp(spotlightIntensity_, 0.0f, 1.0f);
     const int targetIndex = (focusedObject_ >= 0) ? focusedObject_ : hoveredObject_;
     const float targetRadius = (targetIndex < 0) ? 0.72f
                              : (targetIndex < 2) ? 1.05f : 0.34f;
@@ -624,7 +625,7 @@ void Menu3D::DrawSpotlight() {
     const float dirLen = std::sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
     if (dirLen > 1e-5f) { dirX /= dirLen; dirY /= dirLen; dirZ /= dirLen; }
     const GLfloat dir[] = { dirX, dirY, dirZ };
-    const GLfloat diff[] = { 0.86f, 0.93f, 1.0f, 1.0f };
+    const GLfloat diff[] = { 0.86f * si, 0.93f * si, 1.0f * si, 1.0f };
     const float cutoff = (targetIndex >= 2) ? 20.0f : 31.0f;
     glEnable(GL_LIGHT1);
     glLightfv(GL_LIGHT1, GL_POSITION, pos);
@@ -638,7 +639,7 @@ void Menu3D::DrawSpotlight() {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 
     // 可见光锥：顶端固定在 (0, 6.2, 0)，底端跟随目标
-    glColor4f(0.72f, 0.86f, 1.0f, 0.24f);
+    glColor4f(0.72f, 0.86f, 1.0f, 0.24f * si);
     glBegin(GL_QUAD_STRIP);
     constexpr int kSegments = 24;
     for (int i = 0; i <= kSegments; ++i) {
@@ -651,7 +652,7 @@ void Menu3D::DrawSpotlight() {
     glEnd();
 
     // 地面光斑
-    glColor4f(0.78f, 0.90f, 1.0f, 0.27f);
+    glColor4f(0.78f, 0.90f, 1.0f, 0.27f * si);
     glBegin(GL_TRIANGLE_FAN);
     glVertex3f(spotX_, 0.008f, spotZ_);
     for (int i = 0; i <= kSegments; ++i) {
@@ -677,8 +678,8 @@ void Menu3D::DrawSpotlight() {
         else ObjectWorldPosition(idx, x, y, z);
         const float r = (idx < 2) ? 0.82f : 0.30f;
         const float pulse = 0.65f + 0.35f * std::sin(animationTime_ * 5.0f);
-        DrawObjectRing(x, z, r, 0.95f * pulse);
-        DrawObjectRing(x, z, r * 0.72f, 0.55f * pulse);
+        DrawObjectRing(x, z, r, 0.95f * pulse * si);
+        DrawObjectRing(x, z, r * 0.72f, 0.55f * pulse * si);
     }
 }
 

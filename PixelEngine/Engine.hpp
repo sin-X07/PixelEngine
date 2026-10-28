@@ -134,6 +134,8 @@ private:
     uint64_t     mapOverlayStartMs_ = 0;
     uint64_t     mapOverlayCloseStartMs_ = 0;
     float        mapOverlayFade_ = 0.0f;
+    float        mapOverlayBeamFade_ = 1.0f;
+    float        cameraBeamFade_ = 0.0f;
     float        mapOverlayLightProgress_ = 0.0f;
     MatchMode    mapOverlayMode_ = MatchMode::BombDefusal;
     int          mapOverlaySelected_ = 0;
