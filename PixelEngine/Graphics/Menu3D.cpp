@@ -13,6 +13,14 @@ namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
 
+// 主菜单相机：保持原来的高度和俯角，仅略微前移；聚焦页继续使用旧相机参数，
+// 避免物体自定义界面的 3D 排版发生变化。
+constexpr float kMainCamY = 1.25f;
+constexpr float kMainCamZ = 8.0f;
+constexpr float kMainLookY = 0.268f;
+constexpr float kFocusCamZ = 8.6f;
+constexpr float kFloorFrontZ = 10.0f;
+
 void DrawCube(float cx, float cy, float cz,
               float sx, float sy, float sz,
               float r, float g, float b) {
@@ -150,6 +158,18 @@ void ApplyLookAt(const float eye[3], const float target[3], const float up[3]) {
         1.0f
     };
     glMultMatrixf(m);
+}
+
+void ApplyMainCamera() {
+    const float eye[3] = { 0.0f, kMainCamY, kMainCamZ };
+    const float target[3] = { 0.0f, kMainLookY, 0.0f };
+    const float up[3] = { 0.0f, 1.0f, 0.0f };
+    ApplyLookAt(eye, target, up);
+}
+
+void ApplyFocusCamera() {
+    glTranslatef(0.0f, -kMainCamY, -kFocusCamZ);
+    glRotatef(-7.0f, 1.0f, 0.0f, 0.0f);
 }
 
 } // namespace
@@ -600,6 +620,17 @@ void Menu3D::UpdateSpotlight(float dt) {
     const float a = 1.0f - std::exp(-speed * dt);
     spotX_ += (tx - spotX_) * a;
     spotZ_ += (tz - spotZ_) * a;
+
+    const int targetIndex = (focusedObject_ >= 0) ? focusedObject_ : hoveredObject_;
+    const float targetRadius = overlaySpotlightActive_ ? 0.95f
+                             : (targetIndex < 0) ? 0.72f
+                             : (targetIndex < 2) ? 1.05f : 0.34f;
+    const float targetY = overlaySpotlightActive_ ? 0.05f
+                        : (targetIndex < 0) ? 0.05f
+                        : (targetIndex < 2) ? 1.15f : 0.55f;
+    // 光柱落点半径逐帧插值，恢复 T/CT 大圈与小鸡小圈之间的平滑过渡。
+    spotRadius_ += (targetRadius - spotRadius_) * (1.0f - std::exp(-10.0f * dt));
+    spotY_ += (targetY - spotY_) * (1.0f - std::exp(-12.0f * dt));
 }
 
 void Menu3D::DrawObjectRing(float x, float z, float radius, float alpha) {
@@ -626,16 +657,11 @@ void Menu3D::DrawSpotlight() {
     }
     const float si = std::clamp(spotlightIntensity_, 0.0f, 1.0f);
     const int targetIndex = (focusedObject_ >= 0) ? focusedObject_ : hoveredObject_;
-    const float targetRadius = overlaySpotlightActive_ ? 0.95f
-                             : (targetIndex < 0) ? 0.72f
-                             : (targetIndex < 2) ? 1.05f : 0.34f;
-    const float targetY = (targetIndex < 0) ? 0.05f
-                        : (targetIndex < 2) ? 1.15f : 0.55f;
 
     // 发射源在 3D 空间中保持高于地面，选图过场时沿屏幕竖直方向移动
     const GLfloat pos[] = { 0.0f, 6.4f, spotSourceZ_, 1.0f };
     float dirX = spotX_;
-    float dirY = targetY - 6.4f;
+    float dirY = spotY_ - 6.4f;
     float dirZ = spotZ_ - spotSourceZ_;
     const float dirLen = std::sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
     if (dirLen > 1e-5f) { dirX /= dirLen; dirY /= dirLen; dirZ /= dirLen; }
@@ -661,8 +687,8 @@ void Menu3D::DrawSpotlight() {
         const float a = 2.0f * kPi * static_cast<float>(i) / kSegments;
         const float topR = 0.045f;
         glVertex3f(std::cos(a) * topR, 6.2f, spotSourceZ_ + std::sin(a) * topR);
-        glVertex3f(spotX_ + std::cos(a) * targetRadius, 0.02f,
-                   spotZ_ + std::sin(a) * targetRadius);
+        glVertex3f(spotX_ + std::cos(a) * spotRadius_, 0.02f,
+                   spotZ_ + std::sin(a) * spotRadius_);
     }
     glEnd();
 
@@ -672,8 +698,8 @@ void Menu3D::DrawSpotlight() {
     glVertex3f(spotX_, 0.008f, spotZ_);
     for (int i = 0; i <= kSegments; ++i) {
         const float a = 2.0f * kPi * static_cast<float>(i) / kSegments;
-        glVertex3f(spotX_ + std::cos(a) * targetRadius, 0.008f,
-                   spotZ_ + std::sin(a) * targetRadius);
+        glVertex3f(spotX_ + std::cos(a) * spotRadius_, 0.008f,
+                   spotZ_ + std::sin(a) * spotRadius_);
     }
     glEnd();
 
@@ -744,24 +770,23 @@ void Menu3D::DrawFocusScene() {
     // 与主场景保持同一个相机，只让被选中的模型逐帧移动到左侧并放大
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
-    glTranslatef(0.0f, -1.25f, -8.6f);
-    glRotatef(-7.0f, 1.0f, 0.0f, 0.0f);
+    ApplyFocusCamera();
 
     glDisable(GL_LIGHTING);
     glColor4f(0.135f, 0.125f, 0.105f, 1.0f);
     glBegin(GL_QUADS);
     glVertex3f(-13.0f, 0.0f, -5.0f);
     glVertex3f( 13.0f, 0.0f, -5.0f);
-    glVertex3f( 13.0f, 0.0f,  8.0f);
-    glVertex3f(-13.0f, 0.0f,  8.0f);
+    glVertex3f( 13.0f, 0.0f,  kFloorFrontZ);
+    glVertex3f(-13.0f, 0.0f,  kFloorFrontZ);
     glEnd();
     glColor4f(0.52f, 0.40f, 0.22f, 0.42f);
     glBegin(GL_LINES);
     for (int i = -12; i <= 12; ++i) {
         glVertex3f(static_cast<float>(i), 0.006f, -5.0f);
-        glVertex3f(static_cast<float>(i), 0.006f, 8.0f);
+        glVertex3f(static_cast<float>(i), 0.006f, kFloorFrontZ);
     }
-    for (int i = -5; i <= 8; ++i) {
+    for (int i = -5; i <= static_cast<int>(kFloorFrontZ); ++i) {
         glVertex3f(-13.0f, 0.006f, static_cast<float>(i));
         glVertex3f( 13.0f, 0.006f, static_cast<float>(i));
     }
@@ -890,15 +915,14 @@ void Menu3D::DrawScene(float timeSec) {
         // 前视 → 四分之一圆弧 → 正上方俯视
         const float raw = std::clamp(cameraTopDown_, 0.0f, 1.0f);
         const float t = raw * raw * (3.0f - 2.0f * raw);
-        const float radius = 8.6f;
-        const float centerY = 0.85f;
         const float angle = t * (kPi * 0.5f);
         const float eye[3] = {
             0.0f,
-            centerY + radius * std::sin(angle),
-            radius * std::cos(angle) + 0.001f
+            kMainCamY + (9.45f - kMainCamY) * std::sin(angle),
+            kMainCamZ * std::cos(angle) + 0.001f
         };
-        const float target[3] = { 0.0f, centerY, 0.0f };
+        const float targetY = kMainLookY + (0.85f - kMainLookY) * t;
+        const float target[3] = { 0.0f, targetY, 0.0f };
         // 从“屏幕上方为 +Y”平滑过渡到俯视时的“屏幕上方为 -Z”
         float up[3] = {
             0.0f,
@@ -909,22 +933,21 @@ void Menu3D::DrawScene(float timeSec) {
         if (ul > 1e-5f) { up[1] /= ul; up[2] /= ul; }
         ApplyLookAt(eye, target, up);
     } else {
-        glTranslatef(0.0f, -1.25f, -8.6f);
-        glRotatef(-7.0f, 1.0f, 0.0f, 0.0f);
+        ApplyMainCamera();
     }
     glDisable(GL_LIGHTING);
     glColor4f(0.135f, 0.125f, 0.105f, 1.0f);
     glBegin(GL_QUADS);
     glVertex3f(-13.0f, 0.0f, -5.0f);
     glVertex3f( 13.0f, 0.0f, -5.0f);
-    glVertex3f( 13.0f, 0.0f,  8.0f);
-    glVertex3f(-13.0f, 0.0f,  8.0f);
+    glVertex3f( 13.0f, 0.0f,  kFloorFrontZ);
+    glVertex3f(-13.0f, 0.0f,  kFloorFrontZ);
     glEnd();
 
     // 轻微棋盘格，让地面有材质感
     glColor4f(0.19f, 0.165f, 0.12f, 0.55f);
     glBegin(GL_QUADS);
-    for (int iz = -5; iz < 8; ++iz) {
+    for (int iz = -5; iz < static_cast<int>(kFloorFrontZ); ++iz) {
         for (int ix = -13; ix < 13; ++ix) {
             if (((ix + iz) & 1) == 0) continue;
             glVertex3f(static_cast<float>(ix), 0.003f, static_cast<float>(iz));
@@ -939,9 +962,9 @@ void Menu3D::DrawScene(float timeSec) {
     glBegin(GL_LINES);
     for (int i = -12; i <= 12; ++i) {
         glVertex3f(static_cast<float>(i), 0.006f, -5.0f);
-        glVertex3f(static_cast<float>(i), 0.006f, 8.0f);
+        glVertex3f(static_cast<float>(i), 0.006f, kFloorFrontZ);
     }
-    for (int i = -5; i <= 8; ++i) {
+    for (int i = -5; i <= static_cast<int>(kFloorFrontZ); ++i) {
         glVertex3f(-13.0f, 0.006f, static_cast<float>(i));
         glVertex3f( 13.0f, 0.006f, static_cast<float>(i));
     }

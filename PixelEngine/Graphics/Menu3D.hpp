@@ -127,6 +127,8 @@ private:
     float overlayTargetZ_ = 0.0f;
     float spotX_ = 0.0f;
     float spotZ_ = 0.0f;
+    float spotRadius_ = 0.72f;
+    float spotY_ = 0.05f;
     float spotTargetX_ = 0.0f;
     float spotTargetZ_ = 0.0f;
     float spotScanTimer_ = 0.0f;
