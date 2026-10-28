@@ -306,10 +306,9 @@ void Menu3D::UpdateChickens(float dt) {
             const float step = std::min(dist, s.speed * dt);
             s.x += dx / dist * step;
             s.z += dz / dist * step;
-            // 模型正面朝 +Z：yaw=0 面向镜头，移动时朝目标方向
-            s.yaw = std::atan2(dx, dz) * 180.0f / kPi;
+            // 装饰用：不管跑向哪里都保持面向镜头（向前）
+            s.yaw = 0.0f;
         } else {
-            // 到点后停一小会儿，再换下一个随机点
             s.yaw = 0.0f;
         }
     }
