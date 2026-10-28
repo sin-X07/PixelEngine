@@ -105,6 +105,20 @@ void DrawChicken(float x, float z, float phase) {
     DrawCube(x, y + 0.02f, z + 0.22f, 0.10f, 0.18f, 0.08f, 0.75f, 0.58f, 0.22f);
 }
 
+void DrawShadow(float x, float z, float rx, float rz, float alpha) {
+    glDisable(GL_LIGHTING);
+    glColor4f(0.0f, 0.0f, 0.0f, alpha);
+    glBegin(GL_TRIANGLE_FAN);
+    glVertex3f(x, 0.012f, z);
+    constexpr int kSegments = 24;
+    for (int i = 0; i <= kSegments; ++i) {
+        const float a = 2.0f * kPi * static_cast<float>(i) / kSegments;
+        glVertex3f(x + std::cos(a) * rx, 0.012f, z + std::sin(a) * rz);
+    }
+    glEnd();
+    glEnable(GL_LIGHTING);
+}
+
 } // namespace
 
 bool Menu3D::Initialize(SDL_Renderer* mainRenderer, int width, int height) {
@@ -247,6 +261,13 @@ bool Menu3D::LoadModels() {
 }
 
 void Menu3D::DrawModels() {
+    // 接地阴影
+    DrawShadow(-3.6f, 0.0f, 0.55f, 0.34f, 0.42f);
+    DrawShadow( 3.6f, 0.0f, 0.55f, 0.34f, 0.42f);
+    DrawShadow(-2.35f, 3.2f, 0.22f, 0.16f, 0.34f);
+    DrawShadow( 0.0f, 6.2f, 0.20f, 0.15f, 0.30f);
+    DrawShadow( 2.25f, 3.0f, 0.22f, 0.16f, 0.34f);
+
     // 角色
     glPushMatrix();
     glTranslatef(-3.6f, 0.0f, 0.0f);
@@ -260,12 +281,12 @@ void Menu3D::DrawModels() {
 
     // 三只鸡，位置/朝向/动画相位都不同
     const float xs[3] = { -2.35f, 0.0f, 2.25f };
-    const float zs[3] = { 3.2f, 6.2f, 3.0f };
+    const float zs[3] = { 3.2f, 7.0f, 3.0f };
     const float yaw[3] = { 155.0f, 205.0f, 175.0f };
     for (size_t i = 0; i < chickens_.size() && i < 3; ++i) {
         glPushMatrix();
         glTranslatef(xs[i], 0.0f, zs[i]);
-        chickens_[i]->Draw(i == 1 ? 0.26f : 0.30f, 0.0f, yaw[i]);
+        chickens_[i]->Draw(i == 1 ? 0.24f : 0.30f, 0.0f, yaw[i]);
         glPopMatrix();
     }
 }
