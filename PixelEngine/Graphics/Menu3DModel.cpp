@@ -274,8 +274,8 @@ bool Menu3DModel::Load(const std::string& path, const std::string& preferredAnim
                 prim.isSkin = cp.material->name && ContainsNoCase(cp.material->name, "skin");
                 prim.materialName = cp.material->name ? cp.material->name : "";
             } else {
-                // Chickensoft 的 GLB 没有材质，给一个暖白色
-                prim.color = Vec4{ 0.92f, 0.82f, 0.58f, 1.0f };
+                // Chickensoft 的 GLB 没有材质，给一个偏黄的暖色
+                prim.color = Vec4{ 0.94f, 0.62f, 0.12f, 1.0f };
             }
             mesh.primitives.push_back(std::move(prim));
         }
@@ -455,6 +455,7 @@ void Menu3DModel::Update(float dt) {
 }
 
 void Menu3DModel::SkinPrimitives() {
+    float minY = 1e30f;
     for (const Node& node : nodes_) {
         if (node.mesh < 0 || node.mesh >= static_cast<int>(meshes_.size())) continue;
         const Mesh& mesh = meshes_[node.mesh];
@@ -504,18 +505,22 @@ void Menu3DModel::SkinPrimitives() {
                     dst.skinnedPos[vi] = TransformPoint(node.world, v.pos);
                     dst.skinnedNormal[vi] = Normalize(TransformDir(node.world, v.normal));
                 }
+                minY = std::min(minY, dst.skinnedPos[vi].y);
             }
         }
     }
+    minY_ = (minY > 1e29f) ? 0.0f : minY;
 }
 
 void Menu3DModel::Draw(float scale, float yOffset, float yawDegrees) const {
     if (!ready_) return;
     glPushMatrix();
-    glTranslatef(0.0f, yOffset, 0.0f);
+    // 蒙皮后取最低点贴地，避免走路动画时脚底穿进地面
+    glTranslatef(0.0f, yOffset - minY_ * scale, 0.0f);
     glRotatef(yawDegrees, 0.0f, 1.0f, 0.0f);
     glScalef(scale, scale, scale);
 
+    if (unlit_) glDisable(GL_LIGHTING);
     for (const Node& node : nodes_) {
         if (node.mesh < 0 || node.mesh >= static_cast<int>(meshes_.size())) continue;
         const Mesh& mesh = meshes_[node.mesh];
@@ -548,5 +553,6 @@ void Menu3DModel::Draw(float scale, float yOffset, float yawDegrees) const {
             glEnd();
         }
     }
+    if (unlit_) glEnable(GL_LIGHTING);
     glPopMatrix();
 }

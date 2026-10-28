@@ -63,6 +63,7 @@ private:
         float x = 0.0f;
         float z = 0.0f;
         float yaw = 0.0f;
+        float targetYaw = 0.0f;
         float targetX = 0.0f;
         float targetZ = 0.0f;
         float repathTimer = 0.0f;

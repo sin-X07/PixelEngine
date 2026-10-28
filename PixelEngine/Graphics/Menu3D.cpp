@@ -107,15 +107,17 @@ void DrawChicken(float x, float z, float phase) {
 
 void DrawShadow(float x, float z, float rx, float rz, float alpha) {
     glDisable(GL_LIGHTING);
+    glDepthMask(GL_FALSE);   // 影子不写深度，避免把脚底裁掉
     glColor4f(0.0f, 0.0f, 0.0f, alpha);
     glBegin(GL_TRIANGLE_FAN);
-    glVertex3f(x, 0.012f, z);
+    glVertex3f(x, 0.010f, z);
     constexpr int kSegments = 24;
     for (int i = 0; i <= kSegments; ++i) {
         const float a = 2.0f * kPi * static_cast<float>(i) / kSegments;
-        glVertex3f(x + std::cos(a) * rx, 0.012f, z + std::sin(a) * rz);
+        glVertex3f(x + std::cos(a) * rx, 0.010f, z + std::sin(a) * rz);
     }
     glEnd();
+    glDepthMask(GL_TRUE);
     glEnable(GL_LIGHTING);
 }
 
@@ -202,8 +204,8 @@ bool Menu3D::InitGL() {
     glEnable(GL_LIGHT0);
     glShadeModel(GL_SMOOTH);
 
-    const GLfloat ambient[] = { 0.20f, 0.22f, 0.26f, 1.0f };
-    const GLfloat diffuse[] = { 1.00f, 0.92f, 0.78f, 1.0f };
+    const GLfloat ambient[] = { 0.18f, 0.20f, 0.24f, 1.0f };
+    const GLfloat diffuse[] = { 0.88f, 0.84f, 0.76f, 1.0f };
     const GLfloat position[] = { -4.0f, 8.0f, 6.0f, 1.0f };
     glLightfv(GL_LIGHT0, GL_AMBIENT, ambient);
     glLightfv(GL_LIGHT0, GL_DIFFUSE, diffuse);
@@ -249,6 +251,8 @@ bool Menu3D::LoadModels() {
         }
         // 错开三只鸡的动画相位
         chicken->Update(0.37f * static_cast<float>(i));
+        // 中间那只离镜头最近，压暗一点避免灯光下泛白
+        if (i == 1) chicken->SetClothingTint(0.55f, 0.55f, 0.45f);
         chickens_.push_back(std::move(chicken));
     }
 
@@ -269,6 +273,7 @@ void Menu3D::InitChickenState() {
         s.x = xs[i];
         s.z = zs[i];
         s.yaw = 0.0f;
+        s.targetYaw = 0.0f;
         s.speed = 0.75f + (chickenRng_() % 100) / 200.0f;
         PickChickenTarget(i);
     }
@@ -299,17 +304,28 @@ void Menu3D::UpdateChickens(float dt) {
         s.repathTimer -= dt;
         if (s.repathTimer <= 0.0f) PickChickenTarget(i);
 
-        const float dx = s.targetX - s.x;
-        const float dz = s.targetZ - s.z;
-        const float dist = std::sqrt(dx * dx + dz * dz);
-        if (dist > 0.06f) {
+        float dx = s.targetX - s.x;
+        float dz = s.targetZ - s.z;
+        float dist = std::sqrt(dx * dx + dz * dz);
+        if (dist <= 0.06f) {
+            // 到点后立刻换下一个方向，保证主界面里一直有鸡在走
+            PickChickenTarget(i);
+            dx = s.targetX - s.x;
+            dz = s.targetZ - s.z;
+            dist = std::sqrt(dx * dx + dz * dz);
+        }
+
+        if (dist > 0.001f) {
+            // 模型正面为 +Z：yaw 跟随行走方向，并做平滑转身
+            s.targetYaw = std::atan2(dx, dz) * 180.0f / kPi;
+            float delta = std::fmod(s.targetYaw - s.yaw + 540.0f, 360.0f) - 180.0f;
+            const float maxTurn = 220.0f * dt;
+            s.yaw += std::clamp(delta, -maxTurn, maxTurn);
+            s.yaw = std::fmod(s.yaw + 360.0f, 360.0f);
+
             const float step = std::min(dist, s.speed * dt);
             s.x += dx / dist * step;
             s.z += dz / dist * step;
-            // 装饰用：不管跑向哪里都保持面向镜头（向前）
-            s.yaw = 0.0f;
-        } else {
-            s.yaw = 0.0f;
         }
     }
 }

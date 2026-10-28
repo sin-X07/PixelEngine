@@ -32,6 +32,7 @@ public:
     void Draw(float scale, float yOffset = 0.0f, float yawDegrees = 0.0f) const;
     void SetClothingTint(float r, float g, float b) { tint_ = Vec4{ r, g, b, 1.0f }; }
     void SetBluePalette(bool enabled) { bluePalette_ = enabled; }
+    void SetUnlit(bool enabled) { unlit_ = enabled; }
 
 private:
     struct Mat4 {
@@ -98,8 +99,10 @@ private:
     int animationIndex_ = -1;
     std::string animationName_;
     float animationTime_ = 0.0f;
+    float minY_ = 0.0f;
     Vec4 tint_{ 1.0f, 1.0f, 1.0f, 1.0f };
     bool bluePalette_ = false;
+    bool unlit_ = false;
 
     void ComputeWorld(int nodeIndex, const Mat4& parent);
     void SampleAnimation(float time);
