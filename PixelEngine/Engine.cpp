@@ -13,6 +13,7 @@
 #include <fstream>
 #include <algorithm>
 #include <filesystem>
+#include <cmath>
 
 namespace {
 
@@ -477,6 +478,10 @@ void Engine::Clean() {
     if (imGuiUI)      imGuiUI->Shutdown();
     if (cs2dRenderer) cs2dRenderer->Clean();
 
+    for (auto& t : sceneTex_) {
+        if (t) { SDL_DestroyTexture(t); t = nullptr; }
+    }
+
     if (renderer) { SDL_DestroyRenderer(renderer); renderer = nullptr; }
     if (window)   { SDL_DestroyWindow(window);     window = nullptr; }
     SDL_Quit();
@@ -523,7 +528,7 @@ void Engine::HandleInput() {
     if (inputManager->IsFullscreenToggleRequested()) ToggleFullscreen();
     if (inputManager->IsMuteToggleRequested()) audioManager->ToggleMute();
 
-    if (inputManager->IsPauseToggleRequested()) {
+    if (inputManager->IsPauseToggleRequested() && !IsTransitionActive()) {
         if (currentState == PLAYING) {
             currentState = PAUSED;
             SDL_SetRelativeMouseMode(SDL_FALSE);
@@ -548,6 +553,14 @@ void Engine::HandleInput() {
     }
 
     if (currentState != PLAYING) return;
+
+    // 转场期间锁住对局输入，避免进入对局时第一帧误开枪/误移动。
+    if (IsTransitionActive()) {
+        cs2dMouseDown = false;
+        cs2dKeyW = cs2dKeyA = cs2dKeyS = cs2dKeyD = false;
+        cs2dKeyShift = cs2dKeyR = false;
+        return;
+    }
 
     // ---- 买枪菜单 ----
     if (inputManager->IsBuyMenuToggleRequested()) {
@@ -739,7 +752,204 @@ void Engine::Update(float dt) {
     // LLM 只作为主教练使用（教练层在 CS2DGame::CoachUpdate 里调用），不再逐 BOT 轮询。
 }
 
+// ============================================================================
+// 页面转场：双离屏纹理 + 上一帧快照合成
+// ============================================================================
+
+bool Engine::EnsureSceneTextures(int w, int h) {
+    if (w <= 0 || h <= 0) return false;
+    if (sceneTex_[0] && sceneTex_[1] && sceneW_ == w && sceneH_ == h) return true;
+
+    for (auto& t : sceneTex_) {
+        if (t) { SDL_DestroyTexture(t); t = nullptr; }
+    }
+    sceneW_ = w;
+    sceneH_ = h;
+    sceneValid_ = false;
+    sceneWrite_ = 0;
+    transitionKind_ = TransitionKind::None;
+
+    for (int i = 0; i < 2; ++i) {
+        sceneTex_[i] = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
+                                         SDL_TEXTUREACCESS_TARGET, w, h);
+        if (!sceneTex_[i]) {
+            for (auto& t : sceneTex_) {
+                if (t) { SDL_DestroyTexture(t); t = nullptr; }
+            }
+            std::cerr << "[Transition] 无法创建离屏场景纹理，转场禁用" << std::endl;
+            return false;
+        }
+        SDL_SetTextureBlendMode(sceneTex_[i], SDL_BLENDMODE_BLEND);
+    }
+    return true;
+}
+
+void Engine::BeginTransition(GameState from, GameState to) {
+    transitionElapsed_ = 0.0f;
+    transitionSlideDir_ = 1;
+
+    auto menuDepth = [](GameState s) {
+        switch (s) {
+            case MAIN_MENU:    return 0;
+            case MAP_SELECT:   return 1;
+            case SIDE_SELECT:  return 2;
+            default:           return 1;
+        }
+    };
+
+    if (to == PLAYING && (from == SIDE_SELECT || from == MAP_SELECT)) {
+        transitionKind_ = TransitionKind::GoldWipe;
+        transitionDuration_ = 0.30f;
+    } else if ((from == PLAYING && to == PAUSED) ||
+               (from == PAUSED && to == PLAYING)) {
+        transitionKind_ = TransitionKind::PauseFreeze;
+        transitionDuration_ = 0.16f;
+    } else if (from == MAP_SELECT && to == SIDE_SELECT) {
+        transitionKind_ = TransitionKind::MapZoom;
+        transitionDuration_ = 0.28f;
+    } else if (to == SETTINGS || to == HISTORY) {
+        // 设置 / 历史记录从右侧抽屉式进入
+        transitionKind_ = TransitionKind::Slide;
+        transitionDuration_ = 0.20f;
+        transitionSlideDir_ = 1;
+    } else if (from == SETTINGS || from == HISTORY) {
+        transitionKind_ = TransitionKind::Slide;
+        transitionDuration_ = 0.20f;
+        transitionSlideDir_ = -1;
+    } else if ((from == MAIN_MENU || from == MAP_SELECT || from == SIDE_SELECT) &&
+               (to == MAIN_MENU || to == MAP_SELECT || to == SIDE_SELECT) &&
+               from != to) {
+        transitionKind_ = TransitionKind::Slide;
+        transitionDuration_ = 0.22f;
+        transitionSlideDir_ = (menuDepth(to) >= menuDepth(from)) ? 1 : -1;
+    } else {
+        transitionKind_ = TransitionKind::Fade;
+        transitionDuration_ = 0.20f;
+    }
+}
+
+void Engine::DrawTransition(SDL_Texture* oldTex, SDL_Texture* newTex) {
+    const int W = sceneW_;
+    const int H = sceneH_;
+    if (W <= 0 || H <= 0 || !newTex) return;
+
+    const float raw = (transitionDuration_ > 0.0f)
+        ? std::clamp(transitionElapsed_ / transitionDuration_, 0.0f, 1.0f)
+        : 1.0f;
+    const float ease = 1.0f - std::pow(1.0f - raw, 3.0f);
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+
+    auto drawScene = [&](SDL_Texture* tex, float alpha, float scale, float dx, float dy) {
+        if (!tex) return;
+        const float w = static_cast<float>(W) * scale;
+        const float h = static_cast<float>(H) * scale;
+        SDL_FRect dst = { (static_cast<float>(W) - w) * 0.5f + dx,
+                          (static_cast<float>(H) - h) * 0.5f + dy, w, h };
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureAlphaMod(tex, static_cast<Uint8>(
+            std::clamp(alpha * 255.0f, 0.0f, 255.0f)));
+        SDL_RenderCopyF(renderer, tex, nullptr, &dst);
+    };
+
+    switch (transitionKind_) {
+        case TransitionKind::Fade: {
+            // 新页面轻微放大浮入，旧页面淡出
+            drawScene(newTex, 1.0f, 0.985f + 0.015f * ease, 0.0f, 0.0f);
+            drawScene(oldTex, 1.0f - ease, 1.0f, 0.0f, 0.0f);
+            break;
+        }
+        case TransitionKind::Slide: {
+            const float off = 24.0f * (1.0f - ease);
+            const float oldOff = -static_cast<float>(transitionSlideDir_) * 24.0f * ease;
+            drawScene(newTex, 1.0f, 1.0f,
+                      static_cast<float>(transitionSlideDir_) * off, 0.0f);
+            drawScene(oldTex, 1.0f - ease, 1.0f, oldOff, 0.0f);
+            break;
+        }
+        case TransitionKind::MapZoom: {
+            // 地图预览轻微放大，阵营选择面板从下方浮入
+            drawScene(oldTex, 1.0f - ease, 1.0f + 0.08f * ease, 0.0f, 0.0f);
+            drawScene(newTex, ease, 1.0f, 0.0f, 10.0f * (1.0f - ease));
+            break;
+        }
+        case TransitionKind::PauseFreeze: {
+            // 旧对局画面冻结并轻微放大，暂停面板浮入
+            drawScene(oldTex, 1.0f, 1.0f + 0.015f * ease, 0.0f, 0.0f);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0,
+                static_cast<Uint8>(70.0f * (1.0f - 0.5f * ease)));
+            SDL_Rect full = { 0, 0, W, H };
+            SDL_RenderFillRect(renderer, &full);
+            drawScene(newTex, ease, 1.0f, 0.0f, 6.0f * (1.0f - ease));
+            break;
+        }
+        case TransitionKind::GoldWipe: {
+            // 进入对局：旧页面淡出，金色斜向扫描线掠过
+            drawScene(newTex, 1.0f, 1.0f, 0.0f, 0.0f);
+            drawScene(oldTex, 1.0f - ease, 1.0f, 0.0f, 0.0f);
+
+            const float pulse = std::sin(ease * 3.14159265f);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0,
+                static_cast<Uint8>(pulse * 45.0f));
+            SDL_Rect full = { 0, 0, W, H };
+            SDL_RenderFillRect(renderer, &full);
+
+            const float bandX = -80.0f + ease * (static_cast<float>(W) + 160.0f);
+            for (int y = 0; y < H; y += 2) {
+                const int x = static_cast<int>(bandX + static_cast<float>(y) * 0.20f);
+                SDL_SetRenderDrawColor(renderer, 230, 185, 80, 24);
+                SDL_RenderDrawLine(renderer, x - 50, y, x + 50, y);
+                SDL_SetRenderDrawColor(renderer, 255, 225, 150, 85);
+                SDL_RenderDrawLine(renderer, x - 2, y, x + 2, y);
+            }
+            break;
+        }
+        case TransitionKind::None:
+        default:
+            drawScene(newTex, 1.0f, 1.0f, 0.0f, 0.0f);
+            break;
+    }
+
+    if (oldTex) SDL_SetTextureAlphaMod(oldTex, 255);
+    SDL_SetTextureAlphaMod(newTex, 255);
+}
+
 void Engine::Render() {
+    const Uint64 nowTicks = SDL_GetTicks64();
+    float frameDt = lastRenderTicks_ > 0
+        ? static_cast<float>(nowTicks - lastRenderTicks_) / 1000.0f
+        : (1.0f / 60.0f);
+    lastRenderTicks_ = nowTicks;
+    frameDt = std::clamp(frameDt, 0.0f, 0.05f);
+
+    // 记录本帧实际绘制的是哪个页面；按钮在绘制过程中触发切页时，
+    // 下一帧才会用旧页面快照开始转场。
+    const GameState renderedState = currentState;
+    const bool sceneReady = EnsureSceneTextures(logicalW_, logicalH_);
+
+    if (sceneReady && sceneValid_ && renderedState != lastRenderedState_) {
+        BeginTransition(lastRenderedState_, renderedState);
+    }
+    if (transitionKind_ != TransitionKind::None) {
+        transitionElapsed_ += frameDt;
+        if (transitionElapsed_ >= transitionDuration_) {
+            transitionKind_ = TransitionKind::None;
+        }
+    }
+
+    const bool transitioning = IsTransitionActive();
+    ImGuiIO& io = ImGui::GetIO();
+    if (transitioning) {
+        io.ConfigFlags |= ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoKeyboard;
+    } else {
+        io.ConfigFlags &= ~(ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoKeyboard);
+    }
+
+    if (sceneReady) {
+        SDL_SetRenderTarget(renderer, sceneTex_[sceneWrite_]);
+    }
     SDL_SetRenderDrawColor(renderer, 18, 26, 36, 255);
     SDL_RenderClear(renderer);
 
@@ -911,7 +1121,24 @@ void Engine::Render() {
     }
 
     imGuiUI->EndFrame();
+
+    if (sceneReady) {
+        // 回到默认 render target：先清黑，再把旧/新场景合成到窗口。
+        SDL_SetRenderTarget(renderer, nullptr);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        SDL_Texture* oldTex = sceneValid_ ? sceneTex_[1 - sceneWrite_] : nullptr;
+        DrawTransition(oldTex, sceneTex_[sceneWrite_]);
+    }
+
     SDL_RenderPresent(renderer);
+
+    lastRenderedState_ = renderedState;
+    if (sceneReady) {
+        sceneValid_ = true;
+        sceneWrite_ ^= 1;
+    }
+
     SDL_Delay(1000 / std::max(1, targetFPS_));
 }
 

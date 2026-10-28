@@ -116,7 +116,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         // 整块内容（标题 + 副标题 + 按钮组）垂直居中
         const float vpH = viewport->WorkSize.y;
         const float itemSpacing = ImGui::GetStyle().ItemSpacing.y;
-        const int   nBtn = 7;
+        const int   nBtn = 6;
 
         const float titleH = UI(46.0f);
         const float subH   = UI(30.0f);

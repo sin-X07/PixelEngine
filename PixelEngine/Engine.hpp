@@ -67,6 +67,29 @@ private:
     // 分辨率
     int currentResW_ = 800, currentResH_ = 600, currentResIdx_ = 0;
 
+    // ---- 页面转场 ----
+    // 每帧先渲染到离屏纹理，再把上一帧与新页面合成到窗口；
+    // 这样切页时可以直接拿到旧页面快照，不需要每帧读像素。
+    enum class TransitionKind { None, Fade, Slide, MapZoom, GoldWipe, PauseFreeze };
+    SDL_Texture* sceneTex_[2] = { nullptr, nullptr };
+    int          sceneWrite_ = 0;
+    int          sceneW_ = 0, sceneH_ = 0;
+    bool         sceneValid_ = false;
+    GameState    lastRenderedState_ = MAIN_MENU;
+    TransitionKind transitionKind_ = TransitionKind::None;
+    float        transitionElapsed_ = 0.0f;
+    float        transitionDuration_ = 0.0f;
+    int          transitionSlideDir_ = 1;
+    Uint64       lastRenderTicks_ = 0;
+
+    bool EnsureSceneTextures(int w, int h);
+    void BeginTransition(GameState from, GameState to);
+    void DrawTransition(SDL_Texture* oldTex, SDL_Texture* newTex);
+    bool IsTransitionActive() const {
+        return transitionKind_ != TransitionKind::None &&
+               transitionElapsed_ < transitionDuration_;
+    }
+
     // 内部方法
     void HandleInput();
     GameUI::Actions BuildActions();
