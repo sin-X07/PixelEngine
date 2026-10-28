@@ -18,7 +18,9 @@ constexpr float kPi = 3.14159265358979323846f;
 constexpr float kMainCamY = 1.25f;
 constexpr float kMainCamZ = 8.0f;
 constexpr float kMainLookY = 0.268f;
+constexpr float kFocusCamY = 1.45f;
 constexpr float kFocusCamZ = 8.6f;
+constexpr float kFocusLookY = 0.32f;
 constexpr float kFloorFrontZ = 10.0f;
 
 void DrawCube(float cx, float cy, float cz,
@@ -167,9 +169,20 @@ void ApplyMainCamera() {
     ApplyLookAt(eye, target, up);
 }
 
-void ApplyFocusCamera() {
-    glTranslatef(0.0f, -kMainCamY, -kFocusCamZ);
-    glRotatef(-7.0f, 1.0f, 0.0f, 0.0f);
+void ApplyFocusCamera(float progress) {
+    const float p = std::clamp(progress, 0.0f, 1.0f);
+    const float eye[3] = {
+        0.0f,
+        kMainCamY + (kFocusCamY - kMainCamY) * p,
+        kMainCamZ + (kFocusCamZ - kMainCamZ) * p
+    };
+    const float target[3] = {
+        0.0f,
+        kMainLookY + (kFocusLookY - kMainLookY) * p,
+        0.0f
+    };
+    const float up[3] = { 0.0f, 1.0f, 0.0f };
+    ApplyLookAt(eye, target, up);
 }
 
 } // namespace
@@ -767,10 +780,12 @@ void Menu3D::DrawFocusScene() {
     glLoadIdentity();
     glFrustum(-right, right, -top, top, nearZ, 40.0f);
 
-    // 与主场景保持同一个相机，只让被选中的模型逐帧移动到左侧并放大
+    // 相机从主菜单正面视角平滑过渡到聚焦视角，和模型移动/放大同步
+    const float focusRaw = std::clamp(focusProgress_, 0.0f, 1.0f);
+    const float focusT = focusRaw * focusRaw * (3.0f - 2.0f * focusRaw);
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
-    ApplyFocusCamera();
+    ApplyFocusCamera(focusT);
 
     glDisable(GL_LIGHTING);
     glColor4f(0.135f, 0.125f, 0.105f, 1.0f);
@@ -793,8 +808,7 @@ void Menu3D::DrawFocusScene() {
     glEnd();
     glEnable(GL_LIGHTING);
 
-    const float raw = std::clamp(focusProgress_, 0.0f, 1.0f);
-    const float t = raw * raw * (3.0f - 2.0f * raw);
+    const float t = focusT;
 
     float normalX = 0.0f, normalZ = 0.0f, normalScale = 1.22f;
     float targetScale = 1.9f;
