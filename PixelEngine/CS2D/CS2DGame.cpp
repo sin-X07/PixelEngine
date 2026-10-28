@@ -31,7 +31,8 @@ CS2DGame::CS2DGame()
 // 地图载入 / 重置
 // ============================================================================
 
-bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* renderer) {
+bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* renderer,
+                       bool resetMatch) {
     renderer_ = renderer;
 
     CS2DMapData mapData;
@@ -70,8 +71,17 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
     // 预热战术库：换图即加载 + 校验区域名，不必等到第一次 LLM 请求才报错。
     CoachWarmupPlaybook();
 
-    ResetToNewMatch();
-        intel_.Build(world_.get(), clockSec_);
+    if (resetMatch) {
+        ResetToNewMatch();
+    } else {
+        // 选阵营前只保留地图世界，不生成玩家和 BOT。
+        bots_.clear();
+        botAi_.clear();
+        bullets_.clear();
+        player_ = Player{};
+        player_.alive = false;
+    }
+    intel_.Build(world_.get(), clockSec_);
     return true;
 }
 
@@ -701,6 +711,26 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 // ============================================================================
 // 渲染
 // ============================================================================
+
+void CS2DGame::RenderMapPreview(int viewW, int viewH,
+                                float centerX, float centerY, float zoom) {
+    if (!renderer_ || !world_) return;
+    renderer_->SetViewportSize(viewW, viewH);
+    renderer_->SetPreviewCamera(centerX, centerY, zoom);
+    renderer_->DrawWorld();
+}
+
+void CS2DGame::GetTeamSpawnCenter(Team team, float& outX, float& outY) const {
+    outX = world_ ? world_->GetMapPixelW() * 0.5f : 0.0f;
+    outY = world_ ? world_->GetMapPixelH() * 0.5f : 0.0f;
+    if (!world_) return;
+    const auto spawns = world_->SpawnsForTeam(team == Team::CT);
+    if (spawns.empty()) return;
+    float sx = 0.0f, sy = 0.0f;
+    for (const auto* s : spawns) { sx += s->x; sy += s->y; }
+    outX = sx / static_cast<float>(spawns.size());
+    outY = sy / static_cast<float>(spawns.size());
+}
 
 void CS2DGame::Render(int viewW, int viewH) {
     if (!renderer_ || !world_) return;

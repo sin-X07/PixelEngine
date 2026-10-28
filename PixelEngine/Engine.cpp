@@ -760,20 +760,123 @@ void Engine::HandleInput() {
 // 开始对局
 // ============================================================================
 
+void Engine::BeginSideMapPreview() {
+    if (!cs2dGame) return;
+    const CS2DWorld& w = cs2dGame->GetWorld();
+    const float mapW = std::max(1.0f, w.GetMapPixelW());
+    const float mapH = std::max(1.0f, w.GetMapPixelH());
+    const float vw = static_cast<float>(logicalW_);
+    const float vh = static_cast<float>(logicalH_);
+    sideFullZoom_ = std::clamp(std::min(vw / mapW, vh / mapH) * 0.94f, 0.05f, 10.0f);
+    sideFullCenterX_ = mapW * 0.5f;
+    sideFullCenterY_ = mapH * 0.5f;
+    sideZoomStart_ = sideFullZoom_;
+    sideCamStartX_ = sideFullCenterX_;
+    sideCamStartY_ = sideFullCenterY_;
+    sideCamTargetX_ = sideFullCenterX_;
+    sideCamTargetY_ = sideFullCenterY_;
+    sideZoomTarget_ = std::clamp(std::min(vw, vh) / 200.0f, 1.2f, 6.0f);
+    sidePhase_ = SidePhase::FullMap;
+    sidePhaseStartMs_ = SDL_GetTicks64();
+    sideMatchInitialized_ = false;
+}
+
+void Engine::StartSideSpawnZoom() {
+    if (!cs2dGame || !sideChoicePending_ || sidePhase_ != SidePhase::FullMap) return;
+    cs2dGame->GetTeamSpawnCenter(pendingPlayerTeam_, sideCamTargetX_, sideCamTargetY_);
+    sideCamStartX_ = sideFullCenterX_;
+    sideCamStartY_ = sideFullCenterY_;
+    sideZoomStart_ = sideFullZoom_;
+    sidePhase_ = SidePhase::ZoomToSpawn;
+    sidePhaseStartMs_ = SDL_GetTicks64();
+}
+
+float Engine::SideFadeAlpha() const {
+    switch (sidePhase_) {
+        case SidePhase::FullMap:
+        case SidePhase::None:
+            return 0.0f;
+        case SidePhase::ZoomToSpawn: {
+            const float raw = std::clamp(
+                static_cast<float>(SDL_GetTicks64() - sidePhaseStartMs_) / 900.0f,
+                0.0f, 1.0f);
+            return raw * raw * (3.0f - 2.0f * raw);
+        }
+        case SidePhase::DarkHold:
+            return 1.0f;
+        case SidePhase::Reveal: {
+            const float raw = std::clamp(
+                static_cast<float>(SDL_GetTicks64() - sidePhaseStartMs_) / 650.0f,
+                0.0f, 1.0f);
+            return 1.0f - raw * raw * (3.0f - 2.0f * raw);
+        }
+    }
+    return 0.0f;
+}
+
+void Engine::DrawSideMapPreview() {
+    if (!cs2dGame) return;
+    float cx = sideFullCenterX_;
+    float cy = sideFullCenterY_;
+    float zoom = sideFullZoom_;
+    if (sidePhase_ == SidePhase::ZoomToSpawn) {
+        const float raw = std::clamp(
+            static_cast<float>(SDL_GetTicks64() - sidePhaseStartMs_) / 900.0f,
+            0.0f, 1.0f);
+        const float t = raw * raw * (3.0f - 2.0f * raw);
+        cx = sideCamStartX_ + (sideCamTargetX_ - sideCamStartX_) * t;
+        cy = sideCamStartY_ + (sideCamTargetY_ - sideCamStartY_) * t;
+        zoom = sideZoomStart_ + (sideZoomTarget_ - sideZoomStart_) * t;
+    } else if (sidePhase_ == SidePhase::DarkHold) {
+        cx = sideCamTargetX_;
+        cy = sideCamTargetY_;
+        zoom = sideZoomTarget_;
+    }
+    cs2dGame->RenderMapPreview(logicalW_, logicalH_, cx, cy, zoom);
+}
+
+void Engine::UpdateSideSpawnTransition() {
+    if (!sideChoicePending_ || !cs2dGame) return;
+    const uint64_t now = SDL_GetTicks64();
+    if (sidePhase_ == SidePhase::ZoomToSpawn) {
+        if (now - sidePhaseStartMs_ >= 900) {
+            cs2dGame->RestartMatchWithTeam(pendingPlayerTeam_);
+            matchStartMs_ = static_cast<long long>(now);
+            sideMatchInitialized_ = true;
+            sidePhase_ = SidePhase::DarkHold;
+            sidePhaseStartMs_ = now;
+        }
+    } else if (sidePhase_ == SidePhase::DarkHold) {
+        if (now - sidePhaseStartMs_ >= 350) {
+            sidePhase_ = SidePhase::Reveal;
+            sidePhaseStartMs_ = now;
+        }
+    } else if (sidePhase_ == SidePhase::Reveal) {
+        if (now - sidePhaseStartMs_ >= 650) {
+            sidePhase_ = SidePhase::None;
+            sideChoicePending_ = false;
+            sidePopupOpen_ = false;
+            sidePopupClosing_ = false;
+            sidePopupAlpha_ = 0.0f;
+            currentState = PLAYING;
+            buyMenuOpen_ = false;
+            SDL_SetRelativeMouseMode(SDL_TRUE);
+            SDL_ShowCursor(SDL_DISABLE);
+        }
+    }
+}
+
 void Engine::FinalizeSideChoice() {
     if (!sideChoicePending_ || !cs2dGame) return;
 
-    cs2dGame->RestartMatchWithTeam(pendingPlayerTeam_);
-    matchStartMs_ = static_cast<long long>(SDL_GetTicks64());
     sidePopupOpen_ = false;
     sidePopupClosing_ = false;
     sidePopupAlpha_ = 0.0f;
     sidePopupCloseElapsed_ = 0.0f;
-    sideChoicePending_ = false;
-    currentState = PLAYING;
-    buyMenuOpen_ = false;
-    SDL_SetRelativeMouseMode(SDL_TRUE);
-    SDL_ShowCursor(SDL_DISABLE);
+    // 不立刻生成玩家/BOT：先把全图镜头放大到所选阵营出生点，黑屏后再重置对局。
+    StartSideSpawnZoom();
+    SDL_SetRelativeMouseMode(SDL_FALSE);
+    SDL_ShowCursor(SDL_ENABLE);
 }
 
 void Engine::UpdateSidePopupFade(float dt) {
@@ -873,6 +976,7 @@ void Engine::RestartCurrentMatch() {
     sidePopupClosing_ = false;
     sidePopupAlpha_ = 0.0f;
     sidePopupCloseElapsed_ = 0.0f;
+    BeginSideMapPreview();
     matchLoadPhase_ = MatchLoadPhase::None;
     matchLoadElapsed_ = 0.0f;
     transitionKind_ = TransitionKind::None;
@@ -923,9 +1027,13 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
     if (cs2dGame) cs2dGame->SetPlayerTeam(playerTeam);
 
     const std::string mapPath = PathUtils::ResolveAppPath(mapRel);
-    if (!cs2dGame->LoadMap(mapPath, cs2dRenderer.get())) {
+    const bool deferMatchStart = sideChoicePending_;
+    if (!cs2dGame->LoadMap(mapPath, cs2dRenderer.get(), !deferMatchStart)) {
         std::cerr << "CS2D 地图加载失败: " << mapPath << std::endl;
         return;
+    }
+    if (deferMatchStart) {
+        BeginSideMapPreview();
     }
 
     inputManager->SwitchToEnglishKeyboardLayout();
@@ -977,6 +1085,7 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
 
 void Engine::Update(float dt) {
     if (currentState != PLAYING) return;
+    UpdateSideSpawnTransition();
     if (sideChoicePending_ || sidePopupOpen_) return;   // 等待游戏内选阵营
 
     // E 键用于拆包（按住）
@@ -1016,7 +1125,7 @@ void Engine::BeginMatchLoad(MatchMode mode, const std::string& mapRel, Team team
     pendingMatchMapRel_ = mapRel;
     pendingPlayerTeam_ = team;
     currentMatchMode_ = mode;
-    sideChoicePending_ = (mode == MatchMode::BombDefusal);
+    sideChoicePending_ = true;
     sidePopupOpen_ = false;
 
     matchLoadPhase_ = MatchLoadPhase::Zoom;
@@ -1343,8 +1452,18 @@ void Engine::Render() {
                                   currentState == EXIT_CONFIRM);
 
     if (gameplayVisible && !holdOldPage) {
-        cs2dGame->Render(logicalW_, logicalH_);
-        cs2dOverlay.Render(cs2dRenderer.get(), cs2dGame.get(), logicalW_, logicalH_);
+        const bool sideMapPreview = sideChoicePending_ &&
+            (sidePhase_ == SidePhase::FullMap ||
+             sidePhase_ == SidePhase::ZoomToSpawn ||
+             sidePhase_ == SidePhase::DarkHold);
+        if (sideMapPreview) {
+            DrawSideMapPreview();
+        } else {
+            cs2dGame->Render(logicalW_, logicalH_);
+            if (!sideChoicePending_) {
+                cs2dOverlay.Render(cs2dRenderer.get(), cs2dGame.get(), logicalW_, logicalH_);
+            }
+        }
     }
 
     imGuiUI->BeginFrame();
@@ -1758,6 +1877,17 @@ void Engine::Render() {
                 : 1.0f;
             SDL_SetRenderDrawColor(renderer, 0, 0, 0,
                 static_cast<Uint8>((1.0f - raw) * 255.0f));
+            SDL_Rect full = { 0, 0, logicalW_, logicalH_ };
+            SDL_RenderFillRect(renderer, &full);
+        }
+    }
+
+    if (sideChoicePending_) {
+        const float a = SideFadeAlpha();
+        if (a > 0.001f) {
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0,
+                static_cast<Uint8>(std::clamp(a, 0.0f, 1.0f) * 255.0f));
             SDL_Rect full = { 0, 0, logicalW_, logicalH_ };
             SDL_RenderFillRect(renderer, &full);
         }

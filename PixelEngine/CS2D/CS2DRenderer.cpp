@@ -275,6 +275,27 @@ void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
 // 背景图 & tile 层
 // ============================================================================
 
+void CS2DRenderer::SetPreviewCamera(float centerX, float centerY, float zoom) {
+    if (!world_) return;
+    zoom_ = std::clamp(zoom, 0.05f, 10.0f);
+    const float viewW = static_cast<float>(viewW_) / zoom_;
+    const float viewH = static_cast<float>(viewH_) / zoom_;
+
+    float totalW = world_->GetMapPixelW();
+    float totalH = world_->GetMapPixelH();
+    if (world_->HasBackgroundImage()) {
+        totalW = std::max(totalW, world_->GetImageW());
+        totalH = std::max(totalH, world_->GetImageH());
+    }
+
+    cameraX_ = centerX - viewW * 0.5f;
+    cameraY_ = centerY - viewH * 0.5f;
+    if (viewW < totalW) cameraX_ = std::clamp(cameraX_, 0.0f, totalW - viewW);
+    else cameraX_ = (totalW - viewW) * 0.5f;
+    if (viewH < totalH) cameraY_ = std::clamp(cameraY_, 0.0f, totalH - viewH);
+    else cameraY_ = (totalH - viewH) * 0.5f;
+}
+
 void CS2DRenderer::DrawImageBackground() {
     if (!backgroundTex_ || !world_) return;
     const float viewW = world_->GetImageW();

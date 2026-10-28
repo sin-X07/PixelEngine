@@ -114,6 +114,26 @@ private:
     bool         sidePopupClosing_ = false;
     float        sidePopupAlpha_ = 0.0f;
     float        sidePopupCloseElapsed_ = 0.0f;
+
+    // 选阵营后的地图镜头：全图背景 → 放大到出生点 → 黑屏生成 BOT → 渐亮。
+    enum class SidePhase { None, FullMap, ZoomToSpawn, DarkHold, Reveal };
+    SidePhase    sidePhase_ = SidePhase::None;
+    uint64_t     sidePhaseStartMs_ = 0;
+    float        sideFullZoom_ = 1.0f;
+    float        sideFullCenterX_ = 0.0f;
+    float        sideFullCenterY_ = 0.0f;
+    float        sideZoomStart_ = 1.0f;
+    float        sideZoomTarget_ = 3.0f;
+    float        sideCamStartX_ = 0.0f;
+    float        sideCamStartY_ = 0.0f;
+    float        sideCamTargetX_ = 0.0f;
+    float        sideCamTargetY_ = 0.0f;
+    bool         sideMatchInitialized_ = false;
+    void BeginSideMapPreview();
+    void StartSideSpawnZoom();
+    void UpdateSideSpawnTransition();
+    float SideFadeAlpha() const;
+    void DrawSideMapPreview();
     int          hovered3D_ = -1;
     int          focused3D_ = -1;
     int          focusWeapon_ = 0;
