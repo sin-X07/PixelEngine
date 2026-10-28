@@ -475,6 +475,9 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
     const ImVec2 ws = vp->WorkSize;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float fade = std::clamp(ctx.mapOverlayFade, 0.0f, 1.0f);
+    const bool interactive = (fade > 0.5f && !ctx.mapOverlayClosing);
+    ImVec2 beamTarget = ImGui::GetIO().MousePos;
+    bool beamTargetLocked = false;
 
     if (ctx.backdropTex && ctx.backdropW > 0 && ctx.backdropH > 0) {
         const float texAspect = static_cast<float>(ctx.backdropW) / static_cast<float>(ctx.backdropH);
@@ -496,12 +499,12 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
                       IM_COL32(4, 8, 12, static_cast<int>(78.0f * fade)));
 
     const int count = std::max(1, ctx.mapOverlayCount);
-    const float cardW = UI(300.0f);
-    const float cardH = UI(356.0f);
-    const float gap = UI(26.0f);
+    const float cardW = UI(250.0f);
+    const float cardH = UI(336.0f);
+    const float gap = UI(20.0f);
     const float totalW = count * cardW + (count - 1) * gap;
     const float startX = wp.x + (ws.x - totalW) * 0.5f;
-    const float cardY = wp.y + UI(150.0f);
+    const float cardY = wp.y + UI(146.0f);
     const int a255 = static_cast<int>(fade * 255.0f);
 
     DrawImGuiTextCentered(imGuiUI_, ctx.mapOverlayTitle.c_str(), wp.y + UI(42.0f),
@@ -516,8 +519,10 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
 
         ImGui::SetCursorScreenPos(cp);
         ImGui::PushID(i);
-        if (fade > 0.5f) {
+        bool hovered = false;
+        if (interactive) {
             ImGui::InvisibleButton("card", ImVec2(cardW, cardH));
+            hovered = ImGui::IsItemHovered();
             if (ImGui::IsItemClicked()) {
                 if (actions.playClick) actions.playClick();
                 if (actions.selectMapChoice) actions.selectMapChoice(i);
@@ -528,10 +533,17 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
         const ImU32 bg = selected ? IM_COL32(28, 38, 50, static_cast<int>(225 * fade))
                                  : IM_COL32(18, 24, 32, static_cast<int>(205 * fade));
         dl->AddRectFilled(cp, cp2, bg, UI(10.0f));
+        if (hovered) {
+            beamTarget = ImVec2((cp.x + cp2.x) * 0.5f, (cp.y + cp2.y) * 0.5f);
+            beamTargetLocked = true;
+            dl->AddRectFilled(cp, cp2, IM_COL32(110, 190, 255, static_cast<int>(26 * fade)), UI(10.0f));
+        }
         dl->AddRect(cp, cp2,
-                    selected ? IM_COL32(235, 190, 85, a255)
-                             : IM_COL32(255, 255, 255, static_cast<int>(30 * fade)),
-                    UI(10.0f), 0, selected ? UI(2.5f) : UI(1.0f));
+                    hovered ? IM_COL32(130, 205, 255, a255)
+                    : (selected ? IM_COL32(235, 190, 85, a255)
+                                : IM_COL32(255, 255, 255, static_cast<int>(30 * fade))),
+                    UI(10.0f), 0,
+                    hovered ? UI(3.0f) : (selected ? UI(2.5f) : UI(1.0f)));
 
         const float pad = UI(10.0f);
         const ImVec2 img0(cp.x + pad, cp.y + pad);
@@ -565,7 +577,7 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
 
     const float btnW = UI(180.0f), btnH = UI(42.0f);
     const float btnY = cardY + cardH + UI(24.0f);
-    if (fade > 0.5f) {
+    if (interactive) {
         ImGui::SetCursorScreenPos(ImVec2(wp.x + ws.x * 0.5f - btnW - UI(12.0f), btnY));
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.90f, 0.72f, 0.30f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.00f, 0.82f, 0.42f, 1.0f));
@@ -575,6 +587,14 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
             if (actions.playClick) actions.playClick();
             if (actions.startMatchOnChoice) actions.startMatchOnChoice(ctx.mapOverlaySelected);
         }
+        if (ImGui::IsItemHovered()) {
+            const ImVec2 a = ImGui::GetItemRectMin();
+            const ImVec2 b = ImGui::GetItemRectMax();
+            beamTarget = ImVec2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
+            beamTargetLocked = true;
+            dl->AddRect(ImVec2(a.x - 3, a.y - 3), ImVec2(b.x + 3, b.y + 3),
+                        IM_COL32(150, 215, 255, a255), UI(8.0f), 0, UI(2.0f));
+        }
         ImGui::PopStyleColor(4);
 
         ImGui::SetCursorScreenPos(ImVec2(wp.x + ws.x * 0.5f + UI(12.0f), btnY));
@@ -582,13 +602,54 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
             if (actions.playClick) actions.playClick();
             if (actions.closeMapOverlay) actions.closeMapOverlay();
         }
+        if (ImGui::IsItemHovered()) {
+            const ImVec2 a = ImGui::GetItemRectMin();
+            const ImVec2 b = ImGui::GetItemRectMax();
+            beamTarget = ImVec2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
+            beamTargetLocked = true;
+            dl->AddRect(ImVec2(a.x - 3, a.y - 3), ImVec2(b.x + 3, b.y + 3),
+                        IM_COL32(150, 215, 255, a255), UI(8.0f), 0, UI(2.0f));
+        }
+    }
+
+    // 俯视选图页的探照灯：端点固定在屏幕正下方中心，光束指向鼠标/悬停项
+    if (fade > 0.02f) {
+        const ImVec2 origin(wp.x + ws.x * 0.5f, wp.y + ws.y - UI(4.0f));
+        ImVec2 target = beamTarget;
+        if (!beamTargetLocked) {
+            target.x = std::clamp(target.x, wp.x + UI(12.0f), wp.x + ws.x - UI(12.0f));
+            target.y = std::clamp(target.y, wp.y + UI(12.0f), wp.y + ws.y - UI(24.0f));
+        }
+        ImVec2 dir(target.x - origin.x, target.y - origin.y);
+        const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+        if (len > 1.0f) {
+            dir.x /= len; dir.y /= len;
+            const ImVec2 perp(-dir.y, dir.x);
+            const float halfNear = UI(5.0f);
+            const float halfFar = UI(34.0f);
+            const ImU32 beamCol = IM_COL32(150, 215, 255, static_cast<int>(34 * fade));
+            dl->AddQuadFilled(
+                ImVec2(origin.x + perp.x * halfNear, origin.y + perp.y * halfNear),
+                ImVec2(origin.x - perp.x * halfNear, origin.y - perp.y * halfNear),
+                ImVec2(target.x - perp.x * halfFar, target.y - perp.y * halfFar),
+                ImVec2(target.x + perp.x * halfFar, target.y + perp.y * halfFar),
+                beamCol);
+            dl->AddLine(ImVec2(origin.x, origin.y), target,
+                        IM_COL32(190, 230, 255, static_cast<int>(150 * fade)), UI(1.5f));
+            dl->AddCircleFilled(target, UI(beamTargetLocked ? 22.0f : 12.0f),
+                                IM_COL32(170, 225, 255, static_cast<int>(50 * fade)), 24);
+        }
+        dl->AddCircleFilled(origin, UI(10.0f),
+                            IM_COL32(190, 230, 255, static_cast<int>(110 * fade)), 20);
+        dl->AddCircle(origin, UI(18.0f),
+                      IM_COL32(150, 215, 255, static_cast<int>(90 * fade)), 24, UI(2.0f));
     }
 
     DrawImGuiTextCentered(imGuiUI_, "← → 切换地图      Enter 开始      Esc 返回",
                           btnY + btnH + UI(18.0f), 130, 154, 176,
                           static_cast<int>(235 * fade), 14);
 
-    if (fade > 0.8f) {
+    if (interactive) {
         if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && ctx.mapOverlaySelected > 0) {
             if (actions.selectMapChoice) actions.selectMapChoice(ctx.mapOverlaySelected - 1);
         }

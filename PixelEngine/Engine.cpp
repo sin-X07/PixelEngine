@@ -150,7 +150,7 @@ GameUI::Actions Engine::BuildActions() {
         }
     };
     a.startMatchOnChoice = [this](int index) {
-        if (index < 0 || index >= mapOverlayCount_) return;
+        if (mapOverlayClosing_ || index < 0 || index >= mapOverlayCount_) return;
         const MatchMode mode = mapOverlayMode_;
         const std::string path = mapOverlayPaths_[index];
         pendingZoomPreviewTex_ = static_cast<SDL_Texture*>(mapOverlayPreviews_[index]);
@@ -158,14 +158,15 @@ GameUI::Actions Engine::BuildActions() {
         mapSelectIndex_ = (catalogIndex >= 0 && catalogIndex < kMapCatalogCount)
             ? catalogIndex : -1;
         mapOverlayOpen_ = false;
+        mapOverlayClosing_ = false;
         mapOverlayFade_ = 0.0f;
         if (menu3D) menu3D->SetCameraTopDownProgress(0.0f);
         BeginMatchLoad(mode, path, pendingPlayerTeam_);
     };
     a.closeMapOverlay = [this] {
-        mapOverlayOpen_ = false;
-        mapOverlayFade_ = 0.0f;
-        if (menu3D) menu3D->SetCameraTopDownProgress(0.0f);
+        if (!mapOverlayOpen_ || mapOverlayClosing_) return;
+        mapOverlayClosing_ = true;
+        mapOverlayCloseStartMs_ = SDL_GetTicks64();
     };
 
     a.startMatchOnMap = [this](int idx) {
@@ -844,6 +845,7 @@ void Engine::OpenMapOverlay(MatchMode mode) {
     }
 
     mapOverlayOpen_ = true;
+    mapOverlayClosing_ = false;
     mapOverlayStartMs_ = SDL_GetTicks64();
     mapOverlayFade_ = 0.0f;
     mapPreviewRectValid_ = false;
@@ -1412,12 +1414,27 @@ void Engine::Render() {
                 menu3D->SetFocusedObject(-1);
                 menu3D->SetHoveredObject(-1);
             } else if (mapOverlayOpen_) {
-                menu3D->SetCameraTopDownProgress(1.0f);
                 menu3D->SetFocusedObject(-1);
                 menu3D->SetHoveredObject(-1);
-                mapOverlayFade_ = std::clamp(
-                    static_cast<float>(SDL_GetTicks64() - mapOverlayStartMs_) / 350.0f,
-                    0.0f, 1.0f);
+                if (mapOverlayClosing_) {
+                    const float raw = std::clamp(
+                        static_cast<float>(SDL_GetTicks64() - mapOverlayCloseStartMs_) / 900.0f,
+                        0.0f, 1.0f);
+                    const float t = raw * raw * (3.0f - 2.0f * raw);
+                    menu3D->SetCameraTopDownProgress(1.0f - t);
+                    mapOverlayFade_ = 1.0f - t;
+                    if (raw >= 1.0f) {
+                        mapOverlayOpen_ = false;
+                        mapOverlayClosing_ = false;
+                        mapOverlayFade_ = 0.0f;
+                        menu3D->SetCameraTopDownProgress(0.0f);
+                    }
+                } else {
+                    menu3D->SetCameraTopDownProgress(1.0f);
+                    mapOverlayFade_ = std::clamp(
+                        static_cast<float>(SDL_GetTicks64() - mapOverlayStartMs_) / 350.0f,
+                        0.0f, 1.0f);
+                }
             } else {
                 menu3D->SetCameraTopDownProgress(0.0f);
                 if (focused3D_ >= 0) {
@@ -1450,6 +1467,7 @@ void Engine::Render() {
                 menu3D->SetFocusedObject(-1);
             }
             }
+            menu3D->SetSpotlightSuppressed(mapOverlayOpen_);
             menu3D->Render(frameDt);
             if (menu3D->GetTexture()) {
                 ctx.backdropTex = menu3D->GetTexture();
@@ -1470,6 +1488,7 @@ void Engine::Render() {
             ctx.focusProgress = focus3DProgress_;
             ctx.cameraTransition = cameraTransition;
             ctx.mapOverlayOpen = mapOverlayOpen_;
+            ctx.mapOverlayClosing = mapOverlayClosing_;
             ctx.mapOverlayFade = mapOverlayFade_;
             ctx.mapOverlaySelected = mapOverlaySelected_;
             ctx.mapOverlayCount = mapOverlayCount_;

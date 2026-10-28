@@ -130,7 +130,9 @@ private:
     void BeginMenuCameraTransition(std::function<void()> action);
 
     bool         mapOverlayOpen_ = false;
+    bool         mapOverlayClosing_ = false;
     uint64_t     mapOverlayStartMs_ = 0;
+    uint64_t     mapOverlayCloseStartMs_ = 0;
     float        mapOverlayFade_ = 0.0f;
     MatchMode    mapOverlayMode_ = MatchMode::BombDefusal;
     int          mapOverlaySelected_ = 0;

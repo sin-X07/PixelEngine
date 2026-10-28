@@ -110,6 +110,7 @@ public:
         float       focusProgress = 1.0f;  // 聚焦放大 / 轮盘开屏进度
         bool        cameraTransition = false; // 主菜单到模式页的相机弧线转场
         bool        mapOverlayOpen = false;
+        bool        mapOverlayClosing = false;
         float       mapOverlayFade = 0.0f;
         std::string mapOverlayTitle;
         std::string mapOverlaySubtitle;

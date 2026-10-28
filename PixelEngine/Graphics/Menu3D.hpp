@@ -52,6 +52,7 @@ public:
     void SetCameraTopDownProgress(float progress) {
         cameraTopDown_ = progress < 0.0f ? 0.0f : (progress > 1.0f ? 1.0f : progress);
     }
+    void SetSpotlightSuppressed(bool suppressed) { spotlightSuppressed_ = suppressed; }
 
 private:
     bool InitGL();
@@ -110,6 +111,7 @@ private:
     float focusTargetX_ = -2.4f;
     float focusTargetZ_ = 0.0f;
     float cameraTopDown_ = 0.0f;
+    bool spotlightSuppressed_ = false;
     float spotX_ = 0.0f;
     float spotZ_ = 0.0f;
     float spotTargetX_ = 0.0f;

@@ -606,6 +606,10 @@ void Menu3D::DrawObjectRing(float x, float z, float radius, float alpha) {
 }
 
 void Menu3D::DrawSpotlight() {
+    if (spotlightSuppressed_) {
+        glDisable(GL_LIGHT1);
+        return;
+    }
     const int targetIndex = (focusedObject_ >= 0) ? focusedObject_ : hoveredObject_;
     const float targetRadius = (targetIndex < 0) ? 0.72f
                              : (targetIndex < 2) ? 1.05f : 0.34f;
