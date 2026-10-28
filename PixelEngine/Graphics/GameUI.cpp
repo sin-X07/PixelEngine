@@ -75,8 +75,8 @@ void DrawTitleAccent(ImDrawList* dl, float centerX, float y, float halfW) {
                       Palette::U32(Palette::Accent()));
 }
 
-// 选图浮层的体积光：灯源随进度上下移动，目标处用多层光斑融合，
-// 不绘制中心细线，也不吸附到卡片/按钮。
+// 选图浮层的探照光：与主页面的体积光保持一致，
+// 只保留一束冷白锥形光，不绘制光源光晕和末尾小圆圈。
 void DrawMapBeam(ImDrawList* dl, float lightProgress,
                  const ImVec2& wp, const ImVec2& ws,
                  float fade, bool overInteractive) {
@@ -90,53 +90,21 @@ void DrawMapBeam(ImDrawList* dl, float lightProgress,
 
     ImVec2 dir(target.x - origin.x, target.y - origin.y);
     const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
-    if (len > 1.0f) {
-        dir.x /= len;
-        dir.y /= len;
-        const ImVec2 perp(-dir.y, dir.x);
-        const float farBase = overInteractive ? UI(44.0f) : UI(34.0f);
+    if (len <= 1.0f) return;
 
-        // 多层锥体：越靠近中心越亮，形成体积感
-        for (int layer = 0; layer < 3; ++layer) {
-            const float nearHalf = UI(3.5f + layer * 2.0f);
-            const float farHalf = farBase * (1.0f + layer * 0.16f);
-            ImU32 col = IM_COL32(185, 225, 255, static_cast<int>(18 * fade));
-            if (layer == 0) col = IM_COL32(70, 110, 180, static_cast<int>(9 * fade));
-            else if (layer == 1) col = IM_COL32(110, 170, 230, static_cast<int>(14 * fade));
-            dl->AddQuadFilled(
-                ImVec2(origin.x + perp.x * nearHalf, origin.y + perp.y * nearHalf),
-                ImVec2(origin.x - perp.x * nearHalf, origin.y - perp.y * nearHalf),
-                ImVec2(target.x - perp.x * farHalf, target.y - perp.y * farHalf),
-                ImVec2(target.x + perp.x * farHalf, target.y + perp.y * farHalf),
-                col);
-        }
+    dir.x /= len;
+    dir.y /= len;
+    const ImVec2 perp(-dir.y, dir.x);
+    const float nearHalf = UI(1.2f);
+    const float farHalf = overInteractive ? UI(44.0f) : UI(34.0f);
+    const ImU32 col = IM_COL32(184, 219, 255, static_cast<int>(61 * fade));
 
-        // 目标处多层柔光，而不是一个生硬实心圆
-        const float baseR = overInteractive ? UI(34.0f) : UI(19.0f);
-        for (int i = 0; i < 6; ++i) {
-            const float t = static_cast<float>(i) / 5.0f;
-            const float r = baseR * (1.0f - t * 0.62f);
-            const int alpha = static_cast<int>((7.0f + t * 34.0f) * fade);
-            const int rr = static_cast<int>(125 + t * 90);
-            const int gg = static_cast<int>(185 + t * 65);
-            const int bb = static_cast<int>(235 + t * 20);
-            dl->AddCircleFilled(target, r, IM_COL32(rr, gg, bb, alpha), 28);
-        }
-        dl->AddCircle(target, baseR * 0.96f,
-                      IM_COL32(170, 220, 255, static_cast<int>(48 * fade)),
-                      32, UI(1.2f));
-    }
-
-    // 灯源本体的多层光晕
-    for (int i = 0; i < 4; ++i) {
-        const float t = static_cast<float>(i) / 3.0f;
-        const float r = UI(18.0f - t * 10.0f);
-        const int alpha = static_cast<int>((8.0f + t * 28.0f) * fade);
-        dl->AddCircleFilled(origin, r, IM_COL32(150, 205, 245, alpha), 24);
-    }
-    dl->AddCircle(origin, UI(19.0f),
-                  IM_COL32(160, 215, 255, static_cast<int>(66 * fade)),
-                  24, UI(1.5f));
+    dl->AddQuadFilled(
+        ImVec2(origin.x + perp.x * nearHalf, origin.y + perp.y * nearHalf),
+        ImVec2(origin.x - perp.x * nearHalf, origin.y - perp.y * nearHalf),
+        ImVec2(target.x - perp.x * farHalf, target.y - perp.y * farHalf),
+        ImVec2(target.x + perp.x * farHalf, target.y + perp.y * farHalf),
+        col);
 }
 
 } // namespace
