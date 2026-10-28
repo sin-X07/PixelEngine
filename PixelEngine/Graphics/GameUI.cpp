@@ -97,7 +97,16 @@ void DrawMapBeam(ImDrawList* dl, float lightProgress,
     const ImVec2 perp(-dir.y, dir.x);
     const float nearHalf = UI(1.2f);
     const float farHalf = overInteractive ? UI(44.0f) : UI(34.0f);
-    const ImU32 col = IM_COL32(184, 219, 255, static_cast<int>(61 * fade));
+    const ImU32 col = IM_COL32(184, 219, 255, static_cast<int>(84 * fade));
+
+    // 主页面光锥射到地面后的柔和光斑
+    const float poolR = overInteractive ? UI(68.0f) : UI(48.0f);
+    dl->AddEllipseFilled(target, ImVec2(poolR * 1.55f, poolR * 0.53f),
+                         IM_COL32(115, 180, 245, static_cast<int>(14 * fade)), 0.0f, 32);
+    dl->AddEllipseFilled(target, ImVec2(poolR * 1.10f, poolR * 0.38f),
+                         IM_COL32(145, 205, 255, static_cast<int>(22 * fade)), 0.0f, 32);
+    dl->AddEllipseFilled(target, ImVec2(poolR * 0.64f, poolR * 0.24f),
+                         IM_COL32(195, 230, 255, static_cast<int>(30 * fade)), 0.0f, 28);
 
     dl->AddQuadFilled(
         ImVec2(origin.x + perp.x * nearHalf, origin.y + perp.y * nearHalf),
