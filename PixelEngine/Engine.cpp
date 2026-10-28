@@ -804,6 +804,8 @@ void Engine::BeginMenuCameraTransition(std::function<void()> action) {
 }
 
 void Engine::OpenMapOverlay(MatchMode mode) {
+    // 旧独立选图页不再进入，这里负责首次加载地图卡片预览图。
+    LoadMapPreviews(renderer, mapPreviewTex_, kMapCatalogCount);
     mapOverlayMode_ = mode;
     mapOverlayCount_ = 0;
     mapOverlaySelected_ = 0;

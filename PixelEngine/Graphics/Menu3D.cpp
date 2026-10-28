@@ -141,9 +141,9 @@ void ApplyLookAt(const float eye[3], const float target[3], const float up[3]) {
     const float uz = sx * fy - sy * fx;
 
     const float m[16] = {
-        sx, sy, sz, 0.0f,
-        ux, uy, uz, 0.0f,
-        -fx, -fy, -fz, 0.0f,
+        sx, ux, -fx, 0.0f,
+        sy, uy, -fy, 0.0f,
+        sz, uz, -fz, 0.0f,
         -(sx * eye[0] + sy * eye[1] + sz * eye[2]),
         -(ux * eye[0] + uy * eye[1] + uz * eye[2]),
          (fx * eye[0] + fy * eye[1] + fz * eye[2]),
