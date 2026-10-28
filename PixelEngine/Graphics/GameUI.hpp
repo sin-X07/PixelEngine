@@ -104,6 +104,7 @@ public:
         int         focusColor = 0;    // 0=原色 1=金色 2=赤红 3=冰蓝
         int         focusPose = 0;     // 0=待机 1=警戒 2=挥手
         float       focusProgress = 1.0f;  // 聚焦放大 / 轮盘开屏进度
+        bool        cameraTransition = false; // 主菜单到模式页的相机弧线转场
     };
 
     struct InGameCtx {

@@ -49,6 +49,9 @@ public:
     void SetFocusWeapon(int option) { focusWeapon_ = option; }
     void SetFocusProgress(float progress) { focusProgress_ = progress < 0.0f ? 0.0f : (progress > 1.0f ? 1.0f : progress); }
     float FocusProgress() const { return focusProgress_; }
+    void SetCameraTopDownProgress(float progress) {
+        cameraTopDown_ = progress < 0.0f ? 0.0f : (progress > 1.0f ? 1.0f : progress);
+    }
 
 private:
     bool InitGL();
@@ -106,6 +109,7 @@ private:
     float focusProgress_ = 1.0f;
     float focusTargetX_ = -2.4f;
     float focusTargetZ_ = 0.0f;
+    float cameraTopDown_ = 0.0f;
     float spotX_ = 0.0f;
     float spotZ_ = 0.0f;
     float spotTargetX_ = 0.0f;

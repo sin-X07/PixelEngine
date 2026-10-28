@@ -78,6 +78,14 @@ GameUI::Actions Engine::BuildActions() {
 
     a.playClick = [this] { audioManager->PlaySound(SoundEffect::CLICK); };
     a.goState   = [this](GameState s) {
+        if (s == MAP_SELECT && currentState == MAIN_MENU &&
+            menu3D && menu3D->IsReady()) {
+            BeginMenuCameraTransition([this] {
+                LoadMapPreviews(renderer, mapPreviewTex_, kMapCatalogCount);
+                currentState = MAP_SELECT;
+            });
+            return;
+        }
         if (s == MAP_SELECT) {
             LoadMapPreviews(renderer, mapPreviewTex_, kMapCatalogCount);
         }
@@ -87,13 +95,21 @@ GameUI::Actions Engine::BuildActions() {
     a.startMatch     = [this] { RestartCurrentMatch(); };
     a.startMatchMode = [this](int m) {
         const MatchMode mode = static_cast<MatchMode>(m);
-        if (mode == MatchMode::DeathMatch) {
-            BeginMatchLoad(mode, "assets/cs2d/maps/cs_office.tmj", pendingPlayerTeam_);
-        } else if (mode == MatchMode::TeamElimination) {
-            BeginMatchLoad(mode, "assets/cs2d/maps/ancient_ruins.tmj", pendingPlayerTeam_);
-        } else {
-            StartMatch(mode);
+        auto startNow = [this, mode] {
+            if (mode == MatchMode::DeathMatch) {
+                BeginMatchLoad(mode, "assets/cs2d/maps/cs_office.tmj", pendingPlayerTeam_);
+            } else if (mode == MatchMode::TeamElimination) {
+                BeginMatchLoad(mode, "assets/cs2d/maps/ancient_ruins.tmj", pendingPlayerTeam_);
+            } else {
+                StartMatch(mode);
+            }
+        };
+        if (currentState == MAIN_MENU && menu3D && menu3D->IsReady() &&
+            (mode == MatchMode::DeathMatch || mode == MatchMode::TeamElimination)) {
+            BeginMenuCameraTransition(startNow);
+            return;
         }
+        startNow();
     };
     // 选择阵营（爆破模式）：0 = T, 1 = CT, <0 = 随机
     a.chooseSide = [this](int side) {
@@ -747,6 +763,19 @@ void Engine::UpdateSidePopupFade(float dt) {
     }
 }
 
+void Engine::BeginMenuCameraTransition(std::function<void()> action) {
+    if (!menu3D || !menu3D->IsReady() || menuCameraTransition_) {
+        if (action) action();
+        return;
+    }
+    menuCameraTransition_ = true;
+    menuCameraStartMs_ = SDL_GetTicks64();
+    pendingMenuAction_ = std::move(action);
+    focused3D_ = -1;
+    hovered3D_ = -1;
+    focus3DClosing_ = false;
+}
+
 void Engine::RestartCurrentMatch() {
     if (!cs2dGame) return;
 
@@ -1296,7 +1325,18 @@ void Engine::Render() {
         ctx.backdrop3D  = false;
 
         if (currentState == MAIN_MENU && menu3D && menu3D->IsReady()) {
-            if (focused3D_ >= 0) {
+            const bool cameraTransition = menuCameraTransition_;
+            float cameraProgress = 0.0f;
+            if (cameraTransition) {
+                cameraProgress = std::clamp(
+                    static_cast<float>(SDL_GetTicks64() - menuCameraStartMs_) / 900.0f,
+                    0.0f, 1.0f);
+                menu3D->SetCameraTopDownProgress(cameraProgress);
+                menu3D->SetFocusedObject(-1);
+                menu3D->SetHoveredObject(-1);
+            } else {
+                menu3D->SetCameraTopDownProgress(0.0f);
+                if (focused3D_ >= 0) {
                 if (focus3DClosing_) {
                     const float elapsed = std::clamp(
                         static_cast<float>(SDL_GetTicks64() - focusExitStartMs_) / 380.0f,
@@ -1325,6 +1365,7 @@ void Engine::Render() {
                 menu3D->SetHoveredObject(hovered3D_);
                 menu3D->SetFocusedObject(-1);
             }
+            }
             menu3D->Render(frameDt);
             if (menu3D->GetTexture()) {
                 ctx.backdropTex = menu3D->GetTexture();
@@ -1343,11 +1384,22 @@ void Engine::Render() {
             ctx.focusColor  = focusColor_;
             ctx.focusPose   = focusPose_;
             ctx.focusProgress = focus3DProgress_;
+            ctx.cameraTransition = cameraTransition;
         }
 
         gameUI->DrawMenu(ctx, BuildActions());
 
-        if (currentState == MAIN_MENU && menu3D && menu3D->IsReady()) {
+        if (menuCameraTransition_ &&
+            SDL_GetTicks64() - menuCameraStartMs_ >= 900) {
+            menuCameraTransition_ = false;
+            menu3D->SetCameraTopDownProgress(0.0f);
+            std::function<void()> action = std::move(pendingMenuAction_);
+            pendingMenuAction_ = nullptr;
+            if (action) action();
+        }
+
+        if (currentState == MAIN_MENU && menu3D && menu3D->IsReady() &&
+            !menuCameraTransition_) {
             if (focused3D_ < 0) {
                 const ImGuiIO& io = ImGui::GetIO();
                 const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -1355,6 +1407,13 @@ void Engine::Render() {
                 const float scrH = std::max(1.0f, vp->WorkSize.y);
                 float u = (io.MousePos.x - vp->WorkPos.x) / scrW;
                 float v = (io.MousePos.y - vp->WorkPos.y) / scrH;
+                const float screenU = u;
+                const float screenV = v;
+
+                // 主菜单中央是按钮列，鼠标在这里时绝不穿透到 3D 物体。
+                const bool overMenuButtons =
+                    (screenU > 0.37f && screenU < 0.63f &&
+                     screenV > 0.33f && screenV < 0.68f);
 
                 // 与 GameUI 的背景等比裁切一致，把屏幕坐标换算成 3D 纹理坐标
                 const float texAspect = static_cast<float>(menu3D->Width()) /
@@ -1368,7 +1427,7 @@ void Engine::Render() {
                     v = (v - (1.0f - frac) * 0.5f) / frac;
                 }
 
-                const bool uiHovered = ImGui::IsAnyItemHovered();
+                const bool uiHovered = ImGui::IsAnyItemHovered() || overMenuButtons;
                 int hit = -1;
                 if (!uiHovered && u >= 0.0f && u <= 1.0f && v >= 0.0f && v <= 1.0f) {
                     hit = menu3D->HitTestNormalized(u, v);

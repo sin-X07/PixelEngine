@@ -123,6 +123,10 @@ private:
     float        focusCloseStartProgress_ = 0.0f;
     float        focus3DProgress_ = 0.0f;
     bool         focus3DClosing_ = false;
+    bool         menuCameraTransition_ = false;
+    uint64_t     menuCameraStartMs_ = 0;
+    std::function<void()> pendingMenuAction_;
+    void BeginMenuCameraTransition(std::function<void()> action);
     void FinalizeSideChoice();
     void UpdateSidePopupFade(float dt);
     void BeginMatchLoad(MatchMode mode, const std::string& mapRel, Team team);

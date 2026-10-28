@@ -121,6 +121,37 @@ void DrawShadow(float x, float z, float rx, float rz, float alpha) {
     glEnable(GL_LIGHTING);
 }
 
+void ApplyLookAt(const float eye[3], const float target[3], const float up[3]) {
+    float fx = target[0] - eye[0];
+    float fy = target[1] - eye[1];
+    float fz = target[2] - eye[2];
+    const float flen = std::sqrt(fx * fx + fy * fy + fz * fz);
+    if (flen < 1e-6f) return;
+    fx /= flen; fy /= flen; fz /= flen;
+
+    float sx = fy * up[2] - fz * up[1];
+    float sy = fz * up[0] - fx * up[2];
+    float sz = fx * up[1] - fy * up[0];
+    const float slen = std::sqrt(sx * sx + sy * sy + sz * sz);
+    if (slen < 1e-6f) return;
+    sx /= slen; sy /= slen; sz /= slen;
+
+    const float ux = sy * fz - sz * fy;
+    const float uy = sz * fx - sx * fz;
+    const float uz = sx * fy - sy * fx;
+
+    const float m[16] = {
+        sx, sy, sz, 0.0f,
+        ux, uy, uz, 0.0f,
+        -fx, -fy, -fz, 0.0f,
+        -(sx * eye[0] + sy * eye[1] + sz * eye[2]),
+        -(ux * eye[0] + uy * eye[1] + uz * eye[2]),
+         (fx * eye[0] + fy * eye[1] + fz * eye[2]),
+        1.0f
+    };
+    glMultMatrixf(m);
+}
+
 } // namespace
 
 bool Menu3D::Initialize(SDL_Renderer* mainRenderer, int width, int height) {
@@ -496,8 +527,8 @@ void Menu3D::UpdateObjectScreenPositions() {
         // 使用覆盖脚底到头顶的屏幕包围盒，鼠标落在身体任意位置都能命中。
         screenU_[i] = (ul + ur) * 0.5f;
         // T/CT 的可选中区域再向外侧扩一点，避免点击角色边缘时落空
-        if (i == 0) screenU_[i] -= 0.018f;
-        else if (i == 1) screenU_[i] += 0.018f;
+        if (i == 0) screenU_[i] -= 0.032f;
+        else if (i == 1) screenU_[i] += 0.032f;
         screenV_[i] = (vb + vt) * 0.5f;
         screenRU_[i] = std::max(0.018f, std::fabs(ur - ul) * 0.5f * 1.30f);
         screenRV_[i] = std::max(0.024f, std::fabs(vt - vb) * 0.5f * 1.20f);
@@ -835,10 +866,32 @@ void Menu3D::DrawScene(float timeSec) {
 
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
-    glTranslatef(0.0f, -1.25f, -8.6f);
-    glRotatef(-7.0f, 1.0f, 0.0f, 0.0f);
-
-    // 地面：暖灰褐色，和上方深蓝黑背景形成明确分界
+    if (cameraTopDown_ > 0.001f) {
+        // 前视 → 四分之一圆弧 → 正上方俯视
+        const float raw = std::clamp(cameraTopDown_, 0.0f, 1.0f);
+        const float t = raw * raw * (3.0f - 2.0f * raw);
+        const float radius = 8.6f;
+        const float centerY = 0.85f;
+        const float angle = t * (kPi * 0.5f);
+        const float eye[3] = {
+            0.0f,
+            centerY + radius * std::sin(angle),
+            radius * std::cos(angle) + 0.001f
+        };
+        const float target[3] = { 0.0f, centerY, 0.0f };
+        // 从“屏幕上方为 +Y”平滑过渡到俯视时的“屏幕上方为 -Z”
+        float up[3] = {
+            0.0f,
+            1.0f - t,
+            -t
+        };
+        const float ul = std::sqrt(up[1] * up[1] + up[2] * up[2]);
+        if (ul > 1e-5f) { up[1] /= ul; up[2] /= ul; }
+        ApplyLookAt(eye, target, up);
+    } else {
+        glTranslatef(0.0f, -1.25f, -8.6f);
+        glRotatef(-7.0f, 1.0f, 0.0f, 0.0f);
+    }
     glDisable(GL_LIGHTING);
     glColor4f(0.135f, 0.125f, 0.105f, 1.0f);
     glBegin(GL_QUADS);

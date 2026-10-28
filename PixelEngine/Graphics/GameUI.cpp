@@ -89,6 +89,32 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                  ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
                  ImGuiWindowFlags_NoBringToFrontOnFocus);
 
+    if (ctx.cameraTransition) {
+        if (ctx.backdropTex && ctx.backdropW > 0 && ctx.backdropH > 0) {
+            const ImVec2 wp = viewport->WorkPos;
+            const ImVec2 ws = viewport->WorkSize;
+            const float texAspect = static_cast<float>(ctx.backdropW) / static_cast<float>(ctx.backdropH);
+            const float scrAspect = ws.x / ws.y;
+            ImVec2 uv0(0.0f, 0.0f), uv1(1.0f, 1.0f);
+            if (texAspect > scrAspect) {
+                const float frac = scrAspect / texAspect;
+                uv0.x = (1.0f - frac) * 0.5f;
+                uv1.x = uv0.x + frac;
+            } else {
+                const float frac = texAspect / scrAspect;
+                uv0.y = (1.0f - frac) * 0.5f;
+                uv1.y = uv0.y + frac;
+            }
+            ImGui::GetWindowDrawList()->AddImage(
+                reinterpret_cast<ImTextureID>(ctx.backdropTex),
+                wp, ImVec2(wp.x + ws.x, wp.y + ws.y), uv0, uv1);
+        }
+        ImGui::End();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
+        return;
+    }
+
     const float mainMenuOpen = std::clamp(ctx.focusProgress, 0.0f, 1.0f);
     const float mainMenuAlpha = ctx.focus3D
         ? 1.0f - mainMenuOpen * mainMenuOpen * (3.0f - 2.0f * mainMenuOpen)
