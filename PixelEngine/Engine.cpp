@@ -939,8 +939,10 @@ void Engine::OpenMapOverlay(MatchMode mode) {
                 mapPreviewTex_[i], i);
         }
     } else if (mode == MatchMode::TeamElimination) {
-        add(kMapCatalog[0].name, kMapCatalog[0].tagline, kMapCatalog[0].tmj,
-            mapPreviewTex_[0], 0);
+        for (int i = 0; i < kMapCatalogCount; ++i) {
+            add(kMapCatalog[i].name, kMapCatalog[i].tagline, kMapCatalog[i].tmj,
+                mapPreviewTex_[i], i);
+        }
     } else {
         if (!officePreviewTex_) {
             const std::string preview = PathUtils::ResolveAppPath("assets/cs2d/tilesets/cs_office_bg.png");
