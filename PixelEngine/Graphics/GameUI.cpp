@@ -534,7 +534,8 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
     const ImVec2 ws = vp->WorkSize;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float fade = std::clamp(ctx.mapOverlayFade, 0.0f, 1.0f);
-    const bool interactive = (fade > 0.5f && !ctx.mapOverlayClosing);
+    const bool interactive = (fade > 0.5f && !ctx.mapOverlayClosing &&
+                              !ctx.mapOverlayLaunching);
     bool beamOverInteractive = false;
 
     if (ctx.backdropTex && ctx.backdropW > 0 && ctx.backdropH > 0) {
@@ -672,6 +673,26 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
     // 俯视选图页的探照灯：灯源从顶部逐帧移到屏幕正下方，光束始终跟随鼠标
     DrawMapBeam(dl, ctx.mapOverlayLightProgress, wp, ws,
                 ctx.mapOverlayBeamFade, beamOverInteractive);
+
+    if (ctx.mapOverlayLaunching) {
+        const float launch = std::clamp(ctx.mapOverlayLaunchProgress, 0.0f, 1.0f);
+        // 地图外的界面先快速压暗淡出，只留下当前选中的地图预览。
+        dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y),
+                          IM_COL32(0, 0, 0, static_cast<int>(launch * 255.0f)));
+        const int idx = std::clamp(ctx.mapOverlaySelected, 0, count - 1);
+        const ImVec2 cp(startX + idx * (cardW + gap), cardY);
+        const ImVec2 img0(cp.x + UI(10.0f), cp.y + UI(10.0f));
+        const ImVec2 img1(cp.x + cardW - UI(10.0f), cp.y + UI(166.0f));
+        if (idx < 8 && ctx.mapOverlayPreviews[idx]) {
+            dl->AddImage(reinterpret_cast<ImTextureID>(ctx.mapOverlayPreviews[idx]), img0, img1);
+        } else {
+            dl->AddRectFilled(img0, img1, IM_COL32(28, 38, 50, 255), UI(6.0f));
+        }
+        if (actions.setMapPreviewRect) {
+            actions.setMapPreviewRect(img0.x, img0.y, img1.x, img1.y);
+        }
+        return;
+    }
 
     DrawImGuiTextCentered(imGuiUI_, "← → 切换地图      Enter 开始      Esc 返回",
                           btnY + btnH + UI(18.0f), 130, 154, 176,

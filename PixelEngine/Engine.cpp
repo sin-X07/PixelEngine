@@ -150,23 +150,24 @@ GameUI::Actions Engine::BuildActions() {
         }
     };
     a.startMatchOnChoice = [this](int index) {
-        if (mapOverlayClosing_ || index < 0 || index >= mapOverlayCount_) return;
+        if (mapOverlayClosing_ || mapOverlayLaunching_ ||
+            index < 0 || index >= mapOverlayCount_) return;
         const MatchMode mode = mapOverlayMode_;
         const std::string path = mapOverlayPaths_[index];
+        pendingOverlayMode_ = mode;
+        pendingOverlayMapPath_ = path;
         pendingZoomPreviewTex_ = static_cast<SDL_Texture*>(mapOverlayPreviews_[index]);
         const int catalogIndex = mapOverlayCatalogIndex_[index];
         mapSelectIndex_ = (catalogIndex >= 0 && catalogIndex < kMapCatalogCount)
             ? catalogIndex : -1;
-        mapOverlayOpen_ = false;
-        mapOverlayClosing_ = false;
-        mapOverlayFade_ = 0.0f;
-        mapOverlayBeamFade_ = 0.0f;
-        cameraBeamFade_ = 0.0f;
-        if (menu3D) menu3D->SetCameraTopDownProgress(0.0f);
-        BeginMatchLoad(mode, path, pendingPlayerTeam_);
+        mapOverlaySelected_ = index;
+        // 先让地图外的所有 UI 淡出，短暂停顿后再开始地图放大。
+        mapOverlayLaunching_ = true;
+        mapOverlayLaunchStartMs_ = SDL_GetTicks64();
+        mapOverlayLaunchProgress_ = 0.0f;
     };
     a.closeMapOverlay = [this] {
-        if (!mapOverlayOpen_ || mapOverlayClosing_) return;
+        if (!mapOverlayOpen_ || mapOverlayClosing_ || mapOverlayLaunching_) return;
         mapOverlayClosing_ = true;
         mapOverlayCloseStartMs_ = SDL_GetTicks64();
     };
@@ -951,6 +952,8 @@ void Engine::OpenMapOverlay(MatchMode mode) {
 
     mapOverlayOpen_ = true;
     mapOverlayClosing_ = false;
+    mapOverlayLaunching_ = false;
+    mapOverlayLaunchProgress_ = 0.0f;
     mapOverlayStartMs_ = SDL_GetTicks64();
     mapOverlayFade_ = 0.0f;
     mapOverlayBeamFade_ = 0.0f;
@@ -1164,12 +1167,12 @@ void Engine::DrawMatchZoomOverlay() {
     if (matchLoadPhase_ != MatchLoadPhase::Zoom || !matchZoomRectValid_) return;
 
     const float raw = std::clamp(matchLoadElapsed_ / matchLoadZoomDuration_, 0.0f, 1.0f);
-    const float ease = 1.0f - std::pow(1.0f - raw, 3.0f);
+    const float ease = raw * raw * (3.0f - 2.0f * raw);
     const float W = static_cast<float>(logicalW_);
     const float H = static_cast<float>(logicalH_);
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, static_cast<Uint8>(ease * 170.0f));
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_Rect full = { 0, 0, logicalW_, logicalH_ };
     SDL_RenderFillRect(renderer, &full);
 
@@ -1529,6 +1532,23 @@ void Engine::Render() {
         ctx.backdrop3D  = false;
 
         if (currentState == MAIN_MENU && menu3D && menu3D->IsReady()) {
+            if (mapOverlayOpen_ && mapOverlayLaunching_) {
+                const uint64_t launchElapsed = SDL_GetTicks64() - mapOverlayLaunchStartMs_;
+                mapOverlayLaunchProgress_ = std::clamp(
+                    static_cast<float>(launchElapsed) /
+                    std::max(1.0f, mapOverlayLaunchFadeMs_), 0.0f, 1.0f);
+                if (static_cast<float>(launchElapsed) >= mapOverlayLaunchDelayMs_) {
+                    mapOverlayOpen_ = false;
+                    mapOverlayLaunching_ = false;
+                    mapOverlayLaunchProgress_ = 0.0f;
+                    mapOverlayFade_ = 0.0f;
+                    mapOverlayBeamFade_ = 0.0f;
+                    cameraBeamFade_ = 0.0f;
+                    menu3D->SetCameraTopDownProgress(0.0f);
+                    BeginMatchLoad(pendingOverlayMode_, pendingOverlayMapPath_,
+                                   pendingPlayerTeam_);
+                }
+            }
             const bool cameraTransition = menuCameraTransition_;
             float cameraProgress = 0.0f;
             if (cameraTransition) {
@@ -1656,6 +1676,8 @@ void Engine::Render() {
             ctx.cameraTransition = cameraTransition;
             ctx.mapOverlayOpen = mapOverlayOpen_;
             ctx.mapOverlayClosing = mapOverlayClosing_;
+            ctx.mapOverlayLaunching = mapOverlayLaunching_;
+            ctx.mapOverlayLaunchProgress = mapOverlayLaunchProgress_;
             ctx.mapOverlayFade = mapOverlayFade_;
             ctx.mapOverlayLightProgress = mapOverlayLightProgress_;
             ctx.mapOverlayBeamFade = mapOverlayBeamFade_;

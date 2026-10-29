@@ -151,8 +151,15 @@ private:
 
     bool         mapOverlayOpen_ = false;
     bool         mapOverlayClosing_ = false;
+    bool         mapOverlayLaunching_ = false;
     uint64_t     mapOverlayStartMs_ = 0;
     uint64_t     mapOverlayCloseStartMs_ = 0;
+    uint64_t     mapOverlayLaunchStartMs_ = 0;
+    float        mapOverlayLaunchProgress_ = 0.0f;
+    float        mapOverlayLaunchDelayMs_ = 260.0f;
+    float        mapOverlayLaunchFadeMs_ = 180.0f;
+    std::string  pendingOverlayMapPath_;
+    MatchMode    pendingOverlayMode_ = MatchMode::BombDefusal;
     float        mapOverlayFade_ = 0.0f;
     float        mapOverlayBeamFade_ = 1.0f;
     float        cameraBeamFade_ = 0.0f;

@@ -111,6 +111,8 @@ public:
         bool        cameraTransition = false; // 主菜单到模式页的相机弧线转场
         bool        mapOverlayOpen = false;
         bool        mapOverlayClosing = false;
+        bool        mapOverlayLaunching = false;
+        float       mapOverlayLaunchProgress = 0.0f;
         float       mapOverlayFade = 0.0f;
         float       mapOverlayLightProgress = 1.0f;
         float       mapOverlayBeamFade = 1.0f;
