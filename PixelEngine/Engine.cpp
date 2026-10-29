@@ -833,7 +833,7 @@ void Engine::DrawSideMapPreview() {
         cy = sideCamTargetY_;
         zoom = sideZoomTarget_;
     }
-    cs2dGame->RenderMapPreview(logicalW_, logicalH_, cx, cy, zoom);
+    cs2dGame->RenderMapPreview(logicalW_, logicalH_, cx, cy, zoom, false);
 }
 
 void Engine::UpdateSideSpawnTransition() {

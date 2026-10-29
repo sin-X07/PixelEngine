@@ -713,10 +713,11 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 // ============================================================================
 
 void CS2DGame::RenderMapPreview(int viewW, int viewH,
-                                float centerX, float centerY, float zoom) {
+                                float centerX, float centerY, float zoom,
+                                bool clampToMap) {
     if (!renderer_ || !world_) return;
     renderer_->SetViewportSize(viewW, viewH);
-    renderer_->SetPreviewCamera(centerX, centerY, zoom);
+    renderer_->SetPreviewCamera(centerX, centerY, zoom, clampToMap);
     renderer_->DrawWorld();
 }
 

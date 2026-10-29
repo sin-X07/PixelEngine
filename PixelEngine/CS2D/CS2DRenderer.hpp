@@ -129,7 +129,8 @@ public:
     float GetVisionRadius() const { return visionRadius_; }
     void  SetZoom(float z) { zoom_ = z; }
     // 选阵营/地图总览：直接指定世界中心与缩放，不经过玩家视野拟合。
-    void  SetPreviewCamera(float centerX, float centerY, float zoom);
+    void  SetPreviewCamera(float centerX, float centerY, float zoom,
+                           bool clampToMap = true);
     void  SetViewportSize(int w, int h);   // 全屏 FOV 自适应后重建视野纹理
 
 private:

@@ -371,7 +371,8 @@ public:
     void Reset();
 
     // 选阵营阶段：只画地图，不生成玩家/BOT。
-    void RenderMapPreview(int viewW, int viewH, float centerX, float centerY, float zoom);
+    void RenderMapPreview(int viewW, int viewH, float centerX, float centerY, float zoom,
+                          bool clampToMap = true);
     void GetTeamSpawnCenter(Team team, float& outX, float& outY) const;
 
     // 当前地图 id（与 MapCatalog / coach/<mapId>.txt 对齐）
