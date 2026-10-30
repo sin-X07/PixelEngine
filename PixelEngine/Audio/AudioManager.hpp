@@ -66,7 +66,10 @@ private:
     bool audioInitialized = false;
     Mix_Music* backgroundMusic = nullptr;
     Mix_Chunk* buttonHoverSound = nullptr;
-    Mix_Chunk* clickSound = nullptr;
+    // 按钮点击音效候选：设置界面可切换
+    std::array<Mix_Chunk*, 5> clickSounds_{};
+    int clickSoundIndex_ = 0;
+    int musicTrack_ = 0;
     Mix_Chunk* daggerSound = nullptr;
     Mix_Chunk* hitSound = nullptr;
     Mix_Chunk* killSound = nullptr;
@@ -134,6 +137,19 @@ public:
     bool IsMusicPlaying() const {
         return audioInitialized && Mix_PlayingMusic() != 0;
     }
+
+    // ---- 菜单 BGM 候选（设置界面切换）----
+    static constexpr int kMusicTrackCount = 3;
+    static const char* MusicTrackName(int index);
+    static const char* MusicTrackPath(int index);
+    void SetMusicTrack(int index);
+    int  GetMusicTrack() const { return musicTrack_; }
+
+    // ---- 按钮点击音效候选 ----
+    static constexpr int kClickSoundCount = 5;
+    static const char* ClickSoundName(int index);
+    void SetClickSound(int index);
+    int  GetClickSound() const { return clickSoundIndex_; }
 
     void PlaySound(SoundEffect effect);
     // 3D 音效：声像由声源的世界位置相对听者决定（与听者朝向无关）

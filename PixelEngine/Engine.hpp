@@ -200,6 +200,7 @@ private:
     void* mapPreviewTex_[8] = {nullptr, nullptr, nullptr, nullptr,
                              nullptr, nullptr, nullptr, nullptr};  // 地图预览图
     void LoadAudioConfig();
+    void SaveAudioConfig();
     void InitLLM();
     void EnsureLlmInitialized();
     bool llmInitialized_ = false;

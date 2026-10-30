@@ -38,6 +38,8 @@ public:
         std::function<void(int)>           setMasterVolume;
         std::function<void(int)>           setMusicVolume;
         std::function<void(int)>           setEffectsVolume;
+        std::function<void(int)>           setMusicTrack;
+        std::function<void(int)>           setClickSound;
         std::function<void(float)>         setMouseSensitivity;
         std::function<void(int)>           setTargetFPS;
         // 准星
@@ -69,6 +71,13 @@ public:
         int       musicVolume = 0;
         int       effectsVolume = 0;
         bool      muted = false;
+        // 背景音乐 / 按钮音效（设置页下拉选择）
+        int       musicTrack = 0;
+        int       musicTrackCount = 0;
+        const char* musicTrackLabels[8] = {};
+        int       clickSound = 0;
+        int       clickSoundCount = 0;
+        const char* clickSoundLabels[8] = {};
         float     mouseSensitivity = 1.0f;
         int       targetFPS = 60;
 

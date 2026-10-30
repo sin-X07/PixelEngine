@@ -113,7 +113,18 @@ bool AudioManager::Initialize() {
 
     // ---- 界面 / 音乐 ----
     buttonHoverSound = loadChunk("assets/audio/ui_hover.ogg", "按钮悬停");
-    clickSound = loadChunk("assets/audio/ui_click.ogg", "按钮点击");
+    {
+        const char* clickPaths[5] = {
+            "assets/audio/ui_click_1.ogg",
+            "assets/audio/ui_click_2.ogg",
+            "assets/audio/ui_click_3.ogg",
+            "assets/audio/ui_click_4.ogg",
+            "assets/audio/ui_click_5.ogg",
+        };
+        for (int i = 0; i < 5; ++i) {
+            clickSounds_[i] = loadChunk(clickPaths[i], "按钮点击");
+        }
+    }
 
     // ---- 通用反馈 ----
     hitSound = loadChunk("assets/audio/sfx_hit.wav", "命中");
@@ -182,7 +193,9 @@ void AudioManager::Clean() {
 
     if (backgroundMusic) { Mix_FreeMusic(backgroundMusic); backgroundMusic = nullptr; }
     if (buttonHoverSound) { Mix_FreeChunk(buttonHoverSound); buttonHoverSound = nullptr; }
-    if (clickSound) { Mix_FreeChunk(clickSound); clickSound = nullptr; }
+    for (auto*& c : clickSounds_) {
+        if (c) { Mix_FreeChunk(c); c = nullptr; }
+    }
     if (daggerSound) { Mix_FreeChunk(daggerSound); daggerSound = nullptr; }
     if (hitSound) { Mix_FreeChunk(hitSound); hitSound = nullptr; }
     if (killSound) { Mix_FreeChunk(killSound); killSound = nullptr; }
@@ -242,6 +255,7 @@ void AudioManager::PlayMusic(const std::string& filename) {
     if (backgroundMusic) {
         UpdateVolumes();
         Mix_PlayMusic(backgroundMusic, -1);
+        std::cout << "[Audio] 背景音乐: " << filename << std::endl;
     } else {
         std::cerr << "背景音乐加载失败: " << Mix_GetError() << std::endl;
     }
@@ -259,11 +273,59 @@ void AudioManager::StopMusic() {
     if (audioInitialized) Mix_HaltMusic();
 }
 
+// ============================================================================
+// 菜单 BGM / 按钮点击音效候选
+// ============================================================================
+namespace {
+const char* const kMusicTrackNames[AudioManager::kMusicTrackCount] = {
+    "Menu Music（电子）",
+    "Cyberpunk Menu（赛博）",
+    "Calm Loop（安静）",
+};
+const char* const kMusicTrackPaths[AudioManager::kMusicTrackCount] = {
+    "assets/audio/music_menu.ogg",
+    "assets/audio/music_menu_cyber.ogg",
+    "assets/audio/music_menu_calm.ogg",
+};
+const char* const kClickSoundNames[AudioManager::kClickSoundCount] = {
+    "点击 1（默认）",
+    "点击 2",
+    "点击 3",
+    "点击 4",
+    "点击 5",
+};
+} // namespace
+
+const char* AudioManager::MusicTrackName(int index) {
+    if (index < 0 || index >= kMusicTrackCount) return "";
+    return kMusicTrackNames[index];
+}
+
+const char* AudioManager::MusicTrackPath(int index) {
+    if (index < 0 || index >= kMusicTrackCount) return kMusicTrackPaths[0];
+    return kMusicTrackPaths[index];
+}
+
+void AudioManager::SetMusicTrack(int index) {
+    musicTrack_ = std::clamp(index, 0, kMusicTrackCount - 1);
+}
+
+const char* AudioManager::ClickSoundName(int index) {
+    if (index < 0 || index >= kClickSoundCount) return "";
+    return kClickSoundNames[index];
+}
+
+void AudioManager::SetClickSound(int index) {
+    clickSoundIndex_ = std::clamp(index, 0, kClickSoundCount - 1);
+}
+
 // 效果 → 音频块（播放入口共用，避免 switch 重复）
 Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
     switch (effect) {
         case SoundEffect::BUTTON_HOVER:     return buttonHoverSound;
-        case SoundEffect::CLICK:            return clickSound;
+        case SoundEffect::CLICK:
+            return clickSounds_[static_cast<size_t>(
+                std::clamp(clickSoundIndex_, 0, kClickSoundCount - 1))];
         case SoundEffect::DAGGER_FIRE:      return daggerSound;
         case SoundEffect::HIT:              return hitSound;
         case SoundEffect::KILL:             return killSound;

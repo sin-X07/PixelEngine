@@ -47,6 +47,7 @@ Engine::Engine() {
 }
 
 Engine::~Engine() {
+    SaveAudioConfig();
     Clean();
 }
 
@@ -221,6 +222,21 @@ GameUI::Actions Engine::BuildActions() {
     a.setMasterVolume  = [this](int v) { audioManager->SetMasterVolume(v); };
     a.setMusicVolume   = [this](int v) { audioManager->SetMusicVolume(v); };
     a.setEffectsVolume = [this](int v) { audioManager->SetEffectsVolume(v); };
+
+    // 菜单 BGM：切换后立即生效（只在大厅/设置页预览，不打断对局）
+    a.setMusicTrack = [this](int idx) {
+        audioManager->SetMusicTrack(idx);
+        if (currentState == MAIN_MENU || (currentState == SETTINGS && settingsReturnState == MAIN_MENU)) {
+            audioManager->PlayMusic(AudioManager::MusicTrackPath(idx));
+        }
+        SaveAudioConfig();
+    };
+    // 按钮点击音效：切换后立刻用新音效试听一次
+    a.setClickSound = [this](int idx) {
+        audioManager->SetClickSound(idx);
+        audioManager->PlaySound(SoundEffect::CLICK);
+        SaveAudioConfig();
+    };
 
     // 设置类：同步写入运行时对象 + SaveManager，退出时统一落盘
     a.setMouseSensitivity = [this](float v) {
@@ -470,7 +486,7 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
     historyPath_ = PathUtils::ResolveWritablePath(MatchHistory::kFileName);
     history_ = MatchHistory::Load(historyPath_);
 
-    audioManager->PlayMusic("assets/audio/music_menu.wav");
+    audioManager->PlayMusic(AudioManager::MusicTrackPath(audioManager->GetMusicTrack()));
 
     isRunning = true;
 
@@ -682,6 +698,7 @@ void Engine::HandleInput() {
             SDL_ShowCursor(SDL_DISABLE);
             audioManager->ResumeMusic();
         } else if (currentState == SETTINGS) {
+            SaveAudioConfig();
             currentState = settingsReturnState;
         } else if (currentState == EXIT_CONFIRM) {
             currentState = PAUSED;
@@ -1135,7 +1152,7 @@ void Engine::Update(float dt) {
             currentState = MAIN_MENU;
             SDL_SetRelativeMouseMode(SDL_FALSE);
             SDL_ShowCursor(SDL_ENABLE);
-            audioManager->PlayMusic("assets/audio/music_menu.wav");
+            audioManager->PlayMusic(AudioManager::MusicTrackPath(audioManager->GetMusicTrack()));
             return;
         }
     }
@@ -1368,6 +1385,7 @@ void Engine::DrawTransition(SDL_Texture* oldTex, SDL_Texture* newTex) {
 }
 
 void Engine::Render() {
+
     const Uint64 nowTicks = SDL_GetTicks64();
     float frameDt = lastRenderTicks_ > 0
         ? static_cast<float>(nowTicks - lastRenderTicks_) / 1000.0f
@@ -1379,7 +1397,7 @@ void Engine::Render() {
     // 统一在大厅状态切换时补播菜单音乐；已在播放则不重启。
     if (currentState == MAIN_MENU && lastRenderedState_ != MAIN_MENU &&
         audioManager && !audioManager->IsMusicPlaying()) {
-        audioManager->PlayMusic("assets/audio/music_menu.wav");
+        audioManager->PlayMusic(AudioManager::MusicTrackPath(audioManager->GetMusicTrack()));
     }
 
     UpdateSidePopupFade(frameDt);
@@ -1470,7 +1488,7 @@ void Engine::Render() {
     if (matchLoading) {
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     } else {
-        SDL_SetRenderDrawColor(renderer, 18, 26, 36, 255);
+        SDL_SetRenderDrawColor(renderer, CS2DRenderer::VoidR(), CS2DRenderer::VoidG(), CS2DRenderer::VoidB(), 255);
     }
     SDL_RenderClear(renderer);
 
@@ -1523,6 +1541,16 @@ void Engine::Render() {
         ctx.musicVolume        = audioManager->GetMusicVolume();
         ctx.effectsVolume      = audioManager->GetEffectsVolume();
         ctx.muted              = audioManager->IsMuted();
+        ctx.musicTrack         = audioManager->GetMusicTrack();
+        ctx.musicTrackCount    = AudioManager::kMusicTrackCount;
+        for (int i = 0; i < AudioManager::kMusicTrackCount && i < 8; ++i) {
+            ctx.musicTrackLabels[i] = AudioManager::MusicTrackName(i);
+        }
+        ctx.clickSound         = audioManager->GetClickSound();
+        ctx.clickSoundCount    = AudioManager::kClickSoundCount;
+        for (int i = 0; i < AudioManager::kClickSoundCount && i < 8; ++i) {
+            ctx.clickSoundLabels[i] = AudioManager::ClickSoundName(i);
+        }
         ctx.mouseSensitivity   = cs2dGame->GetMouseSensitivity();
         ctx.targetFPS          = targetFPS_;
 
@@ -1982,10 +2010,37 @@ void Engine::LoadAudioConfig() {
     IniFile ini = IniFile::Load(path);
     if (!ini.IsLoaded()) return;
 
-    audioManager->SetMasterVolume (ini.GetInt("audio", "master",  100));
-    audioManager->SetMusicVolume  (ini.GetInt("audio", "music",    25));
-    audioManager->SetEffectsVolume(ini.GetInt("audio", "effects", 100));
-    audioManager->SetMuted        (ini.GetBool("audio", "muted", false));
+    // 兼容旧格式：早期 audio_config.ini 没有 [audio] 分节，键直接写在顶层。
+    const bool hasAudioSection = !ini.GetSection("audio").empty();
+    auto readInt = [&](const char* key, int def) {
+        return hasAudioSection ? ini.GetInt("audio", key, def) : ini.GetInt("", key, def);
+    };
+    auto readBool = [&](const char* key, bool def) {
+        return hasAudioSection ? ini.GetBool("audio", key, def) : ini.GetBool("", key, def);
+    };
+
+    audioManager->SetMasterVolume (readInt("master",  100));
+    audioManager->SetMusicVolume  (readInt("music",    25));
+    audioManager->SetEffectsVolume(readInt("effects", 100));
+    audioManager->SetMuted        (readBool("muted", false));
+    audioManager->SetMusicTrack   (readInt("music_track", 0));
+    audioManager->SetClickSound   (readInt("click_sound", 0));
+
+    // 旧格式迁移：立即用带 [audio] 分节的新格式重写一次
+    if (!hasAudioSection) SaveAudioConfig();
+}
+
+void Engine::SaveAudioConfig() {
+    if (!audioManager) return;
+    IniFile ini;
+    ini.SetInt ("audio", "master",      audioManager->GetMasterVolume());
+    ini.SetInt ("audio", "music",       audioManager->GetMusicVolume());
+    ini.SetInt ("audio", "effects",     audioManager->GetEffectsVolume());
+    ini.SetBool("audio", "muted",       audioManager->IsMuted());
+    ini.SetInt ("audio", "music_track", audioManager->GetMusicTrack());
+    ini.SetInt ("audio", "click_sound", audioManager->GetClickSound());
+    const std::string path = PathUtils::ResolveWritablePath("audio_config.ini");
+    ini.Save(path);
 }
 
 // 买枪菜单：由 WeaponDB 生成条目，点击回调直接调用 CS2DGame::TryBuy

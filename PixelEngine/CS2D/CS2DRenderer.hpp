@@ -208,4 +208,10 @@ private:
     int maskH_ = 0;
 
     void CreateVisionTexture();   // 创建/重建视野 streaming 纹理
+
+public:
+    // 地图外背景色：与视野雾色一致，避免地图边界外出现一条突兀的深色带。
+    static constexpr Uint8 VoidR() { return VISION_FOG_R; }
+    static constexpr Uint8 VoidG() { return VISION_FOG_G; }
+    static constexpr Uint8 VoidB() { return VISION_FOG_B; }
 };

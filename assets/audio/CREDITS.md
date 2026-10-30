@@ -79,7 +79,34 @@ CC BY 4.0 素材在使用时需保留署名。本项目通过本文件与
 | `switch_grenade.wav` | Equip Item, Weapon or Armor (metallic) by harrisonlace | https://freesound.org/s/829499/ |
 | `switch_c4.wav` | Equip Item, Weapon or Armor (metallic) by harrisonlace | https://freesound.org/s/829499/ |
 
+## 主菜单音乐（`music_menu*.ogg`）
+
+设置 → 音频 →「背景音乐」可切换 3 首，全部为 **CC0 1.0**：
+
+| 文件 | 曲目 | 时长 | 来源 |
+|---|---|---|---|
+| `music_menu.ogg` | Menu Music by wipics | 66.9s | https://opengameart.org/content/menu-music-1 |
+| `music_menu_cyber.ogg` | Cyberpunk Menu Music by ZaninDevelopers | 12.8s | https://opengameart.org/content/cyberpunk-menu-music |
+| `music_menu_calm.ogg` | Simple menu/background music loop by polosik | 119.8s | https://opengameart.org/content/simple-menubackground-music-loop |
+
+- 由 `Mix_LoadMUS` + `Mix_PlayMusic(-1)` 循环播放；切歌即时生效。
+- 原始下载与 WAV 备选见 `prev_assets/menu_music/`。
+
+## UI 音效（`ui_click_*.ogg` / `ui_hover.ogg`）
+
+- 素材：**UI Audio** by Kenney（Kenney Vleugels）
+- 来源：https://kenney.nl/assets/ui-audio
+- 授权：CC0 1.0（公共领域，无需署名）
+- 使用：
+  - `ui_click_1.ogg` ← `click3.ogg`（默认，0.09s）
+  - `ui_click_2.ogg` ← `click1.ogg`
+  - `ui_click_3.ogg` ← `click2.ogg`
+  - `ui_click_4.ogg` ← `click4.ogg`
+  - `ui_click_5.ogg` ← `click5.ogg`
+  - `ui_hover.ogg` ← `rollover2.ogg`（0.06s）
+- 设置 → 音频 →「按钮音效」可切换 5 种点击声（切换时立即试听）。
+- 原始压缩包：`prev_assets/ui_sounds/kenney_ui-audio.zip`
 ## 其他音效
 
-`ui_*`、`music_*`、`reload_*`、`melee_*`、`throw_*`、`fx_*`、`bomb_*`、`round_*`、
-`sfx_*` 为项目原有素材，本次只做了统一重命名，未改变内容。
+`reload_*`、`melee_*`、`throw_*`、`fx_*`、`bomb_*`、`round_*`、`sfx_*`
+为项目原有素材，本次只做了统一重命名，未改变内容。

@@ -201,8 +201,8 @@
 | 文件 | 用途 |
 |---|---|
 | `ui_hover.ogg` | 按钮悬停 |
-| `ui_click.ogg` | 按钮点击 |
-| `music_menu.wav` | 主菜单音乐 |
+| `ui_click_1.ogg` … `ui_click_5.ogg` | 按钮点击（设置里可切换 5 种） |
+| `music_menu.ogg` / `music_menu_cyber.ogg` / `music_menu_calm.ogg` | 主菜单音乐（设置里可切换 3 首，循环 BGM） |
 | `reload_glock.mp3` | Glock 换弹 |
 | `reload_usp.mp3` | USP 换弹 |
 | `reload_deagle.mp3` | Deagle 换弹 |
