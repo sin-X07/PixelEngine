@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <array>
 #include <cstdint>
 
 // ============================================================================
@@ -32,10 +33,39 @@ public:
     void Draw(float scale, float yOffset = 0.0f, float yawDegrees = 0.0f,
               float opacity = 1.0f) const;
     void DrawHighlight(float scale, float yOffset = 0.0f, float yawDegrees = 0.0f) const;
+    // 不施加「贴地/缩放/朝向」外层变换，直接按模型空间绘制（给配件用）
+    void DrawRaw(float opacity = 1.0f) const;
     bool PlayAnimation(const std::string& name);
     void SetClothingTint(float r, float g, float b) { tint_ = Vec4{ r, g, b, 1.0f }; }
     void SetBluePalette(bool enabled) { bluePalette_ = enabled; }
     void SetUnlit(bool enabled) { unlit_ = enabled; }
+
+    // ---- 材质槽换色（按材质名归类，角色调色板用）----
+    enum class Slot { Skin = 0, Main, Pants, Boots, Gear, Wood, Count };
+    void SetSlotColor(Slot slot, float r, float g, float b);
+    void ClearSlotColors();
+    // 整体覆盖颜色（小鸡没有材质，用这个换羽色）
+    void SetSolidColor(float r, float g, float b);
+    void ClearSolidColor();
+
+    // ---- 节点显隐（角色自带多把武器节点，只显示选中的那一把）----
+    void SetNodeVisible(const std::string& name, bool visible);
+    bool GetNodeVisible(const std::string& name) const;
+    // 节点不参与材质槽换色（武器保持自己的木/金属色，不跟随服装调色板）
+    void SetNodeColorExcluded(const std::string& name, bool excluded);
+
+    // 节点在模型空间的世界矩阵（列主序），用于调试/扩展
+    bool GetNodeWorldMatrix(const std::string& name, float out[16]) const;
+    // 在模型空间的指定位置绘制另一个模型（帽子/眼镜/背包）。
+    // 位置用模型空间坐标，和蒙皮顶点在同一空间，避免骨骼绑定空间的缩放差异。
+    bool DrawAttached(const Menu3DModel& accessory,
+                      float px, float py, float pz,
+                      float scale, float yOffset, float yawDegrees,
+                      float socketYaw, float accessoryScale,
+                      float opacity = 1.0f) const;
+
+    // 蒙皮后模型的最低点（Draw 用它贴地；挂配件时要复现同一变换）
+    float GroundOffset() const { return minY_; }
 
 private:
     struct Mat4 {
@@ -56,11 +86,15 @@ private:
         Vec4 color{ 0.8f, 0.8f, 0.8f, 1.0f };
         bool isSkin = false;
         std::string materialName;
+        Slot slot = Slot::Gear;
     };
     struct Mesh {
         std::vector<Primitive> primitives;
     };
     struct Node {
+        std::string name;
+        bool visible = true;
+        bool colorExcluded = false;   // 不参与调色板换色（武器）
         Mat4 baseLocal;
         Vec3 baseT{ 0, 0, 0 };
         Quat baseR;
@@ -106,6 +140,17 @@ private:
     Vec4 tint_{ 1.0f, 1.0f, 1.0f, 1.0f };
     bool bluePalette_ = false;
     bool unlit_ = false;
+
+    struct SlotColor {
+        float r = 0.0f, g = 0.0f, b = 0.0f;
+        bool  set = false;
+    };
+    std::array<SlotColor, static_cast<size_t>(Slot::Count)> slotColor_{};
+    bool  solidColorSet_ = false;
+    Vec4  solidColor_{ 1.0f, 1.0f, 1.0f, 1.0f };
+
+    int FindNode(const std::string& name) const;
+    void ApplyPrimitiveColor(const Primitive& prim, float alpha, bool allowSlot) const;
 
     void ComputeWorld(int nodeIndex, const Mat4& parent);
     void SampleAnimation(float time);

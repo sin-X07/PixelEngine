@@ -719,7 +719,7 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
 }
 
 // ============================================================================
-// 主菜单 3D 聚焦 + 半圆装备轮盘
+// 主菜单 3D 聚焦 + 右侧自定义面板
 // ============================================================================
 
 void GameUI::DrawFocusWheel(const MenuCtx& ctx, const Actions& actions) {
@@ -765,85 +765,96 @@ void GameUI::DrawFocusWheel(const MenuCtx& ctx, const Actions& actions) {
     dl->AddText(ImVec2(wp.x + UI(54.0f), wp.y + ws.y - UI(54.0f)),
                 IM_COL32(150, 166, 180, 210), "点击右侧轮盘选项 · ESC 返回");
 
-    const ImVec2 center(wp.x + ws.x * 0.79f, wp.y + ws.y * 0.54f);
-    const float baseR = UI(205.0f) * (0.15f + 0.85f * open);
+    const int categoryCount = std::clamp(ctx.focusCategoryCount, 0, 4);
     const float arcSpan = 1.34f * open;
-    const char* categoryNames[3] = { "武器", "颜色", "姿势" };
-    const int optionCounts[3] = { 4, 4, 3 };
-    const char* options[3][4] = {
-        { "步枪", "手枪", "匕首", "空手" },
-        { "原色", "金色", "赤红", "冰蓝" },
-        { "待机", "警戒", "挥手" }
-    };
-    const int selected[3] = { ctx.focusWeapon, ctx.focusColor, ctx.focusPose };
+    const ImVec2 center(wp.x + ws.x * 0.60f, wp.y + ws.y * 0.52f);
 
-    // 半圆轮盘底：随 open 从物体后方展开
-    if (open > 0.02f) {
+    // 每个类别的环半径：按选项数保证相邻按钮有足够弧距，环与环之间至少留 64。
+    // 这样 8 个颜色选项也不会压在一起，同时四环仍能完整落在屏幕内。
+    const float btnW = UI(60.0f);
+    const float btnH = UI(27.0f);
+    float radii[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    for (int cat = 0; cat < categoryCount; ++cat) {
+        const int n = std::clamp(ctx.focusOptionCounts[cat], 1, 8);
+        const float minArcR = (btnW + UI(10.0f)) * static_cast<float>(n - 1) / (2.0f * 1.34f);
+        const float baseR = UI(170.0f) * (0.52f + 0.30f * static_cast<float>(cat));
+        const float prevR = (cat > 0) ? radii[cat - 1] + UI(60.0f) : 0.0f;
+        radii[cat] = std::max(std::max(baseR, minArcR), prevR);
+    }
+
+    // 轮盘底：随 open 从物体后方展开（右半圆）
+    const float anim = 0.20f + 0.80f * open;
+    if (open > 0.02f && categoryCount > 0) {
+        const float outerR = radii[categoryCount - 1] * anim + UI(26.0f);
         dl->PathClear();
-        dl->PathArcTo(center, baseR * 1.14f, -1.42f * open, 1.42f * open, 36);
+        dl->PathArcTo(center, outerR, -1.42f * open, 1.42f * open, 48);
         dl->PathFillConvex(IM_COL32(9, 13, 18, static_cast<int>(225.0f * open)));
         dl->PathClear();
-        dl->PathArcTo(center, baseR * 1.14f, -1.42f * open, 1.42f * open, 36);
+        dl->PathArcTo(center, outerR, -1.42f * open, 1.42f * open, 48);
         dl->PathStroke(IM_COL32(226, 185, 92, static_cast<int>(190.0f * open)),
                        false, UI(2.0f));
     }
 
-    for (int category = 0; category < 3; ++category) {
-        const float radius = baseR * (0.55f + 0.47f * static_cast<float>(category));
-        dl->PathClear();
-        dl->PathArcTo(center, radius, -arcSpan, arcSpan, 28);
-        dl->PathStroke(IM_COL32(160, 132, 70, static_cast<int>(120.0f * open)),
-                       false, UI(1.0f));
+    for (int category = 0; category < categoryCount; ++category) {
+        const float radius = radii[category] * anim;
+        const char* categoryName = ctx.focusCategoryNames[category]
+                                 ? ctx.focusCategoryNames[category] : "";
+        const ImVec2 catSize = ImGui::CalcTextSize(categoryName);
 
         if (contentAlpha > 0.05f) {
-            dl->AddText(ImVec2(center.x - UI(16.0f), center.y - radius - UI(15.0f)),
-                        IM_COL32(190, 168, 108, static_cast<int>(230.0f * contentAlpha)),
-                        categoryNames[category]);
+            dl->PathClear();
+            dl->PathArcTo(center, radius, -arcSpan, arcSpan, 32);
+            dl->PathStroke(IM_COL32(160, 132, 70, static_cast<int>(120.0f * open)),
+                           false, UI(1.0f));
+            dl->AddText(ImVec2(center.x - catSize.x - UI(14.0f), center.y - radius - UI(4.0f)),
+                        IM_COL32(190, 168, 108, static_cast<int>(235.0f * contentAlpha)),
+                        categoryName);
         }
 
         if (contentAlpha <= 0.05f) continue;
+        const int optionCount = std::clamp(ctx.focusOptionCounts[category], 0, 8);
         ImGui::PushID(category);
-        for (int option = 0; option < optionCounts[category]; ++option) {
-            const float t = (optionCounts[category] <= 1)
+        for (int option = 0; option < optionCount; ++option) {
+            ImGui::PushID(option);
+            const float t = (optionCount <= 1)
                 ? 0.0f
-                : static_cast<float>(option) / static_cast<float>(optionCounts[category] - 1);
+                : static_cast<float>(option) / static_cast<float>(optionCount - 1);
             const float angle = -arcSpan + 2.0f * arcSpan * t;
-            const ImVec2 pos(center.x + std::cos(angle) * radius,
-                             center.y + std::sin(angle) * radius);
-            const float bw = UI(74.0f), bh = UI(34.0f);
-            bool clicked = false;
-            bool hovered = false;
-            if (open > 0.72f) {
-                ImGui::SetCursorScreenPos(ImVec2(pos.x - bw * 0.5f, pos.y - bh * 0.5f));
-                clicked = ImGui::InvisibleButton("##opt", ImVec2(bw, bh));
-                hovered = ImGui::IsItemHovered();
-            }
-            const bool isSelected = (selected[category] == option);
-            const int a = static_cast<int>(contentAlpha * 255.0f);
+            const ImVec2 pos(center.x + std::cos(angle) * radius - btnW * 0.5f,
+                             center.y + std::sin(angle) * radius - btnH * 0.5f);
+            const bool isSelected = (ctx.focusSelected[category] == option);
+            const char* optionLabel = ctx.focusOptions[category][option]
+                                    ? ctx.focusOptions[category][option] : "";
 
-            const ImU32 bg = isSelected
-                ? IM_COL32(160, 122, 48, static_cast<int>(245 * contentAlpha))
-                : (hovered ? IM_COL32(62, 76, 92, static_cast<int>(245 * contentAlpha))
-                           : IM_COL32(20, 28, 38, static_cast<int>(225 * contentAlpha)));
-            const ImU32 border = isSelected
-                ? IM_COL32(255, 218, 128, a)
-                : IM_COL32(112, 126, 142, static_cast<int>(170 * contentAlpha));
-            dl->AddRectFilled(ImVec2(pos.x - bw * 0.5f, pos.y - bh * 0.5f),
-                              ImVec2(pos.x + bw * 0.5f, pos.y + bh * 0.5f),
-                              bg, UI(5.0f));
-            dl->AddRect(ImVec2(pos.x - bw * 0.5f, pos.y - bh * 0.5f),
-                        ImVec2(pos.x + bw * 0.5f, pos.y + bh * 0.5f),
-                        border, UI(5.0f), 0, UI(1.0f));
-            const ImVec2 textSize = ImGui::CalcTextSize(options[category][option]);
-            dl->AddText(ImVec2(pos.x - textSize.x * 0.5f, pos.y - textSize.y * 0.5f),
-                        isSelected ? IM_COL32(20, 16, 9, a)
-                                   : IM_COL32(224, 230, 238, a),
-                        options[category][option]);
+            ImGui::PushStyleColor(ImGuiCol_Button,
+                isSelected ? ImVec4(0.63f, 0.48f, 0.19f, 0.96f) : ImVec4(0.08f, 0.11f, 0.15f, 0.88f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                isSelected ? ImVec4(0.72f, 0.56f, 0.24f, 1.0f) : ImVec4(0.24f, 0.30f, 0.36f, 0.96f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                isSelected ? ImVec4(0.80f, 0.62f, 0.28f, 1.0f) : ImVec4(0.30f, 0.38f, 0.46f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                isSelected ? ImVec4(0.08f, 0.06f, 0.04f, 1.0f) : ImVec4(0.88f, 0.90f, 0.93f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, UI(5.0f));
+
+            bool clicked = false;
+            if (open > 0.72f) {
+                ImGui::SetCursorScreenPos(pos);
+                clicked = ImGui::Button(optionLabel, ImVec2(btnW, btnH));
+            } else {
+                ImGui::BeginDisabled();
+                ImGui::SetCursorScreenPos(pos);
+                ImGui::Button(optionLabel, ImVec2(btnW, btnH));
+                ImGui::EndDisabled();
+            }
+
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor(4);
 
             if (clicked) {
                 if (actions.playClick) actions.playClick();
                 if (actions.focus3DSelect) actions.focus3DSelect(category, option);
             }
+            ImGui::PopID();
         }
         ImGui::PopID();
     }
@@ -1760,3 +1771,4 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
         }
     }
 }
+

@@ -47,6 +47,25 @@ public:
     void SetObjectColor(int index, int option);
     void SetObjectPose(int index, int option);
     void SetFocusWeapon(int option) { focusWeapon_ = option; }
+
+    // ---- 自定义（Phase 1/2）----
+    // 每项按对象索引：0=T, 1=CT, 2..4=三只小鸡
+    struct Customization {
+        int color[5]     = { 0, 0, 0, 0, 0 };   // 角色调色板 / 小鸡羽色
+        int pose[5]      = { 0, 0, 0, 0, 0 };   // 动画选项
+        int weapon[2]    = { 0, 0 };            // T/CT 手持武器（节点）
+        int accessory[5] = { 0, 0, 0, 0, 0 };   // 0=无
+    };
+    void SetCustomization(const Customization& c);
+    const Customization& GetCustomization() const { return custom_; }
+
+    // 轮盘数据：按对象动态生成类别与选项
+    int         FocusCategoryCount(int objectIndex) const;
+    const char* FocusCategoryName(int objectIndex, int cat) const;
+    int         FocusOptionCount(int objectIndex, int cat) const;
+    const char* FocusOptionName(int objectIndex, int cat, int opt) const;
+    int         FocusSelected(int objectIndex, int cat) const;
+    void        FocusSelect(int objectIndex, int cat, int opt);
     void SetFocusProgress(float progress) { focusProgress_ = progress < 0.0f ? 0.0f : (progress > 1.0f ? 1.0f : progress); }
     float FocusProgress() const { return focusProgress_; }
     void SetCameraTopDownProgress(float progress) {
@@ -94,6 +113,15 @@ private:
     std::unique_ptr<Menu3DModel> ctModel_;
     std::vector<std::unique_ptr<Menu3DModel>> chickens_;
     std::vector<std::unique_ptr<Menu3DModel>> focusWeapons_;   // AK / 手枪 / 匕首
+    // 自定义配件：0=鸭舌帽 1=墨镜 2=背包 3=小鸡帽
+    std::unique_ptr<Menu3DModel> accessories_[4];
+    Customization custom_{};
+
+    void ApplyAllCustomization();
+    void ApplyCustomizationColor(int obj);
+    void ApplyCustomizationPose(int obj);
+    void ApplyCustomizationWeapon(int obj);
+    void DrawAccessory(int obj, float scale, float yOffset, float yaw) const;
     struct ChickenState {
         float x = 0.0f;
         float z = 0.0f;

@@ -1,0 +1,111 @@
+{
+ "asset": {
+  "version": "2.0",
+  "generator": "PixelEngine menu accessory generator"
+ },
+ "scene": 0,
+ "scenes": [
+  {
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "name": "ChickenHat",
+   "mesh": 0
+  }
+ ],
+ "meshes": [
+  {
+   "name": "ChickenHat",
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 0,
+      "NORMAL": 1
+     },
+     "indices": 3,
+     "material": 0,
+     "mode": 4
+    }
+   ]
+  }
+ ],
+ "materials": [
+  {
+   "name": "ChickHat",
+   "pbrMetallicRoughness": {
+    "baseColorFactor": [
+     0.66,
+     0.14,
+     0.12,
+     1.0
+    ],
+    "metallicFactor": 0.0,
+    "roughnessFactor": 0.8
+   }
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "componentType": 5126,
+   "count": 56,
+   "type": "VEC3",
+   "min": [
+    -0.08,
+    0.0025000000000000005,
+    -0.06
+   ],
+   "max": [
+    0.08,
+    0.125,
+    0.1
+   ]
+  },
+  {
+   "bufferView": 1,
+   "componentType": 5126,
+   "count": 56,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 2,
+   "componentType": 5125,
+   "count": 78,
+   "type": "SCALAR"
+  },
+  {
+   "bufferView": 2,
+   "byteOffset": 0,
+   "componentType": 5125,
+   "count": 78,
+   "type": "SCALAR"
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 672
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 672,
+   "byteLength": 672
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 1344,
+   "byteLength": 312
+  }
+ ],
+ "buffers": [
+  {
+   "byteLength": 1656,
+   "uri": "data:application/octet-stream;base64,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"
+  }
+ ]
+}

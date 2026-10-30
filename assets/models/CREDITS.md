@@ -18,6 +18,13 @@
 - 署名：Chickensoft 3D Mascot Model by Chickensoft, licensed CC BY 4.0.
 - 修改：在运行时为其缺少材质的 GLB 指定默认暖白色材质。
 
+## 主菜单自定义配件（项目自制）
+
+- 文件：`custom/cap.gltf`、`custom/glasses.gltf`、`custom/backpack.gltf`、`custom/chicken_hat.gltf`
+- 来源：`tools/gen_menu_accessories.py` 程序化生成的低模几何体（纯色材质，无贴图）
+- 授权：随项目发布，可自由修改
+- 修改：如需调整造型，改脚本后重新生成即可
+
 ## 说明
 
 这些模型仅用于主菜单装饰。T/CT 不代表 Valve 的《反恐精英》角色，

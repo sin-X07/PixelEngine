@@ -104,10 +104,13 @@ public:
         int         focusObject = 0;
         bool        focusChicken = false;
         std::string focusName;
-        int         focusWeapon = 0;   // 0=步枪 1=手枪 2=匕首 3=空手
-        int         focusColor = 0;    // 0=原色 1=金色 2=赤红 3=冰蓝
-        int         focusPose = 0;     // 0=待机 1=警戒 2=挥手
         float       focusProgress = 1.0f;  // 聚焦放大 / 轮盘开屏进度
+        // 轮盘内容（按对象动态生成：T/CT 4 类，小鸡 3 类）
+        int         focusCategoryCount = 0;
+        const char* focusCategoryNames[4] = { nullptr, nullptr, nullptr, nullptr };
+        int         focusOptionCounts[4] = { 0, 0, 0, 0 };
+        const char* focusOptions[4][8] = {};
+        int         focusSelected[4] = { 0, 0, 0, 0 };
         bool        cameraTransition = false; // 主菜单到模式页的相机弧线转场
         bool        mapOverlayOpen = false;
         bool        mapOverlayClosing = false;

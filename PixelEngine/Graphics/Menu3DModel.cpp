@@ -28,6 +28,26 @@ bool ContainsNoCase(const std::string& s, const std::string& needle) {
     return it != s.end();
 }
 
+// 材质名 → 调色槽。Quaternius 的两套角色材质命名不同，这里统一归一化：
+//   Skin     皮肤（不参与换色）
+//   Main     上衣/主体（Character_Main / Enemy_Red / Red）
+//   Pants    裤子（Pants / DarkGrey）
+//   Boots    靴子/手套（Black）
+//   Gear     装具（Grey / Grey2 / LightGrey）
+//   Wood     木质件（Wood / DarkWood）
+Menu3DModel::Slot SlotOfMaterial(const std::string& name) {
+    if (ContainsNoCase(name, "skin")) return Menu3DModel::Slot::Skin;
+    if (ContainsNoCase(name, "character_main") ||
+        ContainsNoCase(name, "enemy_red") ||
+        (!name.empty() && ContainsNoCase(name, "red") && !ContainsNoCase(name, "dark")))
+        return Menu3DModel::Slot::Main;
+    if (ContainsNoCase(name, "pants") || ContainsNoCase(name, "darkgrey"))
+        return Menu3DModel::Slot::Pants;
+    if (ContainsNoCase(name, "black")) return Menu3DModel::Slot::Boots;
+    if (ContainsNoCase(name, "wood")) return Menu3DModel::Slot::Wood;
+    return Menu3DModel::Slot::Gear;
+}
+
 } // namespace
 
 Menu3DModel::Mat4 Menu3DModel::Identity() {
@@ -168,6 +188,8 @@ bool Menu3DModel::Load(const std::string& path, const std::string& preferredAnim
     for (size_t i = 0; i < data->nodes_count; ++i) {
         const cgltf_node& src = data->nodes[i];
         Node& dst = nodes_[i];
+        dst.name = src.name ? src.name : "";
+        dst.visible = true;
         dst.baseT = Vec3{ 0, 0, 0 };
         dst.baseR = Quat{};
         dst.baseS = Vec3{ 1, 1, 1 };
@@ -273,6 +295,7 @@ bool Menu3DModel::Load(const std::string& path, const std::string& preferredAnim
                 prim.color = Vec4{ c[0], c[1], c[2], c[3] };
                 prim.isSkin = cp.material->name && ContainsNoCase(cp.material->name, "skin");
                 prim.materialName = cp.material->name ? cp.material->name : "";
+                prim.slot = SlotOfMaterial(prim.materialName);
             } else {
                 // Chickensoft 的 GLB 没有材质，给一个偏黄的暖色
                 prim.color = Vec4{ 0.94f, 0.62f, 0.12f, 1.0f };
@@ -530,40 +553,36 @@ void Menu3DModel::SkinPrimitives() {
 
 void Menu3DModel::Draw(float scale, float yOffset, float yawDegrees, float opacity) const {
     if (!ready_ || opacity <= 0.001f) return;
-    const float alpha = std::clamp(opacity, 0.0f, 1.0f);
-    const bool depthWrite = alpha >= 0.999f;
-    if (!depthWrite) {
-        glEnable(GL_BLEND);
-        glDepthMask(GL_FALSE);
-    }
     glPushMatrix();
     // 蒙皮后取最低点贴地，避免走路动画时脚底穿进地面
     glTranslatef(0.0f, yOffset - minY_ * scale, 0.0f);
     glRotatef(yawDegrees, 0.0f, 1.0f, 0.0f);
     glScalef(scale, scale, scale);
 
+    DrawRaw(opacity);
+
+    glPopMatrix();
+}
+
+// 只画顶点，不施加「贴地 + 缩放 + 朝向」的外层变换。
+// 角色/小鸡的 Draw 内部调用它；配件则用 DrawAttached 在骨骼处直接调用它。
+void Menu3DModel::DrawRaw(float opacity) const {
+    if (!ready_ || opacity <= 0.001f) return;
+    const float alpha = std::clamp(opacity, 0.0f, 1.0f);
+    const bool depthWrite = alpha >= 0.999f;
+    if (!depthWrite) {
+        glEnable(GL_BLEND);
+        glDepthMask(GL_FALSE);
+    }
     if (unlit_) glDisable(GL_LIGHTING);
+
     for (const Node& node : nodes_) {
+        if (!node.visible) continue;
         if (node.mesh < 0 || node.mesh >= static_cast<int>(meshes_.size())) continue;
         const Mesh& mesh = meshes_[node.mesh];
         for (const Primitive& prim : mesh.primitives) {
             if (prim.indices.empty()) continue;
-            const float tr = prim.isSkin ? 1.0f : tint_.x;
-            const float tg = prim.isSkin ? 1.0f : tint_.y;
-            const float tb = prim.isSkin ? 1.0f : tint_.z;
-            float r = prim.color.x * tr;
-            float g = prim.color.y * tg;
-            float b = prim.color.z * tb;
-            if (bluePalette_ && !prim.isSkin) {
-                if (ContainsNoCase(prim.materialName, "Character_Main")) {
-                    r = 0.18f; g = 0.34f; b = 0.72f;
-                } else if (ContainsNoCase(prim.materialName, "Pants")) {
-                    r = 0.09f; g = 0.14f; b = 0.26f;
-                } else if (ContainsNoCase(prim.materialName, "Red")) {
-                    r = 0.18f; g = 0.42f; b = 0.85f;
-                }
-            }
-            glColor4f(r, g, b, prim.color.w * alpha);
+            ApplyPrimitiveColor(prim, alpha, !node.colorExcluded);
             glBegin(GL_TRIANGLES);
             for (uint32_t idx : prim.indices) {
                 if (idx >= prim.skinnedPos.size()) continue;
@@ -575,9 +594,118 @@ void Menu3DModel::Draw(float scale, float yOffset, float yawDegrees, float opaci
             glEnd();
         }
     }
+
     if (unlit_) glEnable(GL_LIGHTING);
-    glPopMatrix();
     if (!depthWrite) glDepthMask(GL_TRUE);
+}
+
+void Menu3DModel::ApplyPrimitiveColor(const Primitive& prim, float alpha,
+                                      bool allowSlot) const {
+    float r = prim.color.x;
+    float g = prim.color.y;
+    float b = prim.color.z;
+
+    if (solidColorSet_) {
+        // 小鸡没有材质：整体覆盖颜色
+        r = solidColor_.x;
+        g = solidColor_.y;
+        b = solidColor_.z;
+    } else {
+        const int slot = static_cast<int>(prim.slot);
+        if (allowSlot && !prim.isSkin && slot >= 0 &&
+            slot < static_cast<int>(Slot::Count) && slotColor_[slot].set) {
+            // 调色槽优先（角色换色）
+            r = slotColor_[slot].r;
+            g = slotColor_[slot].g;
+            b = slotColor_[slot].b;
+        } else {
+            const float tr = prim.isSkin ? 1.0f : tint_.x;
+            const float tg = prim.isSkin ? 1.0f : tint_.y;
+            const float tb = prim.isSkin ? 1.0f : tint_.z;
+            r *= tr; g *= tg; b *= tb;
+            if (bluePalette_ && !prim.isSkin) {
+                if (ContainsNoCase(prim.materialName, "Character_Main")) {
+                    r = 0.18f; g = 0.34f; b = 0.72f;
+                } else if (ContainsNoCase(prim.materialName, "Pants")) {
+                    r = 0.09f; g = 0.14f; b = 0.26f;
+                } else if (ContainsNoCase(prim.materialName, "Red")) {
+                    r = 0.18f; g = 0.42f; b = 0.85f;
+                }
+            }
+        }
+    }
+
+    glColor4f(r, g, b, prim.color.w * alpha);
+}
+
+void Menu3DModel::SetSlotColor(Slot slot, float r, float g, float b) {
+    const int idx = static_cast<int>(slot);
+    if (idx < 0 || idx >= static_cast<int>(Slot::Count)) return;
+    slotColor_[idx] = SlotColor{ r, g, b, true };
+}
+
+void Menu3DModel::ClearSlotColors() {
+    for (auto& c : slotColor_) c.set = false;
+}
+
+void Menu3DModel::SetSolidColor(float r, float g, float b) {
+    solidColorSet_ = true;
+    solidColor_ = Vec4{ r, g, b, 1.0f };
+}
+
+void Menu3DModel::ClearSolidColor() {
+    solidColorSet_ = false;
+}
+
+int Menu3DModel::FindNode(const std::string& name) const {
+    if (name.empty()) return -1;
+    for (size_t i = 0; i < nodes_.size(); ++i) {
+        if (nodes_[i].name == name) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+void Menu3DModel::SetNodeVisible(const std::string& name, bool visible) {
+    const int i = FindNode(name);
+    if (i >= 0) nodes_[static_cast<size_t>(i)].visible = visible;
+}
+
+bool Menu3DModel::GetNodeVisible(const std::string& name) const {
+    const int i = FindNode(name);
+    return (i >= 0) ? nodes_[static_cast<size_t>(i)].visible : false;
+}
+
+void Menu3DModel::SetNodeColorExcluded(const std::string& name, bool excluded) {
+    const int i = FindNode(name);
+    if (i >= 0) nodes_[static_cast<size_t>(i)].colorExcluded = excluded;
+}
+
+bool Menu3DModel::GetNodeWorldMatrix(const std::string& name, float out[16]) const {
+    const int i = FindNode(name);
+    if (i < 0 || !out) return false;
+    std::memcpy(out, nodes_[static_cast<size_t>(i)].world.m, sizeof(float) * 16);
+    return true;
+}
+
+bool Menu3DModel::DrawAttached(const Menu3DModel& accessory,
+                               float px, float py, float pz,
+                               float scale, float yOffset, float yawDegrees,
+                               float socketYaw, float accessoryScale,
+                               float opacity) const {
+    if (!ready_ || !accessory.IsReady() || opacity <= 0.001f) return false;
+
+    glPushMatrix();
+    // 与 Draw() 完全一致的外层变换
+    glTranslatef(0.0f, yOffset - minY_ * scale, 0.0f);
+    glRotatef(yawDegrees, 0.0f, 1.0f, 0.0f);
+    glScalef(scale, scale, scale);
+    // 模型空间锚点（与蒙皮顶点同一空间）
+    glTranslatef(px, py, pz);
+    glRotatef(socketYaw, 0.0f, 1.0f, 0.0f);
+    glScalef(accessoryScale, accessoryScale, accessoryScale);
+    accessory.DrawRaw(opacity);
+    glPopMatrix();
+    return true;
 }
 
 void Menu3DModel::DrawHighlight(float scale, float yOffset, float yawDegrees) const {
@@ -594,6 +722,7 @@ void Menu3DModel::DrawHighlight(float scale, float yOffset, float yawDegrees) co
     glColor4f(0.55f, 0.86f, 1.0f, 0.72f);
 
     for (const Node& node : nodes_) {
+        if (!node.visible) continue;
         if (node.mesh < 0 || node.mesh >= static_cast<int>(meshes_.size())) continue;
         const Mesh& mesh = meshes_[node.mesh];
         for (const Primitive& prim : mesh.primitives) {

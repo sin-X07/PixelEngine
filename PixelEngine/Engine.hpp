@@ -136,9 +136,6 @@ private:
     void DrawSideMapPreview();
     int          hovered3D_ = -1;
     int          focused3D_ = -1;
-    int          focusWeapon_ = 0;
-    int          focusColor_ = 0;
-    int          focusPose_ = 0;
     uint64_t     focusAnimStartMs_ = 0;
     uint64_t     focusExitStartMs_ = 0;
     float        focusCloseStartProgress_ = 0.0f;

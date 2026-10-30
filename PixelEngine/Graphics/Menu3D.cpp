@@ -23,6 +23,74 @@ constexpr float kFocusCamZ = 8.6f;
 constexpr float kFocusLookY = 1.00f;
 constexpr float kFloorFrontZ = 10.0f;
 
+// ============================================================================
+// 主菜单自定义：调色板 / 姿势 / 武器 / 配件选项
+// ============================================================================
+
+struct CharPalette {
+    float main[3];   // 上衣/主体
+    float pants[3];  // 裤子
+    float boots[3];  // 靴子/手套
+    float gear[3];   // 装具
+};
+
+// 0 号是「原色」：不覆盖槽位，T 用模型原色、CT 用蓝色调
+constexpr CharPalette kCharPalettes[] = {
+    { {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0} },                              // 原色
+    { {0.72f, 0.60f, 0.40f}, {0.45f, 0.38f, 0.26f}, {0.25f, 0.22f, 0.18f}, {0.35f, 0.33f, 0.30f} }, // 沙色
+    { {0.24f, 0.34f, 0.20f}, {0.18f, 0.22f, 0.15f}, {0.12f, 0.13f, 0.10f}, {0.24f, 0.26f, 0.22f} }, // 丛林
+    { {0.84f, 0.86f, 0.89f}, {0.52f, 0.57f, 0.63f}, {0.24f, 0.26f, 0.29f}, {0.64f, 0.68f, 0.73f} }, // 雪地
+    { {0.55f, 0.09f, 0.09f}, {0.16f, 0.13f, 0.13f}, {0.08f, 0.07f, 0.07f}, {0.22f, 0.20f, 0.20f} }, // 血红
+    { {0.10f, 0.11f, 0.13f}, {0.08f, 0.08f, 0.09f}, {0.05f, 0.05f, 0.06f}, {0.16f, 0.17f, 0.19f} }, // 幽灵
+    { {0.10f, 0.52f, 0.60f}, {0.16f, 0.12f, 0.32f}, {0.06f, 0.06f, 0.10f}, {0.30f, 0.72f, 0.78f} }, // 赛博
+    { {0.78f, 0.34f, 0.60f}, {0.30f, 0.18f, 0.38f}, {0.12f, 0.09f, 0.14f}, {0.74f, 0.56f, 0.84f} }, // 粉紫
+};
+constexpr int kCharPaletteCount = static_cast<int>(sizeof(kCharPalettes) / sizeof(kCharPalettes[0]));
+
+const char* kCharColorNames[] = { "原色", "沙色", "丛林", "雪地", "血红", "幽灵", "赛博", "粉紫" };
+
+struct RgbColor { float r, g, b; };
+// 小鸡羽色（整体覆盖，模型本身没有材质）
+constexpr RgbColor kChickenColors[] = {
+    { 0.94f, 0.62f, 0.12f },  // 原色（暖黄）
+    { 0.93f, 0.93f, 0.90f },  // 白羽
+    { 0.62f, 0.42f, 0.24f },  // 棕羽
+    { 0.22f, 0.22f, 0.25f },  // 黑羽
+    { 0.34f, 0.54f, 0.90f },  // 蓝羽
+    { 0.40f, 0.76f, 0.38f },  // 绿羽
+    { 0.88f, 0.25f, 0.22f },  // 红羽
+};
+constexpr int kChickenColorCount = static_cast<int>(sizeof(kChickenColors) / sizeof(kChickenColors[0]));
+const char* kChickenColorNames[] = { "原色", "白羽", "棕羽", "黑羽", "蓝羽", "绿羽", "红羽" };
+
+const char* kCharPoseNames[]  = { "待机", "警戒", "挥手", "下蹲", "跳跃", "中弹" };
+const char* kCharPoseAnims[]  = { "Idle", "Idle_Shoot", "Wave", "Duck", "Jump", "HitReact" };
+constexpr int kCharPoseCount = 6;
+
+const char* kChickenPoseNames[] = { "散步", "待机", "奔跑", "跳跃", "眨眼" };
+const char* kChickenPoseAnims[] = { "walk", "idle", "run", "jump", "blink" };
+constexpr int kChickenPoseCount = 5;
+
+// 角色模型自带、挂在右手的所有武器节点
+const char* kAllWeaponNodes[] = {
+    "AK", "GrenadeLauncher", "Knife_1", "Knife_2", "Pistol", "Revolver",
+    "Revolver_Small", "RocketLauncher", "ShortCannon", "Shotgun", "Shovel",
+    "SMG", "Sniper", "Sniper_2",
+};
+constexpr int kAllWeaponNodeCount = static_cast<int>(sizeof(kAllWeaponNodes) / sizeof(kAllWeaponNodes[0]));
+
+const char* kWeaponOptionNames[] = { "AK-47", "冲锋枪", "狙击枪", "霰弹枪", "手枪", "匕首" };
+const char* kWeaponOptionNodes[] = { "AK", "SMG", "Sniper", "Shotgun", "Pistol", "Knife_1" };
+constexpr int kWeaponOptionCount = 6;
+
+const char* kCharAccNames[] = { "无", "鸭舌帽", "墨镜", "背包" };
+constexpr int kCharAccCount = 4;
+const char* kChickenAccNames[] = { "无", "小帽子", "墨镜" };
+constexpr int kChickenAccCount = 3;
+
+const char* kCharCategoryNames[] = { "武器", "颜色", "姿势", "配饰" };
+const char* kChickenCategoryNames[] = { "颜色", "姿势", "配饰" };
+
 void DrawCube(float cx, float cy, float cz,
               float sx, float sy, float sz,
               float r, float g, float b) {
@@ -301,8 +369,6 @@ bool Menu3D::LoadModels() {
     if (!ctModel_->Load("assets/models/quaternius/Character_Soldier.gltf", "Idle")) {
         std::cerr << "[Menu3D] CT 模型加载失败: " << ctModel_->LastError() << std::endl;
         ctModel_.reset();
-    } else {
-        ctModel_->SetBluePalette(true);
     }
 
     chickens_.clear();
@@ -335,6 +401,36 @@ bool Menu3D::LoadModels() {
         }
         focusWeapons_.push_back(std::move(weapon));
     }
+
+    // 自定义配件（低模纯色 glTF，tools/gen_menu_accessories.py 生成）
+    const char* accessoryPaths[4] = {
+        "assets/models/custom/cap.gltf",
+        "assets/models/custom/glasses.gltf",
+        "assets/models/custom/backpack.gltf",
+        "assets/models/custom/chicken_hat.gltf",
+    };
+    for (int i = 0; i < 4; ++i) {
+        accessories_[i] = std::make_unique<Menu3DModel>();
+        if (!accessories_[i]->Load(accessoryPaths[i])) {
+            std::cerr << "[Menu3D] 配件模型加载失败: " << accessoryPaths[i]
+                      << " " << accessories_[i]->LastError() << std::endl;
+            accessories_[i].reset();
+        }
+    }
+
+    // 角色模型自带全部武器节点：先全部隐藏，再由自定义设置显示手持的那把；
+    // 武器不参与服装调色板换色（保持木质/金属原色）
+    for (int i = 0; i < kAllWeaponNodeCount; ++i) {
+        if (tModel_) {
+            tModel_->SetNodeVisible(kAllWeaponNodes[i], false);
+            tModel_->SetNodeColorExcluded(kAllWeaponNodes[i], true);
+        }
+        if (ctModel_) {
+            ctModel_->SetNodeVisible(kAllWeaponNodes[i], false);
+            ctModel_->SetNodeColorExcluded(kAllWeaponNodes[i], true);
+        }
+    }
+    ApplyAllCustomization();
 
     if (tModel_ && ctModel_) {
         std::cout << "[Menu3D] glTF 角色已加载: T=" << tModel_->AnimationName()
@@ -420,12 +516,14 @@ void Menu3D::DrawModels() {
     glTranslatef(-4.4f, 0.0f, 0.0f);
     if (hoveredObject_ == 0) tModel_->DrawHighlight(1.22f, 0.0f, 0.0f);
     tModel_->Draw(1.22f, 0.0f, 0.0f);
+    DrawAccessory(0, 1.22f, 0.0f, 0.0f);
     glPopMatrix();
 
     glPushMatrix();
     glTranslatef(4.4f, 0.0f, 0.0f);
     if (hoveredObject_ == 1) ctModel_->DrawHighlight(1.22f, 0.0f, 0.0f);
     ctModel_->Draw(1.22f, 0.0f, 0.0f);
+    DrawAccessory(1, 1.22f, 0.0f, 0.0f);
     glPopMatrix();
 
     // 三只鸡：左侧、按钮下方、右侧，各自在区域内随机跑动
@@ -438,6 +536,7 @@ void Menu3D::DrawModels() {
         glTranslatef(s.x, 0.0f, s.z);
         if (hoveredObject_ == i + 2) chickens_[i]->DrawHighlight(scale, 0.0f, s.yaw);
         chickens_[i]->Draw(scale, 0.0f, s.yaw);
+        DrawAccessory(i + 2, scale, 0.0f, s.yaw);
         glPopMatrix();
     }
 }
@@ -492,38 +591,221 @@ void Menu3D::SetFocusedObject(int index) {
 }
 
 void Menu3D::SetObjectColor(int index, int option) {
-    Menu3DModel* model = nullptr;
-    if (index == 0) model = tModel_.get();
-    else if (index == 1) model = ctModel_.get();
-    else if (index >= 2 && index < 5 && index - 2 < static_cast<int>(chickens_.size())) {
-        model = chickens_[index - 2].get();
-    }
-    if (!model) return;
-
-    model->SetClothingTint(1.0f, 1.0f, 1.0f);
-    model->SetBluePalette(index == 1 && option == 0);
-    if (option == 1) model->SetClothingTint(1.0f, 0.82f, 0.30f);
-    else if (option == 2) model->SetClothingTint(1.0f, 0.48f, 0.42f);
-    else if (option == 3) model->SetClothingTint(0.50f, 0.72f, 1.15f);
+    if (index < 0 || index >= kObjectCount) return;
+    custom_.color[index] = option;
+    ApplyCustomizationColor(index);
 }
 
 void Menu3D::SetObjectPose(int index, int option) {
-    Menu3DModel* model = nullptr;
-    if (index == 0) model = tModel_.get();
-    else if (index == 1) model = ctModel_.get();
-    else if (index >= 2 && index < 5 && index - 2 < static_cast<int>(chickens_.size())) {
-        model = chickens_[index - 2].get();
+    if (index < 0 || index >= kObjectCount) return;
+    custom_.pose[index] = option;
+    ApplyCustomizationPose(index);
+}
+
+void Menu3D::SetCustomization(const Customization& c) {
+    custom_ = c;
+    ApplyAllCustomization();
+}
+
+void Menu3D::ApplyAllCustomization() {
+    for (int obj = 0; obj < kObjectCount; ++obj) {
+        ApplyCustomizationColor(obj);
+        ApplyCustomizationPose(obj);
+        ApplyCustomizationWeapon(obj);
     }
+}
+
+void Menu3D::ApplyCustomizationColor(int obj) {
+    if (obj < 0 || obj >= kObjectCount) return;
+
+    if (obj < 2) {
+        Menu3DModel* model = (obj == 0) ? tModel_.get() : ctModel_.get();
+        if (!model) return;
+        model->ClearSolidColor();
+        model->ClearSlotColors();
+        model->SetBluePalette(false);
+
+        const int opt = std::clamp(custom_.color[obj], 0, kCharPaletteCount - 1);
+        if (opt == 0) {
+            // 原色：T 用模型自带配色，CT 用蓝色调（保持原有观感）
+            if (obj == 1) model->SetBluePalette(true);
+            return;
+        }
+        const CharPalette& p = kCharPalettes[opt];
+        model->SetSlotColor(Menu3DModel::Slot::Main,  p.main[0],  p.main[1],  p.main[2]);
+        model->SetSlotColor(Menu3DModel::Slot::Pants, p.pants[0], p.pants[1], p.pants[2]);
+        model->SetSlotColor(Menu3DModel::Slot::Boots, p.boots[0], p.boots[1], p.boots[2]);
+        model->SetSlotColor(Menu3DModel::Slot::Gear,  p.gear[0],  p.gear[1],  p.gear[2]);
+        return;
+    }
+
+    const int ci = obj - 2;
+    if (ci < 0 || ci >= static_cast<int>(chickens_.size()) || !chickens_[ci]) return;
+    const int opt = std::clamp(custom_.color[obj], 0, kChickenColorCount - 1);
+    const RgbColor& c = kChickenColors[opt];
+    chickens_[ci]->ClearSlotColors();
+    chickens_[ci]->SetSolidColor(c.r, c.g, c.b);
+}
+
+void Menu3D::ApplyCustomizationPose(int obj) {
+    if (obj < 0 || obj >= kObjectCount) return;
+
+    if (obj < 2) {
+        Menu3DModel* model = (obj == 0) ? tModel_.get() : ctModel_.get();
+        if (!model) return;
+        const int opt = std::clamp(custom_.pose[obj], 0, kCharPoseCount - 1);
+        model->PlayAnimation(kCharPoseAnims[opt]);
+        return;
+    }
+
+    const int ci = obj - 2;
+    if (ci < 0 || ci >= static_cast<int>(chickens_.size()) || !chickens_[ci]) return;
+    const int opt = std::clamp(custom_.pose[obj], 0, kChickenPoseCount - 1);
+    chickens_[ci]->PlayAnimation(kChickenPoseAnims[opt]);
+}
+
+void Menu3D::ApplyCustomizationWeapon(int obj) {
+    if (obj < 0 || obj > 1) return;
+    Menu3DModel* model = (obj == 0) ? tModel_.get() : ctModel_.get();
     if (!model) return;
 
-    if (index < 2) {
-        if (option == 0) model->PlayAnimation("Idle");
-        else if (option == 1) model->PlayAnimation("Idle_Shoot");
-        else if (option == 2) model->PlayAnimation("Wave");
-    } else {
-        if (option == 0) model->PlayAnimation("walk");
-        else if (option == 1) model->PlayAnimation("idle");
-        else if (option == 2) model->PlayAnimation("run");
+    for (int i = 0; i < kAllWeaponNodeCount; ++i) {
+        model->SetNodeVisible(kAllWeaponNodes[i], false);
+    }
+    const int opt = std::clamp(custom_.weapon[obj], 0, kWeaponOptionCount - 1);
+    model->SetNodeVisible(kWeaponOptionNodes[opt], true);
+}
+
+void Menu3D::DrawAccessory(int obj, float scale, float yOffset, float yaw) const {
+    if (obj < 0 || obj >= kObjectCount) return;
+    const int opt = custom_.accessory[obj];
+    if (opt <= 0) return;
+
+    if (obj < 2) {
+        Menu3DModel* base = (obj == 0) ? tModel_.get() : ctModel_.get();
+        if (!base) return;
+
+        int acc = 0;
+        float px = 0.0f, py = 2.30f, pz = 0.10f, accYaw = 0.0f, accScale = 1.0f;
+        if (opt == 1) {            // 鸭舌帽：头顶
+            acc = 0; py = 2.30f; pz = 0.10f;
+        } else if (opt == 2) {     // 墨镜：脸部（+Z 为正面）
+            acc = 1; py = 1.98f; pz = 0.50f;
+        } else if (opt == 3) {     // 背包：背部
+            acc = 2; py = 1.25f; pz = -0.25f;
+        }
+        if (accessories_[acc]) {
+            base->DrawAttached(*accessories_[acc], px, py, pz,
+                               scale, yOffset, yaw, accYaw, accScale);
+        }
+        return;
+    }
+
+    const int ci = obj - 2;
+    if (ci < 0 || ci >= static_cast<int>(chickens_.size()) || !chickens_[ci]) return;
+    Menu3DModel* base = chickens_[ci].get();
+    if (!base) return;
+
+    int acc = 3;
+    float py = 1.68f, pz = 0.08f, accScale = 1.9f;
+    if (opt == 2) { acc = 1; py = 1.03f; pz = 0.38f; accScale = 1.6f; }  // 墨镜
+    if (accessories_[acc]) {
+        base->DrawAttached(*accessories_[acc], 0.0f, py, pz,
+                           scale, yOffset, yaw, 0.0f, accScale);
+    }
+}
+
+int Menu3D::FocusCategoryCount(int objectIndex) const {
+    return (objectIndex >= 0 && objectIndex < 2) ? 4 : 3;
+}
+
+const char* Menu3D::FocusCategoryName(int objectIndex, int cat) const {
+    if (objectIndex >= 0 && objectIndex < 2) {
+        if (cat >= 0 && cat < 4) return kCharCategoryNames[cat];
+    } else if (cat >= 0 && cat < 3) {
+        return kChickenCategoryNames[cat];
+    }
+    return "";
+}
+
+int Menu3D::FocusOptionCount(int objectIndex, int cat) const {
+    if (objectIndex >= 0 && objectIndex < 2) {
+        switch (cat) {
+            case 0: return kWeaponOptionCount;
+            case 1: return kCharPaletteCount;
+            case 2: return kCharPoseCount;
+            case 3: return kCharAccCount;
+            default: return 0;
+        }
+    }
+    switch (cat) {
+        case 0: return kChickenColorCount;
+        case 1: return kChickenPoseCount;
+        case 2: return kChickenAccCount;
+        default: return 0;
+    }
+}
+
+const char* Menu3D::FocusOptionName(int objectIndex, int cat, int opt) const {
+    if (opt < 0 || opt >= FocusOptionCount(objectIndex, cat)) return "";
+    if (objectIndex >= 0 && objectIndex < 2) {
+        switch (cat) {
+            case 0: return kWeaponOptionNames[opt];
+            case 1: return kCharColorNames[opt];
+            case 2: return kCharPoseNames[opt];
+            case 3: return kCharAccNames[opt];
+            default: return "";
+        }
+    }
+    switch (cat) {
+        case 0: return kChickenColorNames[opt];
+        case 1: return kChickenPoseNames[opt];
+        case 2: return kChickenAccNames[opt];
+        default: return "";
+    }
+}
+
+int Menu3D::FocusSelected(int objectIndex, int cat) const {
+    if (objectIndex < 0 || objectIndex >= kObjectCount) return 0;
+    if (objectIndex < 2) {
+        switch (cat) {
+            case 0: return custom_.weapon[objectIndex];
+            case 1: return custom_.color[objectIndex];
+            case 2: return custom_.pose[objectIndex];
+            case 3: return custom_.accessory[objectIndex];
+            default: return 0;
+        }
+    }
+    switch (cat) {
+        case 0: return custom_.color[objectIndex];
+        case 1: return custom_.pose[objectIndex];
+        case 2: return custom_.accessory[objectIndex];
+        default: return 0;
+    }
+}
+
+void Menu3D::FocusSelect(int objectIndex, int cat, int opt) {
+    if (objectIndex < 0 || objectIndex >= kObjectCount) return;
+    const int count = FocusOptionCount(objectIndex, cat);
+    if (count <= 0) return;
+    opt = std::clamp(opt, 0, count - 1);
+
+    if (objectIndex < 2) {
+        switch (cat) {
+            case 0: custom_.weapon[objectIndex] = opt; ApplyCustomizationWeapon(objectIndex); break;
+            case 1: custom_.color[objectIndex] = opt;  ApplyCustomizationColor(objectIndex); break;
+            case 2: custom_.pose[objectIndex] = opt;   ApplyCustomizationPose(objectIndex); break;
+            case 3: custom_.accessory[objectIndex] = opt; break;
+            default: break;
+        }
+        return;
+    }
+
+    switch (cat) {
+        case 0: custom_.color[objectIndex] = opt;     ApplyCustomizationColor(objectIndex); break;
+        case 1: custom_.pose[objectIndex] = opt;      ApplyCustomizationPose(objectIndex); break;
+        case 2: custom_.accessory[objectIndex] = opt; break;
+        default: break;
     }
 }
 
@@ -811,7 +1093,7 @@ void Menu3D::DrawFocusScene() {
     const float t = focusT;
 
     float normalX = 0.0f, normalZ = 0.0f, normalScale = 1.22f;
-    float targetScale = 1.9f;
+    float targetScale = 1.5f;
     if (focusedObject_ == 0) {
         normalX = -4.4f;
     } else if (focusedObject_ == 1) {
@@ -836,12 +1118,14 @@ void Menu3D::DrawFocusScene() {
             glPushMatrix();
             glTranslatef(-4.4f, 0.0f, 0.0f);
             tModel_->Draw(1.22f, 0.0f, 0.0f, otherAlpha);
+            if (otherAlpha > 0.98f) DrawAccessory(0, 1.22f, 0.0f, 0.0f);
             glPopMatrix();
         }
         if (ctModel_ && focusedObject_ != 1) {
             glPushMatrix();
             glTranslatef(4.4f, 0.0f, 0.0f);
             ctModel_->Draw(1.22f, 0.0f, 0.0f, otherAlpha);
+            if (otherAlpha > 0.98f) DrawAccessory(1, 1.22f, 0.0f, 0.0f);
             glPopMatrix();
         }
         for (int i = 0; i < static_cast<int>(chickens_.size()) && i < 3; ++i) {
@@ -852,6 +1136,7 @@ void Menu3D::DrawFocusScene() {
             glPushMatrix();
             glTranslatef(s.x, 0.0f, s.z);
             chickens_[i]->Draw(scaleChicken, 0.0f, s.yaw, otherAlpha);
+            if (otherAlpha > 0.98f) DrawAccessory(i + 2, scaleChicken, 0.0f, s.yaw);
             glPopMatrix();
         }
     }
@@ -863,8 +1148,9 @@ void Menu3D::DrawFocusScene() {
             glTranslatef(x, 0.0f, z);
             model->DrawHighlight(scale, 0.0f, 0.0f);
             model->Draw(scale, 0.0f, 0.0f);
+            // 武器现在握在手里（靠节点显隐切换），不再另画浮空武器
+            DrawAccessory(focusedObject_, scale, 0.0f, 0.0f);
             glPopMatrix();
-            if (t > 0.45f) DrawWeaponProp(x + 0.95f, 1.25f, z);
         }
     } else if (focusedObject_ >= 2 && focusedObject_ - 2 < static_cast<int>(chickens_.size())) {
         Menu3DModel* model = chickens_[focusedObject_ - 2].get();
@@ -873,8 +1159,8 @@ void Menu3D::DrawFocusScene() {
             glTranslatef(x, 0.0f, z);
             model->DrawHighlight(scale, 0.0f, 0.0f);
             model->Draw(scale, 0.0f, 0.0f);
+            DrawAccessory(focusedObject_, scale, 0.0f, 0.0f);
             glPopMatrix();
-            if (t > 0.45f) DrawWeaponProp(x + 0.32f, 0.45f, z + 0.1f);
         }
     }
 

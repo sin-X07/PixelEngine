@@ -128,17 +128,20 @@ GameUI::Actions Engine::BuildActions() {
         focusCloseStartProgress_ = focus3DProgress_;
     };
     a.focus3DSelect = [this](int category, int option) {
-        if (focused3D_ < 0 || focus3DClosing_ || !menu3D) return;
-        if (category == 0) {
-            focusWeapon_ = option;
-            menu3D->SetFocusWeapon(option);
-        } else if (category == 1) {
-            focusColor_ = option;
-            menu3D->SetObjectColor(focused3D_, option);
-        } else if (category == 2) {
-            focusPose_ = option;
-            menu3D->SetObjectPose(focused3D_, option);
+        if (focused3D_ < 0 || focus3DClosing_ || !menu3D || !saveManager) return;
+        menu3D->FocusSelect(focused3D_, category, option);
+
+        // 自定义结果写回存档（重启后保留）
+        const Menu3D::Customization& c = menu3D->GetCustomization();
+        auto& s = saveManager->MutableSettings();
+        for (int i = 0; i < 5; ++i) {
+            s.menuColor[i]     = c.color[i];
+            s.menuPose[i]      = c.pose[i];
+            s.menuAccessory[i] = c.accessory[i];
         }
+        s.menuWeapon[0] = c.weapon[0];
+        s.menuWeapon[1] = c.weapon[1];
+        saveManager->Save();
     };
 
     a.selectMapChoice = [this](int index) {
@@ -415,6 +418,18 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
             std::cerr << "[Menu3D] 初始化失败，回退静态菜单背景: "
                       << menu3D->LastError() << std::endl;
             menu3D.reset();
+        } else if (saveManager) {
+            // 应用存档里的主菜单自定义（颜色/姿势/武器/配件）
+            const auto& s = saveManager->GetSettings();
+            Menu3D::Customization c;
+            for (int i = 0; i < 5; ++i) {
+                c.color[i]     = s.menuColor[i];
+                c.pose[i]      = s.menuPose[i];
+                c.accessory[i] = s.menuAccessory[i];
+            }
+            c.weapon[0] = s.menuWeapon[0];
+            c.weapon[1] = s.menuWeapon[1];
+            menu3D->SetCustomization(c);
         }
     }
 
@@ -1636,7 +1651,6 @@ void Engine::Render() {
                     menu3D->SetFocusProgress(focus3DProgress_);
                     menu3D->SetHoveredObject(-1);
                     menu3D->SetFocusedObject(focused3D_);
-                    menu3D->SetFocusWeapon(focusWeapon_);
                 }
             }
             if (focused3D_ < 0) {
@@ -1677,9 +1691,20 @@ void Engine::Render() {
             ctx.focusName   = (focused3D_ == 0) ? "恐怖分子 T"
                             : (focused3D_ == 1) ? "反恐精英 CT"
                             : "装饰小鸡";
-            ctx.focusWeapon = focusWeapon_;
-            ctx.focusColor  = focusColor_;
-            ctx.focusPose   = focusPose_;
+            // 轮盘内容：按聚焦对象动态生成（T/CT 4 类，小鸡 3 类）
+            if (menu3D) {
+                ctx.focusCategoryCount = menu3D->FocusCategoryCount(focused3D_);
+                for (int cat = 0; cat < 4; ++cat) {
+                    ctx.focusCategoryNames[cat] = menu3D->FocusCategoryName(focused3D_, cat);
+                    const int n = menu3D->FocusOptionCount(focused3D_, cat);
+                    ctx.focusOptionCounts[cat] = n;
+                    for (int opt = 0; opt < n && opt < 8; ++opt) {
+                        ctx.focusOptions[cat][opt] =
+                            menu3D->FocusOptionName(focused3D_, cat, opt);
+                    }
+                    ctx.focusSelected[cat] = menu3D->FocusSelected(focused3D_, cat);
+                }
+            }
             ctx.focusProgress = focus3DProgress_;
             ctx.cameraTransition = cameraTransition;
             ctx.mapOverlayOpen = mapOverlayOpen_;
@@ -1761,12 +1786,7 @@ void Engine::Render() {
                     focusAnimStartMs_ = SDL_GetTicks64();
                     focus3DProgress_ = 0.0f;
                     focus3DClosing_ = false;
-                    focusWeapon_ = 0;
-                    focusColor_ = 0;
-                    focusPose_ = 0;
-                    menu3D->SetFocusWeapon(0);
-                    menu3D->SetObjectColor(hit, 0);
-                    menu3D->SetObjectPose(hit, 0);
+                    // 自定义结果已经是持久化的，这里不再重置外观
                     SDL_SetRelativeMouseMode(SDL_FALSE);
                     SDL_ShowCursor(SDL_ENABLE);
                 }
