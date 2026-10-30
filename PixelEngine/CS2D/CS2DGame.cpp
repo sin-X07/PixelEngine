@@ -461,6 +461,9 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
         if (slot == 3 && player_.grenadeCount > 1) {
             player_.grenadeSlot = (player_.grenadeSlot + 1) % player_.grenadeCount;
             player_.SyncActiveGrenade();
+            // 换了一颗手雷也算「切到新装备」，补一声
+            switchSoundWeapon_ = player_.ActiveGrenade();
+            switchSoundPending_ = true;
         }
         return;
     }
@@ -490,6 +493,8 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
         player_.ammo = 1;
         player_.maxAmmo = 1;
         player_.reserve = 0;
+        switchSoundWeapon_ = WeaponId::C4;
+        switchSoundPending_ = true;
         return;
     }
     if (slot == 3) {
@@ -498,11 +503,15 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
         player_.ammo = 1;
         player_.maxAmmo = 1;
         player_.reserve = 0;
+        switchSoundWeapon_ = player_.ActiveGrenade();
+        switchSoundPending_ = true;
         return;
     }
 
     // 从目标槽读取它自己的弹药
     player_.LoadAmmoFromSlot();
+    switchSoundWeapon_ = player_.weapons[slot];
+    switchSoundPending_ = true;
 }
 
 std::string CS2DGame::GetWeaponName() const {
@@ -548,6 +557,13 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     if (!world_) return;
 
     clockSec_ += dt;
+
+    // 切枪音效：SwitchWeaponSlot 只挂起，这里按刚切到的武器播放
+    if (switchSoundPending_) {
+        switchSoundPending_ = false;
+        if (audio) audio->PlayWeaponSwitch(switchSoundWeapon_);
+        switchSoundWeapon_ = WeaponId::None;
+    }
 
     UpdateRoundFlow(dt, audio);
 

@@ -342,7 +342,9 @@ public:
         WeaponId type = WeaponId::GrenadeHE;
         Team     team = Team::None;
         bool     active = true;
-        bool     bounced = false;   // 已发出落地声（只发一次）
+        bool     landingWarned = false;   // 落点预警已广播（只发一次）
+        int      wallBounces = 0;         // 撞墙反弹次数
+        float    bounceHearCooldown = 0.0f; // 撞墙发声节流
     };
 
     // 烟雾云（遮挡视线）
@@ -842,6 +844,11 @@ private:
     float bombDropDelay_ = 0.0f;   // 丢下后 1 秒内不能被捡回（否则原地立刻捡起，像「丢不掉」）
     float bombDropX_ = 0.0f, bombDropY_ = 0.0f;
     bool  playerHoldingC4_ = false; // 玩家把 C4 拿在手上（按 5）
+
+    // 切枪音效：SwitchWeaponSlot 没有 AudioManager 参数（内部切换/按键都可能调用），
+    // 先把「刚切到的武器」挂起，由 Update(audio) 统一播放。
+    bool     switchSoundPending_ = false;
+    WeaponId switchSoundWeapon_ = WeaponId::None;
 
     // CT 对「掉落 C4」的情报（像敌人情报一样会过期）
     bool  bombIntel_ = false;

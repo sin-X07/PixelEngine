@@ -61,6 +61,24 @@
 CC BY 4.0 素材在使用时需保留署名。本项目通过本文件与
 [`tools/ASSET_SPEC.md`](../../tools/ASSET_SPEC.md) 第 5 节进行署名。
 
+## 切枪音效（`switch_*.wav`）
+
+按武器类别取段，素材来自 **Freesound**，全部为 **CC0 1.0（公共领域）**，
+裁剪为 44.1kHz / 16bit / 单声道、峰值 -1 dBFS。原始下载与候选素材见
+`prev_assets/weapon_switch_sounds/`。
+
+| 文件 | 素材 | 链接 |
+|---|---|---|
+| `switch_pistol.wav` | Pistol Draw Unholster by nioczkus | https://freesound.org/s/377145/ |
+| `switch_smg.wav` | Rifle_Equip1 by BaggoNotes | https://freesound.org/s/784753/ |
+| `switch_rifle.wav` | Generic Rifle Cock by GameWithBepis | https://freesound.org/s/561471/ |
+| `switch_sniper.wav` | Barrett M82A1 Charging Handle by qubodup | https://freesound.org/s/855598/ |
+| `switch_shotgun.wav` | Shotgun Pump by Dentrabert | https://freesound.org/s/673320/ |
+| `switch_mg.wav` | Gun draw holster by huddwink | https://freesound.org/s/239959/ |
+| `switch_knife.wav` | Knife Draw by neilsher | https://freesound.org/s/411741/ |
+| `switch_grenade.wav` | Equip Item, Weapon or Armor (metallic) by harrisonlace | https://freesound.org/s/829499/ |
+| `switch_c4.wav` | Equip Item, Weapon or Armor (metallic) by harrisonlace | https://freesound.org/s/829499/ |
+
 ## 其他音效
 
 `ui_*`、`music_*`、`reload_*`、`melee_*`、`throw_*`、`fx_*`、`bomb_*`、`round_*`、

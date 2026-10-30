@@ -109,6 +109,7 @@ set(SOURCES
     CS2D/TacticalIntel.cpp
     CS2D/SoundEvents.hpp
     CS2D/CS2DGameSound.cpp
+    CS2D/NadePhysics.hpp
     CS2D/CS2DGameBomb.cpp
     CS2D/CS2DGameSquad.cpp
     CS2D/CS2DGameObjective.cpp

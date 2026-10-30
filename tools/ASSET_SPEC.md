@@ -231,11 +231,28 @@
 | `sfx_footstep.mp3` | 脚步 |
 | `sfx_equip.mp3` | 购买装备 |
 
+**切枪音效**（`switch_*.wav`，按武器类别，切到该类任意武器时播放）：
+
+| 文件 | 适用武器类别 |
+|---|---|
+| `switch_knife.wav` | 近战（匕首） |
+| `switch_pistol.wav` | 手枪 / 电击枪 |
+| `switch_smg.wav` | 冲锋枪 |
+| `switch_rifle.wav` | 步枪 |
+| `switch_sniper.wav` | 狙击枪 |
+| `switch_shotgun.wav` | 霰弹枪 |
+| `switch_mg.wav` | 机枪 |
+| `switch_grenade.wav` | 投掷物（手雷槽） |
+| `switch_c4.wav` | C4 |
+
 ### 5.3 素材来源与授权
 
 新的枪声来自 Freesound 素材包 **“Real Gun Sounds” by areniporgen**（pack 38798）。
 其中 `SIG 716` 与 `S&W M&P 9` 两段为 **CC BY 4.0**，其余为 **CC0**。
-逐条来源、链接与授权见 `assets/audio/CREDITS.md`。
+
+切枪音效来自 Freesound 的若干 **CC0** 素材（手枪拔出 / 拉栓 / 拉机柄 /
+霰弹枪上膛 / 匕首出鞘 / 金属装备），逐条来源、链接与授权见
+`assets/audio/CREDITS.md`，原始下载文件在 `prev_assets/weapon_switch_sounds/`。
 
 缺失时 `AudioManager::loadChunk` 返回空指针，播放静默，**不会崩溃**；启动日志会打印
 `[Audio] 缺失: <路径>`，并在最后汇总 `[Asset] 音效缺失 N 项`。

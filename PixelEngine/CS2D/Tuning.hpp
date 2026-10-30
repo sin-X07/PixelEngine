@@ -72,6 +72,15 @@ constexpr float NadeThrowMin     = 90.0f;    // 投掷最小距离
 constexpr float NadeThrowMax     = 230.0f;   // 投掷最大距离
 constexpr float NadeCooldown     = 7.0f;     // 两次投掷间隔
 
+// ---------------- 投掷物撞墙反弹 ----------------
+// 撞墙后沿法线反弹，速度乘以恢复系数（动能按 v² 衰减）。
+// 0.45 ≈ 每次撞墙丢掉 80% 动能，既有明显反弹又不会把雷弹回投掷者脚下。
+constexpr float NadeBounceRestitution  = 0.45f;
+// 反弹后速度低于此值就直接停下，避免在墙角里高频抖动
+constexpr float NadeMinBounceSpeed     = 28.0f;
+// 连续撞墙时「撞墙声」听觉事件的节流（秒）
+constexpr float NadeBounceHearCooldown = 0.12f;
+
 // ---------------- 决策 ----------------
 constexpr float CloseCombatRange = 180.0f;   // 低于此距离交给战术执行器（不寻路）
 constexpr float AnchorHoldRange  = 260.0f;   // 断后位超出此距离不主动追击

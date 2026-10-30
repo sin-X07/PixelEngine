@@ -60,6 +60,27 @@ const WeaponFireAsset kWeaponFireAssets[] = {
     { WeaponId::Negev,        "assets/audio/fire_negev.wav" },
 };
 
+// 武器类别 → 切枪音效。切到该类别任意一把武器时播放，
+// 让「掏出步枪」和「掏出手枪」听起来不一样。
+struct WeaponSwitchAsset {
+    WeaponClass cls;
+    const char* path;
+};
+
+const WeaponSwitchAsset kWeaponSwitchAssets[] = {
+    { WeaponClass::Melee,      "assets/audio/switch_knife.wav" },
+    { WeaponClass::Pistol,     "assets/audio/switch_pistol.wav" },
+    { WeaponClass::SMG,        "assets/audio/switch_smg.wav" },
+    { WeaponClass::Rifle,      "assets/audio/switch_rifle.wav" },
+    { WeaponClass::Sniper,     "assets/audio/switch_sniper.wav" },
+    { WeaponClass::Shotgun,    "assets/audio/switch_shotgun.wav" },
+    { WeaponClass::MachineGun, "assets/audio/switch_mg.wav" },
+    { WeaponClass::Grenade,    "assets/audio/switch_grenade.wav" },
+    { WeaponClass::Bomb,       "assets/audio/switch_c4.wav" },
+    // 电击枪没有独立切枪声，按手枪处理
+    { WeaponClass::ZeusGun,    "assets/audio/switch_pistol.wav" },
+};
+
 } // namespace
 
 bool AudioManager::Initialize() {
@@ -136,6 +157,14 @@ bool AudioManager::Initialize() {
         weaponFire_[static_cast<size_t>(asset.id)] = loadChunk(asset.path, asset.path);
     }
 
+    // ---- 切枪音效（按武器类别）----
+    for (const auto& asset : kWeaponSwitchAssets) {
+        const size_t idx = static_cast<size_t>(asset.cls);
+        if (idx < weaponSwitch_.size()) {
+            weaponSwitch_[idx] = loadChunk(asset.path, asset.path);
+        }
+    }
+
     if (failedAudio > 0) {
         std::cerr << "[Asset] 音效缺失 " << failedAudio
                   << " 项，请参照 tools/ASSET_SPEC.md 补齐" << std::endl;
@@ -188,6 +217,9 @@ void AudioManager::Clean() {
 
     // 分武器枪声
     for (auto& chunk : weaponFire_) {
+        if (chunk) { Mix_FreeChunk(chunk); chunk = nullptr; }
+    }
+    for (auto& chunk : weaponSwitch_) {
         if (chunk) { Mix_FreeChunk(chunk); chunk = nullptr; }
     }
 
@@ -272,6 +304,12 @@ Mix_Chunk* AudioManager::WeaponFireChunk(WeaponId id) const {
     return weaponFire_[static_cast<size_t>(idx)];
 }
 
+Mix_Chunk* AudioManager::WeaponSwitchChunk(WeaponId id) const {
+    const size_t idx = static_cast<size_t>(WeaponDB::Get(id).cls);
+    if (idx >= weaponSwitch_.size()) return nullptr;
+    return weaponSwitch_[idx];
+}
+
 void AudioManager::PlaySound(SoundEffect effect) {
     if (!audioInitialized) return;
 
@@ -296,6 +334,18 @@ void AudioManager::PlayWeaponFire(WeaponId id) {
     const bool autoWeapon = WeaponDB::Get(id).automatic;
     const int chan = Mix_PlayChannel(autoWeapon ? CHANNEL_AUTO_FIRE : -1,
                                      targetChunk, 0);
+    if (chan < 0) return;
+    Mix_Volume(chan, effectsLevel_);
+    Mix_SetPanning(chan, 255, 255);
+}
+
+void AudioManager::PlayWeaponSwitch(WeaponId id) {
+    if (!audioInitialized) return;
+
+    Mix_Chunk* targetChunk = WeaponSwitchChunk(id);
+    if (!targetChunk) return;
+
+    const int chan = Mix_PlayChannel(-1, targetChunk, 0);
     if (chan < 0) return;
     Mix_Volume(chan, effectsLevel_);
     Mix_SetPanning(chan, 255, 255);
@@ -350,6 +400,11 @@ void AudioManager::PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
 void AudioManager::PlayWeaponFireAt(WeaponId id, float sourceX, float sourceY,
                                     float listenerX, float listenerY) {
     PlayChunkAt(WeaponFireChunk(id), sourceX, sourceY, listenerX, listenerY);
+}
+
+void AudioManager::PlayWeaponSwitchAt(WeaponId id, float sourceX, float sourceY,
+                                      float listenerX, float listenerY) {
+    PlayChunkAt(WeaponSwitchChunk(id), sourceX, sourceY, listenerX, listenerY);
 }
 
 void AudioManager::UpdateVolumes() {

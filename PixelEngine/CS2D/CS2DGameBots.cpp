@@ -625,6 +625,10 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 bot.reloadTimer = 0.0f;
                 EmitSound(SoundEventType::WeaponSwitch, bot.x, bot.y, bot.team,
                           static_cast<int>(i));
+                if (audio) {
+                    audio->PlayWeaponSwitchAt(bot.CurrentWeapon().id, bot.x, bot.y,
+                                              ListenerX(), ListenerY());
+                }
             }
         }
 

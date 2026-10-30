@@ -102,9 +102,13 @@ private:
     // 分武器枪声：按 WeaponId 索引，每把枪对应一段单发素材
     std::array<Mix_Chunk*, static_cast<size_t>(WeaponId::Count)> weaponFire_{};
 
+    // 切枪音效：按 WeaponClass 索引（刀/手枪/冲锋枪/步枪/狙击/霰弹/机枪/投掷物/C4）
+    std::array<Mix_Chunk*, 10> weaponSwitch_{};
+
     // 效果 → 音频块（两个播放入口共用，避免 switch 重复）
     Mix_Chunk* ChunkFor(SoundEffect effect) const;
     Mix_Chunk* WeaponFireChunk(WeaponId id) const;
+    Mix_Chunk* WeaponSwitchChunk(WeaponId id) const;
     void PlayChunkAt(Mix_Chunk* chunk, float sourceX, float sourceY,
                      float listenerX, float listenerY);
 
@@ -140,6 +144,11 @@ public:
     void PlayWeaponFire(WeaponId id);
     void PlayWeaponFireAt(WeaponId id, float sourceX, float sourceY,
                           float listenerX, float listenerY);
+
+    // 切枪：切到某把武器时播放该武器类别的「掏出/上膛」声
+    void PlayWeaponSwitch(WeaponId id);
+    void PlayWeaponSwitchAt(WeaponId id, float sourceX, float sourceY,
+                            float listenerX, float listenerY);
 
     void UpdateVolumes();
 

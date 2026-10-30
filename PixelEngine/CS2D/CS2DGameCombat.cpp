@@ -1,5 +1,6 @@
 #include "CS2DGame.hpp"
 #include "Tuning.hpp"
+#include "NadePhysics.hpp"
 #include "../Audio/AudioManager.hpp"
 #include <iostream>
 #include <cmath>
@@ -408,13 +409,14 @@ void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle, AudioManager* audio
 }
 
 void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
-    // 投掷物飞行 + 引信
+    // 投掷物飞行 + 撞墙反弹 + 引信
     for (auto& g : grenades_) {
         if (!g.active) continue;
 
         g.fuse -= dt;
+        if (g.bounceHearCooldown > 0.0f) g.bounceHearCooldown -= dt;
 
-        // 子步进移动：每步不超过半个 tile，避免高速穿过薄墙
+        // 子步进：每步不超过半个 tile，避免高速穿过薄墙
         const float speed = std::sqrt(g.vx * g.vx + g.vy * g.vy);
         const float halfTile = static_cast<float>(world_->GetTileWidth()) * 0.5f;
         int steps = 1;
@@ -424,22 +426,55 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
         steps = std::min(steps, 16);
         const float sub = dt / static_cast<float>(steps);
 
-        bool blocked = false;
         for (int st = 0; st < steps; ++st) {
-            const float nx = g.x + g.vx * sub;
-            const float ny = g.y + g.vy * sub;
+            if (g.vx == 0.0f && g.vy == 0.0f) break;
 
+            const float oldX = g.x, oldY = g.y;
+            const float nx = oldX + g.vx * sub;
+            const float ny = oldY + g.vy * sub;
+
+            // 分轴判定：只把「被墙挡住」的分量反弹，切向速度保留（贴着墙滑行）。
+            // 例：斜着撞到竖直墙面 → vx 反转并按恢复系数衰减，vy 不变。
+            bool hitX = false, hitY = false;
             int row = 0, col = 0;
-            world_->WorldToTile(nx, ny, row, col);
-            if (world_->IsBlockingBullet(row, col)) {
-                blocked = true;   // 到墙就停，不进入墙体
-                break;
+            if (g.vx != 0.0f) {
+                world_->WorldToTile(nx, oldY, row, col);
+                hitX = world_->IsBlockingBullet(row, col);
+                if (!hitX) g.x = nx;
             }
-            g.x = nx;
-            g.y = ny;
-        }
-        if (blocked) {
-            g.vx = g.vy = 0.0f;
+            if (g.vy != 0.0f) {
+                world_->WorldToTile(g.x, ny, row, col);
+                hitY = world_->IsBlockingBullet(row, col);
+                if (!hitY) g.y = ny;
+            }
+            // 斜向穿角：两个单轴都可行，但对角格是墙 → 回退并双轴反弹
+            if (!hitX && !hitY && g.vx != 0.0f && g.vy != 0.0f) {
+                world_->WorldToTile(nx, ny, row, col);
+                if (world_->IsBlockingBullet(row, col)) {
+                    g.x = oldX;
+                    g.y = oldY;
+                    hitX = hitY = true;
+                }
+            }
+
+            if (hitX || hitY) {
+                const float before = std::sqrt(g.vx * g.vx + g.vy * g.vy);
+                ApplyNadeBounce(g.vx, g.vy, hitX, hitY,
+                                Tuning::NadeBounceRestitution,
+                                Tuning::NadeMinBounceSpeed);
+                const float after = std::sqrt(g.vx * g.vx + g.vy * g.vy);
+                ++g.wallBounces;
+
+                // 撞墙同样会发出听觉信息（附近敌人能据此判断投掷物位置）
+                if (g.bounceHearCooldown <= 0.0f) {
+                    g.bounceHearCooldown = Tuning::NadeBounceHearCooldown;
+                    EmitSound(SoundEventType::GrenadeBounce, g.x, g.y, g.team);
+                    std::cout << "[Nade] 撞墙反弹 (" << static_cast<int>(g.x) << ","
+                              << static_cast<int>(g.y) << ") 速度 "
+                              << static_cast<int>(before) << " → "
+                              << static_cast<int>(after) << std::endl;
+                }
+            }
         }
 
         // 地面摩擦（指数衰减；v0/friction ≈ 总投掷距离）
@@ -448,17 +483,16 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
         g.x = std::clamp(g.x, 0.0f, world_->GetMapPixelW() - 1.0f);
         g.y = std::clamp(g.y, 0.0f, world_->GetMapPixelH() - 1.0f);
 
-        // 落地预警：撞墙或速度已经降下来（即将停住）时发出一次位置提示，
-        // 附近敌人会躲开落点。阈值取 200 而不是几十，是为了给反应留出
-        // 约 1 秒的窗口（引信 1.4s，投掷后 ~0.4s 就会降到这个速度）。
-        if (!g.bounced) {
+        // 落点预警：速度降下来（即将停住）时广播一次位置，附近敌人会躲开落点。
+        // 阈值取 200 而不是几十，是为了给反应留出约 1 秒的窗口。
+        if (!g.landingWarned) {
             const float spd2 = g.vx * g.vx + g.vy * g.vy;
-            if (blocked || spd2 < 200.0f * 200.0f) {
-                g.bounced = true;
+            if (spd2 < 200.0f * 200.0f) {
+                g.landingWarned = true;
                 EmitSound(SoundEventType::GrenadeBounce, g.x, g.y, g.team);
-                std::cout << "[Nade] 落地 (" << static_cast<int>(g.x) << ","
+                std::cout << "[Nade] 落点 (" << static_cast<int>(g.x) << ","
                           << static_cast<int>(g.y) << ") → 落点信息已广播"
-                          << std::endl;
+                          << "（反弹 " << g.wallBounces << " 次）" << std::endl;
             }
         }
 
