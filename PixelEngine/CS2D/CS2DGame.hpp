@@ -87,6 +87,7 @@ public:
         AnimState animState = AnimState::Idle;
         float     animTimer = 0.0f;
         int       weaponSlot = 0;          // 活动槽位 0=主 1=副 2=近战 3=投掷 4=C4
+        int       prevWeaponSlot = 1;      // 切到投掷物之前持有的槽位（投掷物用完后自动切回）
         int       spriteKey  = 0;
         float     deathTimer = 0.0f;
         float     shootAnimTimer = 0.0f;
@@ -344,14 +345,28 @@ public:
         bool     active = true;
         bool     landingWarned = false;   // 落点预警已广播（只发一次）
         int      wallBounces = 0;         // 撞墙反弹次数
+        float    spin = 0.0f;             // 飞行旋转角（度）
         float    bounceHearCooldown = 0.0f; // 撞墙发声节流
     };
 
     // 烟雾云（遮挡视线）
+    // 燃烧弹 / 燃烧瓶留下的火区
+    struct FireZone {
+        float x = 0.0f, y = 0.0f;
+        float radius = 58.0f;
+        float life = 7.0f;
+        float maxLife = 7.0f;
+        float age = 0.0f;
+        float seed = 0.0f;
+    };
     struct SmokeCloud {
         float x = 0.0f, y = 0.0f;
         float radius = 70.0f;
-        float life = 12.0f;
+        float life = 12.0f;        // 剩余寿命
+        float maxLife = 12.0f;     // 初始寿命（用于淡出）
+        float age = 0.0f;          // 已存在时间（用于爆开 + 向外扩张）
+        float expandTime = 1.6f;   // 从中心扩散到 full radius 的时间
+        float seed = 0.0f;         // 每团烟的随机种子（形状/旋转）
     };
 
     // 击杀播报条目
@@ -409,6 +424,7 @@ public:
     const std::vector<Bullet>& GetBullets() const { return bullets_; }
     const std::vector<Grenade>& GetGrenades() const { return grenades_; }
     const std::vector<SmokeCloud>& GetSmokes() const { return smokes_; }
+    const std::vector<FireZone>& GetFires() const { return fires_; }
     const std::vector<KillFeedEntry>& GetKillFeed() const { return killFeed_; }
     std::vector<ScoreRow> BuildScoreboard() const;
 
@@ -712,6 +728,8 @@ private:
     std::vector<Bullet> bullets_;
     std::vector<Grenade> grenades_;
     std::vector<SmokeCloud> smokes_;
+    std::vector<FireZone>    fires_;
+    float fireTickTimer_ = 0.0f;
 
     // 手雷爆炸特效（仅用于渲染扩散圆环）
     struct BlastFx {

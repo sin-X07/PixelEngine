@@ -1,0 +1,21 @@
+# 统一换行：文本文件入库统一为 LF，检出时按平台转换
+* text=auto
+
+# 二进制素材：不做换行/编码转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.bmp binary
+*.gif binary
+*.webp binary
+*.ogg binary
+*.wav binary
+*.mp3 binary
+*.ttf binary
+*.ttc binary
+*.otf binary
+*.zip binary
+*.glb binary
+
+# 脚本强制 LF，避免 macOS 上出现 \r 导致执行失败
+*.sh text eol=lf

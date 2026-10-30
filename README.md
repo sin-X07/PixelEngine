@@ -62,6 +62,14 @@ C++17 / SDL2 的俯视角 2D 战术射击游戏，玩法对标 Steam 的 **CS2D*
 - **拆包**：按住 `E` 期间**不能射击**；松开或离开范围，进度**立刻归零**。
 - **投掷物**：一局最多带 **4 个**；闪光可带 **2 个**，其它每种只能 1 个；
   每个投掷物**只能用一次**，用掉即从背包移除。按 `4` 在背包内的投掷物之间循环切换。
+  **最后一颗投掷物用完后会自动切回切投掷物之前持有的武器槽**，不会空手。
+- **烟雾弹**：爆炸后烟雾从中心向外扩散成多层柔和烟团（不是一次性出现的圆盘），
+  会遮挡视线与敌人可见性，并在寿命末尾淡出。
+- **燃烧弹 / 燃烧瓶**：落地后炸开并留下一片**持续燃烧的火区**（约 7 秒）：
+  范围内所有角色每 0.25 秒受 3 点伤害（约 12 HP/s，含投掷者自己）；
+  火区有闪烁的火焰、向上飘散的火星动画，并播放点燃音效。
+- **诱饵弹**：落地引爆时播放独立的爆炸音效。
+- **匕首**：挥砍现在会播放 `melee_knife.wav`（之前枚举未接上导致无声）。
 - **武器库（36 种，照抄 CS2）**：
   - **手枪**：Glock-18 / USP-S / P2000 / Dual Berettas / P250 / Five-SeveN /
     Tec-9 / CZ75-Auto / Desert Eagle / R8 Revolver / Zeus x27（1 发无备弹）
@@ -237,6 +245,46 @@ cmake --build build
 .\build\EngineApp.exe
 ```
 
+### macOS 上构建（给 Mac 协作同学）
+
+项目已经用 CMake + SDL2 FetchContent，macOS 上不需要改代码路径或手装 SDL，
+只需 Xcode 命令行工具和 CMake：
+
+```bash
+xcode-select --install          # 若未安装
+brew install cmake              # 或从 cmake.org 下载
+
+git clone https://github.com/sin-X07/PixelEngine.git
+cd PixelEngine
+cmake -S PixelEngine -B build-macos -DCMAKE_BUILD_TYPE=Release
+cmake --build build-macos --parallel
+./build-macos/EngineApp
+```
+
+说明：
+- SDL2 / SDL2_mixer / SDL2_image 首次 configure 时自动下载（需要网络），之后离线可用；
+- 构建后会自动把仓库根的 `assets/` 复制到可执行文件旁；
+- 中文界面自动使用 macOS 自带 PingFang / 冬青黑体，无需安装字体；
+- macOS 上 LLM 教练走桩实现（`LLMBotController_stub.cpp`），自动回退规则引擎；
+  其余玩法、渲染、音频与 Windows 一致；
+- 键盘布局切换是 Win32 专属功能，macOS 上为空操作，不影响操作。
+
+### 多人协作（Windows + macOS）
+
+1. **加协作者**：GitHub 仓库 → Settings → Collaborators → Add people，
+   对方接受邀请后即可直接 push / 开 PR。
+2. **分支约定**：`main` 作为稳定线；每个人在自己的 `feature/xxx` 分支开发，
+   完成后开 Pull Request 合并回 `main`（仓库已用过 PR #4 的流程）。
+3. **同步习惯**：开始改之前先 `git pull --rebase origin main`；
+   提交后尽快 `git push`，避免本地 main 和远端分叉。
+4. **不要提交构建目录**：`build-*/` 已在 `.gitignore` 中；
+   Windows 用 `build-release`，macOS 用 `build-macos`，互不干扰。
+5. **换行统一**：仓库根的 `.gitattributes` 已声明文本 LF、素材二进制，
+   Windows/macOS 交叉提交不会产生整文件换行 diff。
+6. **素材**：`assets/` 是跨平台共用的，路径全部用 `/`，不要写盘符；
+   大于约 50MB 的模型/视频不要进仓库（`llm_bot/models` 已忽略）。
+
+### 调试参数
 ### 调试参数
 
 ```powershell

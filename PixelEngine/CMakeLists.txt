@@ -128,8 +128,14 @@ set(SOURCES
     ThirdParty/imgui/imgui_widgets.cpp
     ThirdParty/imgui/backends/imgui_impl_sdl2.cpp
     ThirdParty/imgui/backends/imgui_impl_sdlrenderer2.cpp
-    LLM/LLMBotController.cpp
 )
+
+if(WIN32)
+    list(APPEND SOURCES LLM/LLMBotController.cpp)
+else()
+    # macOS / Linux: WinHTTP 不可用，使用桩实现（LLM 教练自动回退规则引擎）
+    list(APPEND SOURCES LLM/LLMBotController_stub.cpp)
+endif()
 
 add_executable(EngineApp ${SOURCES})
 
@@ -143,11 +149,13 @@ target_link_libraries(EngineApp PRIVATE
     SDL2::SDL2
     SDL2_mixer::SDL2_mixer-static
     SDL2_image::SDL2_image-static
-    ws2_32
-    winhttp
 )
 if(WIN32)
-    target_link_libraries(EngineApp PRIVATE opengl32)
+    target_link_libraries(EngineApp PRIVATE ws2_32 winhttp opengl32)
+elseif(APPLE)
+    # Menu3D 使用固定管线 OpenGL（已废弃但可用）
+    find_library(OPENGL_FRAMEWORK OpenGL REQUIRED)
+    target_link_libraries(EngineApp PRIVATE ${OPENGL_FRAMEWORK})
 endif()
 
 # 静态链接 C/C++ 运行库：消除对 libgcc_s_seh-1.dll / libstdc++-6.dll /

@@ -38,6 +38,8 @@ enum class SoundEffect {
     THROW_SMOKE,     // 烟雾弹出手
     FLASH,
     SMOKE,
+    FIRE_IGNITE,     // 燃烧弹点燃
+    DECOY_EXPLODE,   // 诱饵弹爆炸
     BOMB_PLANT,
     BOMB_DEFUSE,
     BOMB_BEEP,
@@ -83,6 +85,8 @@ private:
     Mix_Chunk* throwSmokeSound     = nullptr;
     Mix_Chunk* flashSound = nullptr;
     Mix_Chunk* smokeSound = nullptr;
+    Mix_Chunk* fireIgniteSound = nullptr;
+    Mix_Chunk* decoyExplodeSound = nullptr;
     Mix_Chunk* bombPlantSound = nullptr;
     Mix_Chunk* bombDefuseSound = nullptr;
     Mix_Chunk* bombBeepSound = nullptr;

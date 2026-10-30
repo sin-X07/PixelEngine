@@ -64,6 +64,12 @@ constexpr float DefuseRadius     = 26.0f;   // 拆包半径：必须贴近包点
 constexpr float BombHoldRing     = 85.0f;   // 下包后 T 守包的环形半径
 constexpr float DefuseCoverRing  = 90.0f;   // CT 拆包时其余人的掩护环半径
 constexpr float NadeBlastFxTime  = 0.35f;   // 爆炸特效持续
+
+// 燃烧弹 / 燃烧瓶：落地后形成一片持续燃烧的火区
+constexpr float FireRadius       = 30.0f;   // 火区半径（世界单位）
+constexpr float FireLife         = 7.0f;    // 燃烧持续时间（秒）
+constexpr float FireTickInterval = 0.25f;   // 伤害结算间隔
+constexpr int   FireTickDamage   = 3;       // 每次结算伤害（约 12 HP/s）
 // 闪光弹：致盲时长随距离衰减（贴脸最长、边缘很短）
 constexpr float FlashRadius      = 260.0f;  // 有效半径（超出完全不闪）
 constexpr float FlashMaxBlind    = 3.2f;    // 正中心致盲秒数

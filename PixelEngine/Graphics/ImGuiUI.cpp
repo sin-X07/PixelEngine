@@ -106,16 +106,30 @@ bool ImGuiUI::Initialize(SDL_Window* win, SDL_Renderer* ren) {
     io.Fonts->TexDesiredWidth = 4096;
 
     // 加载中文字体（加载失败则回退 ImGui 内置字体，中文可能显示为方块，但不影响功能）
+#ifdef _WIN32
     const char* fontPaths[] = {
         "C:/Windows/Fonts/msyh.ttc",
         "C:/Windows/Fonts/simhei.ttf",
         "C:/Windows/Fonts/simsun.ttc"
     };
+#else
+    // macOS 系统自带中文字体（PingFang / 冬青黑 / 华文黑体）
+    const char* fontPaths[] = {
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/Library/Fonts/Arial Unicode.ttf"
+    };
+#endif
     // [global] font= 指定路径优先（若有效）
     std::string chosen;
     if (!fontPathOverride.empty()) {
         FILE* f = nullptr;
+#ifdef _WIN32
         if (fopen_s(&f, fontPathOverride.c_str(), "rb") == 0 && f) {
+#else
+        if ((f = fopen(fontPathOverride.c_str(), "rb")) != nullptr) {
+#endif
             fclose(f);
             chosen = fontPathOverride;
         }
@@ -123,7 +137,11 @@ bool ImGuiUI::Initialize(SDL_Window* win, SDL_Renderer* ren) {
     if (chosen.empty()) {
         for (const char* p : fontPaths) {
             FILE* f = nullptr;
+#ifdef _WIN32
             if (fopen_s(&f, p, "rb") == 0 && f) {
+#else
+            if ((f = fopen(p, "rb")) != nullptr) {
+#endif
                 fclose(f);
                 chosen = p;
                 break;

@@ -1488,7 +1488,7 @@ void Engine::Render() {
     if (matchLoading) {
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     } else {
-        SDL_SetRenderDrawColor(renderer, CS2DRenderer::VoidR(), CS2DRenderer::VoidG(), CS2DRenderer::VoidB(), 255);
+        SDL_SetRenderDrawColor(renderer, 18, 26, 36, 255);
     }
     SDL_RenderClear(renderer);
 

@@ -1,14 +1,18 @@
 #include <ctime>
 #include <cstdlib>
+#ifdef _WIN32
 #include <windows.h>
+#endif
 #include <filesystem>
 #include "Engine.hpp"
 #include "Core/PathUtils.hpp"
 
 int main(int argc, char* argv[]) {
     // 设置 Windows 控制台的 UTF-8 编码以支持中文输出
+#ifdef _WIN32
     SetConsoleCP(65001);
     SetConsoleOutputCP(65001);
+#endif
 
     // 以可执行文件所在目录为基准定位资源与存档，
     // 使游戏无论从哪个目录启动都能正确运行（免安装 / 打包友好）。
