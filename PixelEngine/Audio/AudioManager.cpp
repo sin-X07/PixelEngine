@@ -145,6 +145,8 @@ bool AudioManager::Initialize() {
     if (!throwSmokeSound) throwSmokeSound = grenadeThrowSound;
     flashSound          = loadChunk("assets/audio/fx_flash.mp3", "闪光弹");
     smokeSound          = loadChunk("assets/audio/fx_smoke.mp3", "烟雾弹");
+    fireIgniteSound     = loadChunk("assets/audio/fx_ignite.wav", "燃烧弹点燃");
+    decoyExplodeSound   = loadChunk("assets/audio/fx_decoy.wav", "诱饵弹爆炸");
     bombPlantSound      = loadChunk("assets/audio/bomb_plant.wav", "下包");
     bombDefuseSound     = loadChunk("assets/audio/bomb_defuse.wav", "拆包");
     bombBeepSound       = loadChunk("assets/audio/bomb_beep.wav", "C4 滴答");
@@ -209,6 +211,8 @@ void AudioManager::Clean() {
     if (throwSmokeSound && throwSmokeSound != grenadeThrowSound) { Mix_FreeChunk(throwSmokeSound); throwSmokeSound = nullptr; }
     if (flashSound)          { Mix_FreeChunk(flashSound);          flashSound = nullptr; }
     if (smokeSound)          { Mix_FreeChunk(smokeSound);          smokeSound = nullptr; }
+    if (fireIgniteSound)     { Mix_FreeChunk(fireIgniteSound);     fireIgniteSound = nullptr; }
+    if (decoyExplodeSound)   { Mix_FreeChunk(decoyExplodeSound);   decoyExplodeSound = nullptr; }
     if (bombPlantSound)      { Mix_FreeChunk(bombPlantSound);      bombPlantSound = nullptr; }
     if (bombDefuseSound)     { Mix_FreeChunk(bombDefuseSound);     bombDefuseSound = nullptr; }
     if (bombBeepSound)       { Mix_FreeChunk(bombBeepSound);       bombBeepSound = nullptr; }
@@ -327,6 +331,7 @@ Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
             return clickSounds_[static_cast<size_t>(
                 std::clamp(clickSoundIndex_, 0, kClickSoundCount - 1))];
         case SoundEffect::DAGGER_FIRE:      return daggerSound;
+        case SoundEffect::KATANA_SWING:     return daggerSound;
         case SoundEffect::HIT:              return hitSound;
         case SoundEffect::KILL:             return killSound;
 
@@ -338,6 +343,8 @@ Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
         case SoundEffect::GRENADE_EXPLODE:  return grenadeExplodeSound;
         case SoundEffect::FLASH:        return flashSound;
         case SoundEffect::SMOKE:            return smokeSound;
+        case SoundEffect::FIRE_IGNITE:      return fireIgniteSound;
+        case SoundEffect::DECOY_EXPLODE:    return decoyExplodeSound;
         case SoundEffect::BOMB_PLANT:       return bombPlantSound;
         case SoundEffect::BOMB_DEFUSE:      return bombDefuseSound;
         case SoundEffect::BOMB_BEEP:        return bombBeepSound;

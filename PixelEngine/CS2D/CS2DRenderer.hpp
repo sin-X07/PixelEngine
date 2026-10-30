@@ -58,6 +58,8 @@ public:
 
     // 子弹 / 准星
     void DrawBullet(float x, float y, float vx, float vy);
+    // 飞行中的投掷物：按类型画对应的旋转图标（替代原来的 bullet 占位）
+    void DrawThrownGrenade(int weaponId, float worldX, float worldY, float spinDeg);
     // 掉在地上的武器：用 _d 图标（与 HUD 同一套素材），带轻微上下浮动
     // angleDeg：平铺朝向（不浮动）
     void DrawDroppedWeapon(int weaponId, float worldX, float worldY, float angleDeg);
@@ -100,7 +102,11 @@ public:
     void DrawVisionFog(float playerX, float playerY, float aimAngle);
 
     // 烟雾云 / 闪光致盲整屏覆盖
-    void DrawSmokeCloud(float worldX, float worldY, float worldRadius, Uint8 alpha);
+    void DrawSmokeCloud(float worldX, float worldY, float worldRadius,
+                        float age, float expandTime, float life, float maxLife, float seed);
+    // 燃烧弹火区：焦黑地面 + 闪烁的橙色火团
+    void DrawFireZone(float worldX, float worldY, float worldRadius,
+                      float age, float life, float maxLife, float seed);
     void DrawFlashOverlay(Uint8 alpha);
 
     // 命中反馈（屏幕坐标，X 形准星）与受伤红色边缘
@@ -178,6 +184,8 @@ private:
     std::vector<SDL_Texture*> weaponIcons_;
 
     SDL_Texture* bulletTex_ = nullptr;
+    SDL_Texture* smokeTex_  = nullptr;   // 程序生成的柔和烟雾贴图（fBm 噪声）
+    void CreateSmokeTexture();
 
     // 雷达底图：把地图背景（或碰撞网格）一次性烘焙成纹理，避免每帧逐像素采样
     SDL_Texture* radarMapTex_ = nullptr;
@@ -209,9 +217,4 @@ private:
 
     void CreateVisionTexture();   // 创建/重建视野 streaming 纹理
 
-public:
-    // 地图外背景色：与视野雾色一致，避免地图边界外出现一条突兀的深色带。
-    static constexpr Uint8 VoidR() { return VISION_FOG_R; }
-    static constexpr Uint8 VoidG() { return VISION_FOG_G; }
-    static constexpr Uint8 VoidB() { return VISION_FOG_B; }
 };

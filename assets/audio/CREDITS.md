@@ -106,7 +106,19 @@ CC BY 4.0 素材在使用时需保留署名。本项目通过本文件与
   - `ui_hover.ogg` ← `rollover2.ogg`（0.06s）
 - 设置 → 音频 →「按钮音效」可切换 5 种点击声（切换时立即试听）。
 - 原始压缩包：`prev_assets/ui_sounds/kenney_ui-audio.zip`
+## 爆炸 / 匕首 / 燃烧音效（本次替换）
+
+- 素材：**150 Combat Sound Effects** by untamedpixels（CC0 1.0 合集）
+- 来源：https://opengameart.org/content/150-combat-sound-effects
+- 原始压缩包：`prev_assets/combat_sfx/150gameeffectsounds.zip`
+- 使用：
+  - `fx_explosion.wav` ← `low_frequency_explosion_000`（高爆雷爆炸，2s）
+  - `fx_decoy.wav` ← `explosion_crunch_000`（诱饵弹爆炸，0.78s）
+  - `fx_ignite.wav` ← `Fire Spell Impact 1`（燃烧弹点燃）
+  - `melee_knife.wav` ← `knife_slice`（匕首挥砍，0.51s）
+- 授权：CC0 1.0，合集内为多位作者的 CC0 素材，无需署名（见包内 LICENSES.txt）。
+
 ## 其他音效
 
-`reload_*`、`melee_*`、`throw_*`、`fx_*`、`bomb_*`、`round_*`、`sfx_*`
+`reload_*`、`throw_*`、`fx_flash`、`fx_smoke`、`bomb_*`、`round_*`、`sfx_*`
 为项目原有素材，本次只做了统一重命名，未改变内容。

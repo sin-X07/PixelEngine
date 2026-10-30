@@ -89,6 +89,10 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
 void CS2DGame::ResetToNewMatch() {
     bots_.clear();
     bullets_.clear();
+    grenades_.clear();
+    smokes_.clear();
+    fires_.clear();
+    fireTickTimer_ = 0.0f;
     playerKills_ = 0;
     playerDeaths_ = 0;
     matchOverAnnounced_ = false;
@@ -478,6 +482,11 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
         return;
     }
 
+    // 记录「切到投掷物之前」的槽位：最后一颗雷扔完后自动切回这里
+    if (slot == 3 && player_.weaponSlot != 3) {
+        player_.prevWeaponSlot = player_.weaponSlot;
+    }
+
     // 切走前把当前武器的弹药写回它自己的槽位
     player_.SaveAmmoToSlot();
 
@@ -769,12 +778,15 @@ void CS2DGame::Render(int viewW, int viewH) {
     renderer_->UpdateCamera(camX, camY, viewW, viewH);
     renderer_->DrawWorld();
 
-    // 烟雾画在地面层：角色、掉落物、目标标记都在它之上。
-    // 视觉上不再"盖死"一切；但 SegmentBlockedBySmoke 仍然阻挡视线与敌人剔除。
+    // 烟雾画在地面层（视野雾之下）：角色、掉落物、目标标记都在它之上
     for (const auto& s : smokes_) {
-        const float t = std::clamp(s.life / 12.0f, 0.0f, 1.0f);
-        renderer_->DrawSmokeCloud(s.x, s.y, s.radius,
-                                  static_cast<Uint8>(150.0f * std::min(1.0f, t * 3.0f)));
+        renderer_->DrawSmokeCloud(s.x, s.y, s.radius, s.age, s.expandTime,
+                                  s.life, s.maxLife, s.seed);
+    }
+
+    // 燃烧弹留下的火区（在地面层、角色之下）
+    for (const auto& f : fires_) {
+        renderer_->DrawFireZone(f.x, f.y, f.radius, f.age, f.life, f.maxLife, f.seed);
     }
 
     auto fillParams = [](const Player& p, SpriteDrawParams& sp) {
@@ -822,7 +834,7 @@ void CS2DGame::Render(int viewW, int viewH) {
     // 投掷物
     for (const auto& g : grenades_) {
         if (!g.active) continue;
-        renderer_->DrawBullet(g.x, g.y, g.vx, g.vy);
+        renderer_->DrawThrownGrenade(static_cast<int>(g.type), g.x, g.y, g.spin);
     }
 
     // 目标物标记（包点范围）：画在角色之下、遮罩之上，保证始终可辨
@@ -884,6 +896,7 @@ void CS2DGame::Render(int viewW, int viewH) {
     if (player_.alive) {
         renderer_->DrawVisionFog(player_.x, player_.y, player_.aimAngle);
     }
+
 
     renderer_->DrawOverlay();
 

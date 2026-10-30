@@ -387,6 +387,18 @@ void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle, AudioManager* audio
     // 每个投掷物一局只能用一次：用掉就从背包移除
     thrower.ConsumeActiveGrenade();
 
+    // 最后一颗投掷物用完后，自动回到切投掷物之前的武器槽
+    if (&thrower == &player_ && thrower.weaponSlot == 3 && thrower.grenadeCount <= 0) {
+        int back = thrower.prevWeaponSlot;
+        if (back < 0 || back > 2 || thrower.weapons[back] == WeaponId::None) {
+            back = -1;
+            for (int s = 0; s <= 2; ++s) {
+                if (thrower.weapons[s] != WeaponId::None) { back = s; break; }
+            }
+        }
+        if (back >= 0) SwitchWeaponSlot(back);
+    }
+
     // 投掷动作本身会出声（附近敌人能听到，见 Tuning::HearThrowRadius）
     {
         const int idx = (&thrower == &player_)
@@ -478,6 +490,10 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
         }
 
         // 地面摩擦（指数衰减；v0/friction ≈ 总投掷距离）
+        // 飞行时缓慢自转（停下后保持角度）
+        const float spinSpeed = std::sqrt(g.vx * g.vx + g.vy * g.vy);
+        if (spinSpeed > 8.0f) g.spin = std::fmod(g.spin + spinSpeed * dt * 1.4f, 360.0f);
+
         g.vx -= g.vx * 2.0f * dt;
         g.vy -= g.vy * 2.0f * dt;
         g.x = std::clamp(g.x, 0.0f, world_->GetMapPixelW() - 1.0f);
@@ -506,10 +522,34 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
                     grenades_.end());
 
     // 烟雾云寿命
-    for (auto& s : smokes_) s.life -= dt;
+    for (auto& s : smokes_) { s.life -= dt; s.age += dt; }
     smokes_.erase(std::remove_if(smokes_.begin(), smokes_.end(),
                                  [](const SmokeCloud& s) { return s.life <= 0.0f; }),
                   smokes_.end());
+
+    // 火区寿命 + 持续伤害（燃烧弹 / 燃烧瓶）
+    for (auto& f : fires_) { f.life -= dt; f.age += dt; }
+    fires_.erase(std::remove_if(fires_.begin(), fires_.end(),
+                              [](const FireZone& f) { return f.life <= 0.0f; }),
+                 fires_.end());
+
+    fireTickTimer_ -= dt;
+    if (fireTickTimer_ <= 0.0f) {
+        fireTickTimer_ = Tuning::FireTickInterval;
+        auto burn = [&](Player& p) {
+            if (!p.alive) return;
+            for (const auto& f : fires_) {
+                const float dx = p.x - f.x;
+                const float dy = p.y - f.y;
+                if (dx * dx + dy * dy <= f.radius * f.radius) {
+                    ApplyDamage(p, Tuning::FireTickDamage);
+                    break;
+                }
+            }
+        };
+        burn(player_);
+        for (auto& b : bots_) burn(b);
+    }
 
     // 闪光致盲衰减
     if (flashTimer_ > 0.0f) {
@@ -597,10 +637,34 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
             s.x = g.x;
             s.y = g.y;
             s.radius = 70.0f;
+            s.maxLife = 12.0f;
+            s.age = 0.0f;
+            s.expandTime = 1.6f;
+            s.seed = std::fmod(g.x * 0.013f + g.y * 0.017f, 1.0f);
             s.life = 12.0f;
             smokes_.push_back(s);
             if (audio) audio->PlaySound(SoundEffect::SMOKE);
             EmitSound(SoundEventType::SmokePop, g.x, g.y, g.team);
+            break;
+        }
+        case WeaponId::GrenadeMolotov:
+        case WeaponId::GrenadeIncendiary: {
+            FireZone f;
+            f.x = g.x;
+            f.y = g.y;
+            f.radius = Tuning::FireRadius;
+            f.life = Tuning::FireLife;
+            f.maxLife = Tuning::FireLife;
+            f.age = 0.0f;
+            f.seed = std::fmod(g.x * 0.011f + g.y * 0.019f, 1.0f);
+            fires_.push_back(f);
+            if (audio) audio->PlaySound(SoundEffect::FIRE_IGNITE);
+            EmitSound(SoundEventType::Explosion, g.x, g.y, g.team);
+            break;
+        }
+        case WeaponId::GrenadeDecoy: {
+            if (audio) audio->PlaySound(SoundEffect::DECOY_EXPLODE);
+            EmitSound(SoundEventType::Explosion, g.x, g.y, g.team);
             break;
         }
         default:

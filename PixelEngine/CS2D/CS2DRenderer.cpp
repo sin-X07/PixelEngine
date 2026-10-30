@@ -7,6 +7,45 @@
 #include <iostream>
 #include <filesystem>
 
+namespace {
+// ---- 程序化烟雾噪声（value noise + fBm），用于生成柔和的烟雾贴图 ----
+float SmokeHash(int x, int y) {
+    uint32_t h = static_cast<uint32_t>(x) * 374761393u +
+                 static_cast<uint32_t>(y) * 668265263u;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    h ^= h >> 16;
+    return static_cast<float>(h & 0x00FFFFFFu) / 16777215.0f;
+}
+
+float SmokeSmooth(float t) { return t * t * (3.0f - 2.0f * t); }
+
+float SmokeNoise(float x, float y) {
+    const int xi = static_cast<int>(std::floor(x));
+    const int yi = static_cast<int>(std::floor(y));
+    const float fx = x - static_cast<float>(xi);
+    const float fy = y - static_cast<float>(yi);
+    const float a = SmokeHash(xi, yi);
+    const float b = SmokeHash(xi + 1, yi);
+    const float c = SmokeHash(xi, yi + 1);
+    const float d = SmokeHash(xi + 1, yi + 1);
+    const float u = SmokeSmooth(fx);
+    const float v = SmokeSmooth(fy);
+    const float ab = a + (b - a) * u;
+    const float cd = c + (d - c) * u;
+    return ab + (cd - ab) * v;
+}
+
+float SmokeFbm(float x, float y) {
+    float total = 0.0f, amp = 0.55f, freq = 1.0f;
+    for (int i = 0; i < 4; ++i) {
+        total += SmokeNoise(x * freq, y * freq) * amp;
+        freq *= 2.07f;
+        amp *= 0.5f;
+    }
+    return total;
+}
+} // namespace
+
 // ============================================================================
 // 初始化 / 清理
 // ============================================================================
@@ -74,6 +113,7 @@ void CS2DRenderer::Clean() {
     weaponIcons_.clear();
 
     if (bulletTex_) { SDL_DestroyTexture(bulletTex_); bulletTex_ = nullptr; }
+    if (smokeTex_)  { SDL_DestroyTexture(smokeTex_);  smokeTex_  = nullptr; }
 
     if (visionTex_) { SDL_DestroyTexture(visionTex_); visionTex_ = nullptr; }
     visionPixels_.clear();
@@ -173,6 +213,7 @@ void CS2DRenderer::SetWorld(const CS2DWorld* world) {
     }
 
     bulletTex_ = LoadTexture("assets/cs2d/sprites/bullet.png");
+    CreateSmokeTexture();
 
     BuildRadarTexture();   // 用地图内容烘焙雷达底图
 
@@ -512,6 +553,7 @@ void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float 
     const float degOffset = def.degOffset;
     const float weaponSz  = (weaponSlot == 1) ? 3.0f
                           : (weaponSlot == 2) ? 4.5f
+                          : (weaponSlot == 3) ? 2.2f   // 投掷物手持：缩小
                           : 4.0f;
 
     // 武器绘制在精灵前方偏移
@@ -776,6 +818,27 @@ void CS2DRenderer::DrawBullet(float x, float y, float vx, float vy) {
     SDL_RenderCopyEx(renderer_, bulletTex_, nullptr, &dst, angle, nullptr, SDL_FLIP_NONE);
 }
 
+void CS2DRenderer::DrawThrownGrenade(int weaponId, float worldX, float worldY,
+                                  float spinDeg) {
+    if (!renderer_) return;
+    SDL_Texture* tex = nullptr;
+    if (weaponId > 0 && weaponId < static_cast<int>(weaponSprites_.size())) {
+        tex = weaponSprites_[weaponId];
+    }
+    if (!tex) tex = bulletTex_;
+    if (!tex) return;
+
+    // 地面投影，避免看起来像浮在空中
+    DrawCircleFilled(worldX + 0.6f, worldY + 1.1f, 3.2f, 0, 0, 0, 70);
+
+    const float cx = (worldX - cameraX_) * zoom_;
+    const float cy = (worldY - cameraY_) * zoom_;
+    const float box = 3.0f * zoom_;   // 投出状态：缩小到原来的 3/7
+    SDL_FRect dst = { cx - box * 0.5f, cy - box * 0.5f, box, box };
+    const SDL_FPoint center = { box * 0.5f, box * 0.5f };
+    SDL_RenderCopyExF(renderer_, tex, nullptr, &dst, spinDeg, &center, SDL_FLIP_NONE);
+}
+
 void CS2DRenderer::DrawCrosshair(float cx, float cy,
                                   Uint8 r, Uint8 g, Uint8 b, Uint8 a,
                                   float thickness, bool centerDot,
@@ -937,25 +1000,157 @@ float CS2DRenderer::ComputeVisibility(float playerX, float playerY, float aimAng
 }
 
 // 烟雾云：用同心圆近似柔和边缘
-void CS2DRenderer::DrawSmokeCloud(float worldX, float worldY, float worldRadius, Uint8 alpha) {
+// 生成 128×128 的柔和烟雾贴图：径向衰减 × fBm 噪声，边缘完全透明
+void CS2DRenderer::CreateSmokeTexture() {
+    if (smokeTex_) { SDL_DestroyTexture(smokeTex_); smokeTex_ = nullptr; }
     if (!renderer_) return;
+
+    constexpr int S = 128;
+    std::vector<Uint8> px(static_cast<size_t>(S) * S * 4);
+    for (int y = 0; y < S; ++y) {
+        for (int x = 0; x < S; ++x) {
+            const float u = (static_cast<float>(x) + 0.5f) / S * 2.0f - 1.0f;
+            const float v = (static_cast<float>(y) + 0.5f) / S * 2.0f - 1.0f;
+            const float d = std::sqrt(u * u + v * v);
+            const float edge = std::clamp(1.0f - d, 0.0f, 1.0f);
+            const float n = SmokeFbm(u * 2.4f + 13.0f, v * 2.4f + 7.0f);
+            const float a = std::pow(edge, 1.35f) * (0.45f + 0.9f * n);
+            const Uint8 alpha = static_cast<Uint8>(std::clamp(a * 255.0f, 0.0f, 255.0f));
+            const Uint8 c = static_cast<Uint8>(std::clamp(182.0f + 30.0f * n, 0.0f, 255.0f));
+            const size_t idx = (static_cast<size_t>(y) * S + x) * 4;
+            px[idx]     = c;
+            px[idx + 1] = c;
+            px[idx + 2] = static_cast<Uint8>(std::min(255.0f, c + 4.0f));
+            px[idx + 3] = alpha;
+        }
+    }
+
+    smokeTex_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32,
+                                  SDL_TEXTUREACCESS_STATIC, S, S);
+    if (!smokeTex_) return;
+    SDL_UpdateTexture(smokeTex_, nullptr, px.data(), S * 4);
+    SDL_SetTextureBlendMode(smokeTex_, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(smokeTex_, SDL_ScaleModeLinear);
+}
+
+void CS2DRenderer::DrawSmokeCloud(float worldX, float worldY, float worldRadius,
+                                  float age, float expandTime, float life,
+                                  float maxLife, float seed) {
+    if (!renderer_ || !smokeTex_) return;
+
     const float cx = (worldX - cameraX_) * zoom_;
     const float cy = (worldY - cameraY_) * zoom_;
-    const float r  = worldRadius * zoom_;
-    if (r < 1.0f) return;
+    const float p = std::clamp(age / std::max(0.08f, expandTime), 0.0f, 1.0f);
+    const float ease = 1.0f - (1.0f - p) * (1.0f - p);          // 先快后慢地扩散
+    const float r = worldRadius * (0.12f + 0.88f * ease) * zoom_;
+    if (r < 1.5f) return;
 
-    constexpr int kRings = 8;
-    for (int i = kRings; i >= 1; --i) {
-        const float t = static_cast<float>(i) / kRings;
-        const float rr = r * t;
-        const Uint8 a = static_cast<Uint8>(alpha * (1.0f - t * 0.75f));
-        SDL_SetRenderDrawColor(renderer_, 205, 208, 212, a);
-        // 用水平线填充圆，避免依赖 SDL 的圆绘制
-        const int span = static_cast<int>(rr);
-        for (int dy = -span; dy <= span; ++dy) {
-            const float half = std::sqrt(std::max(0.0f, rr * rr - static_cast<float>(dy * dy)));
-            SDL_RenderDrawLineF(renderer_, cx - half, cy + dy, cx + half, cy + dy);
+    // 出现时快速淡入，最后 2 秒淡出
+    const float fadeIn  = std::clamp(age / 0.28f, 0.0f, 1.0f);
+    const float fadeOut = std::clamp(life / std::min(2.0f, std::max(0.1f, maxLife)), 0.0f, 1.0f);
+    const float k = fadeIn * fadeOut;
+    if (k <= 0.01f) return;
+
+    auto drawPuff = [&](float ox, float oy, float scale, float rot, float alphaMul) {
+        const float size = r * 2.0f * scale;
+        SDL_FRect dst = { cx + ox - size * 0.5f, cy + oy - size * 0.5f, size, size };
+        const Uint8 a = static_cast<Uint8>(std::clamp(alphaMul * k * 255.0f, 0.0f, 255.0f));
+        if (a < 3) return;
+        SDL_SetTextureAlphaMod(smokeTex_, a);
+        const SDL_FPoint center = { size * 0.5f, size * 0.5f };
+        SDL_RenderCopyExF(renderer_, smokeTex_, nullptr, &dst, rot, &center, SDL_FLIP_NONE);
+    };
+
+    // 底层：中心最大的一团
+    drawPuff(0.0f, 0.0f, 0.95f, seed * 360.0f, 0.85f);
+
+    // 体积层：围绕中心缓慢漂移的几团，制造层次和轮廓
+    constexpr int kPuffs = 12;
+    for (int i = 0; i < kPuffs; ++i) {
+        const float ang = seed * 6.2831853f + static_cast<float>(i) * 2.39996f;
+        const float wob = 0.18f + 0.22f * std::fmod(static_cast<float>(i) * 0.61f + seed * 3.0f, 1.0f);
+        const float ox = std::cos(ang) * r * wob;
+        const float oy = std::sin(ang) * r * wob * 0.82f;
+        const float scale = 0.40f + 0.22f * std::fmod(static_cast<float>(i) * 0.37f + seed, 1.0f);
+        const float rot = (seed + static_cast<float>(i) * 0.23f) * 360.0f;
+        drawPuff(ox, oy, scale, rot, 0.52f);
+    }
+
+    // 爆炸初期：从中心向外散开的一圈烟（很快消失）
+    if (age < 0.6f) {
+        const float bp = age / 0.6f;
+        const float ba = 1.0f - bp;
+        for (int i = 0; i < 7; ++i) {
+            const float ang = seed * 6.2831853f + static_cast<float>(i) * 0.8976f;
+            const float dist = r * (0.10f + 0.85f * bp);
+            const float ox = std::cos(ang) * dist;
+            const float oy = std::sin(ang) * dist * 0.85f;
+            drawPuff(ox, oy, 0.25f + 0.45f * bp, ang * 57.2958f, 0.5f * ba);
         }
+    }
+
+    SDL_SetTextureAlphaMod(smokeTex_, 255);
+}
+
+void CS2DRenderer::DrawFireZone(float worldX, float worldY, float worldRadius,
+                                float age, float life, float maxLife, float seed) {
+    if (!renderer_) return;
+    const float r = worldRadius * zoom_;
+    if (r < 2.0f) return;
+
+    const float fadeIn  = std::clamp(age / 0.30f, 0.0f, 1.0f);
+    const float fadeOut = std::clamp(life / std::min(1.0f, std::max(0.1f, maxLife)), 0.0f, 1.0f);
+    const float k = fadeIn * fadeOut;
+    if (k <= 0.01f) return;
+
+    const float t = static_cast<float>(SDL_GetTicks()) / 1000.0f;
+
+    auto blob = [&](float ox, float oy, float rad, int rr, int gg, int bb, float a) {
+        DrawCircleFilled(worldX + ox / zoom_, worldY + oy / zoom_, rad / zoom_,
+                         rr, gg, bb,
+                         static_cast<Uint8>(std::clamp(a * k * 255.0f, 0.0f, 255.0f)));
+    };
+
+    // 外层：橙红色火焰团（大量交叠的圆，形成不规则的火焰轮廓）
+    for (int i = 0; i < 24; ++i) {
+        const float ang = seed * 6.2831853f + static_cast<float>(i) * 2.39996f;
+        const float d   = r * 0.42f * std::fmod(static_cast<float>(i) * 0.37f + seed, 1.0f);
+        const float ph  = t * (3.0f + 0.25f * (i % 5)) + static_cast<float>(i) * 1.7f;
+        const float fl  = 0.5f + 0.5f * std::sin(ph);
+        const float rad = r * (0.10f + 0.07f * fl);
+        const float ox  = std::cos(ang) * d;
+        const float oy  = std::sin(ang) * d * 0.6f - r * 0.05f * fl;
+        blob(ox, oy, rad, 255, 85 + static_cast<int>(55.0f * fl), 18, 0.55f + 0.25f * fl);
+    }
+
+    // 中层：橙黄色
+    for (int i = 0; i < 14; ++i) {
+        const float ang = seed * 6.2831853f + static_cast<float>(i) * 1.7f;
+        const float d   = r * 0.24f * std::fmod(static_cast<float>(i) * 0.53f + seed, 1.0f);
+        const float ph  = t * (4.0f + 0.3f * (i % 4)) + static_cast<float>(i) * 2.1f;
+        const float fl  = 0.5f + 0.5f * std::sin(ph);
+        const float rad = r * (0.07f + 0.05f * fl);
+        blob(std::cos(ang) * d, std::sin(ang) * d * 0.6f, rad,
+             255, 175 + static_cast<int>(45.0f * fl), 55, 0.60f + 0.25f * fl);
+    }
+
+    // 内层：黄白色火心
+    for (int i = 0; i < 8; ++i) {
+        const float ang = seed * 6.2831853f + static_cast<float>(i) * 1.1f;
+        const float d   = r * 0.12f * std::fmod(static_cast<float>(i) * 0.71f + seed, 1.0f);
+        const float fl  = 0.5f + 0.5f * std::sin(t * 5.0f + static_cast<float>(i) * 2.3f + seed * 8.0f);
+        blob(std::cos(ang) * d, std::sin(ang) * d * 0.6f, r * (0.05f + 0.03f * fl),
+             255, 228, 150, 0.70f + 0.25f * fl);
+    }
+
+    // 火星：向上飘散
+    for (int i = 0; i < 8; ++i) {
+        const float ph = t * (1.4f + 0.22f * i) + static_cast<float>(i) * 2.3f + seed * 7.0f;
+        const float lifeT = std::fmod(ph, 1.0f);
+        const float ang = seed * 6.2831853f + static_cast<float>(i) * 1.1f;
+        const float ox = std::cos(ang) * r * 0.32f * (0.4f + 0.6f * lifeT);
+        const float oy = -lifeT * r * 0.70f + std::sin(ang) * r * 0.10f;
+        blob(ox, oy, r * 0.016f * (1.0f - lifeT), 255, 225, 140, (1.0f - lifeT) * 0.9f);
     }
 }
 
