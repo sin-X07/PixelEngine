@@ -4,8 +4,12 @@
 #define CGLTF_IMPLEMENTATION
 #include "../ThirdParty/cgltf/cgltf.h"
 
+#ifdef _WIN32
 #include <windows.h>
 #include <GL/gl.h>
+#else
+#include <OpenGL/gl.h>
+#endif
 
 #include <algorithm>
 #include <cctype>

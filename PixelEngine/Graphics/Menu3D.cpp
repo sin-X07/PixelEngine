@@ -1,8 +1,12 @@
 #include "Menu3D.hpp"
 #include "../Core/PathUtils.hpp"
 
+#ifdef _WIN32
 #include <windows.h>
 #include <GL/gl.h>
+#else
+#include <OpenGL/gl.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
