@@ -72,6 +72,15 @@ constexpr float NadeThrowMin     = 90.0f;    // 投掷最小距离
 constexpr float NadeThrowMax     = 230.0f;   // 投掷最大距离
 constexpr float NadeCooldown     = 7.0f;     // 两次投掷间隔
 
+// ---------------- 投掷物撞墙反弹 ----------------
+// 撞墙后沿法线反弹，速度乘以恢复系数（动能按 v² 衰减）。
+// 0.45 ≈ 每次撞墙丢掉 80% 动能，既有明显反弹又不会把雷弹回投掷者脚下。
+constexpr float NadeBounceRestitution  = 0.45f;
+// 反弹后速度低于此值就直接停下，避免在墙角里高频抖动
+constexpr float NadeMinBounceSpeed     = 28.0f;
+// 连续撞墙时「撞墙声」听觉事件的节流（秒）
+constexpr float NadeBounceHearCooldown = 0.12f;
+
 // ---------------- 决策 ----------------
 constexpr float CloseCombatRange = 180.0f;   // 低于此距离交给战术执行器（不寻路）
 constexpr float AnchorHoldRange  = 260.0f;   // 断后位超出此距离不主动追击
@@ -85,22 +94,54 @@ constexpr float CrosshairBloomMaxPx = 18.0f; // 全速跑动时准星 gap 的最
 constexpr float CrosshairBloomExpandRate   = 12.0f;  // 松开静步/加速：散开速度
 constexpr float CrosshairBloomContractRate = 18.0f;  // 按下静步/减速：聚合速度
 
-// ---------------- 下包 / 拆包的「可听」范围 ----------------
-// 声音比视野传得更远：听到下包/拆包声的敌对 BOT 会优先扑向执行者。
-// 这两个半径明显大于 BOT_VIEW_RADIUS(100)，体现「听见但还看不见」。
-constexpr float PlantHearRadius  = 300.0f;   // C4 安装声可被听到的半径
-constexpr float DefuseHearRadius = 300.0f;   // 拆包声可被听到的半径
+// ---------------- 听觉：所有发声体的传播范围 ----------------
+// 声音只按距离传播（墙体 / 烟雾 / 朝向都不阻断）；半径内的单位都会收到一条
+// 听觉信息（HeardSound），由各自的决策树决定反应。
+// 枪声、爆炸明显大于视野半径，体现「先听见、后看见」。
+constexpr float PlantHearRadius  = 300.0f;   // C4 安装声（持续声）可被听到的半径
+constexpr float DefuseHearRadius = 300.0f;   // 拆包声（持续声）可被听到的半径
 
-// ---------------- 脚步声 ----------------
-// 普通跑动会暴露位置；静步（玩家 Shift / BOT 的 lurk 慢走）不出声。
-// 脚步声只让「听见的那只 BOT」自己知道，不进入团队情报网。
-constexpr float FootstepHearRadius = 130.0f; // 普通跑动可被听到的半径
-constexpr float FootstepMemory     = 2.5f;   // 听到后记住最后位置的时间
-constexpr float BotStealthSpeed    = 25.0f;  // BOT 静步速度（与玩家潜行一致）
+constexpr float FootstepHearRadius  = 130.0f; // 普通跑动可被听到的半径
+constexpr float HearGunshotPistol   = 520.0f;
+constexpr float HearGunshotSMG      = 600.0f;
+constexpr float HearGunshotRifle    = 760.0f;
+constexpr float HearGunshotShotgun  = 800.0f;
+constexpr float HearGunshotSniper   = 950.0f;
+constexpr float HearGunshotMG       = 820.0f;
+constexpr float HearSuppressedMul   = 0.42f;  // 消音武器（USP-S/M4A1-S/MP5-SD）
+constexpr float HearReloadRadius    = 220.0f;
+constexpr float HearSwitchRadius    = 150.0f;
+constexpr float HearKnifeRadius     = 90.0f;
+constexpr float HearThrowRadius     = 240.0f;
+constexpr float HearBounceRadius    = 260.0f;
+constexpr float HearExplosionRadius = 1100.0f;
+constexpr float HearFlashRadius     = 650.0f;
+constexpr float HearSmokeRadius     = 400.0f;
+constexpr float HearPlantedRadius   = 1400.0f; // 下包完成 ≈ 全图可闻
+constexpr float HearDefusedRadius   = 1400.0f; // 拆除完成 ≈ 全图可闻
+constexpr float HearBombBeepRadius  = 520.0f;  // CT 靠滴答声定位炸弹
+constexpr float HearDeathRadius     = 350.0f;
+
+// 听觉信息保留时长（秒）
+constexpr float SoundMemory          = 3.0f;
+// 听到敌对声音后「朝向声源警戒」的时长（秒）
+constexpr float SoundAlertMemory     = 2.5f;
+// 听到近处枪声 / 敌人换弹时，主动摸过去的距离阈值
+constexpr float GunshotPushRadius    = 230.0f;
+constexpr float ReloadPushRadius     = 190.0f;
+// 手雷落点危险半径 + 躲闪位移
+constexpr float GrenadeDangerRadius  = 150.0f;
+constexpr float GrenadeDodgeDist     = 90.0f;
 
 // 听觉触发时略微提高命中率（散布乘数 <1 = 打得更准）
 constexpr float PlantHearSpreadMul  = 0.72f;  // 听到下包 → 散布降到 72%
 constexpr float DefuseHearSpreadMul = 0.72f;  // 听到拆包 → 散布降到 72%
+
+// ---------------- 脚步声细节 ----------------
+// 普通跑动会暴露位置；静步（玩家 Shift / BOT 的 lurk 慢走）不出声。
+// 脚步声只让「听见的那只 BOT」自己知道，不进入团队情报网。
+constexpr float FootstepMemory     = 2.5f;   // 听到后记住最后位置的时间
+constexpr float BotStealthSpeed    = 25.0f;  // BOT 静步速度（与玩家潜行一致）
 
 // ---------------- C4 掉落：回收 / 蹲守 ----------------
 // T 全队本性知道 C4 掉落位置（该信息对己方始终可见）。

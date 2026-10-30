@@ -134,45 +134,128 @@
 
 路径：`assets/audio/`，格式 **wav / mp3 / ogg 均可**（SDL_mixer 解码）。
 
+**命名约定**：`<分组>_<对象>.<ext>`，全小写 + 下划线，同一分组内不再混用旧名字。
+
+| 前缀 | 含义 |
+|---|---|
+| `ui_` | 界面（悬停 / 点击） |
+| `music_` | 背景音乐 |
+| `fire_` | 枪声，**每把可射击武器一个文件** |
+| `reload_` | 换弹 |
+| `melee_` | 近战 |
+| `throw_` | 投掷出手 |
+| `fx_` | 爆炸 / 闪光 / 烟雾 |
+| `bomb_` | C4 下包 / 拆包 / 滴答 |
+| `round_` | 回合事件 |
+| `sfx_` | 命中 / 击杀 / 脚步 / 购买等通用反馈 |
+
+> **枪声必须是单发素材。** 每射出一颗子弹都会调用一次
+> `AudioManager::PlayWeaponFire`；素材里若有第二声枪响，就会变成「打一发、响两枪」。
+> 连发/全自动录音不能直接放进 `fire_*.wav`，必须裁出单发（含自然尾音）。
+
+### 5.1 枪声 `fire_<weapon>.wav`
+
+每把枪一个文件（44.1kHz / 16bit / 单声道），由 `AudioManager.cpp` 的
+`kWeaponFireAssets` 表按 `WeaponId` 绑定。当前部分武器复用同一段实录（不同裁剪长度
+或低通），后续替换单个文件即可单独换音色，无需改代码。
+
+| 文件 | 武器 | 素材 |
+|---|---|---|
+| `fire_glock18.wav` | Glock-18 | Glock-19X |
+| `fire_usp_s.wav` | USP-S | HK USP45 |
+| `fire_p2000.wav` | P2000 | SIG P220 |
+| `fire_dualberettas.wav` | Dual Berettas | Colt 1911 |
+| `fire_p250.wav` | P250 | Vektor CP1 |
+| `fire_fiveseven.wav` | Five-SeveN | Glock-20SF |
+| `fire_tec9.wav` | Tec-9 | ASP Pistol |
+| `fire_cz75.wav` | CZ75-Auto | SIG P226 Legion |
+| `fire_deagle.wav` | Desert Eagle | Desert Eagle |
+| `fire_r8revolver.wav` | R8 Revolver | S&W M&P 9 |
+| `fire_zeus.wav` | Zeus x27 | 合成电击声 |
+| `fire_mac10.wav` | MAC-10 | Colt Model 733 |
+| `fire_mp9.wav` | MP9 | HK MP7（消音） |
+| `fire_mp7.wav` | MP7 | HK MP7（消音） |
+| `fire_mp5sd.wav` | MP5-SD | HK MP7（消音 + 低通） |
+| `fire_ump45.wav` | UMP-45 | HK USP45 |
+| `fire_p90.wav` | P90 | SIG P220 |
+| `fire_galilar.wav` | Galil AR | Saiga MK-106 |
+| `fire_famas.wav` | FAMAS | Colt M4A1 SOCOM |
+| `fire_ak47.wav` | AK-47 | SIG 716 |
+| `fire_m4a4.wav` | M4A4 | Colt M4A1 SOCOM |
+| `fire_m4a1s.wav` | M4A1-S | Colt M4A1 SOCOM（低通） |
+| `fire_sg553.wav` | SG 553 | FN SCAR-H |
+| `fire_aug.wav` | AUG | Colt Model 733 |
+| `fire_ssg08.wav` | SSG 08 | Blaser Tactical 2 |
+| `fire_awp.wav` | AWP | McMillan TAC-50 |
+| `fire_scar20.wav` | SCAR-20 | FN SCAR-H |
+| `fire_g3sg1.wav` | G3SG1 | HK G3 |
+| `fire_nova.wav` | Nova | Remington 870 |
+| `fire_xm1014.wav` | XM1014 | Remington 870 |
+| `fire_sawedoff.wav` | Sawed-Off | Remington 870 |
+| `fire_mag7.wav` | MAG-7 | Remington 870 |
+| `fire_m249.wav` | M249 | HK G3 |
+| `fire_negev.wav` | Negev | SIG 716 |
+
+### 5.2 其他音效
+
 | 文件 | 用途 |
 |---|---|
-| `ak47.wav` | AK-47 射击 |
-| `m4a1.mp3` | M4A1 射击 |
-| `galir.wav` | Galil 射击 |
-| `awp.mp3` | AWP 射击 |
-| `deagle.mp3` | 沙鹰射击 |
-| `glock.wav` | Glock 射击 |
-| `usp.wav` | USP 射击 |
-| `shotgun.wav` | 霰弹枪射击 |
-| `dagger_attack.wav` | 匕首攻击 |
-| `ak47_reload.mp3` | AK-47 换弹 |
-| `m4a1_reload.mp3` | M4A1 换弹 |
-| `galir_reload.mp3` | Galil 换弹 |
-| `awp_reload.mp3` | AWP 换弹 |
-| `deagle_reload.wav` | 沙鹰换弹 |
-| `glock_reload.ogg` | Glock 换弹 |
-| `shotgun_load.mp3` | 霰弹枪装填 |
-| `shotgun_loadBullet.mp3` | 霰弹枪单发装弹 |
-| `hit.wav` | 命中 |
-| `kill.wav` | 击杀 |
-| `player_hurt.ogg` | 玩家受伤 |
-| `armor_hit.wav` | 护甲受击 |
-| `grenade_explode.wav` | 手雷爆炸 |
-| `flash.mp3` | 闪光弹爆响 |
-| `smoke.mp3` | 烟雾弹释放 |
+| `ui_hover.ogg` | 按钮悬停 |
+| `ui_click_1.ogg` … `ui_click_5.ogg` | 按钮点击（设置里可切换 5 种） |
+| `music_menu.ogg` / `music_menu_cyber.ogg` / `music_menu_calm.ogg` | 主菜单音乐（设置里可切换 3 首，循环 BGM） |
+| `reload_glock.mp3` | Glock 换弹 |
+| `reload_usp.mp3` | USP 换弹 |
+| `reload_deagle.mp3` | Deagle 换弹 |
+| `reload_galil.mp3` | Galil 换弹 |
+| `reload_ak47.mp3` | AK-47 换弹 |
+| `reload_m4a1.mp3` | M4A1 换弹 |
+| `reload_shotgun.mp3` | 霰弹枪换弹 |
+| `reload_awp.mp3` | AWP 换弹 |
+| `melee_knife.wav` | 匕首攻击 |
+| `throw_generic.mp3` | 投掷出手（通用兜底） |
+| `throw_he.mp3` | 高爆雷出手 |
+| `throw_flash.mp3` | 闪光弹出手 |
+| `throw_smoke.mp3` | 烟雾弹出手 |
+| `fx_explosion.wav` | 手雷爆炸 |
+| `fx_flash.mp3` | 闪光弹爆响 |
+| `fx_smoke.mp3` | 烟雾弹释放 |
 | `bomb_plant.wav` | C4 下包 |
 | `bomb_defuse.wav` | C4 拆包 |
 | `bomb_beep.wav` | C4 滴答 |
 | `round_start.wav` | 回合开始 |
 | `round_win.wav` | 回合胜利 |
 | `round_lose.wav` | 回合失败 |
-| `footstep.mp3` | 脚步 |
-| `menu.wav` | 主菜单音乐 |
-| `button.ogg` | 按钮悬停 |
-| `click.ogg` | 按钮点击 |
-| `pickup.wav` | 拾取 |
+| `sfx_hit.wav` | 命中 |
+| `sfx_kill.mp3` | 击杀 |
+| `sfx_armor_hit.wav` | 护甲受击 |
+| `sfx_footstep.mp3` | 脚步 |
+| `sfx_equip.mp3` | 购买装备 |
 
-缺失时 `AudioManager::loadChunk` 返回空指针，播放静默，**不会崩溃**。
+**切枪音效**（`switch_*.wav`，按武器类别，切到该类任意武器时播放）：
+
+| 文件 | 适用武器类别 |
+|---|---|
+| `switch_knife.wav` | 近战（匕首） |
+| `switch_pistol.wav` | 手枪 / 电击枪 |
+| `switch_smg.wav` | 冲锋枪 |
+| `switch_rifle.wav` | 步枪 |
+| `switch_sniper.wav` | 狙击枪 |
+| `switch_shotgun.wav` | 霰弹枪 |
+| `switch_mg.wav` | 机枪 |
+| `switch_grenade.wav` | 投掷物（手雷槽） |
+| `switch_c4.wav` | C4 |
+
+### 5.3 素材来源与授权
+
+新的枪声来自 Freesound 素材包 **“Real Gun Sounds” by areniporgen**（pack 38798）。
+其中 `SIG 716` 与 `S&W M&P 9` 两段为 **CC BY 4.0**，其余为 **CC0**。
+
+切枪音效来自 Freesound 的若干 **CC0** 素材（手枪拔出 / 拉栓 / 拉机柄 /
+霰弹枪上膛 / 匕首出鞘 / 金属装备），逐条来源、链接与授权见
+`assets/audio/CREDITS.md`，原始下载文件在 `prev_assets/weapon_switch_sounds/`。
+
+缺失时 `AudioManager::loadChunk` 返回空指针，播放静默，**不会崩溃**；启动日志会打印
+`[Audio] 缺失: <路径>`，并在最后汇总 `[Asset] 音效缺失 N 项`。
 
 ---
 

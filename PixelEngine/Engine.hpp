@@ -4,12 +4,14 @@
 #include "Input/InputManager.hpp"
 #include "Graphics/ImGuiUI.hpp"
 #include "Graphics/GameUI.hpp"
+#include "Graphics/Menu3D.hpp"
 #include "Storage/SaveManager.hpp"
 #include "CS2D/CS2DRenderer.hpp"
 #include "CS2D/CS2DGame.hpp"
 #include "CS2D/CS2DOverlay.hpp"
 #include "LLM/LLMBotController.hpp"
 #include <SDL2/SDL.h>
+#include <array>
 #include <memory>
 #include "Storage/MatchHistory.hpp"
 
@@ -34,6 +36,7 @@ private:
     std::unique_ptr<InputManager> inputManager;
     std::unique_ptr<ImGuiUI>      imGuiUI;
     std::unique_ptr<GameUI>       gameUI;
+    std::unique_ptr<Menu3D>       menu3D;
     std::unique_ptr<SaveManager>  saveManager;
 
     // CS2D 对局
@@ -108,6 +111,69 @@ private:
     std::string  pendingMatchMapRel_;
     bool         sideChoicePending_ = false;
     bool         sidePopupOpen_ = false;
+    bool         sidePopupClosing_ = false;
+    float        sidePopupAlpha_ = 0.0f;
+    float        sidePopupCloseElapsed_ = 0.0f;
+
+    // 选阵营后的地图镜头：全图背景 → 放大到出生点 → 黑屏生成 BOT → 渐亮。
+    enum class SidePhase { None, FullMap, ZoomToSpawn, DarkHold, Reveal };
+    SidePhase    sidePhase_ = SidePhase::None;
+    uint64_t     sidePhaseStartMs_ = 0;
+    float        sideFullZoom_ = 1.0f;
+    float        sideFullCenterX_ = 0.0f;
+    float        sideFullCenterY_ = 0.0f;
+    float        sideZoomStart_ = 1.0f;
+    float        sideZoomTarget_ = 3.0f;
+    float        sideCamStartX_ = 0.0f;
+    float        sideCamStartY_ = 0.0f;
+    float        sideCamTargetX_ = 0.0f;
+    float        sideCamTargetY_ = 0.0f;
+    bool         sideMatchInitialized_ = false;
+    void BeginSideMapPreview();
+    void StartSideSpawnZoom();
+    void UpdateSideSpawnTransition();
+    float SideFadeAlpha() const;
+    void DrawSideMapPreview();
+    int          hovered3D_ = -1;
+    int          focused3D_ = -1;
+    uint64_t     focusAnimStartMs_ = 0;
+    uint64_t     focusExitStartMs_ = 0;
+    float        focusCloseStartProgress_ = 0.0f;
+    float        focus3DProgress_ = 0.0f;
+    bool         focus3DClosing_ = false;
+    bool         menuCameraTransition_ = false;
+    uint64_t     menuCameraStartMs_ = 0;
+    std::function<void()> pendingMenuAction_;
+    void BeginMenuCameraTransition(std::function<void()> action);
+
+    bool         mapOverlayOpen_ = false;
+    bool         mapOverlayClosing_ = false;
+    bool         mapOverlayLaunching_ = false;
+    uint64_t     mapOverlayStartMs_ = 0;
+    uint64_t     mapOverlayCloseStartMs_ = 0;
+    uint64_t     mapOverlayLaunchStartMs_ = 0;
+    float        mapOverlayLaunchProgress_ = 0.0f;
+    float        mapOverlayLaunchDelayMs_ = 260.0f;
+    float        mapOverlayLaunchFadeMs_ = 180.0f;
+    std::string  pendingOverlayMapPath_;
+    MatchMode    pendingOverlayMode_ = MatchMode::BombDefusal;
+    float        mapOverlayFade_ = 0.0f;
+    float        mapOverlayBeamFade_ = 1.0f;
+    float        cameraBeamFade_ = 0.0f;
+    float        mapOverlayLightProgress_ = 0.0f;
+    MatchMode    mapOverlayMode_ = MatchMode::BombDefusal;
+    int          mapOverlaySelected_ = 0;
+    int          mapOverlayCount_ = 0;
+    std::array<std::string, 8> mapOverlayNames_;
+    std::array<std::string, 8> mapOverlayTaglines_;
+    std::array<std::string, 8> mapOverlayPaths_;
+    std::array<void*, 8> mapOverlayPreviews_{};
+    std::array<int, 8> mapOverlayCatalogIndex_{};
+    SDL_Texture* officePreviewTex_ = nullptr;
+    SDL_Texture* pendingZoomPreviewTex_ = nullptr;
+    void OpenMapOverlay(MatchMode mode);
+    void FinalizeSideChoice();
+    void UpdateSidePopupFade(float dt);
     void BeginMatchLoad(MatchMode mode, const std::string& mapRel, Team team);
     void DrawMatchZoomOverlay();
 
@@ -134,6 +200,7 @@ private:
     void* mapPreviewTex_[8] = {nullptr, nullptr, nullptr, nullptr,
                              nullptr, nullptr, nullptr, nullptr};  // 地图预览图
     void LoadAudioConfig();
+    void SaveAudioConfig();
     void InitLLM();
     void EnsureLlmInitialized();
     bool llmInitialized_ = false;

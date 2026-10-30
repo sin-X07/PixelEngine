@@ -42,6 +42,18 @@ void SaveManager::Load() {
     settings_.radarHudSize          = ini.GetInt  ("radar", "hud_size", 120);
     settings_.radarMapZoom          = ini.GetFloat("radar", "map_zoom", 0.005f);
 
+    // ---- 主菜单 3D 自定义 ----
+    for (int i = 0; i < 5; ++i) {
+        const std::string ck = "color" + std::to_string(i);
+        const std::string pk = "pose" + std::to_string(i);
+        const std::string ak = "accessory" + std::to_string(i);
+        settings_.menuColor[i]     = ini.GetInt("menu", ck.c_str(), 0);
+        settings_.menuPose[i]      = ini.GetInt("menu", pk.c_str(), 0);
+        settings_.menuAccessory[i] = ini.GetInt("menu", ak.c_str(), 0);
+    }
+    settings_.menuWeapon[0] = ini.GetInt("menu", "weapon0", 0);
+    settings_.menuWeapon[1] = ini.GetInt("menu", "weapon1", 0);
+
     loaded_ = true;
     std::cout << "[Save] 已读取存档" << std::endl;
 }
@@ -71,6 +83,18 @@ void SaveManager::Save() {
     ini.SetInt  ("radar", "bg_alpha",           settings_.radarBgAlpha);
     ini.SetInt  ("radar", "hud_size",           settings_.radarHudSize);
     ini.SetFloat("radar", "map_zoom",           settings_.radarMapZoom);
+
+    // ---- 主菜单 3D 自定义 ----
+    for (int i = 0; i < 5; ++i) {
+        const std::string ck = "color" + std::to_string(i);
+        const std::string pk = "pose" + std::to_string(i);
+        const std::string ak = "accessory" + std::to_string(i);
+        ini.SetInt("menu", ck.c_str(), settings_.menuColor[i]);
+        ini.SetInt("menu", pk.c_str(), settings_.menuPose[i]);
+        ini.SetInt("menu", ak.c_str(), settings_.menuAccessory[i]);
+    }
+    ini.SetInt("menu", "weapon0", settings_.menuWeapon[0]);
+    ini.SetInt("menu", "weapon1", settings_.menuWeapon[1]);
 
     const std::string path = PathUtils::ResolveWritablePath(kSaveFile);
     if (!ini.Save(path)) {

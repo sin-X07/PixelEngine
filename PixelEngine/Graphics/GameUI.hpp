@@ -1,6 +1,7 @@
 #pragma once
 #include "../Core/Types.hpp"
 #include "../Storage/MatchHistory.hpp"
+#include <array>
 #include <functional>
 #include <string>
 #include <vector>
@@ -22,6 +23,11 @@ public:
         std::function<void(int)>           startMatchMode;    // 按模式开始 (MatchMode 枚举值)
         std::function<void(int)>           startMatchOnMap;    // 指定地图开局（kMapCatalog 索引）
         std::function<void(int)>           chooseSide;         // 0=T, 1=CT（爆破模式）
+        std::function<void()>              close3DFocus;      // 退出主菜单 3D 聚焦
+        std::function<void(int,int)>       focus3DSelect;     // (category, option)
+        std::function<void(int)>           selectMapChoice;    // 俯视地图浮层选择
+        std::function<void(int)>           startMatchOnChoice; // 俯视地图浮层确认
+        std::function<void()>              closeMapOverlay;    // 返回主菜单
         std::function<void(int)>           selectMap;          // 地图选择光标移动
         std::function<void(float,float,float,float)> setMapPreviewRect; // 当前选中地图预览图矩形
         std::function<void()>              resumeGame;        // 暂停页继续
@@ -32,6 +38,8 @@ public:
         std::function<void(int)>           setMasterVolume;
         std::function<void(int)>           setMusicVolume;
         std::function<void(int)>           setEffectsVolume;
+        std::function<void(int)>           setMusicTrack;
+        std::function<void(int)>           setClickSound;
         std::function<void(float)>         setMouseSensitivity;
         std::function<void(int)>           setTargetFPS;
         // 准星
@@ -63,6 +71,13 @@ public:
         int       musicVolume = 0;
         int       effectsVolume = 0;
         bool      muted = false;
+        // 背景音乐 / 按钮音效（设置页下拉选择）
+        int       musicTrack = 0;
+        int       musicTrackCount = 0;
+        const char* musicTrackLabels[8] = {};
+        int       clickSound = 0;
+        int       clickSoundCount = 0;
+        const char* clickSoundLabels[8] = {};
         float     mouseSensitivity = 1.0f;
         int       targetFPS = 60;
 
@@ -91,6 +106,36 @@ public:
         // 主菜单背景
         void* backdropTex = nullptr;   // 主菜单背景图（SDL_Texture*）
         int   backdropW = 0, backdropH = 0;
+        bool  backdrop3D = false;      // 实时 3D 背景：使用更轻的压暗
+
+        // 3D 聚焦 + 右侧轮盘
+        bool        focus3D = false;
+        int         focusObject = 0;
+        bool        focusChicken = false;
+        std::string focusName;
+        float       focusProgress = 1.0f;  // 聚焦放大 / 轮盘开屏进度
+        // 轮盘内容（按对象动态生成：T/CT 4 类，小鸡 3 类）
+        int         focusCategoryCount = 0;
+        const char* focusCategoryNames[4] = { nullptr, nullptr, nullptr, nullptr };
+        int         focusOptionCounts[4] = { 0, 0, 0, 0 };
+        const char* focusOptions[4][8] = {};
+        int         focusSelected[4] = { 0, 0, 0, 0 };
+        bool        cameraTransition = false; // 主菜单到模式页的相机弧线转场
+        bool        mapOverlayOpen = false;
+        bool        mapOverlayClosing = false;
+        bool        mapOverlayLaunching = false;
+        float       mapOverlayLaunchProgress = 0.0f;
+        float       mapOverlayFade = 0.0f;
+        float       mapOverlayLightProgress = 1.0f;
+        float       mapOverlayBeamFade = 1.0f;
+        float       cameraBeamFade = 0.0f;
+        std::string mapOverlayTitle;
+        std::string mapOverlaySubtitle;
+        int         mapOverlaySelected = 0;
+        int         mapOverlayCount = 0;
+        std::array<std::string, 8> mapOverlayNames;
+        std::array<std::string, 8> mapOverlayTaglines;
+        std::array<void*, 8> mapOverlayPreviews{};
     };
 
     struct InGameCtx {
@@ -160,6 +205,8 @@ public:
 };
 
     void DrawMenu(const MenuCtx& ctx, const Actions& actions);
+    void DrawFocusWheel(const MenuCtx& ctx, const Actions& actions);
+    void DrawMapOverlay(const MenuCtx& ctx, const Actions& actions);
 
     // 地图选择界面（爆破模式）
     struct MapSelectCtx {
@@ -179,7 +226,8 @@ public:
     // 旧版独立选阵营页；当前流程不再进入，仅保留兼容实现。
     void DrawSideSelect(const SideSelectCtx& ctx, const Actions& actions);
     // 进入游戏后的阵营选择弹窗（半透明遮罩 + 居中面板）
-    void DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions);
+    void DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
+                       float alpha = 1.0f);
     void DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI);
     // 进入对局前的黑屏加载提示（地图 / LLM server）
     void DrawLoadingOverlay(const char* title, const char* subtitle);

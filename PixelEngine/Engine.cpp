@@ -47,6 +47,7 @@ Engine::Engine() {
 }
 
 Engine::~Engine() {
+    SaveAudioConfig();
     Clean();
 }
 
@@ -59,13 +60,16 @@ static void LoadMapPreviews(SDL_Renderer* renderer, void** outTex, int count) {
     int loaded = 0;
     for (int i = 0; i < count; ++i) {
         if (outTex[i]) { ++loaded; continue; }
-        if (outTex[i]) continue;
         const std::string path = PathUtils::ResolveAppPath(kMapCatalog[i].preview);
         SDL_Texture* tex = IMG_LoadTexture(renderer, path.c_str());
         if (!tex) {
             std::cerr << "[MapSelect] 预览图加载失败: " << path << std::endl;
             continue;
         }
+        // 预览图要在选图浮层里跟随卡片淡入淡出。IMG_LoadTexture 得到的纹理
+        // 默认是 SDL_BLENDMODE_NONE，直接用 ImGui 的 AddImage(alpha) 时不会
+        // 做 alpha 混合，只会把颜色调暗，淡出后残留黑色矩形；这里显式开启混合。
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
         outTex[i] = tex;
         ++loaded;
     }
@@ -78,6 +82,13 @@ GameUI::Actions Engine::BuildActions() {
 
     a.playClick = [this] { audioManager->PlaySound(SoundEffect::CLICK); };
     a.goState   = [this](GameState s) {
+        if (s == MAP_SELECT && currentState == MAIN_MENU &&
+            menu3D && menu3D->IsReady()) {
+            BeginMenuCameraTransition([this] {
+                OpenMapOverlay(MatchMode::BombDefusal);
+            });
+            return;
+        }
         if (s == MAP_SELECT) {
             LoadMapPreviews(renderer, mapPreviewTex_, kMapCatalogCount);
         }
@@ -87,6 +98,12 @@ GameUI::Actions Engine::BuildActions() {
     a.startMatch     = [this] { RestartCurrentMatch(); };
     a.startMatchMode = [this](int m) {
         const MatchMode mode = static_cast<MatchMode>(m);
+        if (currentState == MAIN_MENU && menu3D && menu3D->IsReady()) {
+            BeginMenuCameraTransition([this, mode] {
+                OpenMapOverlay(mode);
+            });
+            return;
+        }
         if (mode == MatchMode::DeathMatch) {
             BeginMatchLoad(mode, "assets/cs2d/maps/cs_office.tmj", pendingPlayerTeam_);
         } else if (mode == MatchMode::TeamElimination) {
@@ -95,19 +112,71 @@ GameUI::Actions Engine::BuildActions() {
             StartMatch(mode);
         }
     };
-    // 选择阵营（爆破模式）：0 = T, 1 = CT
+    // 选择阵营（爆破模式）：0 = T, 1 = CT, <0 = 随机
     a.chooseSide = [this](int side) {
-        if (!sidePopupOpen_) return;
-        const Team chosen = (side == 0) ? Team::T : Team::CT;
-        pendingPlayerTeam_ = chosen;
-        cs2dGame->RestartMatchWithTeam(chosen);
-        matchStartMs_ = static_cast<long long>(SDL_GetTicks64());
-        sidePopupOpen_ = false;
-        sideChoicePending_ = false;
-        currentState = PLAYING;
-        buyMenuOpen_ = false;
-        SDL_SetRelativeMouseMode(SDL_TRUE);
-        SDL_ShowCursor(SDL_DISABLE);
+        if (!sidePopupOpen_ || sidePopupClosing_) return;
+        if (side < 0) side = std::rand() % 2;
+        pendingPlayerTeam_ = (side == 0) ? Team::T : Team::CT;
+        // 先淡出弹窗，淡出结束后再重建首回合。
+        sidePopupClosing_ = true;
+        sidePopupCloseElapsed_ = 0.0f;
+    };
+
+    a.close3DFocus = [this] {
+        if (focused3D_ < 0 || focus3DClosing_) return;
+        focus3DClosing_ = true;
+        focusExitStartMs_ = SDL_GetTicks64();
+        focusCloseStartProgress_ = focus3DProgress_;
+    };
+    a.focus3DSelect = [this](int category, int option) {
+        if (focused3D_ < 0 || focus3DClosing_ || !menu3D || !saveManager) return;
+        menu3D->FocusSelect(focused3D_, category, option);
+
+        // 自定义结果写回存档（重启后保留）
+        const Menu3D::Customization& c = menu3D->GetCustomization();
+        auto& s = saveManager->MutableSettings();
+        for (int i = 0; i < 5; ++i) {
+            s.menuColor[i]     = c.color[i];
+            s.menuPose[i]      = c.pose[i];
+            s.menuAccessory[i] = c.accessory[i];
+        }
+        s.menuWeapon[0] = c.weapon[0];
+        s.menuWeapon[1] = c.weapon[1];
+        saveManager->Save();
+    };
+
+    a.selectMapChoice = [this](int index) {
+        if (index < 0 || index >= mapOverlayCount_) return;
+        mapOverlaySelected_ = index;
+        mapPreviewRectValid_ = false;
+        const int catalogIndex = mapOverlayCatalogIndex_[index];
+        if (catalogIndex >= 0 && catalogIndex < kMapCatalogCount) {
+            mapSelectIndex_ = catalogIndex;
+        } else {
+            mapSelectIndex_ = -1;
+        }
+    };
+    a.startMatchOnChoice = [this](int index) {
+        if (mapOverlayClosing_ || mapOverlayLaunching_ ||
+            index < 0 || index >= mapOverlayCount_) return;
+        const MatchMode mode = mapOverlayMode_;
+        const std::string path = mapOverlayPaths_[index];
+        pendingOverlayMode_ = mode;
+        pendingOverlayMapPath_ = path;
+        pendingZoomPreviewTex_ = static_cast<SDL_Texture*>(mapOverlayPreviews_[index]);
+        const int catalogIndex = mapOverlayCatalogIndex_[index];
+        mapSelectIndex_ = (catalogIndex >= 0 && catalogIndex < kMapCatalogCount)
+            ? catalogIndex : -1;
+        mapOverlaySelected_ = index;
+        // 先让地图外的所有 UI 淡出，短暂停顿后再开始地图放大。
+        mapOverlayLaunching_ = true;
+        mapOverlayLaunchStartMs_ = SDL_GetTicks64();
+        mapOverlayLaunchProgress_ = 0.0f;
+    };
+    a.closeMapOverlay = [this] {
+        if (!mapOverlayOpen_ || mapOverlayClosing_ || mapOverlayLaunching_) return;
+        mapOverlayClosing_ = true;
+        mapOverlayCloseStartMs_ = SDL_GetTicks64();
     };
 
     a.startMatchOnMap = [this](int idx) {
@@ -153,6 +222,21 @@ GameUI::Actions Engine::BuildActions() {
     a.setMasterVolume  = [this](int v) { audioManager->SetMasterVolume(v); };
     a.setMusicVolume   = [this](int v) { audioManager->SetMusicVolume(v); };
     a.setEffectsVolume = [this](int v) { audioManager->SetEffectsVolume(v); };
+
+    // 菜单 BGM：切换后立即生效（只在大厅/设置页预览，不打断对局）
+    a.setMusicTrack = [this](int idx) {
+        audioManager->SetMusicTrack(idx);
+        if (currentState == MAIN_MENU || (currentState == SETTINGS && settingsReturnState == MAIN_MENU)) {
+            audioManager->PlayMusic(AudioManager::MusicTrackPath(idx));
+        }
+        SaveAudioConfig();
+    };
+    // 按钮点击音效：切换后立刻用新音效试听一次
+    a.setClickSound = [this](int idx) {
+        audioManager->SetClickSound(idx);
+        audioManager->PlaySound(SoundEffect::CLICK);
+        SaveAudioConfig();
+    };
 
     // 设置类：同步写入运行时对象 + SaveManager，退出时统一落盘
     a.setMouseSensitivity = [this](float v) {
@@ -299,10 +383,27 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
     }
 
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+#if defined(_WIN32)
+    // Menu3D 使用独立的隐藏 OpenGL 上下文；主渲染器固定走 D3D11，
+    // 避免两者争用同一个 OpenGL current context。
+    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d11");
+#endif
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+#if defined(_WIN32)
+    if (!renderer) {
+        SDL_SetHint(SDL_HINT_RENDER_DRIVER, "");
+        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    }
+#endif
     if (!renderer) {
         std::cerr << "渲染器创建失败: " << SDL_GetError() << std::endl;
         return false;
+    }
+    {
+        SDL_RendererInfo info{};
+        if (SDL_GetRendererInfo(renderer, &info) == 0 && info.name) {
+            std::cout << "[Renderer] " << info.name << std::endl;
+        }
     }
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
@@ -316,6 +417,37 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
 
     // CS2D 渲染器（地图目录 assets/cs2d/maps）
     cs2dRenderer->Initialize(renderer, "assets/cs2d/maps", logicalW_, logicalH_);
+
+    // 主菜单实时 3D 背景（独立隐藏 OpenGL 上下文；失败时回退静态背景）
+    bool canInitMenu3D = true;
+    {
+        SDL_RendererInfo info{};
+        if (SDL_GetRendererInfo(renderer, &info) == 0 && info.name &&
+            std::string(info.name).find("opengl") != std::string::npos) {
+            canInitMenu3D = false;
+            std::cerr << "[Menu3D] 主渲染器为 OpenGL，跳过独立 3D 上下文" << std::endl;
+        }
+    }
+    if (canInitMenu3D) {
+        menu3D = std::make_unique<Menu3D>();
+        if (!menu3D->Initialize(renderer, 1024, 576)) {
+            std::cerr << "[Menu3D] 初始化失败，回退静态菜单背景: "
+                      << menu3D->LastError() << std::endl;
+            menu3D.reset();
+        } else if (saveManager) {
+            // 应用存档里的主菜单自定义（颜色/姿势/武器/配件）
+            const auto& s = saveManager->GetSettings();
+            Menu3D::Customization c;
+            for (int i = 0; i < 5; ++i) {
+                c.color[i]     = s.menuColor[i];
+                c.pose[i]      = s.menuPose[i];
+                c.accessory[i] = s.menuAccessory[i];
+            }
+            c.weapon[0] = s.menuWeapon[0];
+            c.weapon[1] = s.menuWeapon[1];
+            menu3D->SetCustomization(c);
+        }
+    }
 
     // ImGui 后端消费原始 SDL 事件（窗口↔逻辑坐标换算）
     inputManager->SetEventCallback([this](const SDL_Event& e) {
@@ -354,7 +486,7 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
     historyPath_ = PathUtils::ResolveWritablePath(MatchHistory::kFileName);
     history_ = MatchHistory::Load(historyPath_);
 
-    audioManager->PlayMusic("assets/audio/menu.wav");
+    audioManager->PlayMusic(AudioManager::MusicTrackPath(audioManager->GetMusicTrack()));
 
     isRunning = true;
 
@@ -501,6 +633,7 @@ void Engine::Clean() {
     if (audioManager) audioManager->Clean();
     if (imGuiUI)      imGuiUI->Shutdown();
     if (cs2dRenderer) cs2dRenderer->Clean();
+    if (menu3D)       { menu3D->Shutdown(); menu3D.reset(); }
 
     for (auto& t : sceneTex_) {
         if (t) { SDL_DestroyTexture(t); t = nullptr; }
@@ -565,6 +698,7 @@ void Engine::HandleInput() {
             SDL_ShowCursor(SDL_DISABLE);
             audioManager->ResumeMusic();
         } else if (currentState == SETTINGS) {
+            SaveAudioConfig();
             currentState = settingsReturnState;
         } else if (currentState == EXIT_CONFIRM) {
             currentState = PAUSED;
@@ -662,6 +796,214 @@ void Engine::HandleInput() {
 // 开始对局
 // ============================================================================
 
+void Engine::BeginSideMapPreview() {
+    if (!cs2dGame) return;
+    const CS2DWorld& w = cs2dGame->GetWorld();
+    const float mapW = std::max(1.0f, w.GetMapPixelW());
+    const float mapH = std::max(1.0f, w.GetMapPixelH());
+    const float vw = static_cast<float>(logicalW_);
+    const float vh = static_cast<float>(logicalH_);
+    sideFullZoom_ = std::clamp(std::min(vw / mapW, vh / mapH) * 0.94f, 0.05f, 10.0f);
+    sideFullCenterX_ = mapW * 0.5f;
+    sideFullCenterY_ = mapH * 0.5f;
+    sideZoomStart_ = sideFullZoom_;
+    sideCamStartX_ = sideFullCenterX_;
+    sideCamStartY_ = sideFullCenterY_;
+    sideCamTargetX_ = sideFullCenterX_;
+    sideCamTargetY_ = sideFullCenterY_;
+    sideZoomTarget_ = std::clamp(std::min(vw, vh) / 200.0f, 1.2f, 6.0f);
+    sidePhase_ = SidePhase::FullMap;
+    sidePhaseStartMs_ = SDL_GetTicks64();
+    sideMatchInitialized_ = false;
+}
+
+void Engine::StartSideSpawnZoom() {
+    if (!cs2dGame || !sideChoicePending_ || sidePhase_ != SidePhase::FullMap) return;
+    cs2dGame->GetTeamSpawnCenter(pendingPlayerTeam_, sideCamTargetX_, sideCamTargetY_);
+    sideCamStartX_ = sideFullCenterX_;
+    sideCamStartY_ = sideFullCenterY_;
+    sideZoomStart_ = sideFullZoom_;
+    sidePhase_ = SidePhase::ZoomToSpawn;
+    sidePhaseStartMs_ = SDL_GetTicks64();
+}
+
+float Engine::SideFadeAlpha() const {
+    switch (sidePhase_) {
+        case SidePhase::FullMap:
+        case SidePhase::None:
+            return 0.0f;
+        case SidePhase::ZoomToSpawn: {
+            const float raw = std::clamp(
+                static_cast<float>(SDL_GetTicks64() - sidePhaseStartMs_) / 900.0f,
+                0.0f, 1.0f);
+            return raw * raw * (3.0f - 2.0f * raw);
+        }
+        case SidePhase::DarkHold:
+            return 1.0f;
+        case SidePhase::Reveal: {
+            const float raw = std::clamp(
+                static_cast<float>(SDL_GetTicks64() - sidePhaseStartMs_) / 650.0f,
+                0.0f, 1.0f);
+            return 1.0f - raw * raw * (3.0f - 2.0f * raw);
+        }
+    }
+    return 0.0f;
+}
+
+void Engine::DrawSideMapPreview() {
+    if (!cs2dGame) return;
+    float cx = sideFullCenterX_;
+    float cy = sideFullCenterY_;
+    float zoom = sideFullZoom_;
+    if (sidePhase_ == SidePhase::ZoomToSpawn) {
+        const float raw = std::clamp(
+            static_cast<float>(SDL_GetTicks64() - sidePhaseStartMs_) / 900.0f,
+            0.0f, 1.0f);
+        const float t = raw * raw * (3.0f - 2.0f * raw);
+        cx = sideCamStartX_ + (sideCamTargetX_ - sideCamStartX_) * t;
+        cy = sideCamStartY_ + (sideCamTargetY_ - sideCamStartY_) * t;
+        zoom = sideZoomStart_ + (sideZoomTarget_ - sideZoomStart_) * t;
+    } else if (sidePhase_ == SidePhase::DarkHold) {
+        cx = sideCamTargetX_;
+        cy = sideCamTargetY_;
+        zoom = sideZoomTarget_;
+    }
+    cs2dGame->RenderMapPreview(logicalW_, logicalH_, cx, cy, zoom, false);
+}
+
+void Engine::UpdateSideSpawnTransition() {
+    if (!sideChoicePending_ || !cs2dGame) return;
+    const uint64_t now = SDL_GetTicks64();
+    if (sidePhase_ == SidePhase::ZoomToSpawn) {
+        if (now - sidePhaseStartMs_ >= 900) {
+            cs2dGame->RestartMatchWithTeam(pendingPlayerTeam_);
+            matchStartMs_ = static_cast<long long>(now);
+            sideMatchInitialized_ = true;
+            sidePhase_ = SidePhase::DarkHold;
+            sidePhaseStartMs_ = now;
+        }
+    } else if (sidePhase_ == SidePhase::DarkHold) {
+        if (now - sidePhaseStartMs_ >= 350) {
+            sidePhase_ = SidePhase::Reveal;
+            sidePhaseStartMs_ = now;
+        }
+    } else if (sidePhase_ == SidePhase::Reveal) {
+        if (now - sidePhaseStartMs_ >= 650) {
+            sidePhase_ = SidePhase::None;
+            sideChoicePending_ = false;
+            sidePopupOpen_ = false;
+            sidePopupClosing_ = false;
+            sidePopupAlpha_ = 0.0f;
+            currentState = PLAYING;
+            buyMenuOpen_ = false;
+            SDL_SetRelativeMouseMode(SDL_TRUE);
+            SDL_ShowCursor(SDL_DISABLE);
+        }
+    }
+}
+
+void Engine::FinalizeSideChoice() {
+    if (!sideChoicePending_ || !cs2dGame) return;
+
+    sidePopupOpen_ = false;
+    sidePopupClosing_ = false;
+    sidePopupAlpha_ = 0.0f;
+    sidePopupCloseElapsed_ = 0.0f;
+    // 不立刻生成玩家/BOT：先把全图镜头放大到所选阵营出生点，黑屏后再重置对局。
+    StartSideSpawnZoom();
+    SDL_SetRelativeMouseMode(SDL_FALSE);
+    SDL_ShowCursor(SDL_ENABLE);
+}
+
+void Engine::UpdateSidePopupFade(float dt) {
+    if (!sidePopupOpen_) return;
+
+    if (sidePopupClosing_) {
+        constexpr float kFadeOut = 0.16f;
+        sidePopupCloseElapsed_ += dt;
+        sidePopupAlpha_ = std::clamp(1.0f - sidePopupCloseElapsed_ / kFadeOut,
+                                     0.0f, 1.0f);
+        if (sidePopupCloseElapsed_ >= kFadeOut) {
+            FinalizeSideChoice();
+        }
+    } else {
+        constexpr float kFadeIn = 0.18f;
+        sidePopupAlpha_ = std::min(1.0f, sidePopupAlpha_ + dt / kFadeIn);
+    }
+}
+
+void Engine::BeginMenuCameraTransition(std::function<void()> action) {
+    if (!menu3D || !menu3D->IsReady() || menuCameraTransition_) {
+        if (action) action();
+        return;
+    }
+    menuCameraTransition_ = true;
+    menuCameraStartMs_ = SDL_GetTicks64();
+    pendingMenuAction_ = std::move(action);
+    focused3D_ = -1;
+    hovered3D_ = -1;
+    focus3DClosing_ = false;
+}
+
+void Engine::OpenMapOverlay(MatchMode mode) {
+    // 旧独立选图页不再进入，这里负责首次加载地图卡片预览图。
+    LoadMapPreviews(renderer, mapPreviewTex_, kMapCatalogCount);
+    mapOverlayMode_ = mode;
+    mapOverlayCount_ = 0;
+    mapOverlaySelected_ = 0;
+    mapOverlayNames_.fill({});
+    mapOverlayTaglines_.fill({});
+    mapOverlayPaths_.fill({});
+    mapOverlayPreviews_.fill(nullptr);
+    mapOverlayCatalogIndex_.fill(-1);
+
+    auto add = [&](const std::string& name, const std::string& tagline,
+                   const std::string& path, void* preview, int catalogIndex) {
+        if (mapOverlayCount_ >= 8) return;
+        const int i = mapOverlayCount_++;
+        mapOverlayNames_[i] = name;
+        mapOverlayTaglines_[i] = tagline;
+        mapOverlayPaths_[i] = path;
+        mapOverlayPreviews_[i] = preview;
+        mapOverlayCatalogIndex_[i] = catalogIndex;
+    };
+
+    if (mode == MatchMode::BombDefusal) {
+        for (int i = 0; i < kMapCatalogCount; ++i) {
+            add(kMapCatalog[i].name, kMapCatalog[i].tagline, kMapCatalog[i].tmj,
+                mapPreviewTex_[i], i);
+        }
+    } else if (mode == MatchMode::TeamElimination) {
+        for (int i = 0; i < kMapCatalogCount; ++i) {
+            add(kMapCatalog[i].name, kMapCatalog[i].tagline, kMapCatalog[i].tmj,
+                mapPreviewTex_[i], i);
+        }
+    } else {
+        if (!officePreviewTex_) {
+            const std::string preview = PathUtils::ResolveAppPath("assets/cs2d/tilesets/cs_office_bg.png");
+            officePreviewTex_ = IMG_LoadTexture(renderer, preview.c_str());
+            if (officePreviewTex_) {
+                SDL_SetTextureBlendMode(officePreviewTex_, SDL_BLENDMODE_BLEND);
+            }
+        }
+        add("办公室", "近距交火 · 室内攻防 · 快速接敌",
+            "assets/cs2d/maps/cs_office.tmj", officePreviewTex_, -1);
+    }
+
+    mapOverlayOpen_ = true;
+    mapOverlayClosing_ = false;
+    mapOverlayLaunching_ = false;
+    mapOverlayLaunchProgress_ = 0.0f;
+    mapOverlayStartMs_ = SDL_GetTicks64();
+    mapOverlayFade_ = 0.0f;
+    mapOverlayBeamFade_ = 0.0f;
+    cameraBeamFade_ = 0.0f;
+    // 相机过场期间光源已经移动到底部，浮层打开时保持在底部。
+    mapOverlayLightProgress_ = 1.0f;
+    mapPreviewRectValid_ = false;
+    currentState = MAIN_MENU;
+}
+
 void Engine::RestartCurrentMatch() {
     if (!cs2dGame) return;
 
@@ -674,6 +1016,10 @@ void Engine::RestartCurrentMatch() {
 
     sideChoicePending_ = true;
     sidePopupOpen_ = false;   // 等转场进入纯黑窗口后再显示
+    sidePopupClosing_ = false;
+    sidePopupAlpha_ = 0.0f;
+    sidePopupCloseElapsed_ = 0.0f;
+    BeginSideMapPreview();
     matchLoadPhase_ = MatchLoadPhase::None;
     matchLoadElapsed_ = 0.0f;
     transitionKind_ = TransitionKind::None;
@@ -724,9 +1070,13 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
     if (cs2dGame) cs2dGame->SetPlayerTeam(playerTeam);
 
     const std::string mapPath = PathUtils::ResolveAppPath(mapRel);
-    if (!cs2dGame->LoadMap(mapPath, cs2dRenderer.get())) {
+    const bool deferMatchStart = sideChoicePending_;
+    if (!cs2dGame->LoadMap(mapPath, cs2dRenderer.get(), !deferMatchStart)) {
         std::cerr << "CS2D 地图加载失败: " << mapPath << std::endl;
         return;
+    }
+    if (deferMatchStart) {
+        BeginSideMapPreview();
     }
 
     inputManager->SwitchToEnglishKeyboardLayout();
@@ -778,6 +1128,7 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
 
 void Engine::Update(float dt) {
     if (currentState != PLAYING) return;
+    UpdateSideSpawnTransition();
     if (sideChoicePending_ || sidePopupOpen_) return;   // 等待游戏内选阵营
 
     // E 键用于拆包（按住）
@@ -801,7 +1152,7 @@ void Engine::Update(float dt) {
             currentState = MAIN_MENU;
             SDL_SetRelativeMouseMode(SDL_FALSE);
             SDL_ShowCursor(SDL_ENABLE);
-            audioManager->PlayMusic("assets/audio/menu.wav");
+            audioManager->PlayMusic(AudioManager::MusicTrackPath(audioManager->GetMusicTrack()));
             return;
         }
     }
@@ -817,18 +1168,21 @@ void Engine::BeginMatchLoad(MatchMode mode, const std::string& mapRel, Team team
     pendingMatchMapRel_ = mapRel;
     pendingPlayerTeam_ = team;
     currentMatchMode_ = mode;
-    sideChoicePending_ = (mode == MatchMode::BombDefusal);
+    sideChoicePending_ = true;
     sidePopupOpen_ = false;
 
     matchLoadPhase_ = MatchLoadPhase::Zoom;
     matchLoadElapsed_ = 0.0f;
     matchLoadMapStarted_ = false;
-    matchZoomTex_ = nullptr;
-    matchZoomRectValid_ = (mode == MatchMode::BombDefusal && mapPreviewRectValid_);
+    matchZoomTex_ = pendingZoomPreviewTex_;
+    pendingZoomPreviewTex_ = nullptr;
+    matchZoomRectValid_ = mapPreviewRectValid_;
 
     if (mode == MatchMode::BombDefusal &&
         mapSelectIndex_ >= 0 && mapSelectIndex_ < kMapCatalogCount) {
-        matchZoomTex_ = static_cast<SDL_Texture*>(mapPreviewTex_[mapSelectIndex_]);
+        if (!matchZoomTex_) {
+            matchZoomTex_ = static_cast<SDL_Texture*>(mapPreviewTex_[mapSelectIndex_]);
+        }
     }
     if (matchZoomRectValid_) {
         for (int i = 0; i < 4; ++i) matchZoomRect_[i] = mapPreviewRect_[i];
@@ -853,12 +1207,12 @@ void Engine::DrawMatchZoomOverlay() {
     if (matchLoadPhase_ != MatchLoadPhase::Zoom || !matchZoomRectValid_) return;
 
     const float raw = std::clamp(matchLoadElapsed_ / matchLoadZoomDuration_, 0.0f, 1.0f);
-    const float ease = 1.0f - std::pow(1.0f - raw, 3.0f);
+    const float ease = raw * raw * (3.0f - 2.0f * raw);
     const float W = static_cast<float>(logicalW_);
     const float H = static_cast<float>(logicalH_);
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, static_cast<Uint8>(ease * 170.0f));
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_Rect full = { 0, 0, logicalW_, logicalH_ };
     SDL_RenderFillRect(renderer, &full);
 
@@ -1031,12 +1385,22 @@ void Engine::DrawTransition(SDL_Texture* oldTex, SDL_Texture* newTex) {
 }
 
 void Engine::Render() {
+
     const Uint64 nowTicks = SDL_GetTicks64();
     float frameDt = lastRenderTicks_ > 0
         ? static_cast<float>(nowTicks - lastRenderTicks_) / 1000.0f
         : (1.0f / 60.0f);
     lastRenderTicks_ = nowTicks;
     frameDt = std::clamp(frameDt, 0.0f, 0.05f);
+
+    // 从对局/暂停回到大厅时，游戏音乐会停在 StartMatchWithMap 的 StopMusic。
+    // 统一在大厅状态切换时补播菜单音乐；已在播放则不重启。
+    if (currentState == MAIN_MENU && lastRenderedState_ != MAIN_MENU &&
+        audioManager && !audioManager->IsMusicPlaying()) {
+        audioManager->PlayMusic(AudioManager::MusicTrackPath(audioManager->GetMusicTrack()));
+    }
+
+    UpdateSidePopupFade(frameDt);
 
     // 进对局前的三段式：地图卡放大压黑 → 黑屏加载 → 游戏淡入
     if (matchLoadPhase_ == MatchLoadPhase::Zoom) {
@@ -1054,6 +1418,9 @@ void Engine::Render() {
             matchLoadElapsed_ = 0.0f;
             if (sideChoicePending_) {
                 sidePopupOpen_ = true;
+                sidePopupClosing_ = false;
+                sidePopupAlpha_ = 0.0f;
+                sidePopupCloseElapsed_ = 0.0f;
                 // 弹窗需要绝对鼠标和可见光标
                 SDL_SetRelativeMouseMode(SDL_FALSE);
                 SDL_ShowCursor(SDL_ENABLE);
@@ -1072,6 +1439,9 @@ void Engine::Render() {
         transitionKind_ != TransitionKind::None &&
         menuProgress >= kMenuFadeOutEnd) {
         sidePopupOpen_ = true;
+        sidePopupClosing_ = false;
+        sidePopupAlpha_ = 0.0f;
+        sidePopupCloseElapsed_ = 0.0f;
         SDL_SetRelativeMouseMode(SDL_FALSE);
         SDL_ShowCursor(SDL_ENABLE);
     }
@@ -1118,7 +1488,7 @@ void Engine::Render() {
     if (matchLoading) {
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     } else {
-        SDL_SetRenderDrawColor(renderer, 18, 26, 36, 255);
+        SDL_SetRenderDrawColor(renderer, CS2DRenderer::VoidR(), CS2DRenderer::VoidG(), CS2DRenderer::VoidB(), 255);
     }
     SDL_RenderClear(renderer);
 
@@ -1126,8 +1496,18 @@ void Engine::Render() {
                                   currentState == EXIT_CONFIRM);
 
     if (gameplayVisible && !holdOldPage) {
-        cs2dGame->Render(logicalW_, logicalH_);
-        cs2dOverlay.Render(cs2dRenderer.get(), cs2dGame.get(), logicalW_, logicalH_);
+        const bool sideMapPreview = sideChoicePending_ &&
+            (sidePhase_ == SidePhase::FullMap ||
+             sidePhase_ == SidePhase::ZoomToSpawn ||
+             sidePhase_ == SidePhase::DarkHold);
+        if (sideMapPreview) {
+            DrawSideMapPreview();
+        } else {
+            cs2dGame->Render(logicalW_, logicalH_);
+            if (!sideChoicePending_) {
+                cs2dOverlay.Render(cs2dRenderer.get(), cs2dGame.get(), logicalW_, logicalH_);
+            }
+        }
     }
 
     imGuiUI->BeginFrame();
@@ -1161,6 +1541,16 @@ void Engine::Render() {
         ctx.musicVolume        = audioManager->GetMusicVolume();
         ctx.effectsVolume      = audioManager->GetEffectsVolume();
         ctx.muted              = audioManager->IsMuted();
+        ctx.musicTrack         = audioManager->GetMusicTrack();
+        ctx.musicTrackCount    = AudioManager::kMusicTrackCount;
+        for (int i = 0; i < AudioManager::kMusicTrackCount && i < 8; ++i) {
+            ctx.musicTrackLabels[i] = AudioManager::MusicTrackName(i);
+        }
+        ctx.clickSound         = audioManager->GetClickSound();
+        ctx.clickSoundCount    = AudioManager::kClickSoundCount;
+        for (int i = 0; i < AudioManager::kClickSoundCount && i < 8; ++i) {
+            ctx.clickSoundLabels[i] = AudioManager::ClickSoundName(i);
+        }
         ctx.mouseSensitivity   = cs2dGame->GetMouseSensitivity();
         ctx.targetFPS          = targetFPS_;
 
@@ -1190,8 +1580,253 @@ void Engine::Render() {
         ctx.backdropTex = menuBgTex_;
         ctx.backdropW   = menuBgW_;
         ctx.backdropH   = menuBgH_;
+        ctx.backdrop3D  = false;
+
+        if (currentState == MAIN_MENU && menu3D && menu3D->IsReady()) {
+            if (mapOverlayOpen_ && mapOverlayLaunching_) {
+                const uint64_t launchElapsed = SDL_GetTicks64() - mapOverlayLaunchStartMs_;
+                mapOverlayLaunchProgress_ = std::clamp(
+                    static_cast<float>(launchElapsed) /
+                    std::max(1.0f, mapOverlayLaunchFadeMs_), 0.0f, 1.0f);
+                if (static_cast<float>(launchElapsed) >= mapOverlayLaunchDelayMs_) {
+                    mapOverlayOpen_ = false;
+                    mapOverlayLaunching_ = false;
+                    mapOverlayLaunchProgress_ = 0.0f;
+                    mapOverlayFade_ = 0.0f;
+                    mapOverlayBeamFade_ = 0.0f;
+                    cameraBeamFade_ = 0.0f;
+                    menu3D->SetCameraTopDownProgress(0.0f);
+                    BeginMatchLoad(pendingOverlayMode_, pendingOverlayMapPath_,
+                                   pendingPlayerTeam_);
+                }
+            }
+            const bool cameraTransition = menuCameraTransition_;
+            float cameraProgress = 0.0f;
+            if (cameraTransition) {
+                cameraProgress = std::clamp(
+                    static_cast<float>(SDL_GetTicks64() - menuCameraStartMs_) / 900.0f,
+                    0.0f, 1.0f);
+                menu3D->SetCameraTopDownProgress(cameraProgress);
+                menu3D->SetFocusedObject(-1);
+                menu3D->SetHoveredObject(-1);
+                mapOverlayLightProgress_ = cameraProgress;
+                cameraBeamFade_ = 0.0f;
+                menu3D->SetSpotlightIntensity(1.0f);
+                menu3D->SetSpotlightSourceProgress(cameraProgress);
+            } else if (mapOverlayOpen_) {
+                menu3D->SetFocusedObject(-1);
+                menu3D->SetHoveredObject(-1);
+                if (mapOverlayClosing_) {
+                    const float raw = std::clamp(
+                        static_cast<float>(SDL_GetTicks64() - mapOverlayCloseStartMs_) / 900.0f,
+                        0.0f, 1.0f);
+                    const float t = raw * raw * (3.0f - 2.0f * raw);
+                    menu3D->SetCameraTopDownProgress(1.0f - t);
+                    menu3D->SetSpotlightIntensity(1.0f);
+                    menu3D->SetSpotlightSourceProgress(1.0f - t);
+                    mapOverlayFade_ = 1.0f - t;
+                    mapOverlayBeamFade_ = 0.0f;
+                    mapOverlayLightProgress_ = 1.0f - t;
+                    cameraBeamFade_ = 0.0f;
+                    if (raw >= 1.0f) {
+                        mapOverlayOpen_ = false;
+                        mapOverlayClosing_ = false;
+                        mapOverlayFade_ = 0.0f;
+                        mapOverlayBeamFade_ = 0.0f;
+                        mapOverlayLightProgress_ = 0.0f;
+                        menu3D->SetCameraTopDownProgress(0.0f);
+                        menu3D->SetSpotlightIntensity(1.0f);
+                        menu3D->SetSpotlightSourceProgress(0.0f);
+                        menu3D->SetOverlayMouse(0.0f, 0.0f, false);
+                    }
+                } else {
+                    menu3D->SetCameraTopDownProgress(1.0f);
+                    menu3D->SetSpotlightIntensity(1.0f);
+                    menu3D->SetSpotlightSourceProgress(1.0f);
+                    mapOverlayBeamFade_ = 0.0f;
+                    cameraBeamFade_ = 0.0f;
+                    mapOverlayFade_ = std::clamp(
+                        static_cast<float>(SDL_GetTicks64() - mapOverlayStartMs_) / 350.0f,
+                        0.0f, 1.0f);
+                    mapOverlayLightProgress_ = 1.0f;
+                }
+            } else {
+                menu3D->SetCameraTopDownProgress(0.0f);
+                menu3D->SetSpotlightIntensity(1.0f);
+                menu3D->SetSpotlightSourceProgress(0.0f);
+                menu3D->SetOverlayMouse(0.0f, 0.0f, false);
+                cameraBeamFade_ = 0.0f;
+                mapOverlayBeamFade_ = 0.0f;
+                if (focused3D_ >= 0) {
+                if (focus3DClosing_) {
+                    const float elapsed = std::clamp(
+                        static_cast<float>(SDL_GetTicks64() - focusExitStartMs_) / 380.0f,
+                        0.0f, 1.0f);
+                    focus3DProgress_ = focusCloseStartProgress_ * (1.0f - elapsed);
+                    if (focus3DProgress_ <= 0.001f) {
+                        focus3DProgress_ = 0.0f;
+                        focus3DClosing_ = false;
+                        focused3D_ = -1;
+                        hovered3D_ = -1;
+                        menu3D->SetFocusedObject(-1);
+                    }
+                } else {
+                    focus3DProgress_ = std::clamp(
+                        static_cast<float>(SDL_GetTicks64() - focusAnimStartMs_) / 380.0f,
+                        0.0f, 1.0f);
+                }
+                if (focused3D_ >= 0) {
+                    menu3D->SetFocusProgress(focus3DProgress_);
+                    menu3D->SetHoveredObject(-1);
+                    menu3D->SetFocusedObject(focused3D_);
+                }
+            }
+            if (focused3D_ < 0) {
+                menu3D->SetHoveredObject(hovered3D_);
+                menu3D->SetFocusedObject(-1);
+            }
+            }
+            if (mapOverlayOpen_ && !mapOverlayClosing_) {
+                const ImGuiIO& mio = ImGui::GetIO();
+                const ImGuiViewport* mvp = ImGui::GetMainViewport();
+                const float sw = std::max(1.0f, mvp->WorkSize.x);
+                const float sh = std::max(1.0f, mvp->WorkSize.y);
+                float u = (mio.MousePos.x - mvp->WorkPos.x) / sw;
+                float v = (mio.MousePos.y - mvp->WorkPos.y) / sh;
+                const float texAspect = static_cast<float>(menu3D->Width()) /
+                                        static_cast<float>(menu3D->Height());
+                const float scrAspect = sw / sh;
+                if (texAspect > scrAspect) {
+                    const float frac = scrAspect / texAspect;
+                    u = (u - (1.0f - frac) * 0.5f) / frac;
+                } else {
+                    const float frac = texAspect / scrAspect;
+                    v = (v - (1.0f - frac) * 0.5f) / frac;
+                }
+                menu3D->SetOverlayMouse(u, v, true);
+            }
+            menu3D->Render(frameDt);
+            if (menu3D->GetTexture()) {
+                ctx.backdropTex = menu3D->GetTexture();
+                ctx.backdropW   = menu3D->Width();
+                ctx.backdropH   = menu3D->Height();
+                ctx.backdrop3D  = true;
+            }
+
+            ctx.focus3D     = (focused3D_ >= 0);
+            ctx.focusObject = focused3D_;
+            ctx.focusChicken = (focused3D_ >= 2);
+            ctx.focusName   = (focused3D_ == 0) ? "恐怖分子 T"
+                            : (focused3D_ == 1) ? "反恐精英 CT"
+                            : "装饰小鸡";
+            // 轮盘内容：按聚焦对象动态生成（T/CT 4 类，小鸡 3 类）
+            if (menu3D) {
+                ctx.focusCategoryCount = menu3D->FocusCategoryCount(focused3D_);
+                for (int cat = 0; cat < 4; ++cat) {
+                    ctx.focusCategoryNames[cat] = menu3D->FocusCategoryName(focused3D_, cat);
+                    const int n = menu3D->FocusOptionCount(focused3D_, cat);
+                    ctx.focusOptionCounts[cat] = n;
+                    for (int opt = 0; opt < n && opt < 8; ++opt) {
+                        ctx.focusOptions[cat][opt] =
+                            menu3D->FocusOptionName(focused3D_, cat, opt);
+                    }
+                    ctx.focusSelected[cat] = menu3D->FocusSelected(focused3D_, cat);
+                }
+            }
+            ctx.focusProgress = focus3DProgress_;
+            ctx.cameraTransition = cameraTransition;
+            ctx.mapOverlayOpen = mapOverlayOpen_;
+            ctx.mapOverlayClosing = mapOverlayClosing_;
+            ctx.mapOverlayLaunching = mapOverlayLaunching_;
+            ctx.mapOverlayLaunchProgress = mapOverlayLaunchProgress_;
+            ctx.mapOverlayFade = mapOverlayFade_;
+            ctx.mapOverlayLightProgress = mapOverlayLightProgress_;
+            ctx.mapOverlayBeamFade = mapOverlayBeamFade_;
+            ctx.cameraBeamFade = cameraBeamFade_;
+            ctx.mapOverlaySelected = mapOverlaySelected_;
+            ctx.mapOverlayCount = mapOverlayCount_;
+            if (mapOverlayMode_ == MatchMode::BombDefusal) {
+                ctx.mapOverlayTitle = "选择地图";
+                ctx.mapOverlaySubtitle = "爆破模式 · 选好战场后开始";
+            } else if (mapOverlayMode_ == MatchMode::TeamElimination) {
+                ctx.mapOverlayTitle = "选择地图";
+                ctx.mapOverlaySubtitle = "团队歼灭 · 当前可用战场";
+            } else {
+                ctx.mapOverlayTitle = "选择地图";
+                ctx.mapOverlaySubtitle = "死斗模式 · 当前可用战场";
+            }
+            for (int i = 0; i < 8; ++i) {
+                ctx.mapOverlayNames[i] = mapOverlayNames_[i];
+                ctx.mapOverlayTaglines[i] = mapOverlayTaglines_[i];
+                ctx.mapOverlayPreviews[i] = mapOverlayPreviews_[i];
+            }
+        }
 
         gameUI->DrawMenu(ctx, BuildActions());
+
+        if (menuCameraTransition_ &&
+            SDL_GetTicks64() - menuCameraStartMs_ >= 900) {
+            menuCameraTransition_ = false;
+            menu3D->SetCameraTopDownProgress(0.0f);
+            std::function<void()> action = std::move(pendingMenuAction_);
+            pendingMenuAction_ = nullptr;
+            if (action) action();
+        }
+
+        if (currentState == MAIN_MENU && menu3D && menu3D->IsReady() &&
+            !menuCameraTransition_ && !mapOverlayOpen_) {
+            if (focused3D_ < 0) {
+                const ImGuiIO& io = ImGui::GetIO();
+                const ImGuiViewport* vp = ImGui::GetMainViewport();
+                const float scrW = std::max(1.0f, vp->WorkSize.x);
+                const float scrH = std::max(1.0f, vp->WorkSize.y);
+                float u = (io.MousePos.x - vp->WorkPos.x) / scrW;
+                float v = (io.MousePos.y - vp->WorkPos.y) / scrH;
+                const float screenU = u;
+                const float screenV = v;
+
+                // 主菜单中央是按钮列，鼠标在这里时绝不穿透到 3D 物体。
+                const bool overMenuButtons =
+                    (screenU > 0.37f && screenU < 0.63f &&
+                     screenV > 0.33f && screenV < 0.68f);
+
+                // 与 GameUI 的背景等比裁切一致，把屏幕坐标换算成 3D 纹理坐标
+                const float texAspect = static_cast<float>(menu3D->Width()) /
+                                        static_cast<float>(menu3D->Height());
+                const float scrAspect = scrW / scrH;
+                if (texAspect > scrAspect) {
+                    const float frac = scrAspect / texAspect;
+                    u = (u - (1.0f - frac) * 0.5f) / frac;
+                } else {
+                    const float frac = texAspect / scrAspect;
+                    v = (v - (1.0f - frac) * 0.5f) / frac;
+                }
+
+                const bool uiHovered = ImGui::IsAnyItemHovered() || overMenuButtons;
+                int hit = -1;
+                if (!uiHovered && u >= 0.0f && u <= 1.0f && v >= 0.0f && v <= 1.0f) {
+                    hit = menu3D->HitTestNormalized(u, v);
+                }
+                hovered3D_ = hit;
+
+                if (hit >= 0 && !uiHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    focused3D_ = hit;
+                    focusAnimStartMs_ = SDL_GetTicks64();
+                    focus3DProgress_ = 0.0f;
+                    focus3DClosing_ = false;
+                    // 自定义结果已经是持久化的，这里不再重置外观
+                    SDL_SetRelativeMouseMode(SDL_FALSE);
+                    SDL_ShowCursor(SDL_ENABLE);
+                }
+            } else {
+                hovered3D_ = -1;
+                if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !focus3DClosing_) {
+                    focus3DClosing_ = true;
+                    focusExitStartMs_ = SDL_GetTicks64();
+                    focusCloseStartProgress_ = focus3DProgress_;
+                }
+            }
+        }
     } else {
         GameUI::InGameCtx ictx;
         ictx.state    = currentState;
@@ -1293,7 +1928,7 @@ void Engine::Render() {
                 break;
             }
         }
-        gameUI->DrawSidePopup(sctx, BuildActions());
+        gameUI->DrawSidePopup(sctx, BuildActions(), sidePopupAlpha_);
     }
 
     // 买枪菜单（覆盖在 HUD 之上）
@@ -1320,6 +1955,17 @@ void Engine::Render() {
                 : 1.0f;
             SDL_SetRenderDrawColor(renderer, 0, 0, 0,
                 static_cast<Uint8>((1.0f - raw) * 255.0f));
+            SDL_Rect full = { 0, 0, logicalW_, logicalH_ };
+            SDL_RenderFillRect(renderer, &full);
+        }
+    }
+
+    if (sideChoicePending_) {
+        const float a = SideFadeAlpha();
+        if (a > 0.001f) {
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0,
+                static_cast<Uint8>(std::clamp(a, 0.0f, 1.0f) * 255.0f));
             SDL_Rect full = { 0, 0, logicalW_, logicalH_ };
             SDL_RenderFillRect(renderer, &full);
         }
@@ -1364,10 +2010,37 @@ void Engine::LoadAudioConfig() {
     IniFile ini = IniFile::Load(path);
     if (!ini.IsLoaded()) return;
 
-    audioManager->SetMasterVolume (ini.GetInt("audio", "master",  100));
-    audioManager->SetMusicVolume  (ini.GetInt("audio", "music",    25));
-    audioManager->SetEffectsVolume(ini.GetInt("audio", "effects", 100));
-    audioManager->SetMuted        (ini.GetBool("audio", "muted", false));
+    // 兼容旧格式：早期 audio_config.ini 没有 [audio] 分节，键直接写在顶层。
+    const bool hasAudioSection = !ini.GetSection("audio").empty();
+    auto readInt = [&](const char* key, int def) {
+        return hasAudioSection ? ini.GetInt("audio", key, def) : ini.GetInt("", key, def);
+    };
+    auto readBool = [&](const char* key, bool def) {
+        return hasAudioSection ? ini.GetBool("audio", key, def) : ini.GetBool("", key, def);
+    };
+
+    audioManager->SetMasterVolume (readInt("master",  100));
+    audioManager->SetMusicVolume  (readInt("music",    25));
+    audioManager->SetEffectsVolume(readInt("effects", 100));
+    audioManager->SetMuted        (readBool("muted", false));
+    audioManager->SetMusicTrack   (readInt("music_track", 0));
+    audioManager->SetClickSound   (readInt("click_sound", 0));
+
+    // 旧格式迁移：立即用带 [audio] 分节的新格式重写一次
+    if (!hasAudioSection) SaveAudioConfig();
+}
+
+void Engine::SaveAudioConfig() {
+    if (!audioManager) return;
+    IniFile ini;
+    ini.SetInt ("audio", "master",      audioManager->GetMasterVolume());
+    ini.SetInt ("audio", "music",       audioManager->GetMusicVolume());
+    ini.SetInt ("audio", "effects",     audioManager->GetEffectsVolume());
+    ini.SetBool("audio", "muted",       audioManager->IsMuted());
+    ini.SetInt ("audio", "music_track", audioManager->GetMusicTrack());
+    ini.SetInt ("audio", "click_sound", audioManager->GetClickSound());
+    const std::string path = PathUtils::ResolveWritablePath("audio_config.ini");
+    ini.Save(path);
 }
 
 // 买枪菜单：由 WeaponDB 生成条目，点击回调直接调用 CS2DGame::TryBuy

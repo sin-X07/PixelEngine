@@ -128,6 +128,9 @@ public:
     float GetZoom()   const { return zoom_; }
     float GetVisionRadius() const { return visionRadius_; }
     void  SetZoom(float z) { zoom_ = z; }
+    // 选阵营/地图总览：直接指定世界中心与缩放，不经过玩家视野拟合。
+    void  SetPreviewCamera(float centerX, float centerY, float zoom,
+                           bool clampToMap = true);
     void  SetViewportSize(int w, int h);   // 全屏 FOV 自适应后重建视野纹理
 
 private:
@@ -205,4 +208,10 @@ private:
     int maskH_ = 0;
 
     void CreateVisionTexture();   // 创建/重建视野 streaming 纹理
+
+public:
+    // 地图外背景色：与视野雾色一致，避免地图边界外出现一条突兀的深色带。
+    static constexpr Uint8 VoidR() { return VISION_FOG_R; }
+    static constexpr Uint8 VoidG() { return VISION_FOG_G; }
+    static constexpr Uint8 VoidB() { return VISION_FOG_B; }
 };

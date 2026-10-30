@@ -137,15 +137,19 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
             bombTimer_ -= dt;
 
             // C4 滴答：越接近爆炸越急促（2s → 0.25s）
-            if (audio) {
+            // 滴答声是 CT 定位炸弹的听觉线索，因此即使没有音频也要发事件。
+            {
                 bombBeepTimer_ -= dt;
                 const float interval = (bombTimer_ > 10.0f) ? 1.0f
                                      : (bombTimer_ > 4.0f)  ? 0.5f
                                      : 0.25f;
                 if (bombBeepTimer_ <= 0.0f) {
                     bombBeepTimer_ = interval;
-                    audio->PlaySoundAt(SoundEffect::BOMB_BEEP, bombX_, bombY_,
-                                       ListenerX(), ListenerY());
+                    EmitSound(SoundEventType::BombBeep, bombX_, bombY_, Team::T);
+                    if (audio) {
+                        audio->PlaySoundAt(SoundEffect::BOMB_BEEP, bombX_, bombY_,
+                                           ListenerX(), ListenerY());
+                    }
                 }
             }
 
@@ -217,6 +221,7 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
                     bombPlanted_ = false;
                     bombTimer_ = 0.0f;
                     defuseProgress_ = 0.0f;
+                    EmitSound(SoundEventType::BombDefused, bombX_, bombY_, Team::CT);
                     if (audio) audio->PlaySound(SoundEffect::BOMB_DEFUSE);
 
                     // ---- 拆包奖励：拆包者个人 +$300（照抄 CS2，不给全队）----
@@ -285,6 +290,8 @@ void CS2DGame::PlantBomb(float x, float y, AudioManager* audio) {
     bombTimer_ = BOMB_FUSE;
     bombBeepTimer_ = 0.0f;
     defuseProgress_ = 0.0f;
+    // 下包完成是全图可闻的事件：所有单位收到「炸弹在这里」
+    EmitSound(SoundEventType::BombPlanted, bombX_, bombY_, Team::T);
     std::cout << "[CS2D] C4 已安装! " << static_cast<int>(BOMB_FUSE) << " 秒后爆炸" << std::endl;
     if (audio) audio->PlaySound(SoundEffect::BOMB_PLANT);
 }
@@ -293,6 +300,7 @@ void CS2DGame::DetonateBomb(AudioManager* audio) {
     bombPlanted_ = false;
     bombTimer_ = 0.0f;
     std::cout << "[CS2D] C4 爆炸! T 获胜本回合" << std::endl;
+    EmitSound(SoundEventType::Explosion, bombX_, bombY_, Team::T, -2, 1600.0f);
 
     // 爆炸范围伤害（不分阵营）
     constexpr float RADIUS = 160.0f;

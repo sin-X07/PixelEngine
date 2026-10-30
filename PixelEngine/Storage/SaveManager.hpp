@@ -34,6 +34,12 @@ struct GameSettings {
     int   radarBgAlpha          = 160;
     int   radarHudSize          = 120;
     float radarMapZoom          = 0.005f;
+
+    // 主菜单 3D 自定义（索引 0=T, 1=CT, 2..4=三只小鸡）
+    int   menuColor[5]     = { 0, 0, 0, 0, 0 };
+    int   menuPose[5]      = { 0, 0, 0, 0, 0 };
+    int   menuWeapon[2]    = { 0, 0 };
+    int   menuAccessory[5] = { 0, 0, 0, 0, 0 };
 };
 
 class SaveManager {

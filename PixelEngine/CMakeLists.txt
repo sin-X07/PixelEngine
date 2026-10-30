@@ -90,6 +90,8 @@ set(SOURCES
     Input/InputManager.cpp
     Graphics/ImGuiUI.cpp
     Graphics/GameUI.cpp
+    Graphics/Menu3D.cpp
+    Graphics/Menu3DModel.cpp
     Storage/SaveManager.cpp
     Storage/MatchHistory.hpp
     Storage/MatchHistory.cpp
@@ -105,6 +107,9 @@ set(SOURCES
     CS2D/CS2DGameSpectate.cpp
     CS2D/TacticalIntel.hpp
     CS2D/TacticalIntel.cpp
+    CS2D/SoundEvents.hpp
+    CS2D/CS2DGameSound.cpp
+    CS2D/NadePhysics.hpp
     CS2D/CS2DGameBomb.cpp
     CS2D/CS2DGameSquad.cpp
     CS2D/CS2DGameObjective.cpp
@@ -141,6 +146,9 @@ target_link_libraries(EngineApp PRIVATE
     ws2_32
     winhttp
 )
+if(WIN32)
+    target_link_libraries(EngineApp PRIVATE opengl32)
+endif()
 
 # 静态链接 C/C++ 运行库：消除对 libgcc_s_seh-1.dll / libstdc++-6.dll /
 # libwinpthread-1.dll 的运行时依赖，产出可独立运行的单文件 exe。

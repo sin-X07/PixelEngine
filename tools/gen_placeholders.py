@@ -55,19 +55,17 @@ HUD_ICONS = [
 
 # 音效: (相对路径, 基准频率 Hz, 时长秒)
 SOUNDS = [
-    ("assets/audio/glock.wav",          700,  0.10),
-    ("assets/audio/shotgun.wav",        180,  0.22),
-    ("assets/audio/grenade_explode.wav", 90,  0.60),
-    ("assets/audio/flash.mp3",         1200,  0.35),
-    ("assets/audio/smoke.mp3",          300,  0.50),
-    ("assets/audio/bomb_plant.wav",     520,  0.20),
-    ("assets/audio/bomb_defuse.wav",    440,  0.20),
-    ("assets/audio/bomb_beep.wav",      900,  0.06),
-    ("assets/audio/round_start.wav",    600,  0.25),
-    ("assets/audio/round_win.wav",      780,  0.40),
-    ("assets/audio/round_lose.wav",     260,  0.40),
-    ("assets/audio/footstep.mp3",       200,  0.05),
-    ("assets/audio/armor_hit.wav",      500,  0.08),
+    ("assets/audio/fx_explosion.wav", 90, 0.60),
+    ("assets/audio/fx_flash.mp3", 1200, 0.35),
+    ("assets/audio/fx_smoke.mp3", 300, 0.50),
+    ("assets/audio/bomb_plant.wav", 520, 0.20),
+    ("assets/audio/bomb_defuse.wav", 440, 0.20),
+    ("assets/audio/bomb_beep.wav", 900, 0.06),
+    ("assets/audio/round_start.wav", 600, 0.25),
+    ("assets/audio/round_win.wav", 780, 0.40),
+    ("assets/audio/round_lose.wav", 260, 0.40),
+    ("assets/audio/sfx_footstep.mp3", 200, 0.05),
+    ("assets/audio/sfx_armor_hit.wav", 500, 0.08),
 ]
 
 # Tileset: 3 列 x 22 行, 每块 32x32

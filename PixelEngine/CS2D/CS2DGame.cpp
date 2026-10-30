@@ -31,7 +31,8 @@ CS2DGame::CS2DGame()
 // 地图载入 / 重置
 // ============================================================================
 
-bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* renderer) {
+bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* renderer,
+                       bool resetMatch) {
     renderer_ = renderer;
 
     CS2DMapData mapData;
@@ -70,8 +71,17 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
     // 预热战术库：换图即加载 + 校验区域名，不必等到第一次 LLM 请求才报错。
     CoachWarmupPlaybook();
 
-    ResetToNewMatch();
-        intel_.Build(world_.get(), clockSec_);
+    if (resetMatch) {
+        ResetToNewMatch();
+    } else {
+        // 选阵营前只保留地图世界，不生成玩家和 BOT。
+        bots_.clear();
+        botAi_.clear();
+        bullets_.clear();
+        player_ = Player{};
+        player_.alive = false;
+    }
+    intel_.Build(world_.get(), clockSec_);
     return true;
 }
 
@@ -451,6 +461,9 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
         if (slot == 3 && player_.grenadeCount > 1) {
             player_.grenadeSlot = (player_.grenadeSlot + 1) % player_.grenadeCount;
             player_.SyncActiveGrenade();
+            // 换了一颗手雷也算「切到新装备」，补一声
+            switchSoundWeapon_ = player_.ActiveGrenade();
+            switchSoundPending_ = true;
         }
         return;
     }
@@ -473,10 +486,15 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
     player_.reloadTimer = 0.0f;
     playerHoldingC4_ = (slot == 4);
 
+    // 切枪有金属声，附近敌人能听见（半径见 Tuning::HearSwitchRadius）
+    EmitSound(SoundEventType::WeaponSwitch, player_.x, player_.y, player_.team, -1);
+
     if (slot == 4) {
         player_.ammo = 1;
         player_.maxAmmo = 1;
         player_.reserve = 0;
+        switchSoundWeapon_ = WeaponId::C4;
+        switchSoundPending_ = true;
         return;
     }
     if (slot == 3) {
@@ -485,11 +503,15 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
         player_.ammo = 1;
         player_.maxAmmo = 1;
         player_.reserve = 0;
+        switchSoundWeapon_ = player_.ActiveGrenade();
+        switchSoundPending_ = true;
         return;
     }
 
     // 从目标槽读取它自己的弹药
     player_.LoadAmmoFromSlot();
+    switchSoundWeapon_ = player_.weapons[slot];
+    switchSoundPending_ = true;
 }
 
 std::string CS2DGame::GetWeaponName() const {
@@ -535,6 +557,13 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     if (!world_) return;
 
     clockSec_ += dt;
+
+    // 切枪音效：SwitchWeaponSlot 只挂起，这里按刚切到的武器播放
+    if (switchSoundPending_) {
+        switchSoundPending_ = false;
+        if (audio) audio->PlayWeaponSwitch(switchSoundWeapon_);
+        switchSoundWeapon_ = WeaponId::None;
+    }
 
     UpdateRoundFlow(dt, audio);
 
@@ -701,6 +730,27 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 // ============================================================================
 // 渲染
 // ============================================================================
+
+void CS2DGame::RenderMapPreview(int viewW, int viewH,
+                                float centerX, float centerY, float zoom,
+                                bool clampToMap) {
+    if (!renderer_ || !world_) return;
+    renderer_->SetViewportSize(viewW, viewH);
+    renderer_->SetPreviewCamera(centerX, centerY, zoom, clampToMap);
+    renderer_->DrawWorld();
+}
+
+void CS2DGame::GetTeamSpawnCenter(Team team, float& outX, float& outY) const {
+    outX = world_ ? world_->GetMapPixelW() * 0.5f : 0.0f;
+    outY = world_ ? world_->GetMapPixelH() * 0.5f : 0.0f;
+    if (!world_) return;
+    const auto spawns = world_->SpawnsForTeam(team == Team::CT);
+    if (spawns.empty()) return;
+    float sx = 0.0f, sy = 0.0f;
+    for (const auto* s : spawns) { sx += s->x; sy += s->y; }
+    outX = sx / static_cast<float>(spawns.size());
+    outY = sy / static_cast<float>(spawns.size());
+}
 
 void CS2DGame::Render(int viewW, int viewH) {
     if (!renderer_ || !world_) return;

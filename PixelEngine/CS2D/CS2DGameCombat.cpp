@@ -1,5 +1,6 @@
 #include "CS2DGame.hpp"
 #include "Tuning.hpp"
+#include "NadePhysics.hpp"
 #include "../Audio/AudioManager.hpp"
 #include <iostream>
 #include <cmath>
@@ -160,6 +161,7 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
         }
         player_.shootCooldown = def.cooldown;
         player_.shootAnimTimer = 0.12f;
+        EmitSound(SoundEventType::KnifeSwing, player_.x, player_.y, player_.team, -1);
         if (audio) audio->PlaySound(SoundEffect::KATANA_SWING);
         return;
     }
@@ -183,61 +185,10 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     player_.shootCooldown = def.cooldown;
     player_.shootAnimTimer = 0.12f;
 
-    if (audio) audio->PlaySound(FireSoundFor(def.id));
-}
-
-// 武器 → 枪声（照抄 CS2 时新增武器共用现有音效，后续替换真实素材即可）
-// 回退策略：按武器类别映射到最接近的已有音效，避免新武器静音。
-SoundEffect CS2DGame::FireSoundFor(WeaponId id) {
-    switch (id) {
-        // ---- 手枪：用各自的近亲音效 ----
-        case WeaponId::Glock18:     return SoundEffect::GLOCK_FIRE;
-        case WeaponId::USP_S:
-        case WeaponId::P2000:       return SoundEffect::USP_FIRE;
-        case WeaponId::Deagle:
-        case WeaponId::R8Revolver:  return SoundEffect::DEAGLE_FIRE;
-        case WeaponId::P250:
-        case WeaponId::FiveSeven:
-        case WeaponId::Tec9:
-        case WeaponId::CZ75:
-        case WeaponId::DualBerettas: return SoundEffect::GLOCK_FIRE;
-        case WeaponId::Zeus:        return SoundEffect::SHOTGUN_FIRE;
-
-        // ---- 冲锋枪 ----
-        case WeaponId::MAC10:
-        case WeaponId::MP9:
-        case WeaponId::MP7:
-        case WeaponId::MP5SD:
-        case WeaponId::UMP45:
-        case WeaponId::P90:         return SoundEffect::SMG_FIRE;
-
-        // ---- 步枪 ----
-        case WeaponId::AK47:
-        case WeaponId::SG553:       return SoundEffect::AK47_FIRE;
-        case WeaponId::M4A4:
-        case WeaponId::M4A1S:
-        case WeaponId::AUG:         return SoundEffect::M4A1_FIRE;
-        case WeaponId::GalilAR:
-        case WeaponId::FAMAS:       return SoundEffect::GALIL_FIRE;
-
-        // ---- 狙击枪 ----
-        case WeaponId::AWP:         return SoundEffect::AWP_FIRE;
-        case WeaponId::SSG08:
-        case WeaponId::SCAR20:
-        case WeaponId::G3SG1:       return SoundEffect::AWP_FIRE;
-
-        // ---- 霰弹枪 ----
-        case WeaponId::Nova:
-        case WeaponId::XM1014:
-        case WeaponId::SawedOff:
-        case WeaponId::MAG7:        return SoundEffect::SHOTGUN_FIRE;
-
-        // ---- 机枪 ----
-        case WeaponId::M249:
-        case WeaponId::Negev:       return SoundEffect::AK47_FIRE;
-
-        default:                    return SoundEffect::SHOOT;
-    }
+    // 枪声传播：附近敌人按武器类别/消音器得到不同半径
+    EmitSound(SoundEventType::Gunshot, player_.x, player_.y, player_.team, -1,
+              GunshotRadius(def));
+    if (audio) audio->PlayWeaponFire(def.id);
 }
 
 // 由 WeaponDef 直接发射子弹
@@ -436,6 +387,14 @@ void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle, AudioManager* audio
     // 每个投掷物一局只能用一次：用掉就从背包移除
     thrower.ConsumeActiveGrenade();
 
+    // 投掷动作本身会出声（附近敌人能听到，见 Tuning::HearThrowRadius）
+    {
+        const int idx = (&thrower == &player_)
+            ? -1
+            : static_cast<int>(&thrower - bots_.data());
+        EmitSound(SoundEventType::GrenadeThrow, thrower.x, thrower.y, thrower.team, idx);
+    }
+
     // 出手音效：按投掷物类型选择，且与投掷动作在同一帧
     if (audio) {
         SoundEffect se = SoundEffect::GRENADE_THROW;
@@ -450,13 +409,14 @@ void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle, AudioManager* audio
 }
 
 void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
-    // 投掷物飞行 + 引信
+    // 投掷物飞行 + 撞墙反弹 + 引信
     for (auto& g : grenades_) {
         if (!g.active) continue;
 
         g.fuse -= dt;
+        if (g.bounceHearCooldown > 0.0f) g.bounceHearCooldown -= dt;
 
-        // 子步进移动：每步不超过半个 tile，避免高速穿过薄墙
+        // 子步进：每步不超过半个 tile，避免高速穿过薄墙
         const float speed = std::sqrt(g.vx * g.vx + g.vy * g.vy);
         const float halfTile = static_cast<float>(world_->GetTileWidth()) * 0.5f;
         int steps = 1;
@@ -466,22 +426,55 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
         steps = std::min(steps, 16);
         const float sub = dt / static_cast<float>(steps);
 
-        bool blocked = false;
         for (int st = 0; st < steps; ++st) {
-            const float nx = g.x + g.vx * sub;
-            const float ny = g.y + g.vy * sub;
+            if (g.vx == 0.0f && g.vy == 0.0f) break;
 
+            const float oldX = g.x, oldY = g.y;
+            const float nx = oldX + g.vx * sub;
+            const float ny = oldY + g.vy * sub;
+
+            // 分轴判定：只把「被墙挡住」的分量反弹，切向速度保留（贴着墙滑行）。
+            // 例：斜着撞到竖直墙面 → vx 反转并按恢复系数衰减，vy 不变。
+            bool hitX = false, hitY = false;
             int row = 0, col = 0;
-            world_->WorldToTile(nx, ny, row, col);
-            if (world_->IsBlockingBullet(row, col)) {
-                blocked = true;   // 到墙就停，不进入墙体
-                break;
+            if (g.vx != 0.0f) {
+                world_->WorldToTile(nx, oldY, row, col);
+                hitX = world_->IsBlockingBullet(row, col);
+                if (!hitX) g.x = nx;
             }
-            g.x = nx;
-            g.y = ny;
-        }
-        if (blocked) {
-            g.vx = g.vy = 0.0f;
+            if (g.vy != 0.0f) {
+                world_->WorldToTile(g.x, ny, row, col);
+                hitY = world_->IsBlockingBullet(row, col);
+                if (!hitY) g.y = ny;
+            }
+            // 斜向穿角：两个单轴都可行，但对角格是墙 → 回退并双轴反弹
+            if (!hitX && !hitY && g.vx != 0.0f && g.vy != 0.0f) {
+                world_->WorldToTile(nx, ny, row, col);
+                if (world_->IsBlockingBullet(row, col)) {
+                    g.x = oldX;
+                    g.y = oldY;
+                    hitX = hitY = true;
+                }
+            }
+
+            if (hitX || hitY) {
+                const float before = std::sqrt(g.vx * g.vx + g.vy * g.vy);
+                ApplyNadeBounce(g.vx, g.vy, hitX, hitY,
+                                Tuning::NadeBounceRestitution,
+                                Tuning::NadeMinBounceSpeed);
+                const float after = std::sqrt(g.vx * g.vx + g.vy * g.vy);
+                ++g.wallBounces;
+
+                // 撞墙同样会发出听觉信息（附近敌人能据此判断投掷物位置）
+                if (g.bounceHearCooldown <= 0.0f) {
+                    g.bounceHearCooldown = Tuning::NadeBounceHearCooldown;
+                    EmitSound(SoundEventType::GrenadeBounce, g.x, g.y, g.team);
+                    std::cout << "[Nade] 撞墙反弹 (" << static_cast<int>(g.x) << ","
+                              << static_cast<int>(g.y) << ") 速度 "
+                              << static_cast<int>(before) << " → "
+                              << static_cast<int>(after) << std::endl;
+                }
+            }
         }
 
         // 地面摩擦（指数衰减；v0/friction ≈ 总投掷距离）
@@ -489,6 +482,19 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
         g.vy -= g.vy * 2.0f * dt;
         g.x = std::clamp(g.x, 0.0f, world_->GetMapPixelW() - 1.0f);
         g.y = std::clamp(g.y, 0.0f, world_->GetMapPixelH() - 1.0f);
+
+        // 落点预警：速度降下来（即将停住）时广播一次位置，附近敌人会躲开落点。
+        // 阈值取 200 而不是几十，是为了给反应留出约 1 秒的窗口。
+        if (!g.landingWarned) {
+            const float spd2 = g.vx * g.vx + g.vy * g.vy;
+            if (spd2 < 200.0f * 200.0f) {
+                g.landingWarned = true;
+                EmitSound(SoundEventType::GrenadeBounce, g.x, g.y, g.team);
+                std::cout << "[Nade] 落点 (" << static_cast<int>(g.x) << ","
+                          << static_cast<int>(g.y) << ") → 落点信息已广播"
+                          << "（反弹 " << g.wallBounces << " 次）" << std::endl;
+            }
+        }
 
         if (g.fuse <= 0.0f) {
             ExplodeGrenade(g, audio);
@@ -543,10 +549,12 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
                                        Tuning::NadeBlastFxTime });
 
             if (audio) audio->PlaySound(SoundEffect::GRENADE_EXPLODE);
+            EmitSound(SoundEventType::Explosion, g.x, g.y, g.team);
             break;
         }
         case WeaponId::GrenadeFlash: {
             if (audio) audio->PlaySound(SoundEffect::FLASH);
+            EmitSound(SoundEventType::Flashbang, g.x, g.y, g.team);
             // 致盲：距离越近越久（平方衰减）+ 墙体遮挡
             // 返回 {致盲秒数, 峰值强度}，强度用于控制白屏有多白
             auto flashAt = [&](const Player& t) -> std::pair<float, float> {
@@ -592,6 +600,7 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
             s.life = 12.0f;
             smokes_.push_back(s);
             if (audio) audio->PlaySound(SoundEffect::SMOKE);
+            EmitSound(SoundEventType::SmokePop, g.x, g.y, g.team);
             break;
         }
         default:
@@ -634,6 +643,10 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio, Player* ki
     victim.vx = victim.vy = 0.0f;
     victim.reloading = false;
     ++victim.deaths;
+
+    // 倒地也会出声：附近单位听到后转向警戒（队友还会据此补枪）
+    EmitSound(SoundEventType::Death, victim.x, victim.y, victim.team,
+              (&victim == &player_) ? -1 : static_cast<int>(&victim - bots_.data()));
 
     // 击杀归属（自己炸自己 / 环境伤害不计入）
     // 玩家阵亡 → 进入观察者模式
@@ -739,6 +752,14 @@ void CS2DGame::StartReload(Player& p, AudioManager* audio) {
 
     p.reloading   = true;
     p.reloadTimer = def.reloadTime;         // 每把枪不同，取自素材时长
+
+    // 换弹声会暴露位置：附近敌人能听见（约 220px），可趁机前压
+    {
+        const int idx = (&p == &player_)
+            ? -1
+            : static_cast<int>(&p - bots_.data());
+        EmitSound(SoundEventType::Reload, p.x, p.y, p.team, idx);
+    }
     if (audio) {
         audio->PlaySoundAt(ReloadSoundFor(def.id), p.x, p.y, ListenerX(), ListenerY());
     }
