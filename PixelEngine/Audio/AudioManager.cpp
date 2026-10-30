@@ -3,6 +3,65 @@
 #include <algorithm>
 #include <iostream>
 
+namespace {
+
+// 武器 → 枪声素材。每把可射击武器一段「单发」录音：
+// 每颗子弹都会触发一次，素材里若含连发会被听成多打了一枪。
+struct WeaponFireAsset {
+    WeaponId    id;
+    const char* path;
+};
+
+const WeaponFireAsset kWeaponFireAssets[] = {
+    // ---- 手枪 ----
+    { WeaponId::Glock18,      "assets/audio/fire_glock18.wav" },
+    { WeaponId::USP_S,        "assets/audio/fire_usp_s.wav" },
+    { WeaponId::P2000,        "assets/audio/fire_p2000.wav" },
+    { WeaponId::DualBerettas, "assets/audio/fire_dualberettas.wav" },
+    { WeaponId::P250,         "assets/audio/fire_p250.wav" },
+    { WeaponId::FiveSeven,    "assets/audio/fire_fiveseven.wav" },
+    { WeaponId::Tec9,         "assets/audio/fire_tec9.wav" },
+    { WeaponId::CZ75,         "assets/audio/fire_cz75.wav" },
+    { WeaponId::Deagle,       "assets/audio/fire_deagle.wav" },
+    { WeaponId::R8Revolver,   "assets/audio/fire_r8revolver.wav" },
+    { WeaponId::Zeus,         "assets/audio/fire_zeus.wav" },
+
+    // ---- 冲锋枪 ----
+    { WeaponId::MAC10,        "assets/audio/fire_mac10.wav" },
+    { WeaponId::MP9,          "assets/audio/fire_mp9.wav" },
+    { WeaponId::MP7,          "assets/audio/fire_mp7.wav" },
+    { WeaponId::MP5SD,        "assets/audio/fire_mp5sd.wav" },
+    { WeaponId::UMP45,        "assets/audio/fire_ump45.wav" },
+    { WeaponId::P90,          "assets/audio/fire_p90.wav" },
+
+    // ---- 步枪 ----
+    { WeaponId::GalilAR,      "assets/audio/fire_galilar.wav" },
+    { WeaponId::FAMAS,        "assets/audio/fire_famas.wav" },
+    { WeaponId::AK47,         "assets/audio/fire_ak47.wav" },
+    { WeaponId::M4A4,         "assets/audio/fire_m4a4.wav" },
+    { WeaponId::M4A1S,        "assets/audio/fire_m4a1s.wav" },
+    { WeaponId::SG553,        "assets/audio/fire_sg553.wav" },
+    { WeaponId::AUG,          "assets/audio/fire_aug.wav" },
+
+    // ---- 狙击枪 ----
+    { WeaponId::SSG08,        "assets/audio/fire_ssg08.wav" },
+    { WeaponId::AWP,          "assets/audio/fire_awp.wav" },
+    { WeaponId::SCAR20,       "assets/audio/fire_scar20.wav" },
+    { WeaponId::G3SG1,        "assets/audio/fire_g3sg1.wav" },
+
+    // ---- 霰弹枪 ----
+    { WeaponId::Nova,         "assets/audio/fire_nova.wav" },
+    { WeaponId::XM1014,       "assets/audio/fire_xm1014.wav" },
+    { WeaponId::SawedOff,     "assets/audio/fire_sawedoff.wav" },
+    { WeaponId::MAG7,         "assets/audio/fire_mag7.wav" },
+
+    // ---- 机枪 ----
+    { WeaponId::M249,         "assets/audio/fire_m249.wav" },
+    { WeaponId::Negev,        "assets/audio/fire_negev.wav" },
+};
+
+} // namespace
+
 bool AudioManager::Initialize() {
     if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
         std::cerr << "SDL 音频子系统初始化失败，游戏将静音运行: " << SDL_GetError() << std::endl;
@@ -31,54 +90,51 @@ bool AudioManager::Initialize() {
         return chunk;
     };
 
-    buttonHoverSound = loadChunk("assets/audio/button.ogg", "按钮悬停");
-    clickSound = loadChunk("assets/audio/click.ogg", "按钮点击");
-    shootSound = loadChunk("assets/audio/deagle.mp3", "射击");
-    hitSound = loadChunk("assets/audio/hit.wav", "命中");
-    killSound = loadChunk("assets/audio/kill.mp3", "击杀");
+    // ---- 界面 / 音乐 ----
+    buttonHoverSound = loadChunk("assets/audio/ui_hover.ogg", "按钮悬停");
+    clickSound = loadChunk("assets/audio/ui_click.ogg", "按钮点击");
 
-    // 战局事件
-    grenadeExplodeSound = loadChunk("assets/audio/grenade_explode.wav", "手雷爆炸");
-    equipSound          = loadChunk("assets/audio/equip.mp3", "购买装备");
-    grenadeThrowSound   = loadChunk("assets/audio/dagger_out.mp3", "投掷出手");
+    // ---- 通用反馈 ----
+    hitSound = loadChunk("assets/audio/sfx_hit.wav", "命中");
+    killSound = loadChunk("assets/audio/sfx_kill.mp3", "击杀");
+    armorHitSound = loadChunk("assets/audio/sfx_armor_hit.wav", "护甲受击");
+    footstepSound = loadChunk("assets/audio/sfx_footstep.mp3", "脚步");
+    equipSound = loadChunk("assets/audio/sfx_equip.mp3", "购买装备");
+
+    // ---- 战局事件 ----
+    grenadeExplodeSound = loadChunk("assets/audio/fx_explosion.wav", "手雷爆炸");
+    grenadeThrowSound   = loadChunk("assets/audio/throw_generic.mp3", "投掷出手");
     // 出手音效：优先用专用素材，缺失时回落到通用出手声
-    throwHeSound    = loadChunk("assets/audio/throw_grenade.mp3", "高爆雷出手");
+    throwHeSound    = loadChunk("assets/audio/throw_he.mp3", "高爆雷出手");
     if (!throwHeSound)    throwHeSound    = grenadeThrowSound;
     throwFlashSound = loadChunk("assets/audio/throw_flash.mp3", "闪光弹出手");
     if (!throwFlashSound) throwFlashSound = grenadeThrowSound;
     throwSmokeSound = loadChunk("assets/audio/throw_smoke.mp3", "烟雾弹出手");
     if (!throwSmokeSound) throwSmokeSound = grenadeThrowSound;
-    flashSound          = loadChunk("assets/audio/flash.mp3", "闪光弹");
-    smokeSound          = loadChunk("assets/audio/smoke.mp3", "烟雾弹");
+    flashSound          = loadChunk("assets/audio/fx_flash.mp3", "闪光弹");
+    smokeSound          = loadChunk("assets/audio/fx_smoke.mp3", "烟雾弹");
     bombPlantSound      = loadChunk("assets/audio/bomb_plant.wav", "下包");
     bombDefuseSound     = loadChunk("assets/audio/bomb_defuse.wav", "拆包");
     bombBeepSound       = loadChunk("assets/audio/bomb_beep.wav", "C4 滴答");
     roundStartSound     = loadChunk("assets/audio/round_start.wav", "回合开始");
     roundWinSound       = loadChunk("assets/audio/round_win.wav", "回合胜利");
     roundLoseSound      = loadChunk("assets/audio/round_lose.wav", "回合失败");
-    footstepSound       = loadChunk("assets/audio/footstep.mp3", "脚步");
-    armorHitSound       = loadChunk("assets/audio/armor_hit.wav", "护甲受击");
+    daggerSound         = loadChunk("assets/audio/melee_knife.wav", "匕首攻击");
 
-    // 换弹音效
-    reloadGlockSound   = loadChunk("assets/audio/glock_reload.mp3",  "Glock 换弹");
-    reloadUspSound     = loadChunk("assets/audio/usp_reload.mp3",    "USP 换弹");
-    reloadDeagleSound  = loadChunk("assets/audio/deagle_reload.mp3", "Deagle 换弹");
-    reloadGalilSound   = loadChunk("assets/audio/galir_reload.mp3",  "Galil 换弹");
-    reloadAk47Sound    = loadChunk("assets/audio/ak47_reload.mp3",   "AK47 换弹");
-    reloadM4a1Sound    = loadChunk("assets/audio/m4a1_reload.mp3",   "M4A1 换弹");
-    reloadShotgunSound = loadChunk("assets/audio/shotgun_load.mp3",  "霰弹枪换弹");
-    reloadAwpSound     = loadChunk("assets/audio/awp_reload.mp3",    "AWP 换弹");
+    // ---- 换弹音效 ----
+    reloadGlockSound   = loadChunk("assets/audio/reload_glock.mp3",   "Glock 换弹");
+    reloadUspSound     = loadChunk("assets/audio/reload_usp.mp3",     "USP 换弹");
+    reloadDeagleSound  = loadChunk("assets/audio/reload_deagle.mp3",  "Deagle 换弹");
+    reloadGalilSound   = loadChunk("assets/audio/reload_galil.mp3",   "Galil 换弹");
+    reloadAk47Sound    = loadChunk("assets/audio/reload_ak47.mp3",    "AK47 换弹");
+    reloadM4a1Sound    = loadChunk("assets/audio/reload_m4a1.mp3",    "M4A1 换弹");
+    reloadShotgunSound = loadChunk("assets/audio/reload_shotgun.mp3", "霰弹枪换弹");
+    reloadAwpSound     = loadChunk("assets/audio/reload_awp.mp3",     "AWP 换弹");
 
-    // 分武器枪声
-    ak47Sound = loadChunk("assets/audio/ak47.wav", "AK47 射击");
-    glockFireSound   = loadChunk("assets/audio/glock.wav", "Glock 射击");
-    uspFireSound     = loadChunk("assets/audio/usp.mp3", "USP 射击");
-    deagleSound = loadChunk("assets/audio/deagle.mp3", "沙漠之鹰射击");
-    m4a1FireSound    = loadChunk("assets/audio/m4a1.mp3", "M4A1 射击");
-    awpFireSound     = loadChunk("assets/audio/awp.mp3", "AWP 射击");
-    shotgunFireSound = loadChunk("assets/audio/shotgun.wav", "霰弹枪射击");
-    galilFireSound   = loadChunk("assets/audio/galir.mp3", "Galil 射击");
-    daggerSound = loadChunk("assets/audio/dagger_attack.wav", "匕首攻击");
+    // ---- 分武器枪声（单发）----
+    for (const auto& asset : kWeaponFireAssets) {
+        weaponFire_[static_cast<size_t>(asset.id)] = loadChunk(asset.path, asset.path);
+    }
 
     if (failedAudio > 0) {
         std::cerr << "[Asset] 音效缺失 " << failedAudio
@@ -99,11 +155,8 @@ void AudioManager::Clean() {
     if (buttonHoverSound) { Mix_FreeChunk(buttonHoverSound); buttonHoverSound = nullptr; }
     if (clickSound) { Mix_FreeChunk(clickSound); clickSound = nullptr; }
     if (daggerSound) { Mix_FreeChunk(daggerSound); daggerSound = nullptr; }
-    if (shootSound) { Mix_FreeChunk(shootSound); shootSound = nullptr; }
     if (hitSound) { Mix_FreeChunk(hitSound); hitSound = nullptr; }
     if (killSound) { Mix_FreeChunk(killSound); killSound = nullptr; }
-    if (ak47Sound) { Mix_FreeChunk(ak47Sound); ak47Sound = nullptr; }
-    if (deagleSound) { Mix_FreeChunk(deagleSound); deagleSound = nullptr; }
 
     // 战局事件
     if (grenadeExplodeSound) { Mix_FreeChunk(grenadeExplodeSound); grenadeExplodeSound = nullptr; }
@@ -134,12 +187,9 @@ void AudioManager::Clean() {
     if (reloadAwpSound)     { Mix_FreeChunk(reloadAwpSound);     reloadAwpSound = nullptr; }
 
     // 分武器枪声
-    if (glockFireSound)   { Mix_FreeChunk(glockFireSound);   glockFireSound = nullptr; }
-    if (uspFireSound)     { Mix_FreeChunk(uspFireSound);     uspFireSound = nullptr; }
-    if (m4a1FireSound)    { Mix_FreeChunk(m4a1FireSound);    m4a1FireSound = nullptr; }
-    if (awpFireSound)     { Mix_FreeChunk(awpFireSound);     awpFireSound = nullptr; }
-    if (shotgunFireSound) { Mix_FreeChunk(shotgunFireSound); shotgunFireSound = nullptr; }
-    if (galilFireSound)   { Mix_FreeChunk(galilFireSound);   galilFireSound = nullptr; }
+    for (auto& chunk : weaponFire_) {
+        if (chunk) { Mix_FreeChunk(chunk); chunk = nullptr; }
+    }
 
     Mix_CloseAudio();
     SDL_QuitSubSystem(SDL_INIT_AUDIO);
@@ -183,11 +233,8 @@ Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
         case SoundEffect::BUTTON_HOVER:     return buttonHoverSound;
         case SoundEffect::CLICK:            return clickSound;
         case SoundEffect::DAGGER_FIRE:      return daggerSound;
-        case SoundEffect::SHOOT:            return shootSound;
         case SoundEffect::HIT:              return hitSound;
         case SoundEffect::KILL:             return killSound;
-        case SoundEffect::AK47_FIRE:        return ak47Sound;
-        case SoundEffect::DEAGLE_FIRE:      return deagleSound;
 
         case SoundEffect::GRENADE_THROW:   return grenadeThrowSound;
         case SoundEffect::THROW_HE:        return throwHeSound;
@@ -215,44 +262,50 @@ Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
         case SoundEffect::RELOAD_SHOTGUN:    return reloadShotgunSound;
         case SoundEffect::RELOAD_AWP:        return reloadAwpSound;
 
-        case SoundEffect::GLOCK_FIRE:       return glockFireSound;
-        case SoundEffect::USP_FIRE:         return uspFireSound;
-        case SoundEffect::M4A1_FIRE:        return m4a1FireSound;
-        case SoundEffect::AWP_FIRE:         return awpFireSound;
-        case SoundEffect::SHOTGUN_FIRE:     return shotgunFireSound;
-        case SoundEffect::GALIL_FIRE:       return galilFireSound;
+        default:                             return nullptr;
     }
-    return nullptr;
+}
+
+Mix_Chunk* AudioManager::WeaponFireChunk(WeaponId id) const {
+    const int idx = static_cast<int>(id);
+    if (idx < 0 || idx >= static_cast<int>(weaponFire_.size())) return nullptr;
+    return weaponFire_[static_cast<size_t>(idx)];
 }
 
 void AudioManager::PlaySound(SoundEffect effect) {
     if (!audioInitialized) return;
 
     Mix_Chunk* targetChunk = ChunkFor(effect);
-    if (targetChunk) {
-        // 自动武器共用专用通道：新枪声覆盖旧枪声，避免通道耗尽后失声
-        const bool autoWeapon = (effect == SoundEffect::AK47_FIRE ||
-                                 effect == SoundEffect::M4A1_FIRE ||
-                                 effect == SoundEffect::GALIL_FIRE ||
-                                 effect == SoundEffect::SMG_FIRE);
-        const int want = autoWeapon ? CHANNEL_AK47_FIRE : -1;
-        const int chan = Mix_PlayChannel(want, targetChunk, 0);
-        if (chan < 0) return;
-        // 关键修复：通道是复用的，上一个音可能是远处 3D 音效（音量 0、声像偏一侧）。
-        // 不重置的话，玩家自己的枪声会继承那个 0 音量，表现为「时有时无」。
-        Mix_Volume(chan, effectsLevel_);
-        Mix_SetPanning(chan, 255, 255);
-    }
-}
-
-void AudioManager::PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
-                                float listenerX, float listenerY) {
-    if (!audioInitialized) return;
-
-    Mix_Chunk* targetChunk = ChunkFor(effect);
     if (!targetChunk) return;
 
     const int chan = Mix_PlayChannel(-1, targetChunk, 0);
+    if (chan < 0) return;
+    // 关键修复：通道是复用的，上一个音可能是远处 3D 音效（音量 0、声像偏一侧）。
+    // 不重置的话，玩家自己的枪声会继承那个 0 音量，表现为「时有时无」。
+    Mix_Volume(chan, effectsLevel_);
+    Mix_SetPanning(chan, 255, 255);
+}
+
+void AudioManager::PlayWeaponFire(WeaponId id) {
+    if (!audioInitialized) return;
+
+    Mix_Chunk* targetChunk = WeaponFireChunk(id);
+    if (!targetChunk) return;
+
+    // 自动武器共用专用通道：新枪声覆盖上一发，避免通道耗尽后失声
+    const bool autoWeapon = WeaponDB::Get(id).automatic;
+    const int chan = Mix_PlayChannel(autoWeapon ? CHANNEL_AUTO_FIRE : -1,
+                                     targetChunk, 0);
+    if (chan < 0) return;
+    Mix_Volume(chan, effectsLevel_);
+    Mix_SetPanning(chan, 255, 255);
+}
+
+void AudioManager::PlayChunkAt(Mix_Chunk* chunk, float sourceX, float sourceY,
+                               float listenerX, float listenerY) {
+    if (!audioInitialized || !chunk) return;
+
+    const int chan = Mix_PlayChannel(-1, chunk, 0);
     if (chan < 0) return;
 
     // ---- 声像：由「声源相对玩家的世界位置」决定 ----
@@ -287,6 +340,16 @@ void AudioManager::PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
     }
     const int vol = static_cast<int>(distFactor * effectsLevel_);
     Mix_Volume(chan, vol);
+}
+
+void AudioManager::PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
+                               float listenerX, float listenerY) {
+    PlayChunkAt(ChunkFor(effect), sourceX, sourceY, listenerX, listenerY);
+}
+
+void AudioManager::PlayWeaponFireAt(WeaponId id, float sourceX, float sourceY,
+                                    float listenerX, float listenerY) {
+    PlayChunkAt(WeaponFireChunk(id), sourceX, sourceY, listenerX, listenerY);
 }
 
 void AudioManager::UpdateVolumes() {

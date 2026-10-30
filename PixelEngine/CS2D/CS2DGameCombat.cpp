@@ -160,6 +160,7 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
         }
         player_.shootCooldown = def.cooldown;
         player_.shootAnimTimer = 0.12f;
+        EmitSound(SoundEventType::KnifeSwing, player_.x, player_.y, player_.team, -1);
         if (audio) audio->PlaySound(SoundEffect::KATANA_SWING);
         return;
     }
@@ -183,61 +184,10 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     player_.shootCooldown = def.cooldown;
     player_.shootAnimTimer = 0.12f;
 
-    if (audio) audio->PlaySound(FireSoundFor(def.id));
-}
-
-// 武器 → 枪声（照抄 CS2 时新增武器共用现有音效，后续替换真实素材即可）
-// 回退策略：按武器类别映射到最接近的已有音效，避免新武器静音。
-SoundEffect CS2DGame::FireSoundFor(WeaponId id) {
-    switch (id) {
-        // ---- 手枪：用各自的近亲音效 ----
-        case WeaponId::Glock18:     return SoundEffect::GLOCK_FIRE;
-        case WeaponId::USP_S:
-        case WeaponId::P2000:       return SoundEffect::USP_FIRE;
-        case WeaponId::Deagle:
-        case WeaponId::R8Revolver:  return SoundEffect::DEAGLE_FIRE;
-        case WeaponId::P250:
-        case WeaponId::FiveSeven:
-        case WeaponId::Tec9:
-        case WeaponId::CZ75:
-        case WeaponId::DualBerettas: return SoundEffect::GLOCK_FIRE;
-        case WeaponId::Zeus:        return SoundEffect::SHOTGUN_FIRE;
-
-        // ---- 冲锋枪 ----
-        case WeaponId::MAC10:
-        case WeaponId::MP9:
-        case WeaponId::MP7:
-        case WeaponId::MP5SD:
-        case WeaponId::UMP45:
-        case WeaponId::P90:         return SoundEffect::SMG_FIRE;
-
-        // ---- 步枪 ----
-        case WeaponId::AK47:
-        case WeaponId::SG553:       return SoundEffect::AK47_FIRE;
-        case WeaponId::M4A4:
-        case WeaponId::M4A1S:
-        case WeaponId::AUG:         return SoundEffect::M4A1_FIRE;
-        case WeaponId::GalilAR:
-        case WeaponId::FAMAS:       return SoundEffect::GALIL_FIRE;
-
-        // ---- 狙击枪 ----
-        case WeaponId::AWP:         return SoundEffect::AWP_FIRE;
-        case WeaponId::SSG08:
-        case WeaponId::SCAR20:
-        case WeaponId::G3SG1:       return SoundEffect::AWP_FIRE;
-
-        // ---- 霰弹枪 ----
-        case WeaponId::Nova:
-        case WeaponId::XM1014:
-        case WeaponId::SawedOff:
-        case WeaponId::MAG7:        return SoundEffect::SHOTGUN_FIRE;
-
-        // ---- 机枪 ----
-        case WeaponId::M249:
-        case WeaponId::Negev:       return SoundEffect::AK47_FIRE;
-
-        default:                    return SoundEffect::SHOOT;
-    }
+    // 枪声传播：附近敌人按武器类别/消音器得到不同半径
+    EmitSound(SoundEventType::Gunshot, player_.x, player_.y, player_.team, -1,
+              GunshotRadius(def));
+    if (audio) audio->PlayWeaponFire(def.id);
 }
 
 // 由 WeaponDef 直接发射子弹
@@ -436,6 +386,14 @@ void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle, AudioManager* audio
     // 每个投掷物一局只能用一次：用掉就从背包移除
     thrower.ConsumeActiveGrenade();
 
+    // 投掷动作本身会出声（附近敌人能听到，见 Tuning::HearThrowRadius）
+    {
+        const int idx = (&thrower == &player_)
+            ? -1
+            : static_cast<int>(&thrower - bots_.data());
+        EmitSound(SoundEventType::GrenadeThrow, thrower.x, thrower.y, thrower.team, idx);
+    }
+
     // 出手音效：按投掷物类型选择，且与投掷动作在同一帧
     if (audio) {
         SoundEffect se = SoundEffect::GRENADE_THROW;
@@ -490,6 +448,20 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
         g.x = std::clamp(g.x, 0.0f, world_->GetMapPixelW() - 1.0f);
         g.y = std::clamp(g.y, 0.0f, world_->GetMapPixelH() - 1.0f);
 
+        // 落地预警：撞墙或速度已经降下来（即将停住）时发出一次位置提示，
+        // 附近敌人会躲开落点。阈值取 200 而不是几十，是为了给反应留出
+        // 约 1 秒的窗口（引信 1.4s，投掷后 ~0.4s 就会降到这个速度）。
+        if (!g.bounced) {
+            const float spd2 = g.vx * g.vx + g.vy * g.vy;
+            if (blocked || spd2 < 200.0f * 200.0f) {
+                g.bounced = true;
+                EmitSound(SoundEventType::GrenadeBounce, g.x, g.y, g.team);
+                std::cout << "[Nade] 落地 (" << static_cast<int>(g.x) << ","
+                          << static_cast<int>(g.y) << ") → 落点信息已广播"
+                          << std::endl;
+            }
+        }
+
         if (g.fuse <= 0.0f) {
             ExplodeGrenade(g, audio);
             g.active = false;
@@ -543,10 +515,12 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
                                        Tuning::NadeBlastFxTime });
 
             if (audio) audio->PlaySound(SoundEffect::GRENADE_EXPLODE);
+            EmitSound(SoundEventType::Explosion, g.x, g.y, g.team);
             break;
         }
         case WeaponId::GrenadeFlash: {
             if (audio) audio->PlaySound(SoundEffect::FLASH);
+            EmitSound(SoundEventType::Flashbang, g.x, g.y, g.team);
             // 致盲：距离越近越久（平方衰减）+ 墙体遮挡
             // 返回 {致盲秒数, 峰值强度}，强度用于控制白屏有多白
             auto flashAt = [&](const Player& t) -> std::pair<float, float> {
@@ -592,6 +566,7 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
             s.life = 12.0f;
             smokes_.push_back(s);
             if (audio) audio->PlaySound(SoundEffect::SMOKE);
+            EmitSound(SoundEventType::SmokePop, g.x, g.y, g.team);
             break;
         }
         default:
@@ -634,6 +609,10 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio, Player* ki
     victim.vx = victim.vy = 0.0f;
     victim.reloading = false;
     ++victim.deaths;
+
+    // 倒地也会出声：附近单位听到后转向警戒（队友还会据此补枪）
+    EmitSound(SoundEventType::Death, victim.x, victim.y, victim.team,
+              (&victim == &player_) ? -1 : static_cast<int>(&victim - bots_.data()));
 
     // 击杀归属（自己炸自己 / 环境伤害不计入）
     // 玩家阵亡 → 进入观察者模式
@@ -739,6 +718,14 @@ void CS2DGame::StartReload(Player& p, AudioManager* audio) {
 
     p.reloading   = true;
     p.reloadTimer = def.reloadTime;         // 每把枪不同，取自素材时长
+
+    // 换弹声会暴露位置：附近敌人能听见（约 220px），可趁机前压
+    {
+        const int idx = (&p == &player_)
+            ? -1
+            : static_cast<int>(&p - bots_.data());
+        EmitSound(SoundEventType::Reload, p.x, p.y, p.team, idx);
+    }
     if (audio) {
         audio->PlaySoundAt(ReloadSoundFor(def.id), p.x, p.y, ListenerX(), ListenerY());
     }

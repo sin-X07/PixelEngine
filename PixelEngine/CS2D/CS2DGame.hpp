@@ -4,6 +4,7 @@
 #include "Teams/TeamManager.hpp"
 #include "Coach/CoachTypes.hpp"
 #include "TacticalIntel.hpp"
+#include "SoundEvents.hpp"
 #include "Rounds/RoundManager.hpp"
 #include "Weapons/WeaponDef.hpp"
 #include "Tuning.hpp"
@@ -286,11 +287,15 @@ public:
         // 状态标记
         float blindTimer     = 0.0f;   // 闪光致盲剩余秒数
         bool  defusing       = false;  // 正在拆包
-        float heardLogCooldown = 0.0f; // 听声扑人日志节流（调试用）
-        // 最近一次听到的敌人脚步（只属于这只 BOT，不共享给队友）
-        float heardFootstepTimer = 0.0f;
-        float heardFootstepX = 0.0f, heardFootstepY = 0.0f;
-        float heardFootstepDist = 1e9f;
+        float heardLogCooldown = 0.0f; // 听声日志节流（调试用）
+        float reactionLogCooldown = 0.0f; // 听声决策日志节流（调试用）
+
+        // ---- 听觉：本 BOT 最近听到的声音（由 CS2DGame::EmitSound 写入）----
+        // 只保留每种类型最新的一条，最多 kMaxHeard 条；超过 SoundMemory 丢弃。
+        std::vector<HeardSound> heard;
+        // 听到敌对声音后的警戒朝向（没有可见目标时朝这里转）
+        float alertTimer = 0.0f;
+        float alertX = 0.0f, alertY = 0.0f;
         float grenadeCooldown = 0.0f;  // 投掷冷却
         bool  tradePushed     = false; // 本回合是否已补过枪
         bool  hadTarget       = false; // 上一帧是否看得见敌人（决定是否原地扫描）
@@ -337,6 +342,7 @@ public:
         WeaponId type = WeaponId::GrenadeHE;
         Team     team = Team::None;
         bool     active = true;
+        bool     bounced = false;   // 已发出落地声（只发一次）
     };
 
     // 烟雾云（遮挡视线）
@@ -900,8 +906,6 @@ private:
     // 敌方出生点质心（用于无情报时的推进方向，与地图朝向无关）
     bool EnemySpawnCentroid(Team myTeam, float& outX, float& outY) const;
 
-    // 找到武器对应的枪声（供玩家与 BOT 共用）
-    static SoundEffect FireSoundFor(WeaponId id);
     // 武器对应的换弹音效（时长与 WeaponDef::reloadTime 对齐）
     static SoundEffect ReloadSoundFor(WeaponId id);
 
@@ -917,6 +921,21 @@ private:
     const EnemyContact* FindNearestContact(Team team, float x, float y) const;
     std::vector<EnemyContact>&       ContactsOf(Team t);
     const std::vector<EnemyContact>& ContactsOf(Team t) const;
+
+    // ---- 听觉（声音传播）----
+    // 在声源位置发一次声：半径内的所有存活 BOT 都会收到一条 HeardSound；
+    // 敌对声音同时把听者的警戒朝向指向声源。radius 为 0 时用 SoundRadius(type)。
+    void EmitSound(SoundEventType type, float x, float y, Team team,
+                   int sourceIdx = -2, float radius = 0.0f);
+    // 某个 BOT 最近听到的指定类型声音（只按 age 过滤）；没有返回 nullptr
+    const HeardSound* NewestHeard(size_t botIdx, SoundEventType type,
+                                  float maxAge = Tuning::SoundMemory) const;
+    bool HasHeard(size_t botIdx, SoundEventType type,
+                  float maxAge = Tuning::SoundMemory) const {
+        return NewestHeard(botIdx, type, maxAge) != nullptr;
+    }
+    // 听觉信息老化（每帧、每 BOT）
+    void AgeHeardSounds(BotRuntime& ai, float dt);
     // 找一个「真实可见」的敌人（距离 + 烟雾 + LOS）
     const Player* FindVisibleEnemy(const Player& self, float& outDist) const;
     // 拆包安全判定：最近受击 / 可见敌人时先放弃拆包反击；炸弹最后 6 秒强制拆。

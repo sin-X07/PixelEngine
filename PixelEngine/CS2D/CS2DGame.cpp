@@ -483,6 +483,9 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
     player_.reloadTimer = 0.0f;
     playerHoldingC4_ = (slot == 4);
 
+    // 切枪有金属声，附近敌人能听见（半径见 Tuning::HearSwitchRadius）
+    EmitSound(SoundEventType::WeaponSwitch, player_.x, player_.y, player_.team, -1);
+
     if (slot == 4) {
         player_.ammo = 1;
         player_.maxAmmo = 1;

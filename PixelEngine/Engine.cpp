@@ -59,13 +59,16 @@ static void LoadMapPreviews(SDL_Renderer* renderer, void** outTex, int count) {
     int loaded = 0;
     for (int i = 0; i < count; ++i) {
         if (outTex[i]) { ++loaded; continue; }
-        if (outTex[i]) continue;
         const std::string path = PathUtils::ResolveAppPath(kMapCatalog[i].preview);
         SDL_Texture* tex = IMG_LoadTexture(renderer, path.c_str());
         if (!tex) {
             std::cerr << "[MapSelect] 预览图加载失败: " << path << std::endl;
             continue;
         }
+        // 预览图要在选图浮层里跟随卡片淡入淡出。IMG_LoadTexture 得到的纹理
+        // 默认是 SDL_BLENDMODE_NONE，直接用 ImGui 的 AddImage(alpha) 时不会
+        // 做 alpha 混合，只会把颜色调暗，淡出后残留黑色矩形；这里显式开启混合。
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
         outTex[i] = tex;
         ++loaded;
     }
@@ -452,7 +455,7 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
     historyPath_ = PathUtils::ResolveWritablePath(MatchHistory::kFileName);
     history_ = MatchHistory::Load(historyPath_);
 
-    audioManager->PlayMusic("assets/audio/menu.wav");
+    audioManager->PlayMusic("assets/audio/music_menu.wav");
 
     isRunning = true;
 
@@ -947,6 +950,9 @@ void Engine::OpenMapOverlay(MatchMode mode) {
         if (!officePreviewTex_) {
             const std::string preview = PathUtils::ResolveAppPath("assets/cs2d/tilesets/cs_office_bg.png");
             officePreviewTex_ = IMG_LoadTexture(renderer, preview.c_str());
+            if (officePreviewTex_) {
+                SDL_SetTextureBlendMode(officePreviewTex_, SDL_BLENDMODE_BLEND);
+            }
         }
         add("办公室", "近距交火 · 室内攻防 · 快速接敌",
             "assets/cs2d/maps/cs_office.tmj", officePreviewTex_, -1);
@@ -1114,7 +1120,7 @@ void Engine::Update(float dt) {
             currentState = MAIN_MENU;
             SDL_SetRelativeMouseMode(SDL_FALSE);
             SDL_ShowCursor(SDL_ENABLE);
-            audioManager->PlayMusic("assets/audio/menu.wav");
+            audioManager->PlayMusic("assets/audio/music_menu.wav");
             return;
         }
     }
@@ -1358,7 +1364,7 @@ void Engine::Render() {
     // 统一在大厅状态切换时补播菜单音乐；已在播放则不重启。
     if (currentState == MAIN_MENU && lastRenderedState_ != MAIN_MENU &&
         audioManager && !audioManager->IsMusicPlaying()) {
-        audioManager->PlayMusic("assets/audio/menu.wav");
+        audioManager->PlayMusic("assets/audio/music_menu.wav");
     }
 
     UpdateSidePopupFade(frameDt);

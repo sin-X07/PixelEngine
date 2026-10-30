@@ -91,39 +91,6 @@ int CS2DGame::PickDefuseBot() const {
     return mustDefuse ? fallback : -2;
 }
 
-// 脚步事件：只让附近「能听到」的敌对 BOT 记住声源，不写入团队情报。
-// 静步（source.stealth）完全不出声；墙和烟雾不阻断声音。
-void CS2DGame::OnFootstepSound(const Player& source, float x, float y) {
-    if (source.stealth) return;
-
-    const float hearR2 = Tuning::FootstepHearRadius * Tuning::FootstepHearRadius;
-    for (size_t i = 0; i < bots_.size(); ++i) {
-        Player& listener = bots_[i];
-        if (!listener.alive || listener.team == source.team) continue;
-
-        const float dx = x - listener.x;
-        const float dy = y - listener.y;
-        const float d2 = dx * dx + dy * dy;
-        if (d2 > hearR2) continue;
-
-        auto& ai = AiAt(i);
-        const float dist = std::sqrt(d2);
-        // 同一时刻只记最近/最新的声源；较远的旧声音不覆盖更近的新声音。
-        if (ai.heardFootstepTimer <= 0.0f || dist <= ai.heardFootstepDist) {
-            ai.heardFootstepX = x;
-            ai.heardFootstepY = y;
-            ai.heardFootstepDist = dist;
-            ai.heardFootstepTimer = Tuning::FootstepMemory;
-            if (ai.heardLogCooldown <= 0.0f) {
-                ai.heardLogCooldown = 2.0f;
-                std::cout << "[Bot] #" << i << " 听到脚步("
-                          << TeamName(source.team) << ") 距离 "
-                          << static_cast<int>(dist) << " → 搜索声源" << std::endl;
-            }
-        }
-    }
-}
-
 // 找最近的存活敌人（玩家或其它 BOT）
 // 已废弃：BOT 不再全图感知，改用 FindVisibleEnemy + 团队情报。
 
@@ -263,8 +230,20 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     // 之前朝航点算，航点落在身后时会让 BOT 一直转圈找方向。
     const float speed2 = bot.vx * bot.vx + bot.vy * bot.vy;
     if (speed2 > 25.0f) {
-        const float desired = std::atan2(bot.vy, bot.vx)
-                            + std::sin(ai.scanPhase * 2.2f) * Tuning::BotScanAmplitudeRad;
+        const float moveAng = std::atan2(bot.vy, bot.vx);
+        float desired = moveAng
+                      + std::sin(ai.scanPhase * 2.2f) * Tuning::BotScanAmplitudeRad;
+        // 听到敌对声音、且声源大致在前进方向上：边推进边把枪口偏向声源
+        if (ai.alertTimer > 0.0f) {
+            const float want = std::atan2(ai.alertY - bot.y, ai.alertX - bot.x);
+            float dd = want - moveAng;
+            while (dd >  3.14159265f) dd -= 6.28318531f;
+            while (dd < -3.14159265f) dd += 6.28318531f;
+            if (std::abs(dd) < 1.9f) {   // 前方 ±109° 内才偏头，避免倒着走
+                desired = want + std::sin(ai.scanPhase * 2.2f)
+                                * Tuning::BotScanAmplitudeRad * 0.35f;
+            }
+        }
         float delta = desired - bot.aimAngle;
         while (delta >  3.14159265f) delta -= 6.28318531f;
         while (delta < -3.14159265f) delta += 6.28318531f;
@@ -329,10 +308,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // BOT 阵亡掉落 / 切换武器读取的都是 ammoSlot，必须保持最新。
         bot.SaveAmmoToSlot();
         auto& ai = AiAt(i);
-        if (ai.heardFootstepTimer > 0.0f) {
-            ai.heardFootstepTimer = std::max(0.0f, ai.heardFootstepTimer - dt);
-            if (ai.heardFootstepTimer <= 0.0f) ai.heardFootstepDist = 1e9f;
-        }
+        AgeHeardSounds(ai, dt);
         if (ai.blindTimer > 0.0f) ai.blindTimer = std::max(0.0f, ai.blindTimer - dt);
         if (ai.lastHitTimer > 0.0f) ai.lastHitTimer = std::max(0.0f, ai.lastHitTimer - dt);
         if (ai.defuseCooldown > 0.0f) ai.defuseCooldown = std::max(0.0f, ai.defuseCooldown - dt);
@@ -369,15 +345,23 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // ---- 原地扫描：没有目标时缓慢转身 ----
         // 视野是 120° 扇形，若不扫描，背对着敌人的 BOT 会永远发现不了对方
         if (!ai.hadTarget && bot.vx == 0.0f && bot.vy == 0.0f) {
-            // 原地扫视：绕「进入空闲时的朝向」左右 ±60° 摆动。
-            // 中心只在进入空闲时锁定一次，否则 base 会跟着摆角漂移 → 变成整圈旋转。
-            // 原先是 aimAngle += 角速度（360° 连续自转），看起来像原地转圈。
-            if (!ai.scanBaseValid) {
-                ai.scanBase = bot.aimAngle;
+            if (ai.alertTimer > 0.0f) {
+                // 刚听到敌对声音：朝声源方向小幅扫视（±16°），而不是回到原扫描中心
+                const float ang = std::atan2(ai.alertY - bot.y, ai.alertX - bot.x);
+                ai.scanBase = ang;
                 ai.scanBaseValid = true;
+                bot.aimAngle = ang + std::sin(ai.scanPhase * 3.2f) * 0.28f;
+            } else {
+                // 原地扫视：绕「进入空闲时的朝向」左右 ±60° 摆动。
+                // 中心只在进入空闲时锁定一次，否则 base 会跟着摆角漂移 → 变成整圈旋转。
+                // 原先是 aimAngle += 角速度（360° 连续自转），看起来像原地转圈。
+                if (!ai.scanBaseValid) {
+                    ai.scanBase = bot.aimAngle;
+                    ai.scanBaseValid = true;
+                }
+                bot.aimAngle = ai.scanBase +
+                               std::sin(ai.scanPhase * 1.6f) * 1.05f;   // ±60°
             }
-            bot.aimAngle = ai.scanBase +
-                           std::sin(ai.scanPhase * 1.6f) * 1.05f;   // ±60°
         } else {
             ai.scanBaseValid = false;
         }
@@ -443,13 +427,64 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             }
         }
 
+        // ---- 听觉：把最近听到的声音整理成本帧要用的信息 ----
+        // 只取敌对声音；同类型只保留最新一条，超过记忆时长自动失效。
+        auto heardCopy = [&](SoundEventType type, float maxAge, HeardSound& out) -> bool {
+            const HeardSound* h = NewestHeard(i, type, maxAge);
+            if (!h || !h->hostile) return false;
+            out = *h;
+            return true;
+        };
+        HeardSound hearStep, hearShot, hearReload, hearNade;
+        const bool bStep   = heardCopy(SoundEventType::Footstep, Tuning::FootstepMemory, hearStep);
+        const bool bShot   = heardCopy(SoundEventType::Gunshot, Tuning::SoundAlertMemory, hearShot);
+        const bool bReload = heardCopy(SoundEventType::Reload, Tuning::SoundAlertMemory, hearReload);
+        const bool bNade   = heardCopy(SoundEventType::GrenadeBounce,
+                                       Tuning::SoundAlertMemory, hearNade);
+
+        // 近处枪声/换弹 → 主动摸过去（断后位不追；下包后守包优先）
+        const auto dist2Of = [&](const HeardSound& h) {
+            const float dx = h.x - bot.x;
+            const float dy = h.y - bot.y;
+            return dx * dx + dy * dy;
+        };
+        const bool pushShot = bShot && dist2Of(hearShot) <=
+                              Tuning::GunshotPushRadius * Tuning::GunshotPushRadius;
+        const bool pushReload = bReload && dist2Of(hearReload) <=
+                                Tuning::ReloadPushRadius * Tuning::ReloadPushRadius;
+        const bool heardPush = !target && !heardSound && !bombPlanted_ &&
+                               order.role != BotRole::Anchor &&
+                               (pushShot || pushReload);
+
+        // ---- 听到手雷落地：先躲开落点（活下来比守点重要）----
+        if (bNade && !ai.defusing) {
+            const float ndx = bot.x - hearNade.x;
+            const float ndy = bot.y - hearNade.y;
+            const float nd  = std::sqrt(ndx * ndx + ndy * ndy);
+            if (nd > 1.0f && nd < Tuning::GrenadeDangerRadius) {
+                float ex = bot.x + (ndx / nd) * Tuning::GrenadeDodgeDist;
+                float ey = bot.y + (ndy / nd) * Tuning::GrenadeDodgeDist;
+                if (world_) {
+                    ex = std::clamp(ex, 1.0f, world_->GetMapPixelW() - 1.0f);
+                    ey = std::clamp(ey, 1.0f, world_->GetMapPixelH() - 1.0f);
+                }
+                if (FollowPathTo(bot, ai, ex, ey, dt, 1.0f)) {
+                    if (ai.reactionLogCooldown <= 0.0f) {
+                        ai.reactionLogCooldown = 2.0f;
+                        std::cout << "[Bot] #" << i << " 听到手雷落地 距离 "
+                                  << static_cast<int>(nd) << " → 躲开落点" << std::endl;
+                    }
+                    continue;
+                }
+            }
+        }
+
         // 静步时机：lurk 平时慢走；听到脚步去查时慢走；教练 save 时也尽量不出声。
         // 有可见目标时解除静步，正常交火/补枪。
         {
             const bool saving = GetCoachPlan(bot.team).intent == PlanIntent::Save;
             bot.stealth = !target &&
-                          (saving || order.canRotate ||
-                           ai.heardFootstepTimer > 0.0f);
+                          (saving || order.canRotate || bStep);
         }
 
         // 首次接火：每队每回合只报一次（教练据此判断主攻方向）
@@ -492,23 +527,24 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
         // 听到敌人脚步：只有听见的这只 BOT 去查，不写入团队情报。
         // 优先级高于驻守点，但低于已下包 / C4 掉落等目标。
-        if (!target && ai.heardFootstepTimer > 0.0f && !bombPlanted_ && !bombDropped_) {
-            const float hdx = ai.heardFootstepX - bot.x;
-            const float hdy = ai.heardFootstepY - bot.y;
+        if (!target && bStep && !bombPlanted_ && !bombDropped_) {
+            const float hdx = hearStep.x - bot.x;
+            const float hdy = hearStep.y - bot.y;
             constexpr float kHearArrive = 14.0f;
             if (hdx * hdx + hdy * hdy <= kHearArrive * kHearArrive) {
                 // 到声源附近：原地压枪警戒，等记忆过期或看到敌人
                 bot.vx = bot.vy = 0.0f;
                 continue;
             }
-            if (FollowPathTo(bot, ai, ai.heardFootstepX, ai.heardFootstepY, dt, 1.0f)) {
+            if (FollowPathTo(bot, ai, hearStep.x, hearStep.y, dt, 1.0f)) {
                 continue;
             }
         }
 
         // 教练计划：没有可见敌人时优先去计划的驻守点（有敌人时反应交给决策树）
         // After plant, defer to bomb ring / defuse dest below (do not pin CT on site center).
-        if (!target && ai.hasPlanHold && !bombPlanted_) {
+        // 近处出现枪声/换弹时暂时让位给听觉反应（记忆过期后自然回到计划点）。
+        if (!target && ai.hasPlanHold && !bombPlanted_ && !heardPush) {
             const float pdx = ai.planHoldX - bot.x;
             const float pdy = ai.planHoldY - bot.y;
             constexpr float kPlanArrive = 16.0f;
@@ -587,6 +623,8 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 bot.LoadAmmoFromSlot();
                 bot.reloading   = false;
                 bot.reloadTimer = 0.0f;
+                EmitSound(SoundEventType::WeaponSwitch, bot.x, bot.y, bot.team,
+                          static_cast<int>(i));
             }
         }
 
@@ -618,6 +656,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         {
             bool hasDest = false;
             bool destIsObjective = false;
+            bool softHold = false;   // 只是「去驻守点」：听觉情报可以临时把它顶掉
             float destX = 0.0f, destY = 0.0f;
 
             // ---- 听声扑人：优先级最高，直接压过常规驻守/进攻目标 ----
@@ -663,6 +702,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                             destY = order.holdY;
                             hasDest = true;
                             destIsObjective = true;
+                            softHold = true;
                         } else {
                             const auto& sites = world_->GetBombSites();
                             float bestD2 = 1e18f;
@@ -718,6 +758,28 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                     destY = order.holdY;
                     hasDest = true;
                     destIsObjective = true;
+                    softHold = true;
+                }
+            }
+
+            // ---- 听觉反应：近处枪声 / 敌人换弹 → 摸过去 ----
+            // 只顶掉「去驻守点」这类软目标；C4 回收、守包、拆包等硬目标不动。
+            // 断后位不追（守自己的角度），下包后也不再离开包点。
+            if (heardPush && (!hasDest || softHold)) {
+                if (pushShot) {
+                    destX = hearShot.x;
+                    destY = hearShot.y;
+                } else {
+                    destX = hearReload.x;
+                    destY = hearReload.y;
+                }
+                hasDest = true;
+                destIsObjective = true;   // 已主动接战，断后位不再撤销
+                if (ai.reactionLogCooldown <= 0.0f) {
+                    ai.reactionLogCooldown = 2.0f;
+                    std::cout << "[Bot] #" << i
+                              << (pushShot ? " 听到枪声" : " 听到换弹")
+                              << " → 前压声源" << std::endl;
                 }
             }
 
@@ -989,9 +1051,12 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                     bot.shootCooldown = def.cooldown * 1.8f * shootCooldownMul;
                     bot.shootAnimTimer = 0.12f;
 
+                    // 枪声传播：附近敌人按武器类别/消音器得到不同半径
+                    EmitSound(SoundEventType::Gunshot, bot.x, bot.y, bot.team,
+                              static_cast<int>(i), GunshotRadius(def));
                     if (audio) {
-                        audio->PlaySoundAt(FireSoundFor(def.id), bot.x, bot.y,
-                                           ListenerX(), ListenerY());
+                        audio->PlayWeaponFireAt(def.id, bot.x, bot.y,
+                                                ListenerX(), ListenerY());
                     }
                 }
             }
@@ -1008,6 +1073,8 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 }
                 bot.shootCooldown = def.cooldown * 1.5f * shootCooldownMul;
                 bot.shootAnimTimer = 0.12f;
+                EmitSound(SoundEventType::KnifeSwing, bot.x, bot.y, bot.team,
+                          static_cast<int>(i));
             }
         }
     }

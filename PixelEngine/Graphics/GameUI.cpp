@@ -609,7 +609,11 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
         const ImVec2 img0(cp.x + pad, cp.y + pad);
         const ImVec2 img1(cp2.x - pad, cp.y + UI(166.0f));
         if (i < 8 && ctx.mapOverlayPreviews[i]) {
-            dl->AddImage(reinterpret_cast<ImTextureID>(ctx.mapOverlayPreviews[i]), img0, img1);
+            // 预览图同样跟随浮层淡入淡出；否则返回主菜单时卡片已淡出、
+            // 地图缩略图仍不透明，直到浮层关闭才整块消失。
+            dl->AddImage(reinterpret_cast<ImTextureID>(ctx.mapOverlayPreviews[i]),
+                         img0, img1, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f),
+                         IM_COL32(255, 255, 255, a255));
         } else {
             dl->AddRectFilled(img0, img1, IM_COL32(34, 44, 56, static_cast<int>(230 * fade)), UI(6.0f));
         }
