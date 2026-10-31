@@ -62,6 +62,9 @@ public:
         std::function<void(int,int,int)> setResolution;
         std::function<void(int)>           setRenderScale;    // 内部渲染缩放(%)
         std::function<void(bool)>        setFullscreen;
+        // 视野 / 开镜（契约 v1.2）
+        std::function<void(int)>   setFogOpacity;              // 迷雾透明度 0..100
+        std::function<void(bool)>  setSniperDelayedScopeClose; // 开镜开枪后按住扳机延迟关镜
     };
 
     struct MenuCtx {
@@ -104,6 +107,10 @@ public:
         int   resIdx = 0;
         int   renderScalePct = 100;
         bool  isFullscreen = false;
+
+        // 视野 / 开镜（契约 v1.2）
+        int   fogOpacityPct = 100;            // 迷雾透明度 0..100
+        bool  sniperDelayedScopeClose = false; // 开枪后按住扳机延迟关镜
 
         // 主菜单背景
         void* backdropTex = nullptr;   // 主菜单背景图（SDL_Texture*）

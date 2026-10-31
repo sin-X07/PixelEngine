@@ -303,6 +303,17 @@ GameUI::Actions Engine::BuildActions() {
         saveManager->MutableSettings().radarMapZoom = v;
     };
 
+    // 视野 / 开镜（契约 v1.2）
+    a.setFogOpacity = [this](int v) {
+        v = std::clamp(v, 0, 100);
+        saveManager->MutableSettings().fogOpacityPct = v;
+        if (cs2dRenderer) cs2dRenderer->SetFogOpacityPct(v);
+    };
+    a.setSniperDelayedScopeClose = [this](bool v) {
+        saveManager->MutableSettings().sniperDelayedScopeClose = v;
+        if (cs2dGame) cs2dGame->SetDelayedScopeClose(v);
+    };
+
     // 显示
     a.setResolution = [this](int w, int h, int idx) {
         currentResW_ = w;
@@ -350,9 +361,10 @@ GameUI::Actions Engine::BuildActions() {
 // ============================================================================
 
 bool Engine::Initialize(const char* title, int width, int height, bool autostart, bool fastRound,
-                        int startMode, bool coachLlm, const std::string& startMap, bool openMapSelect, bool openHistory, const std::string& side) {
+                        int startMode, bool coachLlm, const std::string& startMap, bool openMapSelect, bool openHistory, const std::string& side, bool openSettings) {
     pendingStartMap_ = startMap;
     openMapSelectOnStart_ = openMapSelect;
+    openSettingsOnStart_  = openSettings;
 
     coachLlmEnabled_ = coachLlm;
     llmInitialized_ = !coachLlmEnabled_;   // --coach=rule 不初始化/拉起 LLM
@@ -505,7 +517,11 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
                   << (pendingPlayerTeam_ == Team::T ? "T" : "CT") << std::endl;
     }
 
-    if (openHistory) {
+    if (openSettingsOnStart_) {
+        // --settings：直接进设置页（验收截图用）
+        settingsReturnState = MAIN_MENU;
+        currentState = SETTINGS;
+    } else if (openHistory) {
         currentState = HISTORY;
     } else if (openMapSelectOnStart_) {
         LoadMapPreviews(renderer, mapPreviewTex_, kMapCatalogCount);
@@ -565,6 +581,10 @@ void Engine::ApplySavedSettings() {
     cs2dOverlay.radar.bgAlpha          = s.radarBgAlpha;
     cs2dOverlay.radar.hudSize          = s.radarHudSize;
     cs2dOverlay.radar.mapZoom          = s.radarMapZoom;
+
+    // 视野 / 开镜（契约 v1.2）
+    if (cs2dRenderer) cs2dRenderer->SetFogOpacityPct(s.fogOpacityPct);
+    if (cs2dGame)     cs2dGame->SetDelayedScopeClose(s.sniperDelayedScopeClose);
 
     // 显示
     targetFPS_     = (s.targetFPS > 0) ? s.targetFPS : 60;
@@ -1691,6 +1711,9 @@ void Engine::Render() {
         ctx.radarBgAlpha          = cs2dOverlay.radar.bgAlpha;
         ctx.radarHudSize          = cs2dOverlay.radar.hudSize;
         ctx.radarMapZoom          = cs2dOverlay.radar.mapZoom;
+        ctx.fogOpacityPct         = saveManager ? saveManager->GetSettings().fogOpacityPct : 100;
+        ctx.sniperDelayedScopeClose =
+            saveManager ? saveManager->GetSettings().sniperDelayedScopeClose : false;
 
         ctx.resW         = currentResW_;
         ctx.resH         = currentResH_;

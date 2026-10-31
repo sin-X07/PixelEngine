@@ -401,6 +401,125 @@ static void TestScopeMaskAndCamera() {
 }
 
 // ---------------------------------------------------------------------------
+// 契约 v1.2：伤害/护甲结算、开枪自动关镜、迷雾透明度
+// ---------------------------------------------------------------------------
+static void TestDamageAndScopeShot() {
+    std::printf("\n===== 伤害与护甲结算（契约 v1.2）=====\n");
+
+    // 数值来源：CS2 官方 Dmg / Armor% 列
+    check(WeaponDB::Get(WeaponId::AWP).damage > 100.0f,
+          "AWP 基础伤害 > 100（CS2 = 115）");
+    check(std::fabs(WeaponDB::ArmorPen(WeaponId::AWP) - 0.975f) < 0.001f,
+          "AWP 护甲穿透 = 97.5%");
+    check(std::fabs(WeaponDB::ArmorPen(WeaponId::AK47) - 0.775f) < 0.001f,
+          "AK-47 护甲穿透 = 77.5%");
+    check(std::fabs(WeaponDB::ArmorPen(WeaponId::Deagle) - 0.932f) < 0.001f,
+          "Deagle 护甲穿透 = 93.2%");
+    check(std::fabs(WeaponDB::ArmorPen(WeaponId::Glock18) - 0.470f) < 0.001f,
+          "Glock-18 护甲穿透 = 47%");
+
+    // 无甲：全额进血，不消耗护甲
+    {
+        const auto r = CS2DGame::ResolveArmorDamage(36, 0.775f, 0);
+        check(r.healthDamage == 36 && r.armorLoss == 0, "无甲：36 点全进血");
+    }
+    // AWP 打满甲：112 进血（>100 → 一枪死），只掉 2 点护甲
+    {
+        const auto r = CS2DGame::ResolveArmorDamage(115, 0.975f, 100);
+        check(r.healthDamage == 112, "AWP 对满甲：112 进血");
+        check(r.healthDamage >= 100, "AWP 对满甲仍是一枪死（>=100）");
+        check(r.armorLoss == 2, "AWP 对满甲：只消耗 2 点护甲");
+    }
+    // AK 打满甲：28 进血、掉 4 点护甲（CS2 手感：4 枪身体）
+    {
+        const auto r = CS2DGame::ResolveArmorDamage(36, 0.775f, 100);
+        check(r.healthDamage == 28, "AK-47 对满甲：28 进血");
+        check(r.armorLoss == 4, "AK-47 对满甲：消耗 4 点护甲");
+    }
+    // 护甲不足：没吸收掉的部分转成伤害
+    {
+        const auto full = CS2DGame::ResolveArmorDamage(115, 0.975f, 100);
+        const auto weak = CS2DGame::ResolveArmorDamage(115, 0.975f, 1);
+        check(weak.healthDamage >= full.healthDamage, "护甲越少，进血伤害越多或持平");
+        check(weak.armorLoss <= 1, "护甲不足时最多扣光剩余护甲");
+    }
+    // 穿透率越界不应崩：clamp 到 0..1
+    {
+        const auto lo = CS2DGame::ResolveArmorDamage(50, -1.0f, 100);
+        const auto hi = CS2DGame::ResolveArmorDamage(50, 5.0f, 100);
+        check(lo.healthDamage == 0 && lo.armorLoss > 0, "穿透率负数被 clamp 到 0（全被护甲吸收）");
+        check(hi.healthDamage == 50, "穿透率超 1 被 clamp 到 1（全额穿甲）");
+    }
+
+    std::printf("\n===== 开枪自动关镜（契约 v1.2）=====\n");
+    {
+        CS2DGame game;
+        if (!LoadDeathMatch(game)) return;
+        game.GetPlayer().money = 16000;
+        game.ExecutePurchase(WeaponReq(WeaponId::AWP));
+        game.GetPlayer().SetSlotWeapon(0, WeaponId::AWP);
+        game.SwitchWeaponSlot(0);
+
+        // 关掉「延迟关镜」：开枪即关
+        game.SetDelayedScopeClose(false);
+        game.UpdateScopeInput(true, true);
+        check(game.GetScopeView().level == 1, "开镜到 1.5x");
+        const float aimX = game.GetPlayer().x + std::cos(game.GetPlayer().aimAngle) * 60.0f;
+        const float aimY = game.GetPlayer().y + std::sin(game.GetPlayer().aimAngle) * 60.0f;
+        game.Update(1.0f / 60.0f, true, aimX, aimY,
+                    false, false, false, false, false, false, false, nullptr);
+        check(game.GetScopeView().level == 0 && !game.GetScopeView().active,
+              "开枪后自动关镜（默认）");
+    }
+    {
+        CS2DGame game;
+        if (!LoadDeathMatch(game)) return;
+        game.GetPlayer().money = 16000;
+        game.ExecutePurchase(WeaponReq(WeaponId::AWP));
+        game.GetPlayer().SetSlotWeapon(0, WeaponId::AWP);
+        game.SwitchWeaponSlot(0);
+
+        // 开启「延迟关镜」：按住扳机 → 保持开镜；松手 → 关镜
+        game.SetDelayedScopeClose(true);
+        game.UpdateScopeInput(true, true);
+        check(game.GetScopeView().level == 1, "延迟关镜：开镜到 1.5x");
+        const float aimX = game.GetPlayer().x + std::cos(game.GetPlayer().aimAngle) * 60.0f;
+        const float aimY = game.GetPlayer().y + std::sin(game.GetPlayer().aimAngle) * 60.0f;
+        game.Update(1.0f / 60.0f, true, aimX, aimY,
+                    false, false, false, false, false, false, false, nullptr);
+        check(game.GetScopeView().level == 1, "延迟关镜：开枪但按住扳机时保持开镜");
+        // 按住不放多帧仍保持
+        for (int i = 0; i < 5; ++i) {
+            game.Update(1.0f / 60.0f, true, aimX, aimY,
+                        false, false, false, false, false, false, false, nullptr);
+        }
+        check(game.GetScopeView().level == 1, "延迟关镜：持续按住仍保持开镜");
+        // 松手 → 关闭
+        game.Update(1.0f / 60.0f, false, aimX, aimY,
+                    false, false, false, false, false, false, false, nullptr);
+        check(game.GetScopeView().level == 0, "延迟关镜：松手后关镜");
+    }
+
+    std::printf("\n===== 迷雾透明度（契约 v1.2）=====\n");
+    {
+        CS2DRenderer renderer;   // 只测参数换算，不需要窗口/世界
+        renderer.SetFogOpacityPct(100);
+        const int a100 = renderer.EffectiveFogAlpha();
+        renderer.SetFogOpacityPct(50);
+        const int a50 = renderer.EffectiveFogAlpha();
+        renderer.SetFogOpacityPct(0);
+        const int a0 = renderer.EffectiveFogAlpha();
+        renderer.SetFogOpacityPct(999);
+        const int aClamp = renderer.EffectiveFogAlpha();
+        check(a100 == 160, "迷雾 100% → 160（原值，行为不变）");
+        check(a50 == 80, "迷雾 50% → 80");
+        check(a0 == 0, "迷雾 0% → 完全透明（视野判定不变）");
+        check(aClamp == 160, "越界值被 clamp 到 100%");
+        renderer.SetFogOpacityPct(100);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 枪弹视觉段
 // ---------------------------------------------------------------------------
 static void TestBulletVisuals() {
@@ -461,6 +580,7 @@ int main() {
     TestBuyDeadAndWindow();
     TestScope();
     TestScopeMaskAndCamera();
+    TestDamageAndScopeShot();
     TestBulletVisuals();
 
     std::printf("\n===== 结果: %d 通过, %d 失败 =====\n", g_pass, g_fail);

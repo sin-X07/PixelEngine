@@ -43,7 +43,7 @@ cmake --build build/tests --parallel 8 --target gameplay_tests
 build/tests/gameplay_tests.exe    # 工作目录 = 仓库根
 ```
 
-结果：`===== 结果: 94 通过, 0 失败 =====`（`tools/buy_scope_test.cpp`）。
+结果：`===== 结果: 119 通过, 0 失败 =====`（`tools/buy_scope_test.cpp`）。
 覆盖内容：
 
 - 购买：全部 `BuyCode`（InvalidItem / PlayerDead / WindowClosed / OutsideBuyZone / TeamRestricted /
@@ -54,6 +54,9 @@ build/tests/gameplay_tests.exe    # 工作目录 = 仓库根
   每档 0.12s 过渡、换档时镜框不重播淡入、`targetZoomMultiplier` 随档位、`ResetScope` 幂等、
   切枪 / 换弹 / 输入被挡 / 阵亡归零。
 - 圆形可见区：圆心=1、圆内=1、圆外=0、软边 0..1 渐变、与朝向无关（不含扇形）、半径 0 一律不可见。
+- 伤害/护甲（v1.2）：AWP 基伤 >100、对满甲 112 进血（一枪死）、AK 对满甲 28/4、无甲全额、穿透率越界 clamp、护甲不足不降伤。
+- 开枪自动关镜（v1.2）：默认开枪即关；延迟关镜开启时按住保持、松手关。
+- 迷雾透明度（v1.2）：100%→160、50%→80、0%→0、越界 clamp。
 - 枪弹视觉段：真实模拟段生成、0.08s 寿命清理、重复 Render 无副作用、512 上限。
 
 > 说明：`OutsideBuyZone` 未单独构造用例（需要把小鸡… 玩家移出购买区并重算），
@@ -63,7 +66,7 @@ build/tests/gameplay_tests.exe    # 工作目录 = 仓库根
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/win_accept.ps1
-# 产物：01-main-menu.png、02-ingame-hud.png、03-buy-menu.png、
+# 产物：01-main-menu.png、02-ingame-hud.png、03-buy-menu.png、06-settings.png、
 #       04-scope-15x.png、05-scope-20x.png + *.out 日志
 ```
 
@@ -80,6 +83,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/win_accept.ps1
 | `03-buy-menu.png` | 购买菜单按 `availability` 禁用：`USP-S $200 (已装备)`、`AWP $4750 (已装备)` 灰显，其余可买 |
 | `04-scope-15x.png` | AWP 右键第 1 档：圆形可见区（圆心=准星，非屏幕中心）、镜外浓雾、1.5×、镜筒圆环 + 中心准星 |
 | `05-scope-20x.png` | 右键第 2 档：同一圆形内明显更放大（2×），镜外仍被雾遮盖，HUD 不受影响 |
+| `06-settings.png` | 设置页新增「视野 / 开镜」卡片：迷雾透明度 100%、狙击枪延迟关镜开关 |
 
 运行日志（`build-evidence/*.out`）关键行：
 
@@ -145,7 +149,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/win_accept.ps1
 - 边界不变：`UpdateChickens` 的漫游范围、`kObjectCount` / `ObjectIndex`（0=T,1=CT,2..4=鸡）、
   菜单/地图选择/退出返回路径均未改动；`chickens_` 为空时所有绘制以 `size()` 为上界，不越界。
 
-### PIX-14 右键开镜（契约 v1.1）
+### PIX-14 右键开镜（契约 v1.1 / v1.2）
 
 - 唯一状态在 `CS2DGame`：`scope_` + `scopeLevel_ / scopeEngagement_ / scopeZoom_`，UI 只读 `GetScopeView()` 快照。
 - `UpdateScopeInput(rightClicked, gameplayInputAllowed)`：输入被挡 → `ResetScope(InputBlocked)`；

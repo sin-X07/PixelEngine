@@ -67,7 +67,8 @@ enum class ScopeResetReason {
     ReloadStarted,
     PlayerDied,
     RoundRestart,
-    MatchExit
+    MatchExit,
+    ShotFired        // 契约 v1.2：开枪后自动关镜（开启"延迟关镜"时按住扳机则推迟到松手）
 };
 
 // ---- 枪弹视觉段 ----

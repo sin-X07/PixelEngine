@@ -897,6 +897,18 @@ void CS2DRenderer::DrawBulletVisuals(
     }
 }
 
+void CS2DRenderer::SetFogOpacityPct(int pct) {
+    fogOpacityPct_ = std::clamp(pct, 0, 100);
+}
+
+int CS2DRenderer::EffectiveFogAlpha() const {
+    const int baseAlpha = scopeMaskActive_ ? SCOPE_FOG_ALPHA : VISION_FOG_ALPHA;
+    return std::clamp(static_cast<int>(std::lround(
+                          static_cast<float>(baseAlpha) *
+                          (static_cast<float>(fogOpacityPct_) / 100.0f))),
+                      0, 255);
+}
+
 void CS2DRenderer::SetScopeMask(bool active, float centerX, float centerY,
                                 float radiusWorld) {
     scopeMaskActive_ = active;
@@ -1375,7 +1387,11 @@ void CS2DRenderer::DrawVisionFog(float playerX, float playerY, float aimAngle) {
     const float px = playerX;
     const float py = playerY;
     // 开镜时镜外要"看不见"而不是"看不清"：同一套圆形可见区下把雾压得更实
-    const Uint8 maxFogAlpha = scopeMaskActive_ ? SCOPE_FOG_ALPHA : VISION_FOG_ALPHA;
+    // 契约 v1.2：雾 alpha 再乘用户设置的透明度百分比（只影响视觉，不影响可见性判定）
+    const int baseAlpha = scopeMaskActive_ ? SCOPE_FOG_ALPHA : VISION_FOG_ALPHA;
+    const float pctScale = static_cast<float>(std::clamp(fogOpacityPct_, 0, 100)) / 100.0f;
+    const Uint8 maxFogAlpha = static_cast<Uint8>(
+        std::lround(static_cast<float>(baseAlpha) * pctScale));
 
     for (int y = 0; y < maskH_; ++y) {
         for (int x = 0; x < maskW_; ++x) {

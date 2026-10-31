@@ -149,4 +149,14 @@ Start-Sleep -Seconds 7
 Save-Shot "03-buy-menu.png"
 if (-not $p3.HasExited) { $p3.Kill() }
 
+# ---- 4. 设置页：新增「迷雾透明度 / 狙击枪延迟关镜」 ----
+Write-Host "== 设置页 =="
+$p4 = Start-Process -FilePath $Exe -ArgumentList "--coach=rule --settings" -PassThru `
+    -RedirectStandardOutput (Join-Path $out "settings.out") `
+    -RedirectStandardError  (Join-Path $out "settings.err")
+Focus-Game $p4
+Start-Sleep -Seconds 5
+Save-Shot "06-settings.png"
+if (-not $p4.HasExited) { $p4.Kill() }
+
 Write-Host "完成：截图与日志在 $out"

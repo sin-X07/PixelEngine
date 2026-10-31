@@ -200,6 +200,7 @@ private:
     std::string currentMapRel_;          // 当前对局地图（重新开始时沿用）
     Team        pendingPlayerTeam_ = Team::CT;
     bool openMapSelectOnStart_ = false;  // --mapselect
+    bool openSettingsOnStart_  = false;  // --settings（验收截图用）
     void* menuBgTex_ = nullptr;   // 主菜单背景图
     int   menuBgW_ = 0, menuBgH_ = 0;
     void* mapPreviewTex_[8] = {nullptr, nullptr, nullptr, nullptr,
@@ -232,7 +233,8 @@ public:
     bool Initialize(const char* title, int width, int height, bool autostart = false,
                     bool fastRound = false, int startMode = 1, bool coachLlm = true,
                     const std::string& startMap = std::string(),
-                    bool openMapSelect = false, bool openHistory = false, const std::string& side = "");
+                    bool openMapSelect = false, bool openHistory = false,
+                    const std::string& side = "", bool openSettings = false);
     void Run();
     void Clean();
     void ToggleFullscreen();

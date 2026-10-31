@@ -683,6 +683,28 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
             }
         }) + UI(16.0f);
 
+        rightY += drawCard(rightX, rightY, "视野 / 开镜", "VISION & SCOPE", 2, 0.0f,
+                           IM_COL32(150, 170, 220, 255), [&](float x, float y) {
+            rowLabel(x, y, 0, "迷雾透明度");
+            ImGui::SetCursorScreenPos(rowPos(x, y, 0));
+            ImGui::SetNextItemWidth(fieldW);
+            int fog = ctx.fogOpacityPct;
+            if (ImGui::SliderInt("##fogOpacity", &fog, 0, 100, "%d%%")) {
+                actions.setFogOpacity(fog);
+            }
+
+            ImGui::SetCursorScreenPos(rowPos(x, y, 1));
+            bool delayed = ctx.sniperDelayedScopeClose;
+            if (ImGui::Checkbox("狙击枪延迟关镜", &delayed)) {
+                actions.setSniperDelayedScopeClose(delayed);
+            }
+
+            DrawImGuiText(imGuiUI_, "迷雾只影响观感，视野判定与烟雾弹不受影响；"
+                                    "延迟关镜开启后开镜开枪时按住左键不松即可保持开镜",
+                          x + labelX, y + header + 2.0f * rowH + UI(6.0f),
+                          112, 132, 152, 220, 12);
+        }) + UI(16.0f);
+
         // 撑出内容高度，保证短分辨率下可滚动
         ImGui::SetCursorScreenPos(ImVec2(panelX, std::max(leftY, rightY)));
         ImGui::Dummy(ImVec2(1.0f, 1.0f));

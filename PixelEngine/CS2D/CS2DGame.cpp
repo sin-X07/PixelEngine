@@ -660,6 +660,7 @@ bool CS2DGame::IsScopeSupported(WeaponId id) {
 void CS2DGame::ResetScope(Presentation::ScopeResetReason reason) {
     (void)reason;   // 重置原因只用于诊断；重置本身固定且幂等
     const WeaponId cur = player_.CurrentWeapon().id;
+    scopeCloseOnRelease_ = false;
     scopeLevel_      = 0;
     scopeEngagement_ = 0.0f;
     scopeEngFrom_    = scopeEngTo_ = 0.0f;
@@ -814,6 +815,11 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 
     // 开镜过渡：每帧按 dt 逼近目标档位（0.12s 线性），与输入边沿解耦
     TickScope(dt);
+
+    // 契约 v1.2：开枪后「松手再关镜」的收尾（延迟关镜设置开启时才可能置位）
+    if (scopeCloseOnRelease_ && !mouseLeftDown) {
+        ResetScope(Presentation::ScopeResetReason::ShotFired);
+    }
 
     // 切枪音效：SwitchWeaponSlot 只挂起，这里按刚切到的武器播放
     if (switchSoundPending_) {

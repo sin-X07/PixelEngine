@@ -156,7 +156,7 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
             const float bdx = bot.x - player_.x;
             const float bdy = bot.y - player_.y;
             if (std::sqrt(bdx * bdx + bdy * bdy) < def.range) {
-                if (ApplyDamage(bot, static_cast<int>(def.damage))) OnCombatantKilled(bot, audio, &player_);
+                if (ApplyDamage(bot, static_cast<int>(def.damage), WeaponDB::ArmorPen(def.id))) OnCombatantKilled(bot, audio, &player_);
             }
         }
         player_.shootCooldown = def.cooldown;
@@ -184,6 +184,16 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     player_.ammo--;
     player_.shootCooldown = def.cooldown;
     player_.shootAnimTimer = 0.12f;
+
+    // 契约 v1.2：开枪后自动关镜。设置里开了「延迟关镜」且仍按着扳机时，
+    // 标记「松手再关」，由 Update 在鼠标松开时收尾。
+    if (scopeLevel_ > 0) {
+        if (delayedScopeClose_ && mouseDown) {
+            scopeCloseOnRelease_ = true;
+        } else {
+            ResetScope(Presentation::ScopeResetReason::ShotFired);
+        }
+    }
 
     // 枪声传播：附近敌人按武器类别/消音器得到不同半径
     EmitSound(SoundEventType::Gunshot, player_.x, player_.y, player_.team, -1,
@@ -305,7 +315,7 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             // 玩家命中反馈（无论是否致死）
             if (bullet.ownerIdx == -1) hitMarkerTimer_ = 0.18f;
 
-            if (ApplyDamage(bot, bullet.damage)) {
+            if (ApplyDamage(bot, bullet.damage, WeaponDB::ArmorPen(bullet.weapon))) {
                 Player* bulletKiller = (bullet.ownerIdx == -1)
                     ? &player_
                     : ((bullet.ownerIdx >= 0 &&
@@ -381,7 +391,7 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                 damageFlashTimer_ = 0.30f;   // 玩家受伤反馈
                 if (audio) audio->PlaySound(player_.armor > 0 ? SoundEffect::ARMOR_HIT
                                                               : SoundEffect::HIT);
-                if (ApplyDamage(player_, bullet.damage)) {
+                if (ApplyDamage(player_, bullet.damage, WeaponDB::ArmorPen(bullet.weapon))) {
                     const std::string killerName =
                         (bullet.ownerIdx >= 0 &&
                          bullet.ownerIdx < static_cast<int>(bots_.size()) &&
@@ -593,7 +603,7 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
                 const float dx = p.x - f.x;
                 const float dy = p.y - f.y;
                 if (dx * dx + dy * dy <= f.radius * f.radius) {
-                    ApplyDamage(p, Tuning::FireTickDamage);
+                    ApplyDamage(p, Tuning::FireTickDamage, 1.0f);   // 火区无视护甲（CS2 同）
                     break;
                 }
             }
@@ -627,7 +637,7 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
                 // 平方衰减：贴近中心才有高伤害，边缘伤害很低
                 const float t = 1.0f - d / RADIUS;
                 const float falloff = t * t;
-                if (ApplyDamage(p, static_cast<int>(MAX_DMG * falloff))) {
+                if (ApplyDamage(p, static_cast<int>(MAX_DMG * falloff), 0.5f)) {   // 爆炸按 50% 穿透
                     OnCombatantKilled(p, audio);
                 }
             };
@@ -835,22 +845,46 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio, Player* ki
 // 统一伤害入口
 // ============================================================================
 
-bool CS2DGame::ApplyDamage(Player& victim, int amount) {
-    if (!victim.alive || amount <= 0) return false;
+// ============================================================================
+// 伤害结算（契约 v1.2）
+// CS2 机制：护甲按武器的穿透率放行一部分伤害，剩余被护甲吸收，
+// 并按吸收量的一半消耗护甲点数；护甲不够时没吸掉的部分转成伤害。
+// ============================================================================
+CS2DGame::ArmorDamageResult CS2DGame::ResolveArmorDamage(int amount, float armorPen,
+                                                         int armorPoints) {
+    ArmorDamageResult r;
+    if (amount <= 0) return r;
 
-    int remaining = amount;
+    r.healthDamage = amount;
+    if (armorPoints <= 0) return r;                 // 没甲：全额进血
 
-    // 护甲吸收：头盔提高吸收比例；护甲按吸收量等量消耗
-    if (victim.armor > 0) {
-        const float frac = victim.helmet ? 0.60f : 0.50f;
-        int absorbed = static_cast<int>(static_cast<float>(amount) * frac + 0.5f);
-        absorbed = std::min(absorbed, victim.armor);
-        victim.armor -= absorbed;
-        remaining -= absorbed;
-        if (victim.armor <= 0) victim.helmet = false;   // 护甲耗尽，头盔失效
+    const float pen = std::clamp(armorPen, 0.0f, 1.0f);
+    int through = static_cast<int>(std::lround(static_cast<float>(amount) * pen));
+    through = std::clamp(through, 0, amount);
+    const int absorbed = amount - through;
+    int armorLoss = (absorbed + 1) / 2;             // CS2：护甲值按被吸收量的一半掉
+
+    // 护甲不够：没吸收掉的部分按剩余护甲比例转成伤害
+    if (armorLoss > armorPoints) {
+        const float keep = static_cast<float>(armorPoints) / static_cast<float>(armorLoss);
+        armorLoss = armorPoints;
+        through = amount - static_cast<int>(std::lround(static_cast<float>(absorbed) * keep));
+        through = std::clamp(through, 0, amount);
     }
 
-    victim.health -= remaining;
+    r.healthDamage = through;
+    r.armorLoss    = armorLoss;
+    return r;
+}
+
+bool CS2DGame::ApplyDamage(Player& victim, int amount, float armorPen) {
+    if (!victim.alive || amount <= 0) return false;
+
+    const ArmorDamageResult r = ResolveArmorDamage(amount, armorPen, victim.armor);
+    victim.armor = std::max(0, victim.armor - r.armorLoss);
+    if (victim.armor <= 0) victim.helmet = false;   // 护甲耗尽，头盔失效
+
+    victim.health -= r.healthDamage;
     if (victim.health <= 0) {
         victim.health = 0;
         return true;

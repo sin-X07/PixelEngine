@@ -135,6 +135,12 @@ public:
     void DrawHitMarker(float screenX, float screenY, float scale, Uint8 alpha);
     void DrawDamageVignette(Uint8 alpha);
 
+    // 契约 v1.2：迷雾透明度（0..100%）。只改视觉 alpha，不改可见性判定，
+    // 也不影响烟雾弹/火区等独立表现（它们各有自己的贴图与 alpha）。
+    void SetFogOpacityPct(int pct);
+    int  FogOpacityPct() const { return fogOpacityPct_; }
+    int  EffectiveFogAlpha() const;   // 供 HUD/测试查询当前实际雾 alpha（0..255）
+
     // 视线检查（供 CS2DGame 使用）
     bool HasLineOfSight(float fromX, float fromY, float toX, float toY) const;
 
@@ -243,6 +249,9 @@ private:
     float scopeMaskX_ = 0.0f;
     float scopeMaskY_ = 0.0f;
     float scopeMaskR_ = 0.0f;
+
+    // 迷雾透明度设置（契约 v1.2）：只缩放雾的 alpha，不改可见性
+    int   fogOpacityPct_ = 100;
 
     void CreateVisionTexture();   // 创建/重建视野 streaming 纹理
 

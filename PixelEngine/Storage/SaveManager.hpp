@@ -19,6 +19,10 @@ struct GameSettings {
     int   targetFPS        = 60;
     int   renderScalePct   = 100;   // 内部渲染缩放（100 / 75 / 50），与窗口大小解耦
 
+    // 视野 / 开镜（契约 v1.2）
+    int   fogOpacityPct          = 100;   // 迷雾透明度 0..100%，只影响视觉，不改可见性
+    bool  sniperDelayedScopeClose = false; // 开镜开枪后：开启则按住扳机可延迟关镜
+
     // 准星
     int   crossR = 255, crossG = 255, crossB = 255, crossA = 200;
     float crossThickness = 1.5f;

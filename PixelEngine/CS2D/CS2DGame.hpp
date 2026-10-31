@@ -671,6 +671,17 @@ public:
     // 立即归零（幂等）：不动伤害/散布/移速。
     void ResetScope(Presentation::ScopeResetReason reason);
     static bool IsScopeSupported(WeaponId id);
+    // 契约 v1.2：开镜后开枪。关闭"延迟关镜"时立即归零；
+    // 开启且按着扳机（triggerHeld）时推迟到松手（见 Update 里的收尾）。
+    void SetDelayedScopeClose(bool on) { delayedScopeClose_ = on; }
+    bool IsDelayedScopeClose() const { return delayedScopeClose_; }
+
+    // 护甲结算（契约 v1.2）：纯函数，ApplyDamage 与回归测试共用
+    struct ArmorDamageResult {
+        int healthDamage = 0;   // 实际扣血
+        int armorLoss = 0;      // 护甲点数消耗
+    };
+    static ArmorDamageResult ResolveArmorDamage(int amount, float armorPen, int armorPoints);
     int  GetPlayerArmor()  const { return player_.armor; }
     int  GetPlayerHealth()    const { return player_.health; }
     int  GetPlayerMaxHealth() const { return player_.maxHealth; }
@@ -933,6 +944,9 @@ private:
 
     float mouseSensitivity_ = 1.0f;
     bool  prevMouseDown_    = false;
+    // 契约 v1.2：开枪自动关镜
+    bool  delayedScopeClose_ = false;     // 设置项：开启后按住扳机可推迟关镜
+    bool  scopeCloseOnRelease_ = false;   // 已开过枪、等松手再关镜
 
     // ---- 开镜状态（唯一来源，UI 只读快照；契约 v1.1 三档循环）----
     Presentation::ScopeView scope_{};
@@ -1054,7 +1068,7 @@ private:
     void CheckWinConditions(class AudioManager* audio);
     void ApplyRoundResult(Team winner, class AudioManager* audio = nullptr);
     // 统一伤害入口：先扣护甲再扣血。返回 true 表示本次伤害致死。
-    bool ApplyDamage(Player& victim, int amount);
+    bool ApplyDamage(Player& victim, int amount, float armorPen = 1.0f);
     void GrantRoundEndMoney(Team winner);   // 发放回合金钱并重置本回合装备
 
     // 目标物
