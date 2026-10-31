@@ -196,12 +196,22 @@ Renderer 接口由功能方声明/接线：
 void UpdateCamera(float playerCenterX,float playerCenterY,
                   int viewportW,int viewportH,float zoomMultiplier=1.0f);
 void SetScopeMask(bool active,float centerX,float centerY,float radiusWorld); // v1.1 新增
-void DrawScopeOverlay(const Presentation::ScopeView& scope,                   // v1.1 签名变更
-                      float centerScreenX,float centerScreenY,float radiusPx,
-                      int viewW,int viewH);
+void DrawScopeOverlay(const Presentation::ScopeOverlayParams& params);       // v1.3 签名变更
+
+// Presentation::ScopeOverlayParams（v1.3）
+struct ScopeOverlayParams {
+    ScopeView scope{};            // transition / level 等
+    float centerX = 0, centerY = 0;   // 镜筒圆心（逻辑画布坐标）
+    float radiusPx = 0;               // 镜筒半径（逻辑像素）
+    float crossThickness = 2.0f;      // 大十字线宽（设置项）
+    float crossGap = 0.0f;            // 中心缺口（0 = 四段线相接）
+};
+// 缺口换算：开启「移动扩散」时随移动扩散系数张开，关闭时固定为 2px
+inline float ComputeScopeCrossGap(float bloom, bool dynamicEnabled,
+                                 float baseGap = 2.0f, float spreadMax = 26.0f);
 ```
 
-CS2DGame::Render 先按倍率算相机偏移再调 UpdateCamera；`GetZoom()` 返回实际倍率，`UpdateCursor` 不二次乘；`visionRadius_` 仍按 base fitZoom 计算（开镜不改变敌人知情范围，圆形可见区单独生效）。预览相机 SetPreviewCamera 不受开镜影响。Render 在 UpdateCamera 之后、绘制角色之前调用 `SetScopeMask`，在世界雾之后、闪光覆盖之前调用 `DrawScopeOverlay`，圆心传「准星世界点投影到屏幕」的坐标（避免相机被地图边界钳制时镜筒与可见区错位）。UI 方只需按 `centerScreenX/Y + radiusPx` 画镜筒与刻度，不做命中/相机计算、不重复画遮罩。功能方新增 GameUI::InGameCtx::scope（ScopeView），Engine 填充，UI 用于提示档位（level / targetZoomMultiplier）。
+CS2DGame::Render 先按倍率算相机偏移再调 UpdateCamera；`GetZoom()` 返回实际倍率，`UpdateCursor` 不二次乘；`visionRadius_` 仍按 base fitZoom 计算（开镜不改变敌人知情范围，圆形可见区单独生效）。预览相机 SetPreviewCamera 不受开镜影响。Render 在 UpdateCamera 之后、绘制角色之前调用 `SetScopeMask`，在世界雾之后、闪光覆盖之前调用 `DrawScopeOverlay`，圆心传「准星世界点投影到屏幕」的坐标（避免相机被地图边界钳制时镜筒与可见区错位）。UI 方只按 `params` 里的圆心/半径/线宽/缺口画镜筒与大十字，不做命中/相机计算、不重复画遮罩。**开镜期间普通准星不再绘制**（`CS2DOverlay::Render` 按 `GetScopeView().active` 跳过），镜筒里只保留一个把视野分成四象限的大十字（不再是中心小点 + 小十字）。功能方新增 GameUI::InGameCtx::scope（ScopeView），Engine 填充，UI 用于提示档位（level / targetZoomMultiplier）。
 
 ## 5. CT/T：沿用 Team，不建立另一份阵营状态
 
@@ -250,6 +260,7 @@ GameUI 的菜单只通过现有 MenuCtx.backdropTex/backdropW/backdropH/backdrop
 - 开镜测试：边沿只切一次；按住不抖动；三档循环 关→1.5x→2x→关 且每档 0.12s 过渡；圆形可见区（圆内可见、圆外不可见、软边渐变、与朝向无关）；开枪自动关镜 + 延迟关镜（按住保持、松手关）；切枪/丢枪/自动切回/换弹/死亡/重生/暂停/设置/失焦/选边/买枪/新回合/退出均正确归零；鼠标相对位移转换取实际 GetZoom；DrawScopeOverlay 空实现替换后确认真正在运行。
 - 伤害/护甲测试（v1.2）：AWP 基伤 >100 且对满甲 ≥100（一枪死）；AK 对满甲 28 进血 / 4 点护甲；无甲全额；穿透率越界被 clamp；护甲不足时进血伤害不降低。
 - 迷雾设置（v1.2）：100%→160、50%→80、0%→0、越界 clamp；只影响 alpha，不改可见性与烟雾弹。
+- 开镜准星（v1.3）：静止缺口 2px、关闭扩散时跑动仍 2px、开启后随移动张开且越界 clamp；线宽 clamp 1..6；开镜期间不绘制普通准星。
 - 阵营测试：None/T/CT、chooseSide 0/1 显式映射；只给可见角色标记；死斗不显示爆破职责。
 - 枪弹测试：512上限、0.08s清理、重复Render无副作用、最后一段保留、穿墙视觉裁剪、不同帧率/缩放；DrawThrownGrenade 回归，烟雾火区/闪光遮挡保留。
 - 生命周期：退出/重建 renderer 前 cache.Shutdown，UI 借用资源不得重复释放；小鸡模型失败不崩；两端文件路径大小写一致。
@@ -257,6 +268,18 @@ GameUI 的菜单只通过现有 MenuCtx.backdropTex/backdropW/backdropH/backdrop
 - 这次只制定契约和任务，不代表上述接口已实现、已编译或已验证。
 
 ## 10. 变更记录
+
+### v1.3（2026-10-31，需求方提出）
+
+1. **开镜准星改成「一个大十字切四象限」**：镜筒里只画贯穿圆心的十字（四段线，中心留 `crossGap`），
+   去掉中心小点/小十字；**开镜期间不画普通准星**（`CS2DOverlay::Render` 跳过 `DrawCrosshair`）。
+2. **`DrawScopeOverlay` 签名变更**：改为接收 `Presentation::ScopeOverlayParams`
+   （圆心/半径/线宽/缺口），新增纯函数 `Presentation::ComputeScopeCrossGap`。
+3. **新增三项开镜设置**（持久化键见 §3.2）：开镜灵敏度倍率、开镜准星线宽、开镜准星随移动张开。
+   开镜灵敏度按 CS2 `zoom_sensitivity_ratio` 语义：只乘在开镜期间的鼠标灵敏度上（`UpdateCursor` 的入参），
+   不改变世界坐标换算与相机。
+
+未变更：倍率档位与过渡、圆形可见区、相机偏移、开枪关镜、迷雾透明度、可见性判定。
 
 ### v1.2（2026-10-31，功能方提出，需求方确认）
 
