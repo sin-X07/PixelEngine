@@ -2018,6 +2018,7 @@ void Engine::Render() {
         ictx.scoreCT          = cs2dGame->GetScoreCT();
         ictx.roundNumber      = cs2dGame->GetRoundNumber();
         ictx.roundRemainingSec = static_cast<int>(cs2dGame->GetRoundRemaining());
+        ictx.roundPhase = static_cast<int>(cs2dGame->GetRoundPhase());
         ictx.aliveT           = cs2dGame->AliveCount(Team::T);
         ictx.aliveCT          = cs2dGame->AliveCount(Team::CT);
         ictx.money            = status.money;

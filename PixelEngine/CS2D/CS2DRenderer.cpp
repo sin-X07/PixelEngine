@@ -1,4 +1,5 @@
 #include "CS2DRenderer.hpp"
+#include "../Graphics/TeamVisualStyle.hpp"
 #include "../Graphics/UiScale.hpp"
 #include "../Core/PathUtils.hpp"
 #include <cmath>
@@ -514,6 +515,47 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
         DrawWeaponForCharacter(cx + xOff, cy + yOff, p.size, p.aimAngle,
                                p.weaponSlot, p.weaponId, p.animState == 2);
     }
+
+    // ---- 阵营标识（契约第 5 节 / PIX-16）----
+    // 只在「已经通过可见性剔除、获准绘制」的 sprite 上画，不新增敌人遍历；
+    // 形状（圆=CT / 菱形=T / 中性）与颜色双重编码，色弱或低饱和地图也能分辨。
+    // 位置放在角色脚下，避开瞄准方向与命中盒中心。
+    if (p.team != Team::None && alpha > 8) {
+        const TeamVisualStyle style = GetTeamVisualStyle(p.team);
+        const float badgeR = std::clamp(sz * 0.16f, 2.5f, 6.0f);
+        const float bx = cx + sz * 0.34f;
+        const float by = cy + sz * 0.62f;
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, style.accent.r, style.accent.g, style.accent.b,
+                               static_cast<Uint8>(alpha * 0.85f));
+        if (style.badge == TeamVisualStyle::BadgeShape::Diamond) {
+            // T：菱形（四段线闭合）
+            SDL_RenderDrawLineF(renderer_, bx, by - badgeR, bx + badgeR, by);
+            SDL_RenderDrawLineF(renderer_, bx + badgeR, by, bx, by + badgeR);
+            SDL_RenderDrawLineF(renderer_, bx, by + badgeR, bx - badgeR, by);
+            SDL_RenderDrawLineF(renderer_, bx - badgeR, by, bx, by - badgeR);
+        } else {
+            // CT / 其它：圆环
+            for (int i = 0; i < 12; ++i) {
+                const float a0 = 6.2831853f * static_cast<float>(i) / 12.0f;
+                const float a1 = 6.2831853f * static_cast<float>(i + 1) / 12.0f;
+                SDL_RenderDrawLineF(renderer_, bx + std::cos(a0) * badgeR, by + std::sin(a0) * badgeR,
+                                    bx + std::cos(a1) * badgeR, by + std::sin(a1) * badgeR);
+            }
+        }
+        // 本地玩家：脚下再加一圈亮环，便于在 5v5 里一眼找到自己
+        if (p.localPlayer) {
+            const float ringR = sz * 0.42f;
+            SDL_SetRenderDrawColor(renderer_, 235, 245, 250,
+                                   static_cast<Uint8>(alpha * 0.55f));
+            for (int i = 0; i < 20; ++i) {
+                const float a0 = 6.2831853f * static_cast<float>(i) / 20.0f;
+                const float a1 = 6.2831853f * static_cast<float>(i + 1) / 20.0f;
+                SDL_RenderDrawLineF(renderer_, cx + std::cos(a0) * ringR, cy + std::sin(a0) * ringR,
+                                    cx + std::cos(a1) * ringR, cy + std::sin(a1) * ringR);
+            }
+        }
+    }
 }
 
 // 枪口火焰：cx/cy 为武器中心的屏幕坐标
@@ -826,23 +868,30 @@ void CS2DRenderer::DrawBullet(float x, float y, float vx, float vy) {
 }
 
 // ---------------------------------------------------------------------------
-// 枪弹视觉段（契约 v1 第 6 节）
-// 最小占位实现：按 remaining/duration 淡出、逻辑像素宽度 1.5~3、长度上限 24px，
-// 并按地图阻挡瓦片裁剪。表现细节归 UI 方（PIX-17）替换，这里保证可运行且不丢弹道。
+// 枪弹视觉段（契约第 6 节 / PIX-17）
+// 数据只来自 CS2DGame::GetBulletVisuals()：真实模拟段、0.08s 寿命、512 段上限、
+// impact 仅在真实碰撞时为真。这里只做表现：
+//   - 拖尾：沿弹道方向延伸，长度上限 24 逻辑像素（不随缩放线性变粗）
+//   - 淡出：按 remaining/duration 线性淡出，帧率无关
+//   - 宽度：1.5~3 逻辑像素，随寿命变细
+//   - 裁剪：按地图阻挡瓦片截断，绝不把曳光画穿墙
+//   - 命中火花：只对 impact 段、在其寿命前 40% 内画一小簇，不伪造精确命中点
 // ---------------------------------------------------------------------------
 void CS2DRenderer::DrawBulletVisuals(
     const std::vector<Presentation::BulletVisualSegment>& segments) {
     if (!renderer_ || segments.empty()) return;
 
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+
     for (const auto& s : segments) {
         const float life = (s.durationSeconds > 0.0f)
                                ? std::clamp(s.remainingSeconds / s.durationSeconds, 0.0f, 1.0f)
                                : 0.0f;
         if (life <= 0.0f) continue;
 
-        // 从起点向终点推进，遇到阻挡瓦片就截断（不宣称是精确命中点）
+        // ---- 按阻挡瓦片裁剪（步长 2px，命中即截断到上一格）----
         float toX = s.toX, toY = s.toY;
+        bool clippedByWall = false;
         if (world_) {
             const float dx = s.toX - s.fromX;
             const float dy = s.toY - s.fromY;
@@ -858,41 +907,103 @@ void CS2DRenderer::DrawBulletVisuals(
                     const float tb = static_cast<float>(i - 1) / static_cast<float>(steps);
                     toX = s.fromX + dx * tb;
                     toY = s.fromY + dy * tb;
+                    clippedByWall = true;
                     break;
                 }
             }
         }
 
-        // 屏幕坐标 + 长度上限（逻辑像素 24）
+        // ---- 屏幕坐标 ----
         float x0 = (s.fromX - cameraX_) * zoom_;
         float y0 = (s.fromY - cameraY_) * zoom_;
         float x1 = (toX - cameraX_) * zoom_;
         float y1 = (toY - cameraY_) * zoom_;
-        const float len = std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+
+        // 长度上限 24 逻辑像素：只保留靠近弹头的一段（拖尾）
         constexpr float kMaxLen = 24.0f;
-        if (len > kMaxLen && len > 0.0f) {
+        float len = std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+        if (len > kMaxLen) {
             const float k = kMaxLen / len;
             x0 = x1 - (x1 - x0) * k;
             y0 = y1 - (y1 - y0) * k;
+            len = kMaxLen;
+        }
+        if (len < 0.5f) {
+            // 极短段（高速弹在当帧只剩一点点位移）：至少画一个亮点，避免"看不见"
+            len = 0.5f;
         }
 
-        const Uint8 alpha = static_cast<Uint8>(235.0f * life);
-        // 枪弹用暖白；命中段略亮，射程到期段略暗
-        SDL_SetRenderDrawColor(renderer_, 255,
-                               s.impact ? 232 : 220,
-                               s.impact ? 180 : 160,
-                               alpha);
-        // SDL 没有画线粗细：按 1.5~3 逻辑像素画 1~3 条平行线
-        const int w = 1 + static_cast<int>(life * 2.0f);
-        const float dx = x1 - x0, dy = y1 - y0;
-        const float len2 = std::sqrt(dx * dx + dy * dy);
-        const float nx = (len2 > 0.001f) ? -dy / len2 : 0.0f;
-        const float ny = (len2 > 0.001f) ? dx / len2 : 1.0f;
-        for (int i = 0; i < w; ++i) {
-            const float off = static_cast<float>(i) - (static_cast<float>(w) - 1.0f) * 0.5f;
-            SDL_RenderDrawLineF(renderer_,
-                                x0 + nx * off, y0 + ny * off,
-                                x1 + nx * off, y1 + ny * off);
+        const float dirX = (x1 - x0) / std::max(0.001f, len);
+        const float dirY = (y1 - y0) / std::max(0.001f, len);
+        const float nx = -dirY;
+        const float ny = dirX;
+
+        // 宽度：1.5~3 逻辑像素（不乘 zoom，避免高倍率下变成粗线）
+        const float widthPx = 1.5f + 1.5f * life;
+        const int   lines = std::max(1, static_cast<int>(std::lround(widthPx)));
+
+        // 颜色：暖白弹头，命中段偏金黄；射程到期段偏暗
+        const Uint8 r = 255;
+        const Uint8 g = s.impact ? 226 : 214;
+        const Uint8 b = s.impact ? 168 : 150;
+
+        // 拖尾：3 段递增 alpha（尾淡 → 头亮）
+        const int kTail = 3;
+        for (int seg = 0; seg < kTail; ++seg) {
+            const float t0 = static_cast<float>(seg) / static_cast<float>(kTail);
+            const float t1 = static_cast<float>(seg + 1) / static_cast<float>(kTail);
+            const float a0 = life * 0.20f + life * 0.80f * t0;
+            const float a1 = life * 0.20f + life * 0.80f * t1;
+            const float ax = x1 - dirX * len * (1.0f - t0);
+            const float ay = y1 - dirY * len * (1.0f - t0);
+            const float bx = x1 - dirX * len * (1.0f - t1);
+            const float by = y1 - dirY * len * (1.0f - t1);
+            const Uint8 alpha = static_cast<Uint8>(235.0f * (a0 + a1) * 0.5f);
+            SDL_SetRenderDrawColor(renderer_, r, g, b, alpha);
+            const int segLines = std::max(1, static_cast<int>(std::lround(widthPx * (0.6f + 0.4f * t1))));
+            for (int i = 0; i < segLines; ++i) {
+                const float off = static_cast<float>(i) - (static_cast<float>(segLines) - 1.0f) * 0.5f;
+                SDL_RenderDrawLineF(renderer_, ax + nx * off, ay + ny * off,
+                                    bx + nx * off, by + ny * off);
+            }
+        }
+
+        // 弹头亮点（最后 60% 寿命内更明显）
+        if (life > 0.25f) {
+            const float dotR = std::clamp(widthPx * 0.9f, 1.0f, 2.6f);
+            const Uint8 dotA = static_cast<Uint8>(255.0f * std::min(1.0f, life * 1.6f));
+            SDL_SetRenderDrawColor(renderer_, 255, 246, 214, dotA);
+            for (int i = 0; i <= static_cast<int>(lines); ++i) {
+                const float off = static_cast<float>(i) - static_cast<float>(lines) * 0.5f;
+                SDL_RenderDrawLineF(renderer_, x1 + nx * off - dirX * dotR,
+                                    y1 + ny * off - dirY * dotR,
+                                    x1 + nx * off + dirX * dotR,
+                                    y1 + ny * off + dirY * dotR);
+            }
+        }
+
+        // 命中火花：只在 impact 段的寿命前 40% 内画一小簇（不宣称精确命中点）
+        // 被墙截断的段与真实角色命中都给同样的视觉反馈，符合"碰撞终点检测"的数据能力。
+        if (s.impact && life > 0.6f) {
+            const float k = (life - 0.6f) / 0.4f;         // 1 → 0
+            const float spark = 2.0f + 4.0f * k;
+            const Uint8 a = static_cast<Uint8>(200.0f * k);
+            SDL_SetRenderDrawColor(renderer_, 255, 232, 170, a);
+            for (int i = 0; i < 4; ++i) {
+                const float ang = 0.7853982f + 1.5707963f * static_cast<float>(i); // 45° 十字
+                SDL_RenderDrawLineF(renderer_, x1, y1,
+                                    x1 + std::cos(ang) * spark, y1 + std::sin(ang) * spark);
+            }
+            if (clippedByWall) {
+                // 撞墙：再补一小片尘土（低饱和），与击中角色的金色火花区分
+                SDL_SetRenderDrawColor(renderer_, 196, 188, 176, static_cast<Uint8>(120.0f * k));
+                for (int i = 0; i < 3; ++i) {
+                    const float ang = -0.6f + 0.6f * static_cast<float>(i);
+                    SDL_RenderDrawLineF(renderer_, x1, y1,
+                                        x1 - dirX * spark * std::cos(ang) + nx * spark * 0.5f,
+                                        y1 - dirY * spark * std::cos(ang) + ny * spark * 0.5f);
+                }
+            }
         }
     }
 }
@@ -918,11 +1029,10 @@ void CS2DRenderer::SetScopeMask(bool active, float centerX, float centerY,
 }
 
 // ---------------------------------------------------------------------------
-// 开镜覆盖层（契约 v1.3）
-// 占位实现：镜筒圆环 + 一个把镜筒分成四象限的大十字（四段线，中心留 gap）。
-// 不再画中心小点/小十字；普通准星在开镜期间由 CS2DOverlay 跳过。
-// 镜外遮挡由「圆形可见区 + 视野雾」完成，这里不重复画遮罩；
-// 表现细节（镜筒样式、刻度、动效）归 UI 方（PIX-10）替换。
+// 开镜覆盖层（契约 v1.3 / PIX-10）
+// 镜筒 = 外圈暗环 + 内缘亮线 + 一圈刻度 + 向内收的暗角；视野用一个贯穿圆心的大十字
+// 分成四象限（中心留 gap，开启"移动扩散"时张开）。
+// 镜外遮挡由「圆形可见区 + 视野雾」完成，这里不重复画遮罩；普通准星在开镜期间不绘制。
 // ---------------------------------------------------------------------------
 void CS2DRenderer::DrawScopeOverlay(const Presentation::ScopeOverlayParams& p) {
     if (!renderer_) return;
@@ -935,52 +1045,88 @@ void CS2DRenderer::DrawScopeOverlay(const Presentation::ScopeOverlayParams& p) {
     const float cy = p.centerY;
     const float r  = radiusPx * (0.62f + 0.38f * t);   // 开镜瞬间由小放大到镜筒尺寸
 
-    // 屏幕空间圆（SDL 没有画圆粗细：用多段折线近似）
-    auto circle = [&](float rr, Uint8 a) {
+    // 屏幕空间圆：SDL 没有线宽，用多段折线近似
+    auto ring = [&](float rr, int segments, Uint8 cr, Uint8 cg, Uint8 cb, Uint8 a) {
         if (rr <= 0.5f) return;
-        SDL_SetRenderDrawColor(renderer_, 8, 10, 12, a);
-        for (int i = 0; i < 72; ++i) {
-            const float a0 = 6.2831853f * static_cast<float>(i) / 72.0f;
-            const float a1 = 6.2831853f * static_cast<float>(i + 1) / 72.0f;
+        SDL_SetRenderDrawColor(renderer_, cr, cg, cb, a);
+        for (int i = 0; i < segments; ++i) {
+            const float a0 = 6.2831853f * static_cast<float>(i) / static_cast<float>(segments);
+            const float a1 = 6.2831853f * static_cast<float>(i + 1) / static_cast<float>(segments);
             SDL_RenderDrawLineF(renderer_, cx + std::cos(a0) * rr, cy + std::sin(a0) * rr,
                                 cx + std::cos(a1) * rr, cy + std::sin(a1) * rr);
         }
     };
 
-    // 镜筒：向内收的 4 圈暗线（形成厚度感）
-    for (int i = 0; i < 4; ++i) {
-        circle(r + static_cast<float>(i) * 1.5f, static_cast<Uint8>(200.0f * t));
+    // 1) 向内收的暗角：让圆边缘看起来有"镜筒厚度"（不在圆外重复遮挡）
+    for (int i = 0; i < 10; ++i) {
+        const float k = static_cast<float>(i) / 9.0f;            // 0=最外
+        const float rr = r * (1.0f - 0.055f * k);
+        const Uint8 a = static_cast<Uint8>((150.0f * (1.0f - k) + 25.0f) * t);
+        ring(rr, 76, 10, 12, 15, a);
     }
-    // 内缘细亮线
-    SDL_SetRenderDrawColor(renderer_, 214, 228, 238, static_cast<Uint8>(130.0f * t));
-    for (int i = 0; i < 72; ++i) {
-        const float a0 = 6.2831853f * static_cast<float>(i) / 72.0f;
-        const float a1 = 6.2831853f * static_cast<float>(i + 1) / 72.0f;
-        SDL_RenderDrawLineF(renderer_, cx + std::cos(a0) * r, cy + std::sin(a0) * r,
-                            cx + std::cos(a1) * r, cy + std::sin(a1) * r);
+    // 2) 外圈暗环（3 圈）形成硬边
+    for (int i = 0; i < 3; ++i) {
+        ring(r + 1.0f + static_cast<float>(i) * 1.4f, 76, 6, 8, 10,
+             static_cast<Uint8>(215.0f * t));
+    }
+    // 3) 内缘细亮线
+    ring(r - 0.6f, 76, 214, 228, 238, static_cast<Uint8>(150.0f * t));
+
+    // 4) 刻度：8 个方向，四个正向更长（借用望远镜分划的视觉语言）
+    {
+        const Uint8 tickA = static_cast<Uint8>(190.0f * t);
+        SDL_SetRenderDrawColor(renderer_, 226, 236, 244, tickA);
+        for (int i = 0; i < 8; ++i) {
+            const float ang = 6.2831853f * static_cast<float>(i) / 8.0f;
+            const float len = (i % 2 == 0) ? 14.0f : 7.0f;
+            const float inner = r - 6.0f;
+            const float outer = inner - len;
+            SDL_RenderDrawLineF(renderer_,
+                                cx + std::cos(ang) * inner, cy + std::sin(ang) * inner,
+                                cx + std::cos(ang) * outer, cy + std::sin(ang) * outer);
+        }
     }
 
-    // ---- 大十字：把镜筒分成四象限 ----
-    // gap 为 0 时四段线在圆心相接；开启「移动扩散」时 gap 随移动量张开。
+    // 5) 大十字：把镜筒分成四象限（gap 为 0 时四段在圆心相接）
     const float gap = std::clamp(p.crossGap, 0.0f, r);
     const float thick = std::clamp(p.crossThickness, 1.0f, 8.0f);
-    const int   lines = static_cast<int>(std::lround(thick));
-    const Uint8 crossAlpha = static_cast<Uint8>(215.0f * t);
-    SDL_SetRenderDrawColor(renderer_, 240, 246, 250, crossAlpha);
-    // 每条臂用 1..N 条平行线叠出线宽
-    for (int i = 0; i < lines; ++i) {
-        const float off = static_cast<float>(i) - (static_cast<float>(lines) - 1.0f) * 0.5f;
-        // 竖直臂（上/下）
+    const int   lines = std::max(1, static_cast<int>(std::lround(thick)));
+    // 先画一层深色描边打底，亮色线压在中间：浅色地图上也能看清
+    const float halo = thick + 2.0f;
+    const int   haloLines = lines + 2;
+    SDL_SetRenderDrawColor(renderer_, 8, 10, 12, static_cast<Uint8>(120.0f * t));
+    for (int i = 0; i < haloLines; ++i) {
+        const float off = static_cast<float>(i) - (static_cast<float>(haloLines) - 1.0f) * 0.5f;
+        (void)halo;
         SDL_RenderDrawLineF(renderer_, cx + off, cy - r, cx + off, cy - gap);
         SDL_RenderDrawLineF(renderer_, cx + off, cy + gap, cx + off, cy + r);
-        // 水平臂（左/右）
         SDL_RenderDrawLineF(renderer_, cx - r, cy + off, cx - gap, cy + off);
         SDL_RenderDrawLineF(renderer_, cx + gap, cy + off, cx + r, cy + off);
     }
+    SDL_SetRenderDrawColor(renderer_, 240, 246, 250, static_cast<Uint8>(225.0f * t));
+    for (int i = 0; i < lines; ++i) {
+        const float off = static_cast<float>(i) - (static_cast<float>(lines) - 1.0f) * 0.5f;
+        SDL_RenderDrawLineF(renderer_, cx + off, cy - r, cx + off, cy - gap);
+        SDL_RenderDrawLineF(renderer_, cx + off, cy + gap, cx + off, cy + r);
+        SDL_RenderDrawLineF(renderer_, cx - r, cy + off, cx - gap, cy + off);
+        SDL_RenderDrawLineF(renderer_, cx + gap, cy + off, cx + r, cy + off);
+    }
+
+    // 6) 档位提示：2x 时在右下内侧多一小段刻度，不用文字（渲染层没有字体）
+    if (p.scope.level >= 2) {
+        const float bx = cx + r * 0.72f;
+        const float by = cy + r * 0.72f;
+        SDL_SetRenderDrawColor(renderer_, 240, 205, 130, static_cast<Uint8>(200.0f * t));
+        for (int i = 0; i < 2; ++i) {
+            const float off = static_cast<float>(i) * 4.0f;
+            SDL_RenderDrawLineF(renderer_, bx + off, by, bx + off, by + 7.0f);
+        }
+    }
 }
 
+
 void CS2DRenderer::DrawThrownGrenade(int weaponId, float worldX, float worldY,
-                                  float spinDeg) {
+                                     float spinDeg) {
     if (!renderer_) return;
     SDL_Texture* tex = nullptr;
     if (weaponId > 0 && weaponId < static_cast<int>(weaponSprites_.size())) {
