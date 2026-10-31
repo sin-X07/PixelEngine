@@ -517,6 +517,53 @@ static void TestDamageAndScopeShot() {
         check(aClamp == 160, "越界值被 clamp 到 100%");
         renderer.SetFogOpacityPct(100);
     }
+
+    std::printf("\n===== 修复项回归（连发开镜 / 换弹中开镜）=====\n");
+    {
+        // 可连发的开镜武器（AUG / SCAR-20 等）：打一枪就必须退镜，
+        // 即使开了「延迟关镜」且按住鼠标，也不能"一直开镜连射"。
+        CS2DGame game;
+        if (!LoadDeathMatch(game)) return;
+        game.GetPlayer().money = 16000;
+        check(game.ExecutePurchase(WeaponReq(WeaponId::AUG)).code == Presentation::BuyCode::Ok,
+              "买 AUG 成功（可连发 + 可开镜）");
+        game.GetPlayer().SetSlotWeapon(0, WeaponId::AUG);
+        game.SwitchWeaponSlot(0);
+        game.SetDelayedScopeClose(true);            // 最坏情况：延迟关镜 + 按住
+        game.UpdateScopeInput(true, true);
+        check(game.GetScopeView().level == 1, "AUG 开镜到 1.5x");
+        const float aimX = game.GetPlayer().x + std::cos(game.GetPlayer().aimAngle) * 60.0f;
+        const float aimY = game.GetPlayer().y + std::sin(game.GetPlayer().aimAngle) * 60.0f;
+        for (int i = 0; i < 3; ++i) {
+            game.Update(1.0f / 60.0f, true, aimX, aimY,
+                        false, false, false, false, false, false, false, nullptr);
+        }
+        check(game.GetScopeView().level == 0,
+              "可连发开镜武器：开一枪即退镜（不会一直开镜连射）");
+    }
+    {
+        // 换弹期间不能开镜；正在开镜时进入换弹也必须退镜（兜底在 TickScope）。
+        CS2DGame game;
+        if (!LoadDeathMatch(game)) return;
+        game.GetPlayer().money = 16000;
+        game.ExecutePurchase(WeaponReq(WeaponId::AWP));
+        game.GetPlayer().SetSlotWeapon(0, WeaponId::AWP);
+        game.SwitchWeaponSlot(0);
+
+        game.GetPlayer().reloading = true;
+        game.UpdateScopeInput(true, true);
+        check(game.GetScopeView().level == 0, "换弹中右键不能开镜");
+        game.GetPlayer().reloading = false;
+
+        game.UpdateScopeInput(true, true);
+        check(game.GetScopeView().level == 1, "停止换弹后可开镜");
+        // 开镜状态下进入换弹：下一帧 Update 的 TickScope 必须兜底归零
+        game.GetPlayer().reloading = true;
+        game.Update(1.0f / 60.0f, false, game.GetPlayer().x, game.GetPlayer().y,
+                    false, false, false, false, false, false, false, nullptr);
+        check(game.GetScopeView().level == 0, "开镜中进入换弹 → 自动退镜");
+        game.GetPlayer().reloading = false;
+    }
 }
 
 // ---------------------------------------------------------------------------

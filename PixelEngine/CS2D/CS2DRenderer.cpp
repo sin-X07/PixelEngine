@@ -516,48 +516,37 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
                                p.weaponSlot, p.weaponId, p.animState == 2);
     }
 
-    // ---- 阵营标识（契约第 5 节 / PIX-16）----
-    // 只在「已经通过可见性剔除、获准绘制」的 sprite 上画，不新增敌人遍历；
-    // 形状（圆=CT / 菱形=T / 中性）与颜色双重编码，色弱或低饱和地图也能分辨。
-    // 位置放在角色脚下，避开瞄准方向与命中盒中心。
-    if (p.team != Team::None && alpha > 8) {
-        const TeamVisualStyle style = GetTeamVisualStyle(p.team);
-        const float badgeR = std::clamp(sz * 0.16f, 2.5f, 6.0f);
-        const float bx = cx + sz * 0.34f;
-        const float by = cy + sz * 0.62f;
-        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(renderer_, style.accent.r, style.accent.g, style.accent.b,
-                               static_cast<Uint8>(alpha * 0.85f));
-        if (style.badge == TeamVisualStyle::BadgeShape::Diamond) {
-            // T：菱形（四段线闭合）
-            SDL_RenderDrawLineF(renderer_, bx, by - badgeR, bx + badgeR, by);
-            SDL_RenderDrawLineF(renderer_, bx + badgeR, by, bx, by + badgeR);
-            SDL_RenderDrawLineF(renderer_, bx, by + badgeR, bx - badgeR, by);
-            SDL_RenderDrawLineF(renderer_, bx - badgeR, by, bx, by - badgeR);
-        } else {
-            // CT / 其它：圆环
-            for (int i = 0; i < 12; ++i) {
-                const float a0 = 6.2831853f * static_cast<float>(i) / 12.0f;
-                const float a1 = 6.2831853f * static_cast<float>(i + 1) / 12.0f;
-                SDL_RenderDrawLineF(renderer_, bx + std::cos(a0) * badgeR, by + std::sin(a0) * badgeR,
-                                    bx + std::cos(a1) * badgeR, by + std::sin(a1) * badgeR);
-            }
-        }
-        // 本地玩家：脚下再加一圈亮环，便于在 5v5 里一眼找到自己
+    // ---- 敌我标识（修复：友军细蓝环 / 敌军细红环）----
+    // 只在「已经通过可见性剔除、获准绘制」的 sprite 上画，不新增敌人遍历。
+    // 轮廓贴着角色画，不遮挡瞄准方向与命中盒中心；死斗模式由上层把 friendly 置 false，
+    // 因此所有人都会显示红色（一人成军，不区分队伍）。
+    if (alpha > 8 && p.animState != 3) {
+        const float ringR = sz * 0.52f;              // 贴着精灵外缘
+        const float lineW = 1.0f + 0.35f * zoom_;    // 很细：1px 起，随缩放轻微变粗
+        const Uint8 ringA = static_cast<Uint8>(alpha * 0.75f);
+        // 友军蓝 / 敌军红；本地玩家用白色中性环（自己不是"友军"，死斗里也不该是红的）
+        Uint8 rr = 236, gg = 88, bb = 78;
         if (p.localPlayer) {
-            const float ringR = sz * 0.42f;
-            SDL_SetRenderDrawColor(renderer_, 235, 245, 250,
-                                   static_cast<Uint8>(alpha * 0.55f));
-            for (int i = 0; i < 20; ++i) {
-                const float a0 = 6.2831853f * static_cast<float>(i) / 20.0f;
-                const float a1 = 6.2831853f * static_cast<float>(i + 1) / 20.0f;
-                SDL_RenderDrawLineF(renderer_, cx + std::cos(a0) * ringR, cy + std::sin(a0) * ringR,
-                                    cx + std::cos(a1) * ringR, cy + std::sin(a1) * ringR);
+            rr = 240; gg = 244; bb = 250;
+        } else if (p.friendly) {
+            rr = 88; gg = 168; bb = 245;
+        }
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, rr, gg, bb, ringA);
+        constexpr int kSegs = 32;
+        const int rings = std::max(1, static_cast<int>(std::lround(lineW)));
+        for (int k = 0; k < rings; ++k) {
+            const float rr2 = ringR + static_cast<float>(k);
+            for (int i = 0; i < kSegs; ++i) {
+                const float a0 = 6.2831853f * static_cast<float>(i) / kSegs;
+                const float a1 = 6.2831853f * static_cast<float>(i + 1) / kSegs;
+                SDL_RenderDrawLineF(renderer_,
+                                    cx + std::cos(a0) * rr2, cy + std::sin(a0) * rr2,
+                                    cx + std::cos(a1) * rr2, cy + std::sin(a1) * rr2);
             }
         }
     }
 }
-
 // 枪口火焰：cx/cy 为武器中心的屏幕坐标
 void CS2DRenderer::DrawMuzzleFlash(float cx, float cy, float size, float aimAngle,
                                    int weaponSlot) {

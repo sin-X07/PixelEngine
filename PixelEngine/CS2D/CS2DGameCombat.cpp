@@ -185,10 +185,12 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     player_.shootCooldown = def.cooldown;
     player_.shootAnimTimer = 0.12f;
 
-    // 契约 v1.2：开枪后自动关镜。设置里开了「延迟关镜」且仍按着扳机时，
-    // 标记「松手再关」，由 Update 在鼠标松开时收尾。
+    // 契约 v1.2 / 修复：开枪后自动关镜。
+    // 「延迟关镜」只对单发狙生效（设置项名字就是狙击枪）；可连发的开镜武器
+    // （AUG / SG 553 / SCAR-20 / G3SG1）打一枪就必须退镜，避免"按住鼠标一直开镜连射"。
     if (scopeLevel_ > 0) {
-        if (delayedScopeClose_ && mouseDown) {
+        const bool allowDelayed = delayedScopeClose_ && mouseDown && !def.automatic;
+        if (allowDelayed) {
             scopeCloseOnRelease_ = true;
         } else {
             ResetScope(Presentation::ScopeResetReason::ShotFired);

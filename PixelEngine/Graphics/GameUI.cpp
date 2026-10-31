@@ -1961,35 +1961,44 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
                  ctx.roundNumber, phaseText,
                  ctx.roundRemainingSec / 60, ctx.roundRemainingSec % 60);
 
-        // 倒计时 ≤10s 用警示色（颜色 + 数字双重提示）
+        // 倒计时 ≤10s 用警示色（颜色 + 数字双重提示）；死斗没有回合，不画这一行
         const bool timeLow = (ctx.roundRemainingSec <= 10 && ctx.roundRemainingSec > 0);
-        DrawImGuiTextCentered(imGuiUI, mid, UI(12.0f),
-                              timeLow ? 240 : 180, timeLow ? 120 : 200,
-                              timeLow ? 110 : 215, 255, 18);
+        if (ctx.playerTeam != Team::None) {
+            DrawImGuiTextCentered(imGuiUI, mid, UI(12.0f),
+                                  timeLow ? 240 : 180, timeLow ? 120 : 200,
+                                  timeLow ? 110 : 215, 255, 18);
+        }
 
         // T / 比分 / CT 分三段绘制，各自用阵营色（形状/文本已在选边页体现）
-        char tScore[16], ctScore[16], sep[8];
-        snprintf(tScore, sizeof(tScore), "T  %d", ctx.scoreT);
-        snprintf(ctScore, sizeof(ctScore), "%d  CT", ctx.scoreCT);
-        snprintf(sep, sizeof(sep), "  :  ");
-        const float sc = UI(22.0f);
-        const float wT = ImGui::CalcTextSize(tScore).x * (sc / 13.0f);
-        const float wS = ImGui::CalcTextSize(sep).x * (sc / 13.0f);
-        const float wC = ImGui::CalcTextSize(ctScore).x * (sc / 13.0f);
-        const float totalW = wT + wS + wC;
-        const float startX = (ImGui::GetIO().DisplaySize.x - totalW) * 0.5f;
-        DrawImGuiText(imGuiUI, tScore, startX, UI(40.0f),
-                      tStyle.accent.r, tStyle.accent.g, tStyle.accent.b, 255,
-                      static_cast<int>(sc));
-        DrawImGuiText(imGuiUI, sep, startX + wT, UI(40.0f), 200, 205, 212, 255,
-                      static_cast<int>(sc));
-        DrawImGuiText(imGuiUI, ctScore, startX + wT + wS, UI(40.0f),
-                      ctStyle.accent.r, ctStyle.accent.g, ctStyle.accent.b, 255,
-                      static_cast<int>(sc));
+        // 修复：死斗是一人成军（playerTeam=None），不展示 T/CT 比分，改为纯击杀数
+        if (ctx.playerTeam == Team::None) {
+            char dm[64];
+            snprintf(dm, sizeof(dm), "死斗 · 击杀 %d", ctx.kills);
+            DrawImGuiTextCentered(imGuiUI, dm, UI(40.0f), 235, 235, 240, 255, 22);
+        } else {
+            char tScore[16], ctScore[16], sep[8];
+            snprintf(tScore, sizeof(tScore), "T  %d", ctx.scoreT);
+            snprintf(ctScore, sizeof(ctScore), "%d  CT", ctx.scoreCT);
+            snprintf(sep, sizeof(sep), "  :  ");
+            const float sc = UI(22.0f);
+            const float wT = ImGui::CalcTextSize(tScore).x * (sc / 13.0f);
+            const float wS = ImGui::CalcTextSize(sep).x * (sc / 13.0f);
+            const float wC = ImGui::CalcTextSize(ctScore).x * (sc / 13.0f);
+            const float totalW = wT + wS + wC;
+            const float startX = (ImGui::GetIO().DisplaySize.x - totalW) * 0.5f;
+            DrawImGuiText(imGuiUI, tScore, startX, UI(40.0f),
+                          tStyle.accent.r, tStyle.accent.g, tStyle.accent.b, 255,
+                          static_cast<int>(sc));
+            DrawImGuiText(imGuiUI, sep, startX + wT, UI(40.0f), 200, 205, 212, 255,
+                          static_cast<int>(sc));
+            DrawImGuiText(imGuiUI, ctScore, startX + wT + wS, UI(40.0f),
+                          ctStyle.accent.r, ctStyle.accent.g, ctStyle.accent.b, 255,
+                          static_cast<int>(sc));
 
-        char alive[64];
-        snprintf(alive, sizeof(alive), "%d vs %d  ", ctx.aliveT, ctx.aliveCT);
-        DrawImGuiTextCentered(imGuiUI, alive, UI(64.0f), 160, 175, 185, 255, 16);
+            char alive[64];
+            snprintf(alive, sizeof(alive), "%d vs %d  ", ctx.aliveT, ctx.aliveCT);
+            DrawImGuiTextCentered(imGuiUI, alive, UI(64.0f), 160, 175, 185, 255, 16);
+        }
     }
 
     // ---- 左上角雷达下方：教练计划 ----

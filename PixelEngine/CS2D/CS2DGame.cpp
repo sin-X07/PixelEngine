@@ -755,6 +755,13 @@ void CS2DGame::TickScope(float dt) {
         return;
     }
 
+    // 修复：换弹期间不允许保持开镜（StartReload 会主动重置，这里每帧再兜一层，
+    // 覆盖"空弹自动换弹"等不经过显式 StartReload 调用的路径）
+    if (player_.reloading) {
+        if (scopeLevel_ > 0) ResetScope(Presentation::ScopeResetReason::ReloadStarted);
+        return;
+    }
+
     // 0.12s 线性过渡：倍率与镜框淡入各自推进（换档时 transition 保持 1，只有倍率变）
     const float step = (Presentation::kScopeTransitionSeconds > 0.0f)
                            ? dt / Presentation::kScopeTransitionSeconds : 1.0f;
@@ -1076,9 +1083,12 @@ void CS2DGame::Render(int viewW, int viewH) {
         sp.animTimer  = p.animTimer;
         sp.deathTimer = p.deathTimer;
         sp.alpha      = 255;
-        // 契约 v1 第 5 节：沿用 Team，不建立第二份阵营状态
-        sp.team        = p.team;
-        sp.friendly    = (p.team == player_.team);
+        // 契约 v1 第 5 节：沿用 Team，不建立第二份阵营状态。
+        // 修复：死斗是一人成军——不区分队伍，所有人对观察者都是"非友军"（画红环），
+        // team 传 None，避免 UI/渲染再按 T/CT 着色。
+        const bool deathmatch = (mode_ == MatchMode::DeathMatch);
+        sp.team        = deathmatch ? Team::None : p.team;
+        sp.friendly    = deathmatch ? false : (p.team == player_.team);
         sp.localPlayer = (&p == &player_);
     };
 
