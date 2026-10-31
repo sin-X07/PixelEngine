@@ -689,6 +689,17 @@ public:
         int armorLoss = 0;      // 护甲点数消耗
     };
     static ArmorDamageResult ResolveArmorDamage(int amount, float armorPen, int armorPoints);
+
+    // 敌我判定（死斗 = 真正的 FFA 混战：除自己外所有人都是敌人）。
+    // 玩法层所有"是否敌对"的判断都必须走这里，不要再散落 `team == team`。
+    bool IsHostileTeam(Team a, Team b) const {
+        if (mode_ == MatchMode::DeathMatch) return true;
+        return a != b;
+    }
+    bool IsHostile(const Player& a, const Player& b) const {
+        return &a != &b && IsHostileTeam(a.team, b.team);
+    }
+    bool IsDeathMatch() const { return mode_ == MatchMode::DeathMatch; }
     int  GetPlayerArmor()  const { return player_.armor; }
     int  GetPlayerHealth()    const { return player_.health; }
     int  GetPlayerMaxHealth() const { return player_.maxHealth; }

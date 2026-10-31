@@ -201,6 +201,11 @@ private:
 
     // ========= 精灵系统 =========
     // 三张角色序列帧贴图（2列×3行；切片帧按武器槽固定，不再循环播放）
+    // 敌我轮廓素材（PIX-16 修复）：与角色精灵同尺寸同帧，白色描边，
+    // 运行时用 SDL_SetTextureColorMod 着成「友军蓝 / 敌军红 / 自己白」
+    SpriteSheetDef ctOutlineSheet_   {};
+    SpriteSheetDef tOutlineSheet_    {};
+    SpriteSheetDef tAltOutlineSheet_ {};
     SpriteSheetDef ctSheet_   {};   // soldier_with_helmet    64×96 → 32×32/frame
     SpriteSheetDef tSheet_    {};   // soldier_no_helmet      64×96 → 32×32/frame
     SpriteSheetDef tAltSheet_ {};   // soldier_by_risingXD   64×94 → 32×31/frame

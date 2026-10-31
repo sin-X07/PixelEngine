@@ -721,6 +721,11 @@ void CS2DGame::UpdateScopeInput(bool rightClicked, bool gameplayInputAllowed) {
         if (scopeLevel_ > 0) ResetScope(Presentation::ScopeResetReason::ReloadStarted);
         return;
     }
+    // 单发狙拉栓冷却期间不能开镜（AWP 1.45s / SSG 的拉栓窗口）；连发武器不受影响
+    {
+        const WeaponDef& def = player_.CurrentWeapon();
+        if (!def.automatic && player_.shootCooldown > 0.0f) return;
+    }
     if (!rightClicked) return;
     if (!IsScopeSupported(cur)) return;   // 不支持的武器不误触
 

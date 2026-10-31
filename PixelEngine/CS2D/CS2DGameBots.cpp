@@ -12,7 +12,7 @@
 // ============================================================================
 
 bool CS2DGame::BotCanSeePlayer(const Player& bot) const {
-    if (!player_.alive || player_.team == bot.team) return false;
+    if (!player_.alive || !IsHostile(player_, bot)) return false;   // 死斗 FFA：所有人都敌对
     const float dx = player_.x - bot.x;
     const float dy = player_.y - bot.y;
     if (std::sqrt(dx * dx + dy * dy) > BOT_VIEW_RADIUS) return false;

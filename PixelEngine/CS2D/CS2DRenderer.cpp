@@ -199,6 +199,14 @@ void CS2DRenderer::SetWorld(const CS2DWorld* world) {
     tAltSheet_.tex   = LoadTexture(mapDir_ + "/../sprites/t_player_alt.png");
     tAltSheet_.frameW = 32; tAltSheet_.frameH = 31; tAltSheet_.cols = 2; tAltSheet_.rows = 3;
 
+    // 敌我轮廓素材（tools/gen_outline_sprites.py 生成；缺失则退回几何环）
+    ctOutlineSheet_.tex     = LoadTexture(mapDir_ + "/../sprites/ct_player_outline.png");
+    ctOutlineSheet_.frameW  = 32; ctOutlineSheet_.frameH = 32; ctOutlineSheet_.cols = 2; ctOutlineSheet_.rows = 3;
+    tOutlineSheet_.tex      = LoadTexture(mapDir_ + "/../sprites/t_player_outline.png");
+    tOutlineSheet_.frameW   = 32; tOutlineSheet_.frameH = 32; tOutlineSheet_.cols = 2; tOutlineSheet_.rows = 3;
+    tAltOutlineSheet_.tex   = LoadTexture(mapDir_ + "/../sprites/t_player_alt_outline.png");
+    tAltOutlineSheet_.frameW = 32; tAltOutlineSheet_.frameH = 31; tAltOutlineSheet_.cols = 2; tAltOutlineSheet_.rows = 3;
+
     // ---- 武器贴图 / 图标（来自 WeaponDB，索引 = WeaponId）----
     const int wcount = static_cast<int>(WeaponId::Count);
     weaponSprites_.assign(wcount, nullptr);
@@ -506,6 +514,31 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
     // 精灵默认面朝上方，需 +90° 使人物朝向与武器朝向一致
     const float charAngle = p.aimAngle * 180.0f / 3.14159265f + tiltDeg
                             + (p.animState == 3 ? 0.0f : 90.0f);
+
+    // ---- 敌我轮廓素材（紧贴角色剪影）----
+    // 友军蓝 / 敌军红 / 自己白；白色描边素材 + ColorMod，所以一份素材服务三色。
+    // 先画轮廓再画角色，轮廓被本体盖住内侧，只剩贴边的一圈。
+    {
+        const SpriteSheetDef* outline = nullptr;
+        if (p.spriteKey == 0)      outline = &ctOutlineSheet_;
+        else if (p.spriteKey == 1) outline = &tOutlineSheet_;
+        else                       outline = &tAltOutlineSheet_;
+
+        Uint8 rr = 236, gg = 88, bb = 78;               // 敌军：红
+        if (p.localPlayer)      { rr = 240; gg = 244; bb = 250; }   // 自己：白
+        else if (p.friendly)    { rr = 88;  gg = 168; bb = 245; }   // 友军：蓝
+
+        if (outline && outline->tex && p.animState != 3) {
+            SDL_SetTextureColorMod(outline->tex, rr, gg, bb);
+            SDL_SetTextureAlphaMod(outline->tex, alpha);
+            // 轮廓素材本身就是外扩一圈，绘制框与本体相同即可贴合
+            SDL_RenderCopyExF(renderer_, outline->tex, &src, &dst,
+                              charAngle, &center, SDL_FLIP_NONE);
+            SDL_SetTextureColorMod(outline->tex, 255, 255, 255);
+            SDL_SetTextureAlphaMod(outline->tex, 255);
+        }
+    }
+
     SDL_RenderCopyExF(renderer_, sheet->tex, &src, &dst,
                       charAngle, &center, SDL_FLIP_NONE);
     SDL_SetTextureAlphaMod(sheet->tex, 255);
@@ -516,36 +549,6 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
                                p.weaponSlot, p.weaponId, p.animState == 2);
     }
 
-    // ---- 敌我标识（修复：友军细蓝环 / 敌军细红环）----
-    // 只在「已经通过可见性剔除、获准绘制」的 sprite 上画，不新增敌人遍历。
-    // 轮廓贴着角色画，不遮挡瞄准方向与命中盒中心；死斗模式由上层把 friendly 置 false，
-    // 因此所有人都会显示红色（一人成军，不区分队伍）。
-    if (alpha > 8 && p.animState != 3) {
-        const float ringR = sz * 0.52f;              // 贴着精灵外缘
-        const float lineW = 1.0f + 0.35f * zoom_;    // 很细：1px 起，随缩放轻微变粗
-        const Uint8 ringA = static_cast<Uint8>(alpha * 0.75f);
-        // 友军蓝 / 敌军红；本地玩家用白色中性环（自己不是"友军"，死斗里也不该是红的）
-        Uint8 rr = 236, gg = 88, bb = 78;
-        if (p.localPlayer) {
-            rr = 240; gg = 244; bb = 250;
-        } else if (p.friendly) {
-            rr = 88; gg = 168; bb = 245;
-        }
-        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(renderer_, rr, gg, bb, ringA);
-        constexpr int kSegs = 32;
-        const int rings = std::max(1, static_cast<int>(std::lround(lineW)));
-        for (int k = 0; k < rings; ++k) {
-            const float rr2 = ringR + static_cast<float>(k);
-            for (int i = 0; i < kSegs; ++i) {
-                const float a0 = 6.2831853f * static_cast<float>(i) / kSegs;
-                const float a1 = 6.2831853f * static_cast<float>(i + 1) / kSegs;
-                SDL_RenderDrawLineF(renderer_,
-                                    cx + std::cos(a0) * rr2, cy + std::sin(a0) * rr2,
-                                    cx + std::cos(a1) * rr2, cy + std::sin(a1) * rr2);
-            }
-        }
-    }
 }
 // 枪口火焰：cx/cy 为武器中心的屏幕坐标
 void CS2DRenderer::DrawMuzzleFlash(float cx, float cy, float size, float aimAngle,
