@@ -313,6 +313,21 @@ GameUI::Actions Engine::BuildActions() {
         saveManager->MutableSettings().sniperDelayedScopeClose = v;
         if (cs2dGame) cs2dGame->SetDelayedScopeClose(v);
     };
+    // 开镜准星（契约 v1.3）
+    a.setScopeCrossThickness = [this](float v) {
+        v = std::clamp(v, 1.0f, 6.0f);
+        auto& st = saveManager->MutableSettings();
+        st.scopeCrossThickness = v;
+        if (cs2dGame) cs2dGame->SetScopeCrosshair(v, st.scopeCrossDynamic);
+    };
+    a.setScopeCrossDynamic = [this](bool v) {
+        auto& st = saveManager->MutableSettings();
+        st.scopeCrossDynamic = v;
+        if (cs2dGame) cs2dGame->SetScopeCrosshair(st.scopeCrossThickness, v);
+    };
+    a.setScopeSensitivity = [this](float v) {
+        saveManager->MutableSettings().scopeSensitivity = std::clamp(v, 0.5f, 2.0f);
+    };
 
     // 显示
     a.setResolution = [this](int w, int h, int idx) {
@@ -582,9 +597,12 @@ void Engine::ApplySavedSettings() {
     cs2dOverlay.radar.hudSize          = s.radarHudSize;
     cs2dOverlay.radar.mapZoom          = s.radarMapZoom;
 
-    // 视野 / 开镜（契约 v1.2）
+    // 视野 / 开镜（契约 v1.2 / v1.3）
     if (cs2dRenderer) cs2dRenderer->SetFogOpacityPct(s.fogOpacityPct);
-    if (cs2dGame)     cs2dGame->SetDelayedScopeClose(s.sniperDelayedScopeClose);
+    if (cs2dGame) {
+        cs2dGame->SetDelayedScopeClose(s.sniperDelayedScopeClose);
+        cs2dGame->SetScopeCrosshair(s.scopeCrossThickness, s.scopeCrossDynamic);
+    }
 
     // 显示
     targetFPS_     = (s.targetFPS > 0) ? s.targetFPS : 60;
@@ -789,8 +807,12 @@ void Engine::HandleInput() {
         SDL_SetRelativeMouseMode(SDL_TRUE);
         int relX = 0, relY = 0;
         SDL_GetRelativeMouseState(&relX, &relY);
+        // 契约 v1.3：开镜时鼠标灵敏度再乘设置倍率（CS2 zoom_sensitivity_ratio 语义）
+        const float scopeSensMul =
+            (cs2dGame->GetScopeView().active && saveManager)
+                ? saveManager->GetSettings().scopeSensitivity : 1.0f;
         cs2dOverlay.UpdateCursor(relX, relY,
-                                 cs2dGame->GetMouseSensitivity(),
+                                 cs2dGame->GetMouseSensitivity() * scopeSensMul,
                                  cs2dRenderer->GetZoom(),
                                  cs2dRenderer->GetCameraX(), cs2dRenderer->GetCameraY(),
                                  logicalW_, logicalH_,
@@ -1714,6 +1736,9 @@ void Engine::Render() {
         ctx.fogOpacityPct         = saveManager ? saveManager->GetSettings().fogOpacityPct : 100;
         ctx.sniperDelayedScopeClose =
             saveManager ? saveManager->GetSettings().sniperDelayedScopeClose : false;
+        ctx.scopeSensitivity    = saveManager ? saveManager->GetSettings().scopeSensitivity : 1.0f;
+        ctx.scopeCrossThickness = saveManager ? saveManager->GetSettings().scopeCrossThickness : 2.0f;
+        ctx.scopeCrossDynamic   = saveManager ? saveManager->GetSettings().scopeCrossDynamic : false;
 
         ctx.resW         = currentResW_;
         ctx.resH         = currentResH_;

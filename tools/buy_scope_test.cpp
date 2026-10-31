@@ -520,6 +520,47 @@ static void TestDamageAndScopeShot() {
 }
 
 // ---------------------------------------------------------------------------
+// 契约 v1.3：开镜大十字准星（四象限）与相关设置
+// ---------------------------------------------------------------------------
+static void TestScopeCrosshair() {
+    std::printf("\n===== 开镜准星设置（契约 v1.3）=====\n");
+
+    // 中心缺口：关闭「移动扩散」时固定；开启后随移动扩散系数线性张开
+    check(Presentation::ComputeScopeCrossGap(0.0f, false) == 2.0f,
+          "静止 + 不扩散：缺口 = 基准 2px");
+    check(Presentation::ComputeScopeCrossGap(1.0f, false) == 2.0f,
+          "跑动 + 不扩散：缺口仍是 2px（固定准星）");
+    check(std::fabs(Presentation::ComputeScopeCrossGap(0.0f, true) - 2.0f) < 0.001f,
+          "静止 + 扩散：缺口 = 2px");
+    {
+        const float half = Presentation::ComputeScopeCrossGap(0.5f, true);
+        const float full = Presentation::ComputeScopeCrossGap(1.0f, true);
+        check(half > 2.0f && half < full, "扩散系数越大缺口越大");
+        check(full > 20.0f, "跑动时缺口明显张开（>20px）");
+    }
+    // 扩散系数越界不应爆掉
+    check(std::fabs(Presentation::ComputeScopeCrossGap(-5.0f, true) - 2.0f) < 0.001f,
+          "扩散系数负值被 clamp 到 0");
+    check(std::fabs(Presentation::ComputeScopeCrossGap(9.0f, true) - 28.0f) < 0.001f,
+          "扩散系数超 1 被 clamp 到 1（缺口上限 28px）");
+
+    // 设置注入：线宽 clamp 到 1..6，动态开关可读回
+    CS2DGame game;
+    if (!LoadDeathMatch(game)) return;
+    game.SetScopeCrosshair(3.5f, true);
+    check(std::fabs(game.ScopeCrosshairThickness() - 3.5f) < 0.001f, "线宽 3.5 生效");
+    check(game.ScopeCrosshairDynamic(), "移动扩散开关生效");
+    game.SetScopeCrosshair(99.0f, false);
+    check(game.ScopeCrosshairThickness() <= 8.0f, "线宽越界被 clamp（<=8）");
+    check(!game.ScopeCrosshairDynamic(), "关闭移动扩散生效");
+
+    // 默认值与契约一致（线宽 2、不扩散）
+    CS2DGame fresh;
+    check(std::fabs(fresh.ScopeCrosshairThickness() - 2.0f) < 0.001f, "默认线宽 = 2");
+    check(!fresh.ScopeCrosshairDynamic(), "默认不随移动扩散");
+}
+
+// ---------------------------------------------------------------------------
 // 枪弹视觉段
 // ---------------------------------------------------------------------------
 static void TestBulletVisuals() {
@@ -581,6 +622,7 @@ int main() {
     TestScope();
     TestScopeMaskAndCamera();
     TestDamageAndScopeShot();
+    TestScopeCrosshair();
     TestBulletVisuals();
 
     std::printf("\n===== 结果: %d 通过, %d 失败 =====\n", g_pass, g_fail);

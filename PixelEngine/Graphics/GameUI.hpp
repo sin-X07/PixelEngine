@@ -65,6 +65,10 @@ public:
         // 视野 / 开镜（契约 v1.2）
         std::function<void(int)>   setFogOpacity;              // 迷雾透明度 0..100
         std::function<void(bool)>  setSniperDelayedScopeClose; // 开镜开枪后按住扳机延迟关镜
+        // 开镜准星（契约 v1.3）
+        std::function<void(float)> setScopeCrossThickness;     // 大十字线宽
+        std::function<void(bool)>  setScopeCrossDynamic;       // 移动时是否张开
+        std::function<void(float)> setScopeSensitivity;        // 开镜灵敏度倍率
     };
 
     struct MenuCtx {
@@ -111,6 +115,9 @@ public:
         // 视野 / 开镜（契约 v1.2）
         int   fogOpacityPct = 100;            // 迷雾透明度 0..100
         bool  sniperDelayedScopeClose = false; // 开枪后按住扳机延迟关镜
+        float scopeSensitivity    = 1.0f;      // 开镜灵敏度倍率
+        float scopeCrossThickness = 2.0f;      // 开镜大十字线宽
+        bool  scopeCrossDynamic   = false;     // 开镜大十字随移动张开
 
         // 主菜单背景
         void* backdropTex = nullptr;   // 主菜单背景图（SDL_Texture*）

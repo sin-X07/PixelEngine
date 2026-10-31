@@ -69,13 +69,11 @@ public:
     // 枪弹视觉段（契约 v1 第 6 节）：数据由 CS2DGame 产出，这里只绘制。
     // 注意：表现实现归 UI 方（PIX-17）；当前为可运行的最小占位实现。
     void DrawBulletVisuals(const std::vector<Presentation::BulletVisualSegment>& segments);
-    // 开镜覆盖层（契约 v1.1 第 4 节）：表现实现归 UI 方（PIX-10）；
+    // 开镜覆盖层（契约 v1.3）：表现实现归 UI 方（PIX-10）；
     // 当前为可运行的最小占位实现，接线与调用时序由功能方保证。
-    // centerScreenX/Y、radiusPx 都是逻辑画布坐标（不是 Retina 物理像素），
-    // 圆心由 CS2DGame 按准星世界点投影算出，UI 不做命中/相机计算。
-    void DrawScopeOverlay(const Presentation::ScopeView& scope,
-                          float centerScreenX, float centerScreenY, float radiusPx,
-                          int viewW, int viewH);
+    // 参数里 centerX/Y、radiusPx、crossThickness、crossGap 都是逻辑画布坐标，
+    // 由 CS2DGame 按准星世界点投影 + 设置项算好，UI 不做命中/相机计算。
+    void DrawScopeOverlay(const Presentation::ScopeOverlayParams& p);
     // 契约 v1.1：开镜时可见区改为以 (centerX, centerY) 为圆心、radiusWorld 为半径的圆，
     // 取代原有「扇形 + 半径」规则；ComputeVisibility 与敌人剔除、视野雾共用这份状态。
     void SetScopeMask(bool active, float centerX, float centerY, float radiusWorld);

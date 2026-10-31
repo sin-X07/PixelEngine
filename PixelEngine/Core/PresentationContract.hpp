@@ -111,6 +111,24 @@ inline float ComputeScopeVisibility(float centerX, float centerY, float radius,
     return 1.0f - blend;
 }
 
+// 契约 v1.3：开镜覆盖层的绘制参数（大十字把镜筒分成四象限；不再画中心小十字）
+struct ScopeOverlayParams {
+    ScopeView scope{};
+    float centerX = 0.0f;         // 镜筒圆心（逻辑画布坐标，由准星世界点投影得到）
+    float centerY = 0.0f;
+    float radiusPx = 0.0f;        // 镜筒半径（逻辑像素）
+    float crossThickness = 2.0f;  // 大十字线宽（逻辑像素，设置项）
+    float crossGap = 0.0f;        // 中心缺口：0=四象限相接；>0=十字在中心断开
+};
+
+// 大十字中心缺口：开启「移动扩散」时随移动扩散系数张开，关闭时固定为 baseGap。
+inline float ComputeScopeCrossGap(float bloom, bool dynamicEnabled,
+                                 float baseGap = 2.0f, float spreadMax = 26.0f) {
+    const float b = std::clamp(bloom, 0.0f, 1.0f);
+    if (!dynamicEnabled) return baseGap;
+    return baseGap + b * spreadMax;
+}
+
 // 枪弹视觉段寿命（秒）与硬上限
 inline constexpr float kBulletVisualSeconds = 0.08f;
 inline constexpr std::size_t kBulletVisualMaxSegments = 512;

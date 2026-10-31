@@ -675,6 +675,13 @@ public:
     // 开启且按着扳机（triggerHeld）时推迟到松手（见 Update 里的收尾）。
     void SetDelayedScopeClose(bool on) { delayedScopeClose_ = on; }
     bool IsDelayedScopeClose() const { return delayedScopeClose_; }
+    // 契约 v1.3：开镜大十字的线宽与「移动时是否张开」（设置项，由 Engine 注入）
+    void SetScopeCrosshair(float thickness, bool dynamicSpread) {
+        scopeCrossThickness_ = std::clamp(thickness, 1.0f, 8.0f);
+        scopeCrossDynamic_   = dynamicSpread;
+    }
+    float ScopeCrosshairThickness() const { return scopeCrossThickness_; }
+    bool  ScopeCrosshairDynamic()   const { return scopeCrossDynamic_; }
 
     // 护甲结算（契约 v1.2）：纯函数，ApplyDamage 与回归测试共用
     struct ArmorDamageResult {
@@ -944,6 +951,9 @@ private:
 
     float mouseSensitivity_ = 1.0f;
     bool  prevMouseDown_    = false;
+    // 契约 v1.3：开镜大十字设置
+    float scopeCrossThickness_ = 2.0f;
+    bool  scopeCrossDynamic_   = false;
     // 契约 v1.2：开枪自动关镜
     bool  delayedScopeClose_ = false;     // 设置项：开启后按住扳机可推迟关镜
     bool  scopeCloseOnRelease_ = false;   // 已开过枪、等松手再关镜

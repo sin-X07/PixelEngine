@@ -43,7 +43,7 @@ cmake --build build/tests --parallel 8 --target gameplay_tests
 build/tests/gameplay_tests.exe    # 工作目录 = 仓库根
 ```
 
-结果：`===== 结果: 119 通过, 0 失败 =====`（`tools/buy_scope_test.cpp`）。
+结果：`===== 结果: 132 通过, 0 失败 =====`（`tools/buy_scope_test.cpp`）。
 覆盖内容：
 
 - 购买：全部 `BuyCode`（InvalidItem / PlayerDead / WindowClosed / OutsideBuyZone / TeamRestricted /
@@ -57,6 +57,7 @@ build/tests/gameplay_tests.exe    # 工作目录 = 仓库根
 - 伤害/护甲（v1.2）：AWP 基伤 >100、对满甲 112 进血（一枪死）、AK 对满甲 28/4、无甲全额、穿透率越界 clamp、护甲不足不降伤。
 - 开枪自动关镜（v1.2）：默认开枪即关；延迟关镜开启时按住保持、松手关。
 - 迷雾透明度（v1.2）：100%→160、50%→80、0%→0、越界 clamp。
+- 开镜准星（v1.3）：缺口换算（静止 2px / 关闭扩散固定 / 开启后随移动张开 / 越界 clamp）、线宽 clamp、默认值。
 - 枪弹视觉段：真实模拟段生成、0.08s 寿命清理、重复 Render 无副作用、512 上限。
 
 > 说明：`OutsideBuyZone` 未单独构造用例（需要把小鸡… 玩家移出购买区并重算），
@@ -83,7 +84,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/win_accept.ps1
 | `03-buy-menu.png` | 购买菜单按 `availability` 禁用：`USP-S $200 (已装备)`、`AWP $4750 (已装备)` 灰显，其余可买 |
 | `04-scope-15x.png` | AWP 右键第 1 档：圆形可见区（圆心=准星，非屏幕中心）、镜外浓雾、1.5×、镜筒圆环 + 中心准星 |
 | `05-scope-20x.png` | 右键第 2 档：同一圆形内明显更放大（2×），镜外仍被雾遮盖，HUD 不受影响 |
-| `06-settings.png` | 设置页新增「视野 / 开镜」卡片：迷雾透明度 100%、狙击枪延迟关镜开关 |
+| `06-settings.png` | 设置页「视野 / 开镜」卡片：迷雾透明度、狙击枪延迟关镜、开镜灵敏度、开镜准星粗细、移动扩散 |
 
 运行日志（`build-evidence/*.out`）关键行：
 
@@ -167,10 +168,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/win_accept.ps1
   由于 `UpdateCursor` 用 `GetZoom()` 反解，偏移只是把灵敏度按 `1/(1-shift)` 放大，无累积漂移。
 - 归零路径：切枪（含投掷物自动切回）、丢枪、购买替换当前武器、换弹开始、阵亡、新回合、
   `LoadMap`、暂停/设置/选边/失焦/转场、离开对局、每次 Update 的防御性武器比对。
-- `DrawScopeOverlay(scope, centerScreenX, centerScreenY, radiusPx, viewW, viewH)`（v1.1 签名）
-  在世界雾之后、闪光之前接线，圆心用「准星世界点投影」而非虚拟光标（相机被地图边界钳制也不错位）。
-  **当前为功能方的最小占位实现**（圆形镜筒 4 圈暗线 + 内缘亮线 + 四向刻度 + 中心准星），
-  表现与倍率刻度样式归 UI 方（PIX-10），替换时只改函数体。
+- `DrawScopeOverlay(const Presentation::ScopeOverlayParams&)`（v1.3 签名）在世界雾之后、闪光之前接线，
+  圆心用「准星世界点投影」而非虚拟光标（相机被地图边界钳制也不错位）。
+  **当前占位实现**：圆形镜筒 + 一个把视野分成四象限的大十字（四段线，中心 `crossGap`），
+  已去掉中心小点 / 小十字；**开镜期间普通准星由 `CS2DOverlay::Render` 跳过**。
+  线宽来自设置、缺口来自 `ComputeScopeCrossGap(bloom, 动态开关)`；表现样式归 UI 方（PIX-10）替换函数体。
+- 开镜灵敏度按 CS2 `zoom_sensitivity_ratio` 语义：Engine 调 `UpdateCursor` 时传入
+  `GetMouseSensitivity() * (开镜 ? settings.scopeSensitivity : 1)`，不改世界坐标换算与相机。
 
 ### PIX-15 Windows 验收
 
@@ -195,7 +199,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/win_accept.ps1
 
 ## 6. 交给 shijin（UI 方）的待办
 
-1. **DrawScopeOverlay**（PIX-10）：替换 `CS2DRenderer::DrawScopeOverlay` 的函数体；
+1. **DrawScopeOverlay**（PIX-10）：替换 `CS2DRenderer::DrawScopeOverlay(const Presentation::ScopeOverlayParams&)` 的函数体；
    入参 `ViewW/ViewH` 已是逻辑画布坐标（1728x1080），不要用 Retina 物理像素；不要做命中/相机计算。
 2. **DrawBulletVisuals**（PIX-17）：替换占位实现；按 `remaining/duration` 淡出、宽度 1.5~3 逻辑像素、
    长度上限 24 逻辑像素、按阻挡瓦片裁剪；数据源只用 `GetBulletVisuals()`（Render 不消费、不计时）。

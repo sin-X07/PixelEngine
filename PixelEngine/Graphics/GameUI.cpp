@@ -683,7 +683,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
             }
         }) + UI(16.0f);
 
-        rightY += drawCard(rightX, rightY, "视野 / 开镜", "VISION & SCOPE", 2, 0.0f,
+        rightY += drawCard(rightX, rightY, "视野 / 开镜", "VISION & SCOPE", 5, 0.0f,
                            IM_COL32(150, 170, 220, 255), [&](float x, float y) {
             rowLabel(x, y, 0, "迷雾透明度");
             ImGui::SetCursorScreenPos(rowPos(x, y, 0));
@@ -699,9 +699,31 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 actions.setSniperDelayedScopeClose(delayed);
             }
 
-            DrawImGuiText(imGuiUI_, "迷雾只影响观感，视野判定与烟雾弹不受影响；"
-                                    "延迟关镜开启后开镜开枪时按住左键不松即可保持开镜",
-                          x + labelX, y + header + 2.0f * rowH + UI(6.0f),
+            rowLabel(x, y, 2, "开镜灵敏度");
+            ImGui::SetCursorScreenPos(rowPos(x, y, 2));
+            ImGui::SetNextItemWidth(fieldW);
+            float scopeSens = ctx.scopeSensitivity;
+            if (ImGui::SliderFloat("##scopeSens", &scopeSens, 0.5f, 2.0f, "%.2f")) {
+                actions.setScopeSensitivity(scopeSens);
+            }
+
+            rowLabel(x, y, 3, "开镜准星粗细");
+            ImGui::SetCursorScreenPos(rowPos(x, y, 3));
+            ImGui::SetNextItemWidth(fieldW);
+            float scopeCrossThick = ctx.scopeCrossThickness;
+            if (ImGui::SliderFloat("##scopeCrossThick", &scopeCrossThick, 1.0f, 6.0f, "%.1f")) {
+                actions.setScopeCrossThickness(scopeCrossThick);
+            }
+
+            ImGui::SetCursorScreenPos(rowPos(x, y, 4));
+            bool crossDyn = ctx.scopeCrossDynamic;
+            if (ImGui::Checkbox("开镜准星随移动扩散", &crossDyn)) {
+                actions.setScopeCrossDynamic(crossDyn);
+            }
+
+            DrawImGuiText(imGuiUI_, "迷雾只影响观感；开镜准星是切分镜筒的大十字，"
+                                    "灵敏度按 CS2 zoom_sensitivity_ratio 语义只作用于开镜期间",
+                          x + labelX, y + header + 5.0f * rowH + UI(6.0f),
                           112, 132, 152, 220, 12);
         }) + UI(16.0f);
 

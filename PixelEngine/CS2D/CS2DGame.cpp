@@ -1174,13 +1174,19 @@ void CS2DGame::Render(int viewW, int viewH) {
         renderer_->DrawVisionFog(player_.x, player_.y, player_.aimAngle);
     }
 
-    // 开镜覆盖层：世界雾之后、闪光覆盖之前（契约 v1.1 第 4 节）
-    // 圆心用「准星世界点投影到屏幕」而不是虚拟光标，避免相机被地图边界钳制时镜筒错位
-    {
-        const float scopeScreenX = (aimWorldX_ - renderer_->GetCameraX()) * renderer_->GetZoom();
-        const float scopeScreenY = (aimWorldY_ - renderer_->GetCameraY()) * renderer_->GetZoom();
-        renderer_->DrawScopeOverlay(scope, scopeScreenX, scopeScreenY,
-                                    scopeRadiusPx, viewW, viewH);
+    // 开镜覆盖层：世界雾之后、闪光覆盖之前（契约 v1.3）
+    // 圆心用「准星世界点投影到屏幕」而不是虚拟光标，避免相机被地图边界钳制时镜筒错位。
+    // 大十字线宽来自设置；中心缺口在「移动扩散」开启时随移动量张开。
+    if (scope.active) {
+        Presentation::ScopeOverlayParams op;
+        op.scope          = scope;
+        op.centerX        = (aimWorldX_ - renderer_->GetCameraX()) * renderer_->GetZoom();
+        op.centerY        = (aimWorldY_ - renderer_->GetCameraY()) * renderer_->GetZoom();
+        op.radiusPx       = scopeRadiusPx;
+        op.crossThickness = scopeCrossThickness_;
+        op.crossGap       = Presentation::ComputeScopeCrossGap(GetCrosshairBloom(),
+                                                               scopeCrossDynamic_);
+        renderer_->DrawScopeOverlay(op);
     }
 
     renderer_->DrawOverlay();

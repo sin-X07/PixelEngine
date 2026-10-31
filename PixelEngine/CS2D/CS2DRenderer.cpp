@@ -918,39 +918,38 @@ void CS2DRenderer::SetScopeMask(bool active, float centerX, float centerY,
 }
 
 // ---------------------------------------------------------------------------
-// 开镜覆盖层（契约 v1.1 第 4 节）
-// 最小占位实现：镜筒圆环 + 刻度 + 中心准星。
+// 开镜覆盖层（契约 v1.3）
+// 占位实现：镜筒圆环 + 一个把镜筒分成四象限的大十字（四段线，中心留 gap）。
+// 不再画中心小点/小十字；普通准星在开镜期间由 CS2DOverlay 跳过。
 // 镜外遮挡由「圆形可见区 + 视野雾」完成，这里不重复画遮罩；
-// 表现细节（镜筒样式、倍率刻度、开镜动效）归 UI 方（PIX-10）替换。
+// 表现细节（镜筒样式、刻度、动效）归 UI 方（PIX-10）替换。
 // ---------------------------------------------------------------------------
-void CS2DRenderer::DrawScopeOverlay(const Presentation::ScopeView& scope,
-                                    float centerScreenX, float centerScreenY,
-                                    float radiusPx, int viewW, int viewH) {
+void CS2DRenderer::DrawScopeOverlay(const Presentation::ScopeOverlayParams& p) {
     if (!renderer_) return;
-    const float t = std::clamp(scope.transition, 0.0f, 1.0f);
-    if (t <= 0.001f || viewW <= 0 || viewH <= 0 || radiusPx <= 1.0f) return;
+    const float t = std::clamp(p.scope.transition, 0.0f, 1.0f);
+    const float radiusPx = p.radiusPx;
+    if (t <= 0.001f || radiusPx <= 1.0f) return;
 
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-    const float cx = centerScreenX;
-    const float cy = centerScreenY;
+    const float cx = p.centerX;
+    const float cy = p.centerY;
     const float r  = radiusPx * (0.62f + 0.38f * t);   // 开镜瞬间由小放大到镜筒尺寸
 
     // 屏幕空间圆（SDL 没有画圆粗细：用多段折线近似）
-    auto circle = [&](float ox, float oy, float rr, int segments, Uint8 a) {
+    auto circle = [&](float rr, Uint8 a) {
         if (rr <= 0.5f) return;
         SDL_SetRenderDrawColor(renderer_, 8, 10, 12, a);
-        for (int i = 0; i < segments; ++i) {
-            const float a0 = 6.2831853f * static_cast<float>(i) / static_cast<float>(segments);
-            const float a1 = 6.2831853f * static_cast<float>(i + 1) / static_cast<float>(segments);
-            SDL_RenderDrawLineF(renderer_, ox + std::cos(a0) * rr, oy + std::sin(a0) * rr,
-                                ox + std::cos(a1) * rr, oy + std::sin(a1) * rr);
+        for (int i = 0; i < 72; ++i) {
+            const float a0 = 6.2831853f * static_cast<float>(i) / 72.0f;
+            const float a1 = 6.2831853f * static_cast<float>(i + 1) / 72.0f;
+            SDL_RenderDrawLineF(renderer_, cx + std::cos(a0) * rr, cy + std::sin(a0) * rr,
+                                cx + std::cos(a1) * rr, cy + std::sin(a1) * rr);
         }
     };
 
     // 镜筒：向内收的 4 圈暗线（形成厚度感）
     for (int i = 0; i < 4; ++i) {
-        circle(cx, cy, r + static_cast<float>(i) * 1.5f, 72,
-               static_cast<Uint8>(200.0f * t));
+        circle(r + static_cast<float>(i) * 1.5f, static_cast<Uint8>(200.0f * t));
     }
     // 内缘细亮线
     SDL_SetRenderDrawColor(renderer_, 214, 228, 238, static_cast<Uint8>(130.0f * t));
@@ -961,25 +960,23 @@ void CS2DRenderer::DrawScopeOverlay(const Presentation::ScopeView& scope,
                             cx + std::cos(a1) * r, cy + std::sin(a1) * r);
     }
 
-    // 倍率刻度：内侧 4 个方向的短划线（1.5x 与 2x 的刻度长度略不同，便于肉眼区分档位）
-    const float tickLen = 10.0f + 8.0f * t + (scope.level >= 2 ? 6.0f : 0.0f);
-    const float gap = 6.0f;
-    SDL_SetRenderDrawColor(renderer_, 225, 236, 244, static_cast<Uint8>(180.0f * t));
-    SDL_RenderDrawLineF(renderer_, cx - r + gap, cy, cx - r + gap + tickLen, cy);
-    SDL_RenderDrawLineF(renderer_, cx + r - gap, cy, cx + r - gap - tickLen, cy);
-    SDL_RenderDrawLineF(renderer_, cx, cy - r + gap, cx, cy - r + gap + tickLen);
-    SDL_RenderDrawLineF(renderer_, cx, cy + r - gap, cx, cy + r - gap - tickLen);
-
-    // 中心准星：小方点 + 十字
-    const float dot = 2.0f;
-    SDL_SetRenderDrawColor(renderer_, 235, 245, 250, static_cast<Uint8>(220.0f * t));
-    SDL_FRect center = { cx - dot, cy - dot, dot * 2.0f, dot * 2.0f };
-    SDL_RenderFillRectF(renderer_, &center);
-    const float cross = 10.0f + 6.0f * t;
-    SDL_RenderDrawLineF(renderer_, cx - cross, cy, cx - dot * 2.0f, cy);
-    SDL_RenderDrawLineF(renderer_, cx + dot * 2.0f, cy, cx + cross, cy);
-    SDL_RenderDrawLineF(renderer_, cx, cy - cross, cx, cy - dot * 2.0f);
-    SDL_RenderDrawLineF(renderer_, cx, cy + dot * 2.0f, cx, cy + cross);
+    // ---- 大十字：把镜筒分成四象限 ----
+    // gap 为 0 时四段线在圆心相接；开启「移动扩散」时 gap 随移动量张开。
+    const float gap = std::clamp(p.crossGap, 0.0f, r);
+    const float thick = std::clamp(p.crossThickness, 1.0f, 8.0f);
+    const int   lines = static_cast<int>(std::lround(thick));
+    const Uint8 crossAlpha = static_cast<Uint8>(215.0f * t);
+    SDL_SetRenderDrawColor(renderer_, 240, 246, 250, crossAlpha);
+    // 每条臂用 1..N 条平行线叠出线宽
+    for (int i = 0; i < lines; ++i) {
+        const float off = static_cast<float>(i) - (static_cast<float>(lines) - 1.0f) * 0.5f;
+        // 竖直臂（上/下）
+        SDL_RenderDrawLineF(renderer_, cx + off, cy - r, cx + off, cy - gap);
+        SDL_RenderDrawLineF(renderer_, cx + off, cy + gap, cx + off, cy + r);
+        // 水平臂（左/右）
+        SDL_RenderDrawLineF(renderer_, cx - r, cy + off, cx - gap, cy + off);
+        SDL_RenderDrawLineF(renderer_, cx + gap, cy + off, cx + r, cy + off);
+    }
 }
 
 void CS2DRenderer::DrawThrownGrenade(int weaponId, float worldX, float worldY,
