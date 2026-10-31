@@ -383,11 +383,29 @@ bool Menu3D::LoadModels() {
             chickens_.clear();
             break;
         }
+        // PIX-12 验收：界面用到的每个姿势动画都必须真实存在，
+        // 缺失的逐个记日志（PlayAnimation 失败不会改变当前动画）
+        for (int p = 0; p < kChickenPoseCount; ++p) {
+            if (!chicken->PlayAnimation(kChickenPoseAnims[p])) {
+                std::cerr << "[Menu3D] 小鸡动画缺失: '" << kChickenPoseAnims[p]
+                          << "'（菜单将回退 walk）" << std::endl;
+            }
+        }
+        // 基础动画固定为使能 walk（契约 v1 第 7 节：区分大小写、循环）
+        if (!chicken->PlayAnimation("walk")) {
+            std::cerr << "[Menu3D] 小鸡基础动画 'walk' 不可用，当前动画="
+                      << chicken->AnimationName() << std::endl;
+        }
         // 错开三只鸡的动画相位
         chicken->Update(0.37f * static_cast<float>(i));
         // 中间那只离镜头最近，压暗一点避免灯光下泛白
         if (i == 1) chicken->SetClothingTint(0.55f, 0.55f, 0.45f);
         chickens_.push_back(std::move(chicken));
+    }
+    if (!chickens_.empty()) {
+        std::cout << "[Menu3D] 小鸡已就绪: " << chickens_.size()
+                  << " 只, 动画=" << chickens_[0]->AnimationName()
+                  << ", 模型高=" << kChickenModelHeight << " 单位" << std::endl;
     }
 
     focusWeapons_.clear();
@@ -454,9 +472,27 @@ void Menu3D::InitChickenState() {
         s.z = zs[i];
         s.yaw = 0.0f;
         s.targetYaw = 0.0f;
-        s.speed = 0.75f + (chickenRng_() % 100) / 200.0f;
+        // 透视补偿：世界速度按距离缩放，屏幕上三只鸡的行走速度接近；
+        // 动画播放速率由 ChickenAnimTimeScale 按同一速度换算，避免滑步。
+        const float dist = 8.6f - s.z;
+        const float variance = 0.85f + static_cast<float>(chickenRng_() % 100) / 100.0f * 0.30f;
+        s.speed = kChickenBaseSpeed * (dist / 6.0f) * variance;
         PickChickenTarget(i);
     }
+}
+
+float Menu3D::ChickenWorldScale(const ChickenState& s) const {
+    // 透视补偿：距离越近，世界缩放越小，屏幕上三只鸡大小接近
+    const float dist = 8.6f - s.z;
+    return std::clamp(0.30f * dist / 6.0f, 0.055f, 0.34f);
+}
+
+float Menu3D::ChickenAnimTimeScale(const ChickenState& s) const {
+    // 期望循环时长 = 每循环步幅 / 移动速度；步幅 = 模型身高 × 世界缩放 × 步幅系数
+    const float stride = kChickenModelHeight * ChickenWorldScale(s) * kChickenStrideBodyHeights;
+    if (stride <= 0.0001f || s.speed <= 0.0001f) return 1.0f;
+    const float cycle = stride / s.speed;
+    return std::clamp(kWalkClipSeconds / cycle, 0.25f, 4.0f);
 }
 
 void Menu3D::PickChickenTarget(int index) {
@@ -514,7 +550,6 @@ void Menu3D::DrawModels() {
         const float shadowScale = std::max(0.04f, dist / 6.0f);
         DrawShadow(s.x, s.z, 0.20f * shadowScale, 0.15f * shadowScale, 0.34f);
     }
-
     // 角色
     glPushMatrix();
     glTranslatef(-4.4f, 0.0f, 0.0f);
@@ -533,9 +568,8 @@ void Menu3D::DrawModels() {
     // 三只鸡：左侧、按钮下方、右侧，各自在区域内随机跑动
     for (int i = 0; i < static_cast<int>(chickens_.size()) && i < 3; ++i) {
         const ChickenState& s = chickenState_[i];
-        const float dist = 8.6f - s.z;
         // 透视下用距离补偿世界缩放，让三只鸡在屏幕上大小接近
-        const float scale = std::clamp(0.30f * dist / 6.0f, 0.055f, 0.34f);
+        const float scale = ChickenWorldScale(s);
         glPushMatrix();
         glTranslatef(s.x, 0.0f, s.z);
         if (hoveredObject_ == i + 2) chickens_[i]->DrawHighlight(scale, 0.0f, s.yaw);
@@ -665,7 +699,12 @@ void Menu3D::ApplyCustomizationPose(int obj) {
     const int ci = obj - 2;
     if (ci < 0 || ci >= static_cast<int>(chickens_.size()) || !chickens_[ci]) return;
     const int opt = std::clamp(custom_.pose[obj], 0, kChickenPoseCount - 1);
-    chickens_[ci]->PlayAnimation(kChickenPoseAnims[opt]);
+    const char* wanted = kChickenPoseAnims[opt];
+    // 契约 v1 第 7 节：额外动画必须用 PlayAnimation 返回值验收，失败回退 walk
+    if (!chickens_[ci]->PlayAnimation(wanted)) {
+        std::cerr << "[Menu3D] 小鸡动画 '" << wanted << "' 不可用，回退 walk" << std::endl;
+        if (std::string(wanted) != "walk") chickens_[ci]->PlayAnimation("walk");
+    }
 }
 
 void Menu3D::ApplyCustomizationWeapon(int obj) {
@@ -1135,8 +1174,7 @@ void Menu3D::DrawFocusScene() {
         for (int i = 0; i < static_cast<int>(chickens_.size()) && i < 3; ++i) {
             if (focusedObject_ == i + 2) continue;
             const ChickenState& s = chickenState_[i];
-            const float dist = 8.6f - s.z;
-            const float scaleChicken = std::clamp(0.30f * dist / 6.0f, 0.055f, 0.34f);
+            const float scaleChicken = ChickenWorldScale(s);
             glPushMatrix();
             glTranslatef(s.x, 0.0f, s.z);
             chickens_[i]->Draw(scaleChicken, 0.0f, s.yaw, otherAlpha);
@@ -1186,7 +1224,18 @@ void Menu3D::Render(float dt) {
     const float animDt = std::clamp(dt, 0.0f, 0.05f);
     if (tModel_) tModel_->Update(animDt);
     if (ctModel_) ctModel_->Update(animDt);
-    for (auto& chicken : chickens_) chicken->Update(animDt);
+    for (int i = 0; i < static_cast<int>(chickens_.size()) && i < 3; ++i) {
+        // 行走/奔跑：按当前速度缩放播放速率，让步幅与位移匹配（消除滑步）；
+        // 静止类姿势保持原速。
+        const std::string& anim = chickens_[i]->AnimationName();
+        float rate = 1.0f;
+        if (anim == "walk") {
+            rate = ChickenAnimTimeScale(chickenState_[i]);
+        } else if (anim == "run") {
+            rate = ChickenAnimTimeScale(chickenState_[i]) * (kWalkClipSeconds / kRunClipSeconds);
+        }
+        chickens_[i]->Update(animDt * rate);
+    }
     if (focusedObject_ < 0) UpdateChickens(animDt);
     UpdateSpotlight(animDt);
 
