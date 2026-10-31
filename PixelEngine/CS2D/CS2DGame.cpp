@@ -1105,15 +1105,16 @@ void CS2DGame::Render(int viewW, int viewH) {
     const bool dmMode = IsDeathMatch();
     for (const auto& bot : bots_) {
         if (!bot.alive && bot.deathTimer > 2.0f) continue;
+        // 死斗：先按墙体遮挡剔除（只看墙、不看雾与朝向）——这一步必须独立于 friendly，
+        // 否则会被"死斗没有友军"的判断短路掉，变成全图透视。
+        if (dmMode && applyVisionCull && renderer_ &&
+            !renderer_->HasLineOfSight(player_.x, player_.y, bot.x, bot.y)) {
+            continue;
+        }
         const bool friendly = dmMode ? true : (bot.team == player_.team);
         if (!friendly && applyVisionCull) {
             if (IsSpectating()) {
                 if (!SpectatorCanSeeEnemy(bot)) continue;
-            } else if (dmMode) {
-                if (renderer_ && !renderer_->HasLineOfSight(player_.x, player_.y,
-                                                          bot.x, bot.y)) {
-                    continue;   // 死斗：只看墙体，不看雾与朝向
-                }
             } else if (!PlayerCanSeeBot(bot)) {
                 continue;
             }

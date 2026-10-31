@@ -167,7 +167,15 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     }
 
     // ---- 枪械 ----
-    if (player_.ammo <= 0) { StartReload(player_, audio); return; }
+    if (player_.ammo <= 0) {
+        // 弹匣打空：先给一声空仓咔哒（被动反馈），再开始换弹
+        // 注意 StartReload 内部还会播换弹音，两者叠加就是"咔哒 + 拉栓"
+        if (!player_.reloading && player_.reserve > 0 && player_.maxAmmo > 0 && audio) {
+            audio->PlaySound(SoundEffect::CLICK);
+        }
+        StartReload(player_, audio);
+        return;
+    }
 
     // 散布 + 多弹丸（霰弹）
     // 静止 = 基础散布；静步/跑动按速度放大，跑动时明显打不准。
@@ -923,7 +931,13 @@ void CS2DGame::StartReload(Player& p, AudioManager* audio) {
         EmitSound(SoundEventType::Reload, p.x, p.y, p.team, idx);
     }
     if (audio) {
-        audio->PlaySoundAt(ReloadSoundFor(def.id), p.x, p.y, ListenerX(), ListenerY());
+        // 玩家自己的换弹用非位置音：走 3D 衰减/声像容易出现"听不见"
+        // （被动换弹紧跟连射之后、声源与听者几乎重合时声像会被拉偏）。
+        if (&p == &player_) {
+            audio->PlaySound(ReloadSoundFor(def.id));
+        } else {
+            audio->PlaySoundAt(ReloadSoundFor(def.id), p.x, p.y, ListenerX(), ListenerY());
+        }
     }
 }
 

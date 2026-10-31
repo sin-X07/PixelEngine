@@ -79,13 +79,19 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
     const auto& bots = game->GetBOTs();
     const Team myTeam = game->GetPlayer().team;
 
-    for (const auto& b : bots) {
-        if (!b.alive || b.team != myTeam) continue;      // 只显示同队存活者
-        dots.push_back({b.x, b.y, 90, 220, 130});        // 友军：绿色
-    }
-    for (const auto& c : game->GetContactsOfTeam(myTeam)) {
-        if (c.age > 6.0f) continue;                      // 情报超过 6 秒不再显示
-        dots.push_back({c.x, c.y, 235, 75, 70});         // 可见敌人：红色
+    // 死斗 = 一人成军：雷达不显示任何 BOT 位置——
+    // 既没有"队友常驻绿点"，也不显示情报红点（FFA 里 9 个 BOT 一直在互相开火，
+    // 情报点会持续铺满全图，等于全图透视）。
+    const bool dmMode = game->IsDeathMatch();
+    if (!dmMode) {
+        for (const auto& b : bots) {
+            if (!b.alive || b.team != myTeam) continue;  // 只显示同队存活者
+            dots.push_back({b.x, b.y, 90, 220, 130});    // 友军：绿色
+        }
+        for (const auto& c : game->GetContactsOfTeam(myTeam)) {
+            if (c.age > 6.0f) continue;                  // 情报超过 6 秒不再显示
+            dots.push_back({c.x, c.y, 235, 75, 70});     // 可见敌人：红色
+        }
     }
 
     // 掉落 C4：T 方始终可见；CT 只在情报期内可见（橙色小点）
