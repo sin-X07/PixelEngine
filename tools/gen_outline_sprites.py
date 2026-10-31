@@ -38,15 +38,14 @@ def make_outline(src_path, dst_path, width):
         for x in range(img.size[0]):
             if g_px[x, y] and not b_px[x, y]:
                 ring_px[x, y] = 255
-    # 轻微外扩柔边：让描边在缩放时不易闪断
-    ring = ring.filter(ImageFilter.MaxFilter(3))
+    # 不做额外柔边/外扩：需求是"只留一个像素点"，任何平滑都会把线加粗
     out = Image.new("RGBA", img.size, (255, 255, 255, 0))
     out_px = out.load()
     r_px = ring.load()
     for y in range(img.size[1]):
         for x in range(img.size[0]):
             if r_px[x, y]:
-                out_px[x, y] = (255, 255, 255, 235)
+                out_px[x, y] = (255, 255, 255, 255)
     out.save(dst_path)
     # 统计一下覆盖情况，便于确认不是空图
     opaque = sum(1 for p in out.getdata() if p[3] > 0)
@@ -55,7 +54,7 @@ def make_outline(src_path, dst_path, width):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--width", type=int, default=2, help="outline width in px (default 2)")
+    ap.add_argument("--width", type=int, default=1, help="描边宽度（像素，默认 1）")
     args = ap.parse_args()
 
     here = os.path.dirname(os.path.abspath(__file__))

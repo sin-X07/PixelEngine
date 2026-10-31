@@ -1097,11 +1097,14 @@ void CS2DGame::Render(int viewW, int viewH) {
         sp.localPlayer = (&p == &player_);
     };
 
-    // 队友始终可见；敌人按视野剔除
+    // 队友始终可见；敌人按视野剔除。
+    // 死斗（一人成军）没有"队友"概念：**所有 BOT 常驻可见**，不按迷雾/视野半径/朝向/墙体剔除——
+    // 玩家需要看到全场的对手；队伍模式仍严格按可见性剔除，不泄露信息。
     const bool applyVisionCull = player_.alive || IsSpectating();
+    const bool dmMode = IsDeathMatch();
     for (const auto& bot : bots_) {
         if (!bot.alive && bot.deathTimer > 2.0f) continue;
-        const bool friendly = (bot.team == player_.team);
+        const bool friendly = dmMode ? true : (bot.team == player_.team);
         if (!friendly && applyVisionCull) {
             if (IsSpectating()) {
                 if (!SpectatorCanSeeEnemy(bot)) continue;
