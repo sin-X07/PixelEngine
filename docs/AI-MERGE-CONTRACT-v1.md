@@ -57,7 +57,8 @@ struct ScopeView {
 };
 enum class ScopeResetReason {
     InputBlocked, FocusLost, WeaponChanged, ReloadStarted,
-    PlayerDied, RoundRestart, MatchExit
+    PlayerDied, RoundRestart, MatchExit,
+    ShotFired    // v1.2 新增：开枪后自动关镜
 };
 // v1.1 新增：档位表与开镜几何参数
 inline constexpr int   kScopeLevelCount = 3;
@@ -116,6 +117,35 @@ void DrawBuyMenu(const BuyMenuCtx& ctx,
 
 Engine::RenderBuyMenu 唯一负责从 WeaponDB/GetPlayer/EvaluatePurchase 填充快照。ctx.canBuy/affordable/owned 仅兼容；新 UI 禁用和原因以 availability 为准；分类从 WeaponDef.cls 映射，图标复制 iconPath，不复制假数值。回调：`[this](const Presentation::BuyRequest& r) { return cs2dGame->ExecutePurchase(r, audioManager.get()); }`。一帧最多提交一次购买请求；执行后余额显示取 result.moneyAfter，其余条目下帧重建，不能继续用旧 ctx 发第二笔。UI 自己保存选中项和短提示，不写 CS2DGame。disabled 项允许悬停读取原因，不能触发回调；执行期失败也必须显示对应 BuyCode 的中文文案。
 
+### 3.1 伤害与护甲（v1.2）
+
+伤害数值与护甲穿透取 CS2 官方表（Dmg / Armor%，来源 <https://counterstrike.codexery.com/weapons>），
+`WeaponDB::kArmorPen[]` 按 `WeaponId` 索引给出 0..1 的穿透率，`WeaponDB::ArmorPen(id)` 取值。
+
+```cpp
+// 纯函数，ApplyDamage 与回归测试共用（CS2 机制）
+struct ArmorDamageResult { int healthDamage; int armorLoss; };
+static ArmorDamageResult CS2DGame::ResolveArmorDamage(int amount, float armorPen, int armorPoints);
+// 护甲 > 0 时：through = round(amount * pen)；absorption = amount - through；
+// armorLoss = ceil(absorption / 2)；护甲不足时按剩余比例把没吸掉的部分转成伤害。
+bool CS2DGame::ApplyDamage(Player& victim, int amount, float armorPen = 1.0f);
+```
+
+调用点必须传穿透率：枪弹用 `WeaponDB::ArmorPen(bullet.weapon)`、近战用武器自身、爆炸 0.5、
+火区与 C4 用 1.0（无视护甲）。**AWP 115 / 97.5% → 对满甲仍造成 112 伤害，命中即死**（需求方硬要求）。
+
+### 3.2 设置项（v1.2，持久化在 `cs2d_save.ini`）
+
+| 键 | 类型 | 默认 | 语义 |
+| --- | --- | --- | --- |
+| `settings.fog_opacity` | 0..100 | 100 | 迷雾透明度；只缩放雾的视觉 alpha，**不影响可见性判定与烟雾弹/火区等独立表现** |
+| `settings.sniper_delayed_scope_close` | bool | false | 开镜开枪后：true=按住左键可延迟关镜（松手再关），false=开枪立即关镜 |
+
+`CS2DRenderer::SetFogOpacityPct(int)` / `FogOpacityPct()` / `EffectiveFogAlpha()`;
+`CS2DGame::SetDelayedScopeClose(bool)`。Engine 在 `ApplySavedSettings` 应用、在
+`GameUI::Actions` 的 `setFogOpacity` / `setSniperDelayedScopeClose` 里即时生效并写回设置。
+
+
 UI 方新增 WeaponIconCache（hpp/cpp），函数固定：
 
 ```cpp
@@ -155,6 +185,10 @@ void CS2DRenderer::SetScopeMask(bool active, float centerX, float centerY, float
 Engine 原有 CS2DGame::Update 签名保留。HandleInput 采集到右键边沿后存 Engine 成员，Engine::Update 在调用 game.Update 之前调用一次 UpdateScopeInput 并消费边沿；不在 HandleInput 和 Update 各切换一次。`gameplayInputAllowed = PLAYING && !buyMenuOpen_ && !sideChoicePending_ && !sidePopupOpen_ && !IsTransitionActive() && HasWindowFocus() && !ImGui::GetIO().WantCaptureMouse`。当 Update 不执行（暂停/设置/退出）时也要在状态切换路径 ResetScope；InputBlocked/FocusLost 等重置不得依赖 game.Update 得到 dt。
 
 功能方负责在 SwitchWeaponSlot/DropCurrentWeapon/成功购买替换当前武器、换弹起始、死亡/重生、RoundRestart、Reset/LoadMap/离开比赛处重置；每次 Update 防御检查当前 WeaponId 与 ScopeView.weapon 不同就 Reset。消耗性切槽不能漏掉投掷物自动切回。
+
+**v1.2 开枪自动关镜**：玩家开枪后 `ResetScope(ShotFired)`。若设置项 `sniper_delayed_scope_close` 为真且
+开枪时左键仍按住，则只置「待松手」，由 `CS2DGame::Update` 在 `mouseLeftDown == false` 时执行
+`ResetScope(ShotFired)`（`ResetScope` 会清掉待办标记）。BOT 不参与开镜，无影响。
 
 Renderer 接口由功能方声明/接线：
 
@@ -213,7 +247,9 @@ GameUI 的菜单只通过现有 MenuCtx.backdropTex/backdropW/backdropH/backdrop
 
 - 两端从干净构建目录 `cmake -S PixelEngine -B build/<platform>`，再 `cmake --build build/<platform> --parallel`；Windows 先采用仓库 README 要求的 MinGW UCRT 及对应生成器，Mac 用本机可用工具链，记录完整命令/版本。Mac LLM 当前使用 stub/规则回退，不能宣称 LLM 与 Windows 等价；本轮接口与 UI 不依赖真实 LLM。
 - 基础/购买测试：所有 BuyCode 可复现；Evaluate 无副作用；一次 Execute 成功只扣一次；失败快照不变；两次同枪请求第二次 AlreadyEquipped；护甲/闪光总数边界；非法 WeaponId 无越界。
-- 开镜测试：边沿只切一次；按住不抖动；三档循环 关→1.5x→2x→关 且每档 0.12s 过渡；圆形可见区（圆内可见、圆外不可见、软边渐变、与朝向无关）；切枪/丢枪/自动切回/换弹/死亡/重生/暂停/设置/失焦/选边/买枪/新回合/退出均正确归零；鼠标相对位移转换取实际 GetZoom；DrawScopeOverlay 空实现替换后确认真正在运行。
+- 开镜测试：边沿只切一次；按住不抖动；三档循环 关→1.5x→2x→关 且每档 0.12s 过渡；圆形可见区（圆内可见、圆外不可见、软边渐变、与朝向无关）；开枪自动关镜 + 延迟关镜（按住保持、松手关）；切枪/丢枪/自动切回/换弹/死亡/重生/暂停/设置/失焦/选边/买枪/新回合/退出均正确归零；鼠标相对位移转换取实际 GetZoom；DrawScopeOverlay 空实现替换后确认真正在运行。
+- 伤害/护甲测试（v1.2）：AWP 基伤 >100 且对满甲 ≥100（一枪死）；AK 对满甲 28 进血 / 4 点护甲；无甲全额；穿透率越界被 clamp；护甲不足时进血伤害不降低。
+- 迷雾设置（v1.2）：100%→160、50%→80、0%→0、越界 clamp；只影响 alpha，不改可见性与烟雾弹。
 - 阵营测试：None/T/CT、chooseSide 0/1 显式映射；只给可见角色标记；死斗不显示爆破职责。
 - 枪弹测试：512上限、0.08s清理、重复Render无副作用、最后一段保留、穿墙视觉裁剪、不同帧率/缩放；DrawThrownGrenade 回归，烟雾火区/闪光遮挡保留。
 - 生命周期：退出/重建 renderer 前 cache.Shutdown，UI 借用资源不得重复释放；小鸡模型失败不崩；两端文件路径大小写一致。
@@ -221,6 +257,22 @@ GameUI 的菜单只通过现有 MenuCtx.backdropTex/backdropW/backdropH/backdrop
 - 这次只制定契约和任务，不代表上述接口已实现、已编译或已验证。
 
 ## 10. 变更记录
+
+### v1.2（2026-10-31，功能方提出，需求方确认）
+
+1. **开枪自动关镜**：开镜后开枪立即 `ResetScope(ShotFired)`。
+2. **狙击枪延迟关镜（设置项）**：开启后，开枪时按住左键则保持开镜，松手才关。
+3. **伤害与护甲机制**：新增 `WeaponDef` 的护甲穿透表（CS2 官方 Dmg / Armor%），
+   `ApplyDamage(..., armorPen)` 按 CS2 机制结算（穿透进血、护甲掉一半吸收量、护甲不足按比例放大伤害）；
+   顺带把 11 把武器的基伤对齐官方值（Glock 28、M4A1-S 38、MP7 30、P250 35、Tec-9 33、
+   Nova 26、XM1014 20、Sawed-Off 32、MAG-7 30、Zeus 255）；**AWP 115 / 97.5% → 满甲 112 伤害，命中即死**。
+4. **迷雾透明度（设置项）**：0..100%，只缩放雾的视觉 alpha（普通视野 160、开镜镜外 242 按比例缩放），
+   不改 `ComputeVisibility` 的任何判定，也不影响烟雾弹/火区（各自独立贴图与 alpha）。
+
+设置持久化键见 §3.2；UI 侧改动是 `GameUI.hpp` 的 `MenuCtx/ Actions` 两个字段 + 设置页新增
+「视野 / 开镜」卡片（本轮由功能方代改，冲突时按函数整合）。
+
+未变更：开镜门控、全部归零路径、`GetZoom` 不二次乘、`visionRadius_` 按 baseZoom、购买判定与金钱。
 
 ### v1.1（2026-10-31，功能方提出，需求方确认）
 
