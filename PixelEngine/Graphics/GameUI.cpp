@@ -3,6 +3,8 @@
 #include <iostream>
 #include "UiScale.hpp"
 #include "Palette.hpp"
+#include "TeamVisualStyle.hpp"
+#include "WeaponIconCache.hpp"
 #include "../Core/Resolutions.hpp"
 #include "../CS2D/MapCatalog.hpp"
 #include "../ThirdParty/imgui/imgui.h"
@@ -1544,19 +1546,96 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
                                  it.availability == Presentation::BuyCode::Ok;
             const char* reason = BuyCodeText(it.availability);
 
-            if (!enabled) {
-                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.12f, 0.14f, 0.17f, 0.85f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.12f, 0.14f, 0.17f, 0.85f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.12f, 0.14f, 0.17f, 0.85f));
-                ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.55f, 0.58f, 0.62f, 1.0f));
+            // ---- 卡片式条目：图标 / 名称 / 类别 / 价格 + 状态色（PIX-9）----
+            const float cardW = UI(182.0f);
+            const float cardH = UI(62.0f);
+            ImGui::PushID(&it);
+            ImGui::InvisibleButton("##card", ImVec2(cardW, cardH));
+            const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+            const bool held    = ImGui::IsItemActive();
+            bool clicked = false;
+            if (enabled && ImGui::IsItemClicked()) clicked = true;
+
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImVec2 p0 = ImGui::GetItemRectMin();
+            const ImVec2 p1 = ImGui::GetItemRectMax();
+
+            // 状态底色：禁用 / 常态 / 悬停 / 按下
+            ImU32 bg = enabled ? IM_COL32(20, 27, 36, 235) : IM_COL32(16, 19, 24, 210);
+            if (enabled && hovered) bg = held ? IM_COL32(52, 66, 84, 245) : IM_COL32(38, 50, 66, 240);
+            ImU32 border = enabled ? IM_COL32(52, 68, 86, 190) : IM_COL32(38, 44, 52, 160);
+            if (enabled && hovered) border = Palette::U32(Palette::Accent());
+            dl->AddRectFilled(p0, p1, bg, UI(5.0f));
+            dl->AddRect(p0, p1, border, UI(5.0f), 0, UI(enabled && hovered ? 2.0f : 1.0f));
+
+            // 左侧色条：类别色（主武器=金 / 副武器=蓝 / 投掷物=绿 / 护甲=灰）
+            ImU32 strip = IM_COL32(120, 132, 148, enabled ? 190 : 90);
+            switch (it.group) {
+                case 0: strip = IM_COL32(214, 172, 96, enabled ? 220 : 100); break;
+                case 1: strip = IM_COL32(96, 160, 214, enabled ? 220 : 100); break;
+                case 2: strip = IM_COL32(180, 140, 110, enabled ? 200 : 90); break;
+                case 3: strip = IM_COL32(110, 190, 130, enabled ? 220 : 100); break;
+                case 4: strip = IM_COL32(150, 160, 176, enabled ? 200 : 90); break;
+                default: break;
+            }
+            dl->AddRectFilled(p0, ImVec2(p0.x + UI(3.0f), p1.y), strip, UI(5.0f));
+
+            // 图标：借用 WeaponIconCache（cache owning，UI 借用，不 Destroy）
+            const float iconBox = UI(34.0f);
+            const ImVec2 iconPos(p0.x + UI(9.0f), p0.y + (cardH - iconBox) * 0.5f);
+            SDL_Texture* iconTex = nullptr;
+            if (weaponIconCache_ && !it.iconPath.empty()) {
+                iconTex = weaponIconCache_->Get(it.iconPath);
+            }
+            const ImU32 iconTintMod = enabled ? IM_COL32(255, 255, 255, 235)
+                                             : IM_COL32(255, 255, 255, 110);
+            if (iconTex) {
+                dl->AddImage(reinterpret_cast<ImTextureID>(iconTex), iconPos,
+                             ImVec2(iconPos.x + iconBox, iconPos.y + iconBox),
+                             ImVec2(0, 0), ImVec2(1, 1), iconTintMod);
+            } else {
+                // 降级：轮廓占位（护甲画盾牌轮廓，其它画武器剪影框）
+                const ImU32 oc = enabled ? IM_COL32(170, 182, 198, 200)
+                                         : IM_COL32(110, 118, 128, 140);
+                if (it.group == 4) {
+                    dl->AddRectFilled(ImVec2(iconPos.x + iconBox * 0.25f, iconPos.y + iconBox * 0.15f),
+                                      ImVec2(iconPos.x + iconBox * 0.75f, iconPos.y + iconBox * 0.85f),
+                                      oc, UI(4.0f));
+                } else {
+                    dl->AddRect(iconPos, ImVec2(iconPos.x + iconBox, iconPos.y + iconBox), oc,
+                                UI(3.0f), 0, UI(1.0f));
+                    dl->AddLine(ImVec2(iconPos.x + iconBox * 0.15f, iconPos.y + iconBox * 0.72f),
+                                ImVec2(iconPos.x + iconBox * 0.85f, iconPos.y + iconBox * 0.30f),
+                                oc, UI(2.0f));
+                }
             }
 
-            char label[160];
-            snprintf(label, sizeof(label), "%s  $%d%s", it.name.c_str(), it.price,
-                     (it.availability == Presentation::BuyCode::AlreadyEquipped) ? " (已装备)"
-                     : (it.availability == Presentation::BuyCode::ItemLimitReached) ? " (已带满)"
-                     : "");
-            if (ImGui::Button(label, ImVec2(UI(182.0f), 0.0f)) && onBuy) {
+            // 文本：名称（上）/ 类别 · 弹匣 · 开镜（下）/ 价格（右）
+            const float textX = p0.x + UI(9.0f) + iconBox + UI(8.0f);
+            const ImU32 nameCol = enabled ? IM_COL32(236, 242, 248, 255)
+                                          : IM_COL32(150, 158, 168, 255);
+            dl->AddText(ImVec2(textX, p0.y + UI(9.0f)), nameCol, it.name.c_str());
+            char sub[64];
+            snprintf(sub, sizeof(sub), "%s%s", it.categoryLabel.c_str(),
+                     it.scopeSupported ? " · 可开镜" : "");
+            dl->AddText(ImVec2(textX, p0.y + UI(28.0f)),
+                        enabled ? IM_COL32(140, 160, 180, 255) : IM_COL32(104, 112, 124, 255), sub);
+            char price[32];
+            snprintf(price, sizeof(price), "$%d", it.price);
+            const ImVec2 priceSz = ImGui::CalcTextSize(price);
+            dl->AddText(ImVec2(p1.x - UI(9.0f) - priceSz.x, p0.y + UI(9.0f)),
+                        enabled ? IM_COL32(240, 200, 120, 255) : IM_COL32(130, 122, 108, 255), price);
+            // 已装备 / 已带满角标
+            if (it.availability == Presentation::BuyCode::AlreadyEquipped) {
+                dl->AddText(ImVec2(p1.x - UI(9.0f) - ImGui::CalcTextSize("已装备").x,
+                                   p1.y - UI(20.0f)), IM_COL32(120, 210, 150, 220), "已装备");
+            } else if (it.availability == Presentation::BuyCode::ItemLimitReached ||
+                       it.availability == Presentation::BuyCode::InventoryFull) {
+                dl->AddText(ImVec2(p1.x - UI(9.0f) - ImGui::CalcTextSize("已带满").x,
+                                   p1.y - UI(20.0f)), IM_COL32(210, 170, 110, 220), "已带满");
+            }
+
+            if (clicked && onBuy) {
                 const Presentation::BuyResult res = onBuy(it.request);
                 submittedThisFrame = true;
                 if (res.code == Presentation::BuyCode::Ok) {
@@ -1570,12 +1649,10 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
             }
             // disabled 项也允许悬停读原因
             if (!enabled && !reason[0] && ctx.hint.size()) reason = ctx.hint.c_str();
-            if (!enabled && reason[0] &&
-                ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            if (!enabled && reason[0] && hovered) {
                 ImGui::SetTooltip("%s", reason);
             }
-
-            if (!enabled) ImGui::PopStyleColor(4);
+            ImGui::PopID();
 
             ++col;
             if (col % 3 != 0) ImGui::SameLine();
@@ -1620,10 +1697,26 @@ void GameUI::DrawSideSelect(const SideSelectCtx& ctx, const Actions& actions) {
     const float yTop  = vp->WorkPos.y + (vp->WorkSize.y - cardH) * 0.42f;
     const float xLeft = cx - cardW - gap * 0.5f;
 
-    struct Card { const char* title; const char* sub; const char* desc; ImU32 accent; int side; };
+    // 阵营视觉唯一来源：Graphics/TeamVisualStyle.hpp（PIX-16）
+    const TeamVisualStyle tStyle  = GetTeamVisualStyle(Team::T);
+    const TeamVisualStyle ctStyle = GetTeamVisualStyle(Team::CT);
+    auto toU32 = [](const SDL_Color& c) {
+        return ImGui::ColorConvertFloat4ToU32(
+            ImVec4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, c.a / 255.0f));
+    };
+    // 职责文案按模式区分：非爆破模式不再展示下包/拆包（PIX-7 / PIX-16 要求）
+    const char* tDesc = ctx.bombMode
+        ? "携带 C4 · 负责下包\n拿到炸弹后按住 E 在包点安装"
+        : "进攻方 · 歼灭全部敌人\n与队友配合清点，注意保存经济";
+    const char* ctDesc = ctx.bombMode
+        ? "阻止下包 / 拆除 C4\n在包点按住 E 拆弹"
+        : "防守方 · 歼灭全部敌人\n卡点等待，注意对手的进攻方向";
+
+    struct Card { const char* title; const char* sub; const char* desc; ImU32 accent;
+                  TeamVisualStyle::BadgeShape badge; int side; };
     const Card cards[2] = {
-        { "T  恐怖分子", "进攻方", "携带 C4 · 负责下包\n拿到炸弹后按住 E 在包点安装", IM_COL32(240, 170, 70, 255), 0 },
-        { "CT  反恐精英", "防守方", "阻止下包 / 拆除 C4\n在包点按住 E 拆弹", IM_COL32(90, 170, 245, 255), 1 },
+        { "T  恐怖分子",   "进攻方", tDesc,  toU32(tStyle.accent),  tStyle.badge,  0 },
+        { "CT  反恐精英",  "防守方", ctDesc, toU32(ctStyle.accent), ctStyle.badge, 1 },
     };
 
     for (int i = 0; i < 2; ++i) {
@@ -1635,6 +1728,24 @@ void GameUI::DrawSideSelect(const SideSelectCtx& ctx, const Actions& actions) {
         ImGui::BeginChild(i == 0 ? "##sideT" : "##sideCT", ImVec2(cardW, cardH), true);
 
         ImGui::Dummy(ImVec2(0.0f, UI(24.0f)));
+        // 徽标：形状（圆/菱形）+ 颜色双重编码，不只靠颜色识别
+        {
+            const float badgeR = UI(7.0f);
+            const ImVec2 bc = ImGui::GetCursorScreenPos();
+            const ImVec2 center(bc.x + badgeR + UI(2.0f), bc.y + UI(13.0f));
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddCircleFilled(center, badgeR + UI(2.5f), IM_COL32(20, 26, 34, 220));
+            if (c.badge == TeamVisualStyle::BadgeShape::Diamond) {
+                const ImVec2 p[4] = {
+                    ImVec2(center.x, center.y - badgeR), ImVec2(center.x + badgeR, center.y),
+                    ImVec2(center.x, center.y + badgeR), ImVec2(center.x - badgeR, center.y) };
+                dl->AddConvexPolyFilled(p, 4, c.accent);
+            } else {
+                dl->AddCircleFilled(center, badgeR, c.accent);
+            }
+            ImGui::Dummy(ImVec2(badgeR * 2.0f + UI(10.0f), UI(26.0f)));
+            ImGui::SameLine();
+        }
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(c.accent));
         if (ImFont* f = imGuiUI_ ? imGuiUI_->GetFont(static_cast<int>(UI(26.0f))) : nullptr)
             ImGui::PushFont(f);
@@ -1829,20 +1940,65 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
                           IM_COL32(230, 185, 90, 150));
     }
 
-    // 顶部计分板：T 比分 : 比分 CT ｜ 回合 ｜ 倒计时
+    // 顶部计分板：T 比分 : 比分 CT ｜ 回合/阶段 ｜ 倒计时（PIX-8：阵营色 + 阶段 + 低时预警）
     {
-        char left[64];
-        char mid[64];
-        char alive[64];
-        snprintf(left, sizeof(left), "T  %d : %d  CT", ctx.scoreT, ctx.scoreCT);
-        snprintf(alive, sizeof(alive), "%d vs %d  ", ctx.aliveT, ctx.aliveCT);
-        snprintf(mid, sizeof(mid), "第 %d 回合   %02d:%02d",
-                 ctx.roundNumber,
+        const TeamVisualStyle tStyle  = GetTeamVisualStyle(Team::T);
+        const TeamVisualStyle ctStyle = GetTeamVisualStyle(Team::CT);
+        auto toU32 = [](const SDL_Color& c) {
+            return ImGui::ColorConvertFloat4ToU32(
+                ImVec4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, c.a / 255.0f));
+        };
+        const char* phaseText = "交战";
+        switch (ctx.roundPhase) {
+            case 0: phaseText = "热身"; break;
+            case 1: phaseText = "冻结"; break;
+            case 2: phaseText = "购买"; break;
+            case 4: phaseText = "结算"; break;
+            default: phaseText = "交战"; break;
+        }
+        char mid[96];
+        snprintf(mid, sizeof(mid), "第 %d 回合 · %s   %02d:%02d",
+                 ctx.roundNumber, phaseText,
                  ctx.roundRemainingSec / 60, ctx.roundRemainingSec % 60);
 
-        DrawImGuiTextCentered(imGuiUI, mid, UI(12.0f), 180, 200, 215, 255, 18);
-        DrawImGuiTextCentered(imGuiUI, left, UI(40.0f), 235, 235, 235, 255, 22);
-        DrawImGuiTextCentered(imGuiUI, alive, UI(64.0f), 160, 175, 185, 255, 16);
+        // 倒计时 ≤10s 用警示色（颜色 + 数字双重提示）；死斗没有回合，不画这一行
+        const bool timeLow = (ctx.roundRemainingSec <= 10 && ctx.roundRemainingSec > 0);
+        if (ctx.playerTeam != Team::None) {
+            DrawImGuiTextCentered(imGuiUI, mid, UI(12.0f),
+                                  timeLow ? 240 : 180, timeLow ? 120 : 200,
+                                  timeLow ? 110 : 215, 255, 18);
+        }
+
+        // T / 比分 / CT 分三段绘制，各自用阵营色（形状/文本已在选边页体现）
+        // 修复：死斗是一人成军（playerTeam=None），不展示 T/CT 比分，改为纯击杀数
+        if (ctx.playerTeam == Team::None) {
+            char dm[64];
+            snprintf(dm, sizeof(dm), "死斗 · 击杀 %d", ctx.kills);
+            DrawImGuiTextCentered(imGuiUI, dm, UI(40.0f), 235, 235, 240, 255, 22);
+        } else {
+            char tScore[16], ctScore[16], sep[8];
+            snprintf(tScore, sizeof(tScore), "T  %d", ctx.scoreT);
+            snprintf(ctScore, sizeof(ctScore), "%d  CT", ctx.scoreCT);
+            snprintf(sep, sizeof(sep), "  :  ");
+            const float sc = UI(22.0f);
+            const float wT = ImGui::CalcTextSize(tScore).x * (sc / 13.0f);
+            const float wS = ImGui::CalcTextSize(sep).x * (sc / 13.0f);
+            const float wC = ImGui::CalcTextSize(ctScore).x * (sc / 13.0f);
+            const float totalW = wT + wS + wC;
+            const float startX = (ImGui::GetIO().DisplaySize.x - totalW) * 0.5f;
+            DrawImGuiText(imGuiUI, tScore, startX, UI(40.0f),
+                          tStyle.accent.r, tStyle.accent.g, tStyle.accent.b, 255,
+                          static_cast<int>(sc));
+            DrawImGuiText(imGuiUI, sep, startX + wT, UI(40.0f), 200, 205, 212, 255,
+                          static_cast<int>(sc));
+            DrawImGuiText(imGuiUI, ctScore, startX + wT + wS, UI(40.0f),
+                          ctStyle.accent.r, ctStyle.accent.g, ctStyle.accent.b, 255,
+                          static_cast<int>(sc));
+
+            char alive[64];
+            snprintf(alive, sizeof(alive), "%d vs %d  ", ctx.aliveT, ctx.aliveCT);
+            DrawImGuiTextCentered(imGuiUI, alive, UI(64.0f), 160, 175, 185, 255, 16);
+        }
     }
 
     // ---- 左上角雷达下方：教练计划 ----
@@ -2100,6 +2256,17 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
     // 提示（换弹等）
     if (ctx.hasNoWeaponHint && !ctx.hintText.empty()) {
         DrawImGuiTextCentered(imGuiUI, ctx.hintText.c_str(), 512.0f, 245, 200, 90, 255, 22);
+    }
+
+    // 开镜档位提示（PIX-8：只读 InGameCtx.scope，不维护第二套状态；镜框由 DrawScopeOverlay 独占）
+    if (ctx.scope.active) {
+        char scopeBuf[48];
+        const float z = (ctx.scope.targetZoomMultiplier > 0.0f)
+                            ? ctx.scope.targetZoomMultiplier : ctx.scope.zoomMultiplier;
+        snprintf(scopeBuf, sizeof(scopeBuf), "%s  %.1f×",
+                 ctx.scope.level >= 2 ? "开镜 II" : "开镜 I", z);
+        const float y = ImGui::GetIO().DisplaySize.y - UI(96.0f) - UI(24.0f);
+        DrawImGuiTextCentered(imGuiUI, scopeBuf, y, 205, 225, 240, 235, 16);
     }
 
 

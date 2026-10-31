@@ -152,7 +152,7 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     // ---- 近战 ----
     if (def.cls == WeaponClass::Melee) {
         for (auto& bot : bots_) {
-            if (!bot.alive || bot.team == player_.team) continue;
+            if (!bot.alive || !IsHostile(player_, bot)) continue;   // 死斗 FFA
             const float bdx = bot.x - player_.x;
             const float bdy = bot.y - player_.y;
             if (std::sqrt(bdx * bdx + bdy * bdy) < def.range) {
@@ -167,7 +167,15 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     }
 
     // ---- 枪械 ----
-    if (player_.ammo <= 0) { StartReload(player_, audio); return; }
+    if (player_.ammo <= 0) {
+        // 弹匣打空：先给一声空仓咔哒（被动反馈），再开始换弹
+        // 注意 StartReload 内部还会播换弹音，两者叠加就是"咔哒 + 拉栓"
+        if (!player_.reloading && player_.reserve > 0 && player_.maxAmmo > 0 && audio) {
+            audio->PlaySound(SoundEffect::CLICK);
+        }
+        StartReload(player_, audio);
+        return;
+    }
 
     // 散布 + 多弹丸（霰弹）
     // 静止 = 基础散布；静步/跑动按速度放大，跑动时明显打不准。
@@ -185,9 +193,10 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     player_.shootCooldown = def.cooldown;
     player_.shootAnimTimer = 0.12f;
 
-    // 契约 v1.2：开枪后自动关镜。设置里开了「延迟关镜」且仍按着扳机时，
-    // 标记「松手再关」，由 Update 在鼠标松开时收尾。
-    if (scopeLevel_ > 0) {
+    // 开枪与开镜的关系（需求方口径）：
+    //   - 可连发的开镜武器（AUG / SG 553 / SCAR-20 / G3SG1）：**保持开镜连射**，不自动退镜；
+    //   - 单发狙（AWP / SSG 08）：开枪后退镜；开了「延迟关镜」且按住扳机时改为松手再关。
+    if (scopeLevel_ > 0 && !def.automatic) {
         if (delayedScopeClose_ && mouseDown) {
             scopeCloseOnRelease_ = true;
         } else {
@@ -288,7 +297,10 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
         // ---- 命中 BOT ----
         for (size_t i = 0; i < bots_.size(); ++i) {
             auto& bot = bots_[i];
-            if (!bot.alive || bot.team == bullet.ownerTeam) continue;
+            if (!bot.alive) continue;
+            // 死斗 FFA：任何他人的子弹都能命中；同时排除"自己打自己"的退化情况
+            if (bullet.ownerIdx == static_cast<int>(i)) continue;
+            if (!IsHostileTeam(bullet.ownerTeam, bot.team)) continue;
 
             const float dx = bullet.x - bot.x;
             const float dy = bullet.y - bot.y;
@@ -381,7 +393,9 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
         }
 
         // ---- 命中玩家 ----
-        if (bullet.active && player_.alive && player_.team != bullet.ownerTeam) {
+        // 死斗 FFA：BOT 的子弹一律能命中玩家；排除玩家自己的子弹
+        if (bullet.active && player_.alive && bullet.ownerIdx != -1 &&
+            IsHostileTeam(bullet.ownerTeam, player_.team)) {
             const float dx = bullet.x - player_.x;
             const float dy = bullet.y - player_.y;
             const float hitR = player_.size * 0.5f + 2.0f;
@@ -917,7 +931,13 @@ void CS2DGame::StartReload(Player& p, AudioManager* audio) {
         EmitSound(SoundEventType::Reload, p.x, p.y, p.team, idx);
     }
     if (audio) {
-        audio->PlaySoundAt(ReloadSoundFor(def.id), p.x, p.y, ListenerX(), ListenerY());
+        // 玩家自己的换弹用非位置音：走 3D 衰减/声像容易出现"听不见"
+        // （被动换弹紧跟连射之后、声源与听者几乎重合时声像会被拉偏）。
+        if (&p == &player_) {
+            audio->PlaySound(ReloadSoundFor(def.id));
+        } else {
+            audio->PlaySoundAt(ReloadSoundFor(def.id), p.x, p.y, ListenerX(), ListenerY());
+        }
     }
 }
 

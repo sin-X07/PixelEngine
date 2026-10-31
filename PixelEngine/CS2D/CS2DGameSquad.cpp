@@ -252,7 +252,7 @@ const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& ou
     float bestD2 = 1e18f;
 
     auto consider = [&](const Player& e) {
-        if (!e.alive || e.team == self.team) return;
+        if (!e.alive || !IsHostile(e, self)) return;   // 死斗 FFA：除自己外都是目标
 
         const float dx = e.x - self.x;
         const float dy = e.y - self.y;

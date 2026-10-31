@@ -186,9 +186,14 @@ Engine 原有 CS2DGame::Update 签名保留。HandleInput 采集到右键边沿�
 
 功能方负责在 SwitchWeaponSlot/DropCurrentWeapon/成功购买替换当前武器、换弹起始、死亡/重生、RoundRestart、Reset/LoadMap/离开比赛处重置；每次 Update 防御检查当前 WeaponId 与 ScopeView.weapon 不同就 Reset。消耗性切槽不能漏掉投掷物自动切回。
 
-**v1.2 开枪自动关镜**：玩家开枪后 `ResetScope(ShotFired)`。若设置项 `sniper_delayed_scope_close` 为真且
-开枪时左键仍按住，则只置「待松手」，由 `CS2DGame::Update` 在 `mouseLeftDown == false` 时执行
-`ResetScope(ShotFired)`（`ResetScope` 会清掉待办标记）。BOT 不参与开镜，无影响。
+**v1.4 开枪与开镜（覆盖 v1.2 的"一律关镜"）**：
+- **可连发的开镜武器**（AUG / SG 553 / SCAR-20 / G3SG1）：开枪**不关镜**，按住左键可以开镜连射。
+- **单发狙**（AWP / SSG 08）：开枪后 `ResetScope(ShotFired)`；若 `sniper_delayed_scope_close` 为真且开枪时
+  左键仍按住，则只置「待松手」，由 `CS2DGame::Update` 在 `mouseLeftDown == false` 时执行
+  `ResetScope(ShotFired)`（`ResetScope` 会清掉待办标记）。BOT 不参与开镜，无影响。
+- **拉栓冷却期间不能开镜**：`!def.automatic && player.shootCooldown > 0` 时右键不改变开镜状态。
+- **换弹期间不能开镜**：`TickScope` 每帧兜底 `player.reloading → ResetScope(ReloadStarted)`，
+  覆盖"空弹自动换弹"等不经过显式 `StartReload` 的路径。
 
 Renderer 接口由功能方声明/接线：
 
@@ -269,6 +274,17 @@ GameUI 的菜单只通过现有 MenuCtx.backdropTex/backdropW/backdropH/backdrop
 
 ## 10. 变更记录
 
+### v1.4（2026-10-31，需求方反馈）
+
+1. **可连发的开镜武器可开镜连射**：不再每发自动退镜（AUG / SG 553 / SCAR-20 / G3SG1）。
+2. **单发狙开枪退镜 + 拉栓冷却期间禁止开镜**；`sniper_delayed_scope_close` 只对单发狙有意义。
+3. **换弹期间禁止开镜**（`TickScope` 兜底，覆盖空弹自动换弹）。
+4. **敌我标识改为「紧贴角色剪影的轮廓素材」**：`assets/cs2d/sprites/*_outline.png`（由
+   `tools/gen_outline_sprites.py` 生成，白色描边 + 运行时 `SDL_SetTextureColorMod`）→
+   友军蓝 / 敌军红 / 自己白；不再使用几何圆环或脚下徽标。
+5. **死斗 = 真正的 FFA 混战**：新增 `CS2DGame::IsHostileTeam` / `IsHostile`，玩法层敌我判定统一走它；
+   死斗下同队也互为敌人，`SpriteDrawParams.team = None`、`friendly = false`，
+   HUD 只显示「死斗 · 击杀 N」。
 ### v1.3（2026-10-31，需求方提出）
 
 1. **开镜准星改成「一个大十字切四象限」**：镜筒里只画贯穿圆心的十字（四段线，中心留 `crossGap`），

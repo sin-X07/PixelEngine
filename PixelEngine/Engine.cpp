@@ -2018,6 +2018,7 @@ void Engine::Render() {
         ictx.scoreCT          = cs2dGame->GetScoreCT();
         ictx.roundNumber      = cs2dGame->GetRoundNumber();
         ictx.roundRemainingSec = static_cast<int>(cs2dGame->GetRoundRemaining());
+        ictx.roundPhase = static_cast<int>(cs2dGame->GetRoundPhase());
         ictx.aliveT           = cs2dGame->AliveCount(Team::T);
         ictx.aliveCT          = cs2dGame->AliveCount(Team::CT);
         ictx.money            = status.money;
@@ -2064,7 +2065,9 @@ void Engine::Render() {
         ictx.bombIntel    = cs2dGame->HasBombIntel();
         ictx.plantProgress = cs2dGame->GetPlantProgress() / 3.0f;
         // 契约 v1 第 4、5 节：阵营与开镜状态由 Engine 填充，UI 只读
-        ictx.playerTeam = cs2dGame->GetPlayer().team;
+        // 修复：死斗一人成军，UI 不再按 T/CT 分队展示
+        ictx.playerTeam = (currentMatchMode_ == MatchMode::DeathMatch)
+                              ? Team::None : cs2dGame->GetPlayer().team;
         ictx.scope      = cs2dGame->GetScopeView();
         if (ictx.spectating) {
             ictx.spectateTarget = cs2dGame->GetSpectatedName();

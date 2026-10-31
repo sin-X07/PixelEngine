@@ -721,6 +721,11 @@ void CS2DGame::UpdateScopeInput(bool rightClicked, bool gameplayInputAllowed) {
         if (scopeLevel_ > 0) ResetScope(Presentation::ScopeResetReason::ReloadStarted);
         return;
     }
+    // 单发狙拉栓冷却期间不能开镜（AWP 1.45s / SSG 的拉栓窗口）；连发武器不受影响
+    {
+        const WeaponDef& def = player_.CurrentWeapon();
+        if (!def.automatic && player_.shootCooldown > 0.0f) return;
+    }
     if (!rightClicked) return;
     if (!IsScopeSupported(cur)) return;   // 不支持的武器不误触
 
@@ -752,6 +757,13 @@ void CS2DGame::TickScope(float dt) {
         if (scopeLevel_ > 0 || scopeZoom_ > 1.0f) {
             ResetScope(Presentation::ScopeResetReason::WeaponChanged);
         }
+        return;
+    }
+
+    // 修复：换弹期间不允许保持开镜（StartReload 会主动重置，这里每帧再兜一层，
+    // 覆盖"空弹自动换弹"等不经过显式 StartReload 调用的路径）
+    if (player_.reloading) {
+        if (scopeLevel_ > 0) ResetScope(Presentation::ScopeResetReason::ReloadStarted);
         return;
     }
 
@@ -1076,17 +1088,30 @@ void CS2DGame::Render(int viewW, int viewH) {
         sp.animTimer  = p.animTimer;
         sp.deathTimer = p.deathTimer;
         sp.alpha      = 255;
-        // 契约 v1 第 5 节：沿用 Team，不建立第二份阵营状态
-        sp.team        = p.team;
-        sp.friendly    = (p.team == player_.team);
+        // 契约 v1 第 5 节：沿用 Team，不建立第二份阵营状态。
+        // 修复：死斗是一人成军——不区分队伍，所有人对观察者都是"非友军"（画红环），
+        // team 传 None，避免 UI/渲染再按 T/CT 着色。
+        const bool deathmatch = (mode_ == MatchMode::DeathMatch);
+        sp.team        = deathmatch ? Team::None : p.team;
+        sp.friendly    = deathmatch ? false : (p.team == player_.team);
         sp.localPlayer = (&p == &player_);
     };
 
-    // 队友始终可见；敌人按视野剔除
+    // 队友始终可见；敌人按视野剔除。
+    // 死斗（一人成军）没有"队友"概念：跳过迷雾/视野半径/朝向扇形的剔除（全场对手都要能看到），
+    // 但保留墙体遮挡（HasLineOfSight）——不会隔着墙看到人。
+    // 队伍模式仍严格按可见性剔除，不泄露信息。
     const bool applyVisionCull = player_.alive || IsSpectating();
+    const bool dmMode = IsDeathMatch();
     for (const auto& bot : bots_) {
         if (!bot.alive && bot.deathTimer > 2.0f) continue;
-        const bool friendly = (bot.team == player_.team);
+        // 死斗：先按墙体遮挡剔除（只看墙、不看雾与朝向）——这一步必须独立于 friendly，
+        // 否则会被"死斗没有友军"的判断短路掉，变成全图透视。
+        if (dmMode && applyVisionCull && renderer_ &&
+            !renderer_->HasLineOfSight(player_.x, player_.y, bot.x, bot.y)) {
+            continue;
+        }
+        const bool friendly = dmMode ? true : (bot.team == player_.team);
         if (!friendly && applyVisionCull) {
             if (IsSpectating()) {
                 if (!SpectatorCanSeeEnemy(bot)) continue;
