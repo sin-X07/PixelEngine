@@ -645,7 +645,10 @@ std::string CS2DGame::GetWeaponNameFor(const Player& p) const {
 }
 
 // ============================================================================
-// 开镜（契约 v1 第 4 节）：玩法层唯一状态，表现层只读快照
+// 开镜（契约 v1.1 第 4 节）：玩法层唯一状态，表现层只读快照
+//   - 三档循环：关 → 1.5x → 2x → 关
+//   - 开镜时可见区是以准星为圆心的圆（渲染层用 SetScopeMask 消费），镜外用视野雾遮盖
+//   - 相机向准星偏移，保证准星下的世界点在换档时不动
 // ============================================================================
 
 bool CS2DGame::IsScopeSupported(WeaponId id) {
@@ -657,22 +660,42 @@ bool CS2DGame::IsScopeSupported(WeaponId id) {
 void CS2DGame::ResetScope(Presentation::ScopeResetReason reason) {
     (void)reason;   // 重置原因只用于诊断；重置本身固定且幂等
     const WeaponId cur = player_.CurrentWeapon().id;
+    scopeLevel_      = 0;
+    scopeEngagement_ = 0.0f;
+    scopeEngFrom_    = scopeEngTo_ = 0.0f;
+    scopeEngT_       = 1.0f;
+    scopeZoom_       = 1.0f;
+    scopeZoomFrom_   = scopeZoomTo_ = 1.0f;
+    scopeZoomT_      = 1.0f;
+
     scope_.weapon       = cur;
     scope_.supported    = IsScopeSupported(cur);
     scope_.active       = false;
+    scope_.level        = 0;
     scope_.transition   = 0.0f;
-    scope_.zoomMultiplier = 1.0f;
+    scope_.zoomMultiplier       = 1.0f;
+    scope_.targetZoomMultiplier = 1.0f;
 }
 
 Presentation::ScopeView CS2DGame::GetScopeView() const {
     Presentation::ScopeView view = scope_;
     const WeaponId cur = player_.CurrentWeapon().id;
+    const int level = std::clamp(scopeLevel_, 0, Presentation::kScopeLevelCount - 1);
+
     view.weapon    = cur;
     view.supported = IsScopeSupported(cur);
+    view.level     = level;
+    view.active    = (level > 0);
+    view.transition = scopeEngagement_;
+    view.zoomMultiplier = scopeZoom_;
+    view.targetZoomMultiplier = Presentation::kScopeZoomLevels[level];
+
     if (!view.supported || !player_.alive) {
         view.active         = false;
+        view.level          = 0;
         view.transition     = 0.0f;
         view.zoomMultiplier = 1.0f;
+        view.targetZoomMultiplier = 1.0f;
     }
     return view;
 }
@@ -694,15 +717,25 @@ void CS2DGame::UpdateScopeInput(bool rightClicked, bool gameplayInputAllowed) {
         ResetScope(Presentation::ScopeResetReason::WeaponChanged);
     }
     if (player_.reloading) {
-        if (scope_.active) ResetScope(Presentation::ScopeResetReason::ReloadStarted);
+        if (scopeLevel_ > 0) ResetScope(Presentation::ScopeResetReason::ReloadStarted);
         return;
     }
     if (!rightClicked) return;
     if (!IsScopeSupported(cur)) return;   // 不支持的武器不误触
 
-    scope_.supported = true;
+    // 契约 v1.1：右键循环 关 → 1.5x → 2x → 关
+    const int next = (scopeLevel_ + 1) % Presentation::kScopeLevelCount;
     scope_.weapon    = cur;
-    scope_.active    = !scope_.active;    // 右键一次切换开/关，无二级倍率
+    scope_.supported = true;
+    scopeLevel_      = next;
+
+    scopeZoomFrom_ = scopeZoom_;
+    scopeZoomTo_   = Presentation::kScopeZoomLevels[next];
+    scopeZoomT_    = 0.0f;
+
+    scopeEngFrom_  = scopeEngagement_;
+    scopeEngTo_    = (next > 0) ? 1.0f : 0.0f;
+    scopeEngT_     = 0.0f;
 }
 
 void CS2DGame::TickScope(float dt) {
@@ -715,22 +748,28 @@ void CS2DGame::TickScope(float dt) {
     }
     if (!scope_.supported) {
         // 不支持开镜的武器：状态与过渡都必须归零
-        if (scope_.active || scope_.transition > 0.0f) {
+        if (scopeLevel_ > 0 || scopeZoom_ > 1.0f) {
             ResetScope(Presentation::ScopeResetReason::WeaponChanged);
         }
         return;
     }
 
-    const float target = scope_.active ? 1.0f : 0.0f;
+    // 0.12s 线性过渡：倍率与镜框淡入各自推进（换档时 transition 保持 1，只有倍率变）
     const float step = (Presentation::kScopeTransitionSeconds > 0.0f)
                            ? dt / Presentation::kScopeTransitionSeconds : 1.0f;
-    if (scope_.transition < target) {
-        scope_.transition = std::min(target, scope_.transition + step);
-    } else if (scope_.transition > target) {
-        scope_.transition = std::max(target, scope_.transition - step);
-    }
-    scope_.zoomMultiplier = 1.0f +
-        (Presentation::kScopeZoomMultiplier - 1.0f) * scope_.transition;
+    if (scopeZoomT_ < 1.0f) scopeZoomT_ = std::min(1.0f, scopeZoomT_ + step);
+    scopeZoom_ = scopeZoomFrom_ + (scopeZoomTo_ - scopeZoomFrom_) * scopeZoomT_;
+
+    if (scopeEngT_ < 1.0f) scopeEngT_ = std::min(1.0f, scopeEngT_ + step);
+    scopeEngagement_ = scopeEngFrom_ + (scopeEngTo_ - scopeEngFrom_) * scopeEngT_;
+}
+
+// 相机向准星偏移的比例：1.5x → 0.35，2x → 0.5，其余按倍率线性插值
+float CS2DGame::ScopeCameraShift() const {
+    const float z = std::clamp(scopeZoom_, 1.0f, 2.0f);
+    if (z <= 1.5f) return (z - 1.0f) / 0.5f * 0.35f;
+    const float kMax = Presentation::kScopeCameraShiftMax;
+    return 0.35f + (z - 1.5f) / 0.5f * (kMax - 0.35f);
 }
 
 // ============================================================================
@@ -769,7 +808,11 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 
     clockSec_ += dt;
 
-    // 开镜过渡：每帧按 dt 逼近目标状态（0.12s 线性），与输入边沿解耦
+    // 准星世界坐标：开镜的圆形可见区与相机偏移都以它为中心
+    aimWorldX_ = mouseWorldX;
+    aimWorldY_ = mouseWorldY;
+
+    // 开镜过渡：每帧按 dt 逼近目标档位（0.12s 线性），与输入边沿解耦
     TickScope(dt);
 
     // 切枪音效：SwitchWeaponSlot 只挂起，这里按刚切到的武器播放
@@ -982,8 +1025,26 @@ void CS2DGame::Render(int viewW, int viewH) {
             camX = bots_[static_cast<size_t>(specTarget_)].x;
             camY = bots_[static_cast<size_t>(specTarget_)].y;
         }
+    } else if (scope.active) {
+        // 契约 v1.1：开镜时相机向准星偏移，准星下的世界点不随倍率漂移
+        const float shift = ScopeCameraShift();
+        camX += (aimWorldX_ - player_.x) * shift;
+        camY += (aimWorldY_ - player_.y) * shift;
     }
     renderer_->UpdateCamera(camX, camY, viewW, viewH, scope.zoomMultiplier);
+
+    // 契约 v1.1：开镜时可见区改为以准星为圆心的圆，镜外由视野雾遮盖。
+    // 半径以「屏幕像素 / 当前倍率」换算成世界半径，保证与屏幕上的镜筒一致。
+    const float scopeRadiusPx =
+        Presentation::kScopeCircleRadiusFrac * static_cast<float>(std::min(viewW, viewH));
+    const bool  scopeMaskOn = scope.active && scope.supported && !IsSpectating() && player_.alive;
+    if (scopeMaskOn) {
+        const float zoomNow = std::max(0.001f, renderer_->GetZoom());
+        renderer_->SetScopeMask(true, aimWorldX_, aimWorldY_, scopeRadiusPx / zoomNow);
+    } else {
+        renderer_->SetScopeMask(false, 0.0f, 0.0f, 0.0f);
+    }
+
     renderer_->DrawWorld();
 
     // 烟雾画在地面层（视野雾之下）：角色、掉落物、目标标记都在它之上
@@ -1107,8 +1168,14 @@ void CS2DGame::Render(int viewW, int viewH) {
         renderer_->DrawVisionFog(player_.x, player_.y, player_.aimAngle);
     }
 
-    // 开镜覆盖层：世界雾之后、闪光覆盖之前（契约 v1 第 4 节）
-    renderer_->DrawScopeOverlay(scope, viewW, viewH);
+    // 开镜覆盖层：世界雾之后、闪光覆盖之前（契约 v1.1 第 4 节）
+    // 圆心用「准星世界点投影到屏幕」而不是虚拟光标，避免相机被地图边界钳制时镜筒错位
+    {
+        const float scopeScreenX = (aimWorldX_ - renderer_->GetCameraX()) * renderer_->GetZoom();
+        const float scopeScreenY = (aimWorldY_ - renderer_->GetCameraY()) * renderer_->GetZoom();
+        renderer_->DrawScopeOverlay(scope, scopeScreenX, scopeScreenY,
+                                    scopeRadiusPx, viewW, viewH);
+    }
 
     renderer_->DrawOverlay();
 

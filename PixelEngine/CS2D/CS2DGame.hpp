@@ -934,9 +934,17 @@ private:
     float mouseSensitivity_ = 1.0f;
     bool  prevMouseDown_    = false;
 
-    // ---- 开镜状态（唯一来源，UI 只读快照）----
+    // ---- 开镜状态（唯一来源，UI 只读快照；契约 v1.1 三档循环）----
     Presentation::ScopeView scope_{};
-    void TickScope(float dt);                              // 每帧按 dt 推进过渡
+    int   scopeLevel_ = 0;                          // 0=关 / 1=1.5x / 2=2x
+    float scopeEngagement_ = 0.0f;                  // 0..1 镜框/遮罩淡入淡出进度
+    float scopeEngFrom_ = 0.0f, scopeEngTo_ = 0.0f, scopeEngT_ = 1.0f;
+    float scopeZoom_ = 1.0f;                        // 当前实际倍率
+    float scopeZoomFrom_ = 1.0f, scopeZoomTo_ = 1.0f, scopeZoomT_ = 1.0f;
+    float aimWorldX_ = 0.0f, aimWorldY_ = 0.0f;     // 最近一次 Update 传入的准星世界坐标
+    void TickScope(float dt);                       // 每帧按 dt 推进过渡
+    // 相机向准星偏移的比例（1.5x≈0.35，2x≈0.5，按当前倍率线性）
+    float ScopeCameraShift() const;
     int  PurchaseQuantityOf(const Presentation::BuyRequest& request) const;
     int  PurchasePriceOf(const Presentation::BuyRequest& request) const;
     bool IsBuyWindowOpen() const;                          // 只看时窗（模式/回合）

@@ -1,6 +1,8 @@
 #pragma once
 #include "Types.hpp"
 #include "../CS2D/Weapons/WeaponDef.hpp"
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 // ============================================================================
@@ -46,12 +48,16 @@ struct BuyResult {
 };
 
 // ---- 开镜 ----
+// 契约 v1.1：三档循环（关 → 1.5x → 2x → 关）。开镜时可见区改为以准星为圆心的圆形，
+// 镜外用视野雾遮盖；相机向准星方向偏移，使准星下的世界点不随倍率漂移。
 struct ScopeView {
     WeaponId weapon = WeaponId::None;
     bool     supported = false;
-    bool     active = false;            // 目标状态，不等同于过渡动画是否完成
-    float    transition = 0.0f;         // 0..1，当前视觉进度
-    float    zoomMultiplier = 1.0f;     // 当前倍率，1 + 0.5 * transition
+    bool     active = false;              // level > 0（目标状态，不等同于过渡是否完成）
+    int      level = 0;                   // 0=关 / 1=1.5x / 2=2x
+    float    transition = 0.0f;           // 0..1，镜框/遮罩淡入淡出进度（不是倍率进度）
+    float    zoomMultiplier = 1.0f;       // 当前实际倍率（含过渡）
+    float    targetZoomMultiplier = 1.0f; // 当前档位目标倍率（1.0 / 1.5 / 2.0）
 };
 
 enum class ScopeResetReason {
@@ -75,9 +81,35 @@ struct BulletVisualSegment {
     bool  impact = false;               // 实际碰撞终止；寿命/射程到期不算命中
 };
 
-// 开镜固定参数（契约第 4 节：单级 1.5 倍、0.12 秒过渡）
-inline constexpr float kScopeZoomMultiplier = 1.5f;
-inline constexpr float kScopeTransitionSeconds = 0.12f;
+// 开镜固定参数（契约 v1.1 第 4 节）
+// 档位倍率表：level 即下标，0=关；右键循环 关 → 1 → 2 → 关
+inline constexpr int   kScopeLevelCount = 3;
+inline constexpr float kScopeZoomLevels[kScopeLevelCount] = { 1.0f, 1.5f, 2.0f };
+inline constexpr float kScopeZoomMultiplier = 1.5f;      // 兼容旧调用（== 档位 1）
+inline constexpr float kScopeTransitionSeconds = 0.12f;  // 每次换档的过渡时长
+// 镜筒半径 = 短边 × 该系数（屏幕上），世界半径 = 半径像素 / 当前倍率
+inline constexpr float kScopeCircleRadiusFrac = 0.42f;
+// 相机向准星偏移的比例上限（1.5x ≈ 0.35，2x ≈ 0.5，其余按倍率线性插值）
+inline constexpr float kScopeCameraShiftMax = 0.5f;
+
+// 契约 v1.1：开镜圆形可见区的唯一几何定义（纯数学，渲染与回归测试共用）。
+// 圆外返回 0；圆内返回 1；softWidth 比例内用 smoothstep 淡出，
+// HasLineOfSight 等遮挡判定由调用方在此之上叠加。
+inline float ComputeScopeVisibility(float centerX, float centerY, float radius,
+                                    float targetX, float targetY,
+                                    float softWidth = 0.06f) {
+    if (radius <= 0.0f) return 0.0f;
+    const float dx = targetX - centerX;
+    const float dy = targetY - centerY;
+    const float d = std::sqrt(dx * dx + dy * dy);
+    const float soft = std::max(0.5f, radius * softWidth);
+    if (d <= radius - soft) return 1.0f;
+    if (d >= radius) return 0.0f;
+    float blend = (d - (radius - soft)) / soft;
+    blend = blend * blend * (3.0f - 2.0f * blend);
+    return 1.0f - blend;
+}
+
 // 枪弹视觉段寿命（秒）与硬上限
 inline constexpr float kBulletVisualSeconds = 0.08f;
 inline constexpr std::size_t kBulletVisualMaxSegments = 512;

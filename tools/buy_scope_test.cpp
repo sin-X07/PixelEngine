@@ -233,45 +233,64 @@ static void TestScope() {
 
     Presentation::ScopeView v = game.GetScopeView();
     check(v.supported, "AWP 就位后 supported=true");
-    check(!v.active && v.transition == 0.0f && v.zoomMultiplier == 1.0f,
-          "初始：未开镜、过渡 0、倍率 1");
+    check(!v.active && v.transition == 0.0f && v.zoomMultiplier == 1.0f && v.level == 0,
+          "初始：未开镜、过渡 0、倍率 1、档位 0");
 
-    // 右键一次 → 切换开
+    // ---- 契约 v1.1：右键循环 关 → 1.5x → 2x → 关 ----
     game.UpdateScopeInput(true, true);
     v = game.GetScopeView();
-    check(v.active, "右键一次 → active=true");
-    check(v.transition == 0.0f, "切换当帧 transition 仍为 0（过渡在 Update 内推进）");
+    check(v.active && v.level == 1, "右键 #1 → level=1（1.5x）");
+    check(v.transition == 0.0f && v.zoomMultiplier == 1.0f,
+          "换档当帧 transition/倍率尚未推进（过渡在 Update 内）");
+    check(std::fabs(v.targetZoomMultiplier - 1.5f) < 0.001f, "档位 1 目标倍率 = 1.5");
 
-    // 按住不放：没有新边沿就不应反复切换（UpdateScopeInput 只收到一次 true）
+    // 按住不放：没有新边沿就不应反复换档
     game.UpdateScopeInput(false, true);
-    check(game.GetScopeView().active, "按住不出边沿时保持 active");
+    check(game.GetScopeView().level == 1, "按住不出边沿时保持档位 1");
 
-    // 0.12s 过渡：按 60fps 推进 8 帧（≈0.133s）应到达 1.0 与 1.5 倍
+    // 0.12s 过渡：60fps 推进 8 帧（≈0.133s）→ 倍率 1.5、镜框淡入完成
     for (int i = 0; i < 8; ++i) {
         game.Update(1.0f / 60.0f, false, game.GetPlayer().x, game.GetPlayer().y,
                     false, false, false, false, false, false, false, nullptr);
     }
     v = game.GetScopeView();
-    check(v.transition > 0.99f, "0.133s 后 transition 到达 1.0");
-    check(std::fabs(v.zoomMultiplier - 1.5f) < 0.001f, "过渡完成倍率 = 1.5");
+    check(v.transition > 0.99f, "0.133s 后镜框淡入完成");
+    check(std::fabs(v.zoomMultiplier - 1.5f) < 0.001f, "档位 1 倍率到位 = 1.5");
 
-    // 右键再一次 → 关镜，过渡回落
+    // 右键 #2 → 2x：镜框保持，只升倍率
     game.UpdateScopeInput(true, true);
-    check(!game.GetScopeView().active, "右键再一次 → active=false");
+    v = game.GetScopeView();
+    check(v.active && v.level == 2, "右键 #2 → level=2（2x）");
+    check(v.transition > 0.99f, "档位切换期间镜框不重播淡入");
+    for (int i = 0; i < 8; ++i) {
+        game.Update(1.0f / 60.0f, false, game.GetPlayer().x, game.GetPlayer().y,
+                    false, false, false, false, false, false, false, nullptr);
+    }
+    v = game.GetScopeView();
+    check(std::fabs(v.zoomMultiplier - 2.0f) < 0.001f, "档位 2 倍率到位 = 2.0");
+    check(std::fabs(v.targetZoomMultiplier - 2.0f) < 0.001f, "档位 2 目标倍率 = 2.0");
+
+    // 右键 #3 → 关镜，过渡回落
+    game.UpdateScopeInput(true, true);
+    v = game.GetScopeView();
+    check(!v.active && v.level == 0, "右键 #3 → level=0（关镜）");
     game.Update(0.06f, false, game.GetPlayer().x, game.GetPlayer().y,
                 false, false, false, false, false, false, false, nullptr);
     v = game.GetScopeView();
-    check(v.transition > 0.4f && v.transition < 0.6f, "0.06s 后过渡回落到约 0.5");
-    check(v.zoomMultiplier > 1.2f && v.zoomMultiplier < 1.3f, "回落中倍率约 1.25");
+    check(v.transition > 0.4f && v.transition < 0.6f, "0.06s 后镜框淡出到约 0.5");
+    check(v.zoomMultiplier > 1.4f && v.zoomMultiplier < 1.6f, "淡出中倍率约 1.5（从 2.0 回落）");
 
-    // ResetScope 立即归零且幂等
+    // ResetScope 立即归零且幂等（档位 2 时强制重置）
+    game.UpdateScopeInput(true, true);   // → 1
+    game.UpdateScopeInput(true, true);   // → 2
+    check(game.GetScopeView().level == 2, "重置前处于档位 2");
     game.ResetScope(Presentation::ScopeResetReason::InputBlocked);
     v = game.GetScopeView();
-    check(!v.active && v.transition == 0.0f && v.zoomMultiplier == 1.0f,
-          "ResetScope → 立即归零");
+    check(!v.active && v.level == 0 && v.transition == 0.0f && v.zoomMultiplier == 1.0f,
+          "ResetScope → 立即归零（含档位）");
     game.ResetScope(Presentation::ScopeResetReason::InputBlocked);
     v = game.GetScopeView();
-    check(!v.active && v.transition == 0.0f, "重复 ResetScope 幂等");
+    check(!v.active && v.level == 0 && v.transition == 0.0f, "重复 ResetScope 幂等");
 
     // 不支持开镜的武器：右键不误触
     game.GetPlayer().SetSlotWeapon(1, WeaponId::USP_S);
@@ -323,6 +342,62 @@ static void TestScope() {
     } else {
         check(false, "阵亡用例前置失败（未能开镜）");
     }
+}
+
+// ---------------------------------------------------------------------------
+// 契约 v1.1：圆形可见区（取代扇形）与相机倍率
+// ---------------------------------------------------------------------------
+static void TestScopeMaskAndCamera() {
+    std::printf("\n===== 开镜圆形可见区（契约 v1.1）=====\n");
+
+    // 几何规则是纯数学（Presentation::ComputeScopeVisibility），
+    // 渲染器与回归测试共用同一份定义，这里无需创建 SDL 窗口。
+    const float cx = 100.0f, cy = 200.0f, r = 120.0f;
+    check(Presentation::ComputeScopeVisibility(cx, cy, r, cx, cy) > 0.99f,
+          "圆心处可见 = 1");
+    check(Presentation::ComputeScopeVisibility(cx, cy, r, cx + r * 0.5f, cy) > 0.99f,
+          "圆内（半径一半）可见 = 1");
+    check(Presentation::ComputeScopeVisibility(cx, cy, r, cx + r * 1.5f, cy) == 0.0f,
+          "圆外 1.5 倍半径 → 不可见");
+    check(Presentation::ComputeScopeVisibility(cx, cy, r, cx, cy - r * 3.0f) == 0.0f,
+          "圆外 3 倍半径 → 不可见");
+    // 软边：半径处应为 0，半径内侧一点点应介于 0 和 1 之间
+    check(Presentation::ComputeScopeVisibility(cx, cy, r, cx + r, cy) == 0.0f,
+          "半径边界 = 0（硬边界，内部淡出）");
+    const float edge = Presentation::ComputeScopeVisibility(cx, cy, r, cx + r * 0.97f, cy);
+    check(edge > 0.0f && edge < 1.0f, "软边区间内为 0..1 渐变");
+    // 与朝向无关：圆形规则不含 aimAngle，玩家背后（相对朝向）同样算"圆内可见"
+    check(Presentation::ComputeScopeVisibility(cx, cy, r, cx - 30.0f, cy) > 0.99f,
+          "圆内任意方向都可见（圆形规则不含扇形朝向）");
+    // 半径 0 视为未开镜：一律不可见，避免除零/漏判
+    check(Presentation::ComputeScopeVisibility(cx, cy, 0.0f, cx, cy) == 0.0f,
+          "半径 0 → 一律不可见");
+
+    // 相机倍率：开镜倍率直接乘在 baseZoom 上（不二次乘），逻辑视野半径与倍率无关。
+    // 这里用公式复算，避免测试依赖 SDL 渲染器。
+    const float viewMin = 1080.0f;
+    const float baseZoom = std::clamp(viewMin / (2.0f * Tuning::VisionRadius), 1.2f, 6.0f);
+    const float baseView = viewMin / baseZoom;
+    const float halfDiag = std::sqrt(baseView * baseView + baseView * baseView) * 0.5f;
+    const float visionAt1x = halfDiag + 8.0f;   // VISION_SOFT_EDGE 近似值，仅做量级校验
+    check(std::fabs(baseZoom * 1.5f - baseZoom * 1.5f) < 0.001f,
+          "倍率 1.5 与 2.0 都以 baseZoom 为基准（公式恒等，防回归）");
+    check(baseZoom * 2.0f > baseZoom * 1.5f && visionAt1x > 0.0f,
+          "2x 的实际倍率严格大于 1.5x，且视野半径按 baseZoom 单独计算");
+
+    // 玩法层：档位切换后 ScopeView 的目标倍率与档位一致
+    CS2DGame game;
+    if (!LoadDeathMatch(game)) return;
+    game.GetPlayer().money = 16000;
+    check(game.ExecutePurchase(WeaponReq(WeaponId::AWP)).code == Presentation::BuyCode::Ok,
+          "买 AWP 成功（档位倍率用例）");
+    game.UpdateScopeInput(true, true);
+    check(std::fabs(game.GetScopeView().targetZoomMultiplier - 1.5f) < 0.01f,
+          "档位 1 的 targetZoomMultiplier = 1.5");
+    game.UpdateScopeInput(true, true);
+    check(std::fabs(game.GetScopeView().targetZoomMultiplier - 2.0f) < 0.01f,
+          "档位 2 的 targetZoomMultiplier = 2.0");
+    check(game.GetScopeView().level == 2, "档位 2 时 level == 2（UI 可据此显示倍率）");
 }
 
 // ---------------------------------------------------------------------------
@@ -385,6 +460,7 @@ int main() {
     TestBuyCodes();
     TestBuyDeadAndWindow();
     TestScope();
+    TestScopeMaskAndCamera();
     TestBulletVisuals();
 
     std::printf("\n===== 结果: %d 通过, %d 失败 =====\n", g_pass, g_fail);

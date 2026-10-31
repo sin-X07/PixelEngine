@@ -897,55 +897,77 @@ void CS2DRenderer::DrawBulletVisuals(
     }
 }
 
+void CS2DRenderer::SetScopeMask(bool active, float centerX, float centerY,
+                                float radiusWorld) {
+    scopeMaskActive_ = active;
+    scopeMaskX_ = centerX;
+    scopeMaskY_ = centerY;
+    scopeMaskR_ = radiusWorld;
+}
+
 // ---------------------------------------------------------------------------
-// 开镜覆盖层（契约 v1 第 4 节）
-// 最小占位实现：按 transition 收拢的暗角 + 镜筒圆环 + 中心准星。
-// 只使用已有 logicalW/H 坐标，不做命中或相机计算；表现归 UI 方（PIX-10）替换。
+// 开镜覆盖层（契约 v1.1 第 4 节）
+// 最小占位实现：镜筒圆环 + 刻度 + 中心准星。
+// 镜外遮挡由「圆形可见区 + 视野雾」完成，这里不重复画遮罩；
+// 表现细节（镜筒样式、倍率刻度、开镜动效）归 UI 方（PIX-10）替换。
 // ---------------------------------------------------------------------------
 void CS2DRenderer::DrawScopeOverlay(const Presentation::ScopeView& scope,
-                                    int viewW, int viewH) {
+                                    float centerScreenX, float centerScreenY,
+                                    float radiusPx, int viewW, int viewH) {
     if (!renderer_) return;
     const float t = std::clamp(scope.transition, 0.0f, 1.0f);
-    if (t <= 0.001f || viewW <= 0 || viewH <= 0) return;
-
-    const float cx = static_cast<float>(viewW) * 0.5f;
-    const float cy = static_cast<float>(viewH) * 0.5f;
-    const float minDim = static_cast<float>(std::min(viewW, viewH));
-    // 窗口从整屏收拢到 0.84 * 短边，过渡完成即是"镜筒"
-    const float half = minDim * (0.5f - 0.08f * t);
+    if (t <= 0.001f || viewW <= 0 || viewH <= 0 || radiusPx <= 1.0f) return;
 
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer_, 4, 6, 8, static_cast<Uint8>(215.0f * t));
-    const SDL_FRect top    = { 0.0f, 0.0f, static_cast<float>(viewW), cy - half };
-    const SDL_FRect bottom = { 0.0f, cy + half, static_cast<float>(viewW), cy - half };
-    const SDL_FRect left   = { 0.0f, cy - half, cx - half, half * 2.0f };
-    const SDL_FRect right  = { cx + half, cy - half, cx - half, half * 2.0f };
-    SDL_RenderFillRectF(renderer_, &top);
-    SDL_RenderFillRectF(renderer_, &bottom);
-    SDL_RenderFillRectF(renderer_, &left);
-    SDL_RenderFillRectF(renderer_, &right);
+    const float cx = centerScreenX;
+    const float cy = centerScreenY;
+    const float r  = radiusPx * (0.62f + 0.38f * t);   // 开镜瞬间由小放大到镜筒尺寸
 
-    // 镜筒边缘：一圈深色 + 一圈细亮线
-    SDL_SetRenderDrawColor(renderer_, 12, 16, 20, static_cast<Uint8>(200.0f * t));
-    for (int i = 0; i < 6; ++i) {
-        const float rr = half - static_cast<float>(i);
-        SDL_FRect ring = { cx - rr, cy - rr, rr * 2.0f, rr * 2.0f };
-        SDL_RenderDrawRectF(renderer_, &ring);
+    // 屏幕空间圆（SDL 没有画圆粗细：用多段折线近似）
+    auto circle = [&](float ox, float oy, float rr, int segments, Uint8 a) {
+        if (rr <= 0.5f) return;
+        SDL_SetRenderDrawColor(renderer_, 8, 10, 12, a);
+        for (int i = 0; i < segments; ++i) {
+            const float a0 = 6.2831853f * static_cast<float>(i) / static_cast<float>(segments);
+            const float a1 = 6.2831853f * static_cast<float>(i + 1) / static_cast<float>(segments);
+            SDL_RenderDrawLineF(renderer_, ox + std::cos(a0) * rr, oy + std::sin(a0) * rr,
+                                ox + std::cos(a1) * rr, oy + std::sin(a1) * rr);
+        }
+    };
+
+    // 镜筒：向内收的 4 圈暗线（形成厚度感）
+    for (int i = 0; i < 4; ++i) {
+        circle(cx, cy, r + static_cast<float>(i) * 1.5f, 72,
+               static_cast<Uint8>(200.0f * t));
     }
-    SDL_SetRenderDrawColor(renderer_, 210, 225, 235, static_cast<Uint8>(110.0f * t));
-    SDL_FRect ring = { cx - half, cy - half, half * 2.0f, half * 2.0f };
-    SDL_RenderDrawRectF(renderer_, &ring);
+    // 内缘细亮线
+    SDL_SetRenderDrawColor(renderer_, 214, 228, 238, static_cast<Uint8>(130.0f * t));
+    for (int i = 0; i < 72; ++i) {
+        const float a0 = 6.2831853f * static_cast<float>(i) / 72.0f;
+        const float a1 = 6.2831853f * static_cast<float>(i + 1) / 72.0f;
+        SDL_RenderDrawLineF(renderer_, cx + std::cos(a0) * r, cy + std::sin(a0) * r,
+                            cx + std::cos(a1) * r, cy + std::sin(a1) * r);
+    }
 
-    // 中心准星：小圆 + 十字，幅度随 t 收敛
+    // 倍率刻度：内侧 4 个方向的短划线（1.5x 与 2x 的刻度长度略不同，便于肉眼区分档位）
+    const float tickLen = 10.0f + 8.0f * t + (scope.level >= 2 ? 6.0f : 0.0f);
+    const float gap = 6.0f;
+    SDL_SetRenderDrawColor(renderer_, 225, 236, 244, static_cast<Uint8>(180.0f * t));
+    SDL_RenderDrawLineF(renderer_, cx - r + gap, cy, cx - r + gap + tickLen, cy);
+    SDL_RenderDrawLineF(renderer_, cx + r - gap, cy, cx + r - gap - tickLen, cy);
+    SDL_RenderDrawLineF(renderer_, cx, cy - r + gap, cx, cy - r + gap + tickLen);
+    SDL_RenderDrawLineF(renderer_, cx, cy + r - gap, cx, cy + r - gap - tickLen);
+
+    // 中心准星：小方点 + 十字
     const float dot = 2.0f;
     SDL_SetRenderDrawColor(renderer_, 235, 245, 250, static_cast<Uint8>(220.0f * t));
     SDL_FRect center = { cx - dot, cy - dot, dot * 2.0f, dot * 2.0f };
     SDL_RenderFillRectF(renderer_, &center);
-    const float tick = 10.0f + 6.0f * t;
-    SDL_RenderDrawLineF(renderer_, cx - tick, cy, cx - dot * 2.0f, cy);
-    SDL_RenderDrawLineF(renderer_, cx + dot * 2.0f, cy, cx + tick, cy);
-    SDL_RenderDrawLineF(renderer_, cx, cy - tick, cx, cy - dot * 2.0f);
-    SDL_RenderDrawLineF(renderer_, cx, cy + dot * 2.0f, cx, cy + tick);
+    const float cross = 10.0f + 6.0f * t;
+    SDL_RenderDrawLineF(renderer_, cx - cross, cy, cx - dot * 2.0f, cy);
+    SDL_RenderDrawLineF(renderer_, cx + dot * 2.0f, cy, cx + cross, cy);
+    SDL_RenderDrawLineF(renderer_, cx, cy - cross, cx, cy - dot * 2.0f);
+    SDL_RenderDrawLineF(renderer_, cx, cy + dot * 2.0f, cx, cy + cross);
 }
 
 void CS2DRenderer::DrawThrownGrenade(int weaponId, float worldX, float worldY,
@@ -1084,6 +1106,16 @@ bool CS2DRenderer::HasLineOfSight(float fromX, float fromY, float toX, float toY
 float CS2DRenderer::ComputeVisibility(float playerX, float playerY, float aimAngle,
                                      float targetX, float targetY) const {
     if (!world_) return 0.0f;
+
+    // ---- 契约 v1.1：开镜时改用「以准星为圆心的圆」取代扇形 + 半径 ----
+    // 几何定义与回归测试共用 Presentation::ComputeScopeVisibility；墙体遮挡仍然生效。
+    if (scopeMaskActive_) {
+        const float circleFactor = Presentation::ComputeScopeVisibility(
+            scopeMaskX_, scopeMaskY_, scopeMaskR_, targetX, targetY);
+        if (circleFactor <= 0.0f) return 0.0f;
+        if (world_ && !HasLineOfSight(playerX, playerY, targetX, targetY)) return 0.0f;
+        return circleFactor;
+    }
 
     const float deltaX = targetX - playerX;
     const float deltaY = targetY - playerY;
@@ -1342,6 +1374,8 @@ void CS2DRenderer::DrawVisionFog(float playerX, float playerY, float aimAngle) {
 
     const float px = playerX;
     const float py = playerY;
+    // 开镜时镜外要"看不见"而不是"看不清"：同一套圆形可见区下把雾压得更实
+    const Uint8 maxFogAlpha = scopeMaskActive_ ? SCOPE_FOG_ALPHA : VISION_FOG_ALPHA;
 
     for (int y = 0; y < maskH_; ++y) {
         for (int x = 0; x < maskW_; ++x) {
@@ -1350,7 +1384,7 @@ void CS2DRenderer::DrawVisionFog(float playerX, float playerY, float aimAngle) {
 
             // 与敌人剔除共用同一套几何，避免遮罩与可见性漂移
             const float vis = ComputeVisibility(px, py, aimAngle, worldX, worldY);
-            const Uint8 alpha = static_cast<Uint8>(std::lround((1.0f - vis) * VISION_FOG_ALPHA));
+            const Uint8 alpha = static_cast<Uint8>(std::lround((1.0f - vis) * maxFogAlpha));
 
             const size_t idx = (static_cast<size_t>(y) * maskW_ + x) * 4;
             visionPixels_[idx]     = VISION_FOG_R;

@@ -1,4 +1,4 @@
-# Windows 验收脚本（PIX-15）：启动游戏、模拟输入、截图留证
+﻿# Windows 验收脚本（PIX-15）：启动游戏、模拟输入、截图留证
 #
 # 用法（在仓库根目录）：
 #   pwsh -File tools/win_accept.ps1                     # 默认输出到 build-evidence/
@@ -33,6 +33,7 @@ public class Win32Input {
     [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint f, UIntPtr e);
     public const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
     public const uint MOUSEEVENTF_RIGHTUP   = 0x0010;
+    public const uint MOUSEEVENTF_MOVE      = 0x0001;
     public const uint KEYEVENTF_KEYUP       = 0x0002;
 }
 "@
@@ -67,6 +68,11 @@ function Click-Right() {
     [Win32Input]::mouse_event([Win32Input]::MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 60
     [Win32Input]::mouse_event([Win32Input]::MOUSEEVENTF_RIGHTUP, 0, 0, 0, [UIntPtr]::Zero)
+}
+
+# 相对模式下的准星位移：产生相对鼠标移动事件（不是移动光标位置）
+function Move-Mouse([int]$dx, [int]$dy) {
+    [Win32Input]::mouse_event([Win32Input]::MOUSEEVENTF_MOVE, $dx, $dy, 0, [UIntPtr]::Zero)
 }
 
 function Focus-Game($proc) {
@@ -115,10 +121,19 @@ Focus-Game $p2
 Start-Sleep -Seconds 6
 Save-Shot "02-ingame-hud.png"
 
-Write-Host "== 开镜（右键）=="
+Write-Host "== 开镜（右键）：1.5x / 2x =="
+# 先把准星挪离屏幕中心（相对鼠标模式下用 MOUSEEVENTF_MOVE 产生相对位移），
+# 用来验证「圆形可见区以准星为圆心」而不是屏幕中心
+Move-Mouse 260 120
+Start-Sleep -Milliseconds 200
 Click-Right
-Start-Sleep -Milliseconds 500
-Save-Shot "04-scope.png"
+Start-Sleep -Milliseconds 700
+Save-Shot "04-scope-15x.png"
+Click-Right
+Start-Sleep -Milliseconds 700
+Save-Shot "05-scope-20x.png"
+Click-Right
+Start-Sleep -Milliseconds 300
 
 if (-not $p2.HasExited) { $p2.Kill() }
 Start-Sleep -Seconds 1

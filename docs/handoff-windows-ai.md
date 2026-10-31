@@ -43,15 +43,17 @@ cmake --build build/tests --parallel 8 --target gameplay_tests
 build/tests/gameplay_tests.exe    # 工作目录 = 仓库根
 ```
 
-结果：`===== 结果: 74 通过, 0 失败 =====`（`tools/buy_scope_test.cpp`）。
+结果：`===== 结果: 94 通过, 0 失败 =====`（`tools/buy_scope_test.cpp`）。
 覆盖内容：
 
 - 购买：全部 `BuyCode`（InvalidItem / PlayerDead / WindowClosed / OutsideBuyZone / TeamRestricted /
   InsufficientFunds / InventoryFull / ItemLimitReached / AlreadyEquipped / Ok）、
   `Evaluate` 无副作用、非法 enum 不越界、成功只扣一次、失败快照不变、同枪第二次 AlreadyEquipped、
   闪光 2 个 / 其它 1 个 / 总数 4 个边界、护甲 tier1/tier2 语义、`TryBuy/TryBuyArmor` 兼容包装。
-- 开镜：`supported` 随武器变化、右键边沿只切一次、按住不反复切换、0.12s 过渡与 1.5 倍率、
-  `ResetScope` 幂等、切枪 / 换弹 / 输入被挡 / 阵亡归零。
+- 开镜（契约 v1.1）：`supported` 随武器变化、右键边沿只切一次、三档循环 关→1.5x→2x→关、
+  每档 0.12s 过渡、换档时镜框不重播淡入、`targetZoomMultiplier` 随档位、`ResetScope` 幂等、
+  切枪 / 换弹 / 输入被挡 / 阵亡归零。
+- 圆形可见区：圆心=1、圆内=1、圆外=0、软边 0..1 渐变、与朝向无关（不含扇形）、半径 0 一律不可见。
 - 枪弹视觉段：真实模拟段生成、0.08s 寿命清理、重复 Render 无副作用、512 上限。
 
 > 说明：`OutsideBuyZone` 未单独构造用例（需要把小鸡… 玩家移出购买区并重算），
@@ -61,11 +63,13 @@ build/tests/gameplay_tests.exe    # 工作目录 = 仓库根
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/win_accept.ps1
-# 产物：build-evidence/01-main-menu.png、02-ingame-hud.png、03-buy-menu.png、04-scope.png + *.out 日志
+# 产物：01-main-menu.png、02-ingame-hud.png、03-buy-menu.png、
+#       04-scope-15x.png、05-scope-20x.png + *.out 日志
 ```
 
-脚本做了两件必要的事：`SetProcessDPIAware()`（否则截图只有逻辑坐标大小的裁切）、
-把光标移动到窗口中心（DPI 缩放下鼠标常停在窗口左上角，右键会落在窗口外）。
+脚本做的三件必要的事：`SetProcessDPIAware()`（否则截图只有逻辑坐标大小的裁切）、
+把光标移动到窗口中心（DPI 缩放下鼠标常停在窗口左上角，右键会落在窗口外）、
+开镜前用 `MOUSEEVENTF_MOVE` 把准星挪离屏幕中心（验证圆形可见区以准星为圆心）。
 
 已核对（截图可见）：
 
@@ -74,7 +78,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/win_accept.ps1
 | `01-main-menu.png` | 主菜单 + 实时 3D 背景：T/CT 角色与 3 只小鸡正常渲染 |
 | `02-ingame-hud.png` | 对局 HUD：雷达、回合/比分、血量护甲、武器栏正常 |
 | `03-buy-menu.png` | 购买菜单按 `availability` 禁用：`USP-S $200 (已装备)`、`AWP $4750 (已装备)` 灰显，其余可买 |
-| `04-scope.png` | AWP 右键开镜：世界 1.5× 放大 + 镜筒覆盖层 + 中心准星，HUD 不受影响 |
+| `04-scope-15x.png` | AWP 右键第 1 档：圆形可见区（圆心=准星，非屏幕中心）、镜外浓雾、1.5×、镜筒圆环 + 中心准星 |
+| `05-scope-20x.png` | 右键第 2 档：同一圆形内明显更放大（2×），镜外仍被雾遮盖，HUD 不受影响 |
 
 运行日志（`build-evidence/*.out`）关键行：
 
@@ -140,19 +145,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/win_accept.ps1
 - 边界不变：`UpdateChickens` 的漫游范围、`kObjectCount` / `ObjectIndex`（0=T,1=CT,2..4=鸡）、
   菜单/地图选择/退出返回路径均未改动；`chickens_` 为空时所有绘制以 `size()` 为上界，不越界。
 
-### PIX-14 右键开镜
+### PIX-14 右键开镜（契约 v1.1）
 
-- 唯一状态在 `CS2DGame`：`scope_`（`ScopeView`），UI 只读 `GetScopeView()` 快照。
+- 唯一状态在 `CS2DGame`：`scope_` + `scopeLevel_ / scopeEngagement_ / scopeZoom_`，UI 只读 `GetScopeView()` 快照。
 - `UpdateScopeInput(rightClicked, gameplayInputAllowed)`：输入被挡 → `ResetScope(InputBlocked)`；
   死亡 → `PlayerDied`；武器变化 → `WeaponChanged`；换弹 → `ReloadStarted`；仅支持 `WeaponDef::scoped`
-  的武器可切；右键一次切换、无二级倍率。
-- `TickScope` → `CS2DGame::Update` 内按 dt 线性推进 0.12s，`zoomMultiplier = 1 + 0.5*transition`。
+  的武器可切；**右键循环 关 → 1.5x → 2x → 关**（`level = (level+1) % 3`）。
+- `TickScope` → `CS2DGame::Update` 内按 dt 推进：倍率与镜框淡入各自 0.12s，
+  换档时 `transition` 保持 1（不重播淡入），`zoomMultiplier` 线性趋向 `kScopeZoomLevels[level]`。
 - `CS2DRenderer::UpdateCamera`：`zoom_ = baseZoom * zoomMultiplier`（`GetZoom()` = 实际倍率，
   `UpdateCursor` 不再二次乘）；`visionRadius_` 仍按 `baseZoom` 计算，敌人知情半径不变。
+- **圆形可见区（v1.1）**：`Presentation::ComputeScopeVisibility` 是唯一几何定义；
+  `CS2DGame::Render` 每帧 `SetScopeMask(true, 准星世界点, kScopeCircleRadiusFrac*min(viewW,viewH)/zoom)`，
+  `ComputeVisibility` 在 mask 激活时先走圆形（叠加 LOS），否则走原扇形——`DrawVisionFog` 与敌人剔除
+  共用这个函数，所以雾自动变成圆形、镜外不可见（`SCOPE_FOG_ALPHA 242`）。
+- **相机向准星偏移（v1.1）**：`shift = f(zoom)`（1.5x→0.35、2x→0.5），相机中心 = 玩家 + (准星−玩家)×shift；
+  由于 `UpdateCursor` 用 `GetZoom()` 反解，偏移只是把灵敏度按 `1/(1-shift)` 放大，无累积漂移。
 - 归零路径：切枪（含投掷物自动切回）、丢枪、购买替换当前武器、换弹开始、阵亡、新回合、
   `LoadMap`、暂停/设置/选边/失焦/转场、离开对局、每次 Update 的防御性武器比对。
-- `DrawScopeOverlay(scope, viewW, viewH)` 已在世界雾之后、闪光之前接线。**当前为功能方的最小占位实现**
-  （暗角 + 镜筒 + 中心准星），按契约表现实现归 UI 方（PIX-10），替换时只改函数体。
+- `DrawScopeOverlay(scope, centerScreenX, centerScreenY, radiusPx, viewW, viewH)`（v1.1 签名）
+  在世界雾之后、闪光之前接线，圆心用「准星世界点投影」而非虚拟光标（相机被地图边界钳制也不错位）。
+  **当前为功能方的最小占位实现**（圆形镜筒 4 圈暗线 + 内缘亮线 + 四向刻度 + 中心准星），
+  表现与倍率刻度样式归 UI 方（PIX-10），替换时只改函数体。
 
 ### PIX-15 Windows 验收
 

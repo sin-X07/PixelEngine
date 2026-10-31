@@ -69,9 +69,17 @@ public:
     // 枪弹视觉段（契约 v1 第 6 节）：数据由 CS2DGame 产出，这里只绘制。
     // 注意：表现实现归 UI 方（PIX-17）；当前为可运行的最小占位实现。
     void DrawBulletVisuals(const std::vector<Presentation::BulletVisualSegment>& segments);
-    // 开镜覆盖层（契约 v1 第 4 节）：表现实现归 UI 方（PIX-10）；
+    // 开镜覆盖层（契约 v1.1 第 4 节）：表现实现归 UI 方（PIX-10）；
     // 当前为可运行的最小占位实现，接线与调用时序由功能方保证。
-    void DrawScopeOverlay(const Presentation::ScopeView& scope, int viewW, int viewH);
+    // centerScreenX/Y、radiusPx 都是逻辑画布坐标（不是 Retina 物理像素），
+    // 圆心由 CS2DGame 按准星世界点投影算出，UI 不做命中/相机计算。
+    void DrawScopeOverlay(const Presentation::ScopeView& scope,
+                          float centerScreenX, float centerScreenY, float radiusPx,
+                          int viewW, int viewH);
+    // 契约 v1.1：开镜时可见区改为以 (centerX, centerY) 为圆心、radiusWorld 为半径的圆，
+    // 取代原有「扇形 + 半径」规则；ComputeVisibility 与敌人剔除、视野雾共用这份状态。
+    void SetScopeMask(bool active, float centerX, float centerY, float radiusWorld);
+    bool IsScopeMaskActive() const { return scopeMaskActive_; }
     // 飞行中的投掷物：按类型画对应的旋转图标（替代原来的 bullet 占位）
     void DrawThrownGrenade(int weaponId, float worldX, float worldY, float spinDeg);
     // 掉在地上的武器：用 _d 图标（与 HUD 同一套素材），带轻微上下浮动
@@ -220,6 +228,7 @@ private:
     static constexpr float VISION_CONE_DEG   = Tuning::VisionConeDeg;
     static constexpr float VISION_ANGLE_SOFT = Tuning::VisionAngleSoftDeg;
     static constexpr Uint8 VISION_FOG_ALPHA  = 160;     // 不可见区半透明上限
+    static constexpr Uint8 SCOPE_FOG_ALPHA   = 242;     // 开镜时镜外的雾（"看不见"而非"看不清"）
     static constexpr Uint8 VISION_FOG_R      = 200;     // 浅灰遮罩颜色
     static constexpr Uint8 VISION_FOG_G      = 200;
     static constexpr Uint8 VISION_FOG_B      = 200;
@@ -228,6 +237,12 @@ private:
     std::vector<Uint8> visionPixels_;
     int maskW_ = 0;
     int maskH_ = 0;
+
+    // 开镜圆形可见区（契约 v1.1）：active 时 ComputeVisibility 改用圆形规则
+    bool  scopeMaskActive_ = false;
+    float scopeMaskX_ = 0.0f;
+    float scopeMaskY_ = 0.0f;
+    float scopeMaskR_ = 0.0f;
 
     void CreateVisionTexture();   // 创建/重建视野 streaming 纹理
 
