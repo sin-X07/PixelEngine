@@ -11,6 +11,7 @@
 #include "Economy/EconomySystem.hpp"
 #include "Navigation/PathFinder.hpp"
 #include "../Core/Types.hpp"
+#include "../Core/PresentationContract.hpp"
 #include <SDL2/SDL.h>
 #include <string>
 #include <vector>
@@ -422,6 +423,10 @@ public:
     std::vector<Player>&       GetBOTs()       { return bots_; }
     const std::vector<Player>& GetBOTs() const { return bots_; }
     const std::vector<Bullet>& GetBullets() const { return bullets_; }
+    // 枪弹视觉段（契约 v1 第 6 节）：玩法层生成的唯一数据源，UI 只绘制。
+    const std::vector<Presentation::BulletVisualSegment>& GetBulletVisuals() const {
+        return bulletVisuals_;
+    }
     const std::vector<Grenade>& GetGrenades() const { return grenades_; }
     const std::vector<SmokeCloud>& GetSmokes() const { return smokes_; }
     const std::vector<FireZone>& GetFires() const { return fires_; }
@@ -650,6 +655,22 @@ public:
     bool TryBuy(WeaponId id, class AudioManager* audio = nullptr);
     // 购买护甲：tier 1=护甲 2=护甲+头盔
     bool TryBuyArmor(int tier, class AudioManager* audio = nullptr);
+
+    // ---- 购买契约 v1（第 3 节）----
+    // EvaluatePurchase：纯判定，无扣款/装备/音效副作用，供 UI 逐项显示可用性。
+    Presentation::BuyCode EvaluatePurchase(const Presentation::BuyRequest& request) const;
+    // ExecutePurchase：点击时重新判定，Ok 才执行一次原装备/扣款与 EQUIP 音效。
+    Presentation::BuyResult ExecutePurchase(const Presentation::BuyRequest& request,
+                                            class AudioManager* audio = nullptr);
+
+    // ---- 开镜契约 v1（第 4 节）----
+    // Engine 每帧在 game.Update 之前调用一次；gameplayInputAllowed=false 时立即归零。
+    void UpdateScopeInput(bool rightClicked, bool gameplayInputAllowed);
+    // 只读快照，无消费副作用。
+    Presentation::ScopeView GetScopeView() const;
+    // 立即归零（幂等）：不动伤害/散布/移速。
+    void ResetScope(Presentation::ScopeResetReason reason);
+    static bool IsScopeSupported(WeaponId id);
     int  GetPlayerArmor()  const { return player_.armor; }
     int  GetPlayerHealth()    const { return player_.health; }
     int  GetPlayerMaxHealth() const { return player_.maxHealth; }
@@ -912,6 +933,19 @@ private:
 
     float mouseSensitivity_ = 1.0f;
     bool  prevMouseDown_    = false;
+
+    // ---- 开镜状态（唯一来源，UI 只读快照）----
+    Presentation::ScopeView scope_{};
+    void TickScope(float dt);                              // 每帧按 dt 推进过渡
+    int  PurchaseQuantityOf(const Presentation::BuyRequest& request) const;
+    int  PurchasePriceOf(const Presentation::BuyRequest& request) const;
+    bool IsBuyWindowOpen() const;                          // 只看时窗（模式/回合）
+
+    // ---- 枪弹视觉段 ----
+    std::vector<Presentation::BulletVisualSegment> bulletVisuals_;
+    std::uint64_t nextBulletVisualId_ = 1;
+    void AddBulletVisual(const Bullet& b, float fromX, float fromY,
+                         float toX, float toY, bool impact);
 
 
     // 内部方法

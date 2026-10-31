@@ -17,6 +17,7 @@ void InputManager::ResetPerFrameActions() {
     buyMenuToggleRequested = false;
     mouseLeftClicked = false;
     mouseLeftReleased = false;
+    mouseRightClicked = false;
 }
 
 void InputManager::ProcessEvents(SDL_Renderer* renderer) {
@@ -52,6 +53,28 @@ void InputManager::ProcessEvents(SDL_Renderer* renderer) {
         if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) {
             mouseLeftDown = false;
             mouseLeftReleased = true;
+        }
+        // 右键：只记录 down 边沿（开镜切换唯一来源）
+        if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_RIGHT) {
+            mouseRightDown = true;
+            mouseRightClicked = true;
+        }
+        if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_RIGHT) {
+            mouseRightDown = false;
+        }
+
+        // 窗口焦点：失焦时清空所有 held 状态与边沿，避免「回来后还按着」
+        if (event.type == SDL_WINDOWEVENT) {
+            if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
+                windowFocused = true;
+            } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                windowFocused = false;
+                mouseLeftDown = false;
+                mouseRightDown = false;
+                mouseLeftClicked = false;
+                mouseLeftReleased = false;
+                mouseRightClicked = false;
+            }
         }
 
         if (event.type == SDL_KEYDOWN && event.key.repeat == 0) {

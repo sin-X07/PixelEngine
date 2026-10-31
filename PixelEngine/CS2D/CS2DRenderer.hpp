@@ -2,6 +2,8 @@
 #include "Tuning.hpp"
 #include "CS2DWorld.hpp"
 #include "Weapons/WeaponDef.hpp"
+#include "../Core/Types.hpp"
+#include "../Core/PresentationContract.hpp"
 #include <SDL2/SDL.h>
 #include <SDL_image.h>
 #include <vector>
@@ -25,6 +27,10 @@ struct SpriteDrawParams {
     float animTimer  = 0.0f;
     float deathTimer = 0.0f;
     Uint8 alpha      = 255;
+    // 契约 v1 第 5 节：阵营/标识只复用「已通过可见性剔除」的 sprite
+    Team  team        = Team::None;
+    bool  friendly    = false;   // 相对当前观察者
+    bool  localPlayer = false;   // 本地玩家自己
 };
 
 // 序列帧精灵图元数据：3 行 × 2 列，共 6 帧移动姿态
@@ -46,8 +52,10 @@ public:
 
     void SetWorld(const CS2DWorld* world);
 
+    // zoomMultiplier：开镜倍率（契约 v1 第 4 节）。GetZoom() 返回 base*multiplier，
+    // 逻辑视野半径始终按 baseZoom 计算，不因开镜改变敌人知情规则。
     void UpdateCamera(float playerCenterX, float playerCenterY,
-                      int viewportW, int viewportH);
+                      int viewportW, int viewportH, float zoomMultiplier = 1.0f);
 
     // 背景 + tile 层
     void DrawWorld();
@@ -58,6 +66,12 @@ public:
 
     // 子弹 / 准星
     void DrawBullet(float x, float y, float vx, float vy);
+    // 枪弹视觉段（契约 v1 第 6 节）：数据由 CS2DGame 产出，这里只绘制。
+    // 注意：表现实现归 UI 方（PIX-17）；当前为可运行的最小占位实现。
+    void DrawBulletVisuals(const std::vector<Presentation::BulletVisualSegment>& segments);
+    // 开镜覆盖层（契约 v1 第 4 节）：表现实现归 UI 方（PIX-10）；
+    // 当前为可运行的最小占位实现，接线与调用时序由功能方保证。
+    void DrawScopeOverlay(const Presentation::ScopeView& scope, int viewW, int viewH);
     // 飞行中的投掷物：按类型画对应的旋转图标（替代原来的 bullet 占位）
     void DrawThrownGrenade(int weaponId, float worldX, float worldY, float spinDeg);
     // 掉在地上的武器：用 _d 图标（与 HUD 同一套素材），带轻微上下浮动

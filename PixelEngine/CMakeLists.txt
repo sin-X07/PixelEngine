@@ -82,6 +82,7 @@ set(SOURCES
     Engine.cpp
     Engine.hpp
     Core/Types.hpp
+    Core/PresentationContract.hpp
     Core/PathUtils.hpp
     Core/UiTextChars.hpp
     Core/IniFile.hpp
@@ -90,6 +91,8 @@ set(SOURCES
     Input/InputManager.cpp
     Graphics/ImGuiUI.cpp
     Graphics/GameUI.cpp
+    Graphics/WeaponIconCache.cpp
+    Graphics/WeaponIconCache.hpp
     Graphics/Menu3D.cpp
     Graphics/Menu3DModel.cpp
     Storage/SaveManager.cpp
@@ -171,3 +174,39 @@ add_custom_command(TARGET EngineApp POST_BUILD
         "$<TARGET_FILE_DIR:EngineApp>/assets"
     COMMENT "Copying assets next to EngineApp executable"
 )
+
+# ---- 玩法回归测试（无窗口 / 无渲染器）----
+# 只链接玩法层：去掉 main.cpp / Engine.cpp（应用外壳与 ImGui/Menu3D 不需要），
+# 复用其余源码，保证测试跑的子树与游戏一致。
+option(BUILD_GAMEPLAY_TESTS "Build headless gameplay regression tests" OFF)
+if(BUILD_GAMEPLAY_TESTS)
+    set(TEST_SOURCES ${SOURCES})
+    list(REMOVE_ITEM TEST_SOURCES main.cpp Engine.cpp Engine.hpp)
+    add_executable(gameplay_tests
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/buy_scope_test.cpp"
+        ${TEST_SOURCES}
+    )
+    target_include_directories(gameplay_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/imgui
+        ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/imgui/backends
+    )
+    # 不链接 SDL2main，也不让 SDL_main.h 把 main 重命名成 SDL_main
+    target_compile_definitions(gameplay_tests PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(gameplay_tests PRIVATE
+        SDL2::SDL2
+        SDL2_mixer::SDL2_mixer-static
+        SDL2_image::SDL2_image-static
+    )
+    if(WIN32)
+        target_link_libraries(gameplay_tests PRIVATE ws2_32 winhttp opengl32)
+    elseif(APPLE)
+        find_library(OPENGL_FRAMEWORK_TEST OpenGL REQUIRED)
+        target_link_libraries(gameplay_tests PRIVATE ${OPENGL_FRAMEWORK_TEST})
+    endif()
+    if(MINGW)
+        # 测试是控制台程序，且不链接 SDL2main（避免 main→SDL_main 重命名），
+        # 显式选择控制台启动对象
+        target_link_options(gameplay_tests PRIVATE -mconsole -static -static-libgcc -static-libstdc++)
+    endif()
+endif()

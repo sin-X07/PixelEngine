@@ -1427,7 +1427,25 @@ void GameUI::DrawHistory(const HistoryCtx& ctx, const Actions& actions) {
     ImGui::PopStyleVar(2);
 }
 
-void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx, const std::function<void(int)>& onBuy) {
+// 购买失败码 → 中文文案（契约 v1 第 3 节：执行期失败也必须显示对应原因）
+static const char* BuyCodeText(Presentation::BuyCode code) {
+    switch (code) {
+        case Presentation::BuyCode::Ok:                return "";
+        case Presentation::BuyCode::InvalidItem:       return "该物品不可购买";
+        case Presentation::BuyCode::PlayerDead:        return "阵亡状态下无法购买";
+        case Presentation::BuyCode::WindowClosed:      return "当前不是购买阶段";
+        case Presentation::BuyCode::OutsideBuyZone:    return "不在购买区内";
+        case Presentation::BuyCode::TeamRestricted:    return "本阵营无法购买该武器";
+        case Presentation::BuyCode::InsufficientFunds: return "余额不足";
+        case Presentation::BuyCode::InventoryFull:     return "投掷物已满 4 个";
+        case Presentation::BuyCode::ItemLimitReached:  return "该投掷物已达携带上限";
+        case Presentation::BuyCode::AlreadyEquipped:   return "已装备";
+    }
+    return "无法购买";
+}
+
+void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
+    const std::function<Presentation::BuyResult(const Presentation::BuyRequest&)>& onBuy) {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float w = UI(600.0f);
     // 高度跟着视口走，小窗口也不会被裁掉；内容超出时右侧出现滚动条
@@ -1442,14 +1460,24 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx, const std::function<void(int)>& 
                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
+    // 一帧最多提交一次购买请求：提交后本帧其余条目只显示旧快照
+    bool submittedThisFrame = false;
+    int  displayMoney = ctx.money;
+    // 上一条结果提示（UI 自己保存，不写 CS2DGame）
+    static std::string flashText;
+    static float       flashUntil = -1.0f;
+
     ImGui::TextColored(ImVec4(0.95f, 0.82f, 0.35f, 1.0f), "购买菜单");
     ImGui::SameLine(0.0f, UI(24.0f));
-    ImGui::Text("余额: $%d", ctx.money);
+    ImGui::Text("余额: $%d", displayMoney);
     ImGui::SameLine(0.0f, UI(24.0f));
     ImGui::TextDisabled("[B] 关闭");
 
     if (!ctx.canBuy && !ctx.hint.empty()) {
         ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "%s", ctx.hint.c_str());
+    }
+    if (!flashText.empty() && ImGui::GetTime() < flashUntil) {
+        ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "%s", flashText.c_str());
     }
     ImGui::Separator();
 
@@ -1467,16 +1495,43 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx, const std::function<void(int)>& 
                 col = 0;
             }
 
-            const bool enabled = ctx.canBuy && it.affordable && !it.owned;
-            if (!enabled) ImGui::BeginDisabled();
+            // 禁用判定以新字段 availability 为准（canBuy/affordable/owned 仅兼容）
+            const bool enabled = ctx.canBuy && !submittedThisFrame &&
+                                 it.availability == Presentation::BuyCode::Ok;
+            const char* reason = BuyCodeText(it.availability);
 
-            char label[128];
-            snprintf(label, sizeof(label), "%s  $%d%s",
-                     it.name.c_str(), it.price, it.owned ? " (已装备)" : "");
-            if (ImGui::Button(label, ImVec2(UI(182.0f), 0.0f))) {
-                if (onBuy) onBuy(it.weaponId);
+            if (!enabled) {
+                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.12f, 0.14f, 0.17f, 0.85f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.12f, 0.14f, 0.17f, 0.85f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.12f, 0.14f, 0.17f, 0.85f));
+                ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.55f, 0.58f, 0.62f, 1.0f));
             }
-            if (!enabled) ImGui::EndDisabled();
+
+            char label[160];
+            snprintf(label, sizeof(label), "%s  $%d%s", it.name.c_str(), it.price,
+                     (it.availability == Presentation::BuyCode::AlreadyEquipped) ? " (已装备)"
+                     : (it.availability == Presentation::BuyCode::ItemLimitReached) ? " (已带满)"
+                     : "");
+            if (ImGui::Button(label, ImVec2(UI(182.0f), 0.0f)) && onBuy) {
+                const Presentation::BuyResult res = onBuy(it.request);
+                submittedThisFrame = true;
+                if (res.code == Presentation::BuyCode::Ok) {
+                    displayMoney = res.moneyAfter;
+                    flashText = std::string(it.name) + " 已购买";
+                    flashUntil = static_cast<float>(ImGui::GetTime()) + 1.6f;
+                } else {
+                    flashText = std::string(it.name) + ": " + BuyCodeText(res.code);
+                    flashUntil = static_cast<float>(ImGui::GetTime()) + 2.2f;
+                }
+            }
+            // disabled 项也允许悬停读原因
+            if (!enabled && !reason[0] && ctx.hint.size()) reason = ctx.hint.c_str();
+            if (!enabled && reason[0] &&
+                ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("%s", reason);
+            }
+
+            if (!enabled) ImGui::PopStyleColor(4);
 
             ++col;
             if (col % 3 != 0) ImGui::SameLine();

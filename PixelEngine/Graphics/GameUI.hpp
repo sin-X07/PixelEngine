@@ -1,5 +1,6 @@
 #pragma once
 #include "../Core/Types.hpp"
+#include "../Core/PresentationContract.hpp"
 #include "../Storage/MatchHistory.hpp"
 #include <array>
 #include <functional>
@@ -7,6 +8,7 @@
 #include <vector>
 
 class ImGuiUI;
+class WeaponIconCache;
 
 // ============================================================================
 // GameUI — ImGui 业务层（菜单 + 游戏内 HUD 文字）
@@ -202,6 +204,10 @@ public:
         bool   bombDropped    = false;   // C4 掉在地上
         bool   bombIntel      = false;   // CT 已知掉落 C4 的位置
         float  plantProgress  = 0.0f;   // 0~1
+
+        // 契约 v1 第 4、5 节：阵营与开镜状态（UI 只读，不维护第二套玩法状态）
+        Team playerTeam = Team::None;
+        Presentation::ScopeView scope{};
 };
 
     void DrawMenu(const MenuCtx& ctx, const Actions& actions);
@@ -222,7 +228,10 @@ public:
     void DrawHistory(const HistoryCtx& ctx, const Actions& actions);
 
     // 阵营选择弹窗（爆破模式，进入游戏后弹出）
-    struct SideSelectCtx { std::string mapName; };
+    struct SideSelectCtx {
+        std::string mapName;
+        bool bombMode = false;   // 由 Engine 按实际 MatchMode 填充（契约 v1 第 5 节）
+    };
     // 旧版独立选阵营页；当前流程不再进入，仅保留兼容实现。
     void DrawSideSelect(const SideSelectCtx& ctx, const Actions& actions);
     // 进入游戏后的阵营选择弹窗（半透明遮罩 + 居中面板）
@@ -234,7 +243,7 @@ public:
 
     // ---- 买枪菜单 ----
     struct BuyItem {
-        int         weaponId = 0;   // kind==0 时有效
+        int         weaponId = 0;   // kind==0 时有效（护甲的负数编码只作兼容）
         int         kind = 0;       // 0=武器 1=护甲
         int         armorTier = 0;  // kind==1 时有效: 1=护甲 2=护甲+头盔
         std::string name;
@@ -242,17 +251,32 @@ public:
         bool        affordable = false;
         bool        owned = false;
         int         group = 0;      // 0=主武器 1=副武器 2=近战 3=投掷物 4=护甲
+
+        // ---- 契约 v1 第 3 节新增字段（新回调只读 request）----
+        Presentation::BuyRequest request{};
+        Presentation::BuyCode    availability = Presentation::BuyCode::InvalidItem;
+        std::string iconPath;       // WeaponDB.iconPath 的复制；护甲为空
+        std::string categoryLabel;
+        int         magazine = 0;
+        bool        automatic = false;
+        bool        scopeSupported = false;
     };
     struct BuyMenuCtx {
         std::vector<BuyItem> items;
         int         money = 0;
-        bool        canBuy = false;   // 是否在购买期 + 购买区内
+        bool        canBuy = false;   // 是否在购买期 + 购买区内（兼容字段）
         std::string hint;
+        Team        playerTeam = Team::None;   // 契约 v1 第 5 节
     };
-    void DrawBuyMenu(const BuyMenuCtx& ctx, const std::function<void(int)>& onBuy);
+    void DrawBuyMenu(const BuyMenuCtx& ctx,
+        const std::function<Presentation::BuyResult(const Presentation::BuyRequest&)>& onBuy);
+
+    // 武器图标缓存（非 owning 借用；由 Engine 管理生命周期）
+    void SetWeaponIconCache(WeaponIconCache* cache) { weaponIconCache_ = cache; }
 
     void SetImGuiUI(ImGuiUI* ui) { imGuiUI_ = ui; }
 
 private:
     ImGuiUI* imGuiUI_ = nullptr;
+    WeaponIconCache* weaponIconCache_ = nullptr;
 };

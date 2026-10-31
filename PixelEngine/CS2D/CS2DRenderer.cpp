@@ -275,21 +275,28 @@ bool CS2DRenderer::FindTileSrc(int gid, SDL_Texture*& outTex, SDL_Rect& outSrc) 
 // ============================================================================
 
 void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
-                                int viewportW, int viewportH) {
+                                int viewportW, int viewportH, float zoomMultiplier) {
     if (!world_) return;
 
     // 视野是半径 VISION_RADIUS 的圆：把镜头缩放到「整圆刚好装进较窄的那一屏边」
     const float minView = static_cast<float>(std::min(viewportW, viewportH));
     const float fitZoom = minView / (2.0f * VISION_RADIUS);
-    zoom_ = std::clamp(fitZoom, 1.2f, 6.0f);
+    const float baseZoom = std::clamp(fitZoom, 1.2f, 6.0f);
+
+    // 开镜只乘一次倍率：zoom_ 就是实际倍率，GetZoom()/UpdateCursor 不得再乘
+    zoomMultiplier = std::clamp(zoomMultiplier, 0.25f, 4.0f);
+    zoom_ = baseZoom * zoomMultiplier;
 
     const float viewW = static_cast<float>(viewportW) / zoom_;
     const float viewH = static_cast<float>(viewportH) / zoom_;
 
     // 玩家视野：正前方要能看到屏幕边缘，但必须有上限，避免 BOT 在屏幕外开火。
     // 加一个软边宽度，让屏幕四角落在"完全点亮"区内，而不是刚好卡在雾边。
-    const float halfW = viewW * 0.5f;
-    const float halfH = viewH * 0.5f;
+    // 关键：按 baseZoom 计算（不是开镜后的 zoom_），否则开镜会缩小敌人知情半径。
+    const float baseViewW = static_cast<float>(viewportW) / baseZoom;
+    const float baseViewH = static_cast<float>(viewportH) / baseZoom;
+    const float halfW = baseViewW * 0.5f;
+    const float halfH = baseViewH * 0.5f;
     const float screenHalfDiag = std::sqrt(halfW * halfW + halfH * halfH);
     visionRadius_ = std::clamp(screenHalfDiag + VISION_SOFT_EDGE, VISION_RADIUS,
                                MAX_PLAYER_VISION_RADIUS);
@@ -816,6 +823,129 @@ void CS2DRenderer::DrawBullet(float x, float y, float vx, float vy) {
     // bullet.png 竖直朝上，+90° 使其沿速度方向对齐
     const double angle = std::atan2(vy, vx) * 180.0 / 3.14159265358979323846 + 90.0;
     SDL_RenderCopyEx(renderer_, bulletTex_, nullptr, &dst, angle, nullptr, SDL_FLIP_NONE);
+}
+
+// ---------------------------------------------------------------------------
+// 枪弹视觉段（契约 v1 第 6 节）
+// 最小占位实现：按 remaining/duration 淡出、逻辑像素宽度 1.5~3、长度上限 24px，
+// 并按地图阻挡瓦片裁剪。表现细节归 UI 方（PIX-17）替换，这里保证可运行且不丢弹道。
+// ---------------------------------------------------------------------------
+void CS2DRenderer::DrawBulletVisuals(
+    const std::vector<Presentation::BulletVisualSegment>& segments) {
+    if (!renderer_ || segments.empty()) return;
+
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    for (const auto& s : segments) {
+        const float life = (s.durationSeconds > 0.0f)
+                               ? std::clamp(s.remainingSeconds / s.durationSeconds, 0.0f, 1.0f)
+                               : 0.0f;
+        if (life <= 0.0f) continue;
+
+        // 从起点向终点推进，遇到阻挡瓦片就截断（不宣称是精确命中点）
+        float toX = s.toX, toY = s.toY;
+        if (world_) {
+            const float dx = s.toX - s.fromX;
+            const float dy = s.toY - s.fromY;
+            const float dist = std::sqrt(dx * dx + dy * dy);
+            const int steps = std::max(1, static_cast<int>(dist / 2.0f));
+            for (int i = 1; i <= steps; ++i) {
+                const float t = static_cast<float>(i) / static_cast<float>(steps);
+                const float px = s.fromX + dx * t;
+                const float py = s.fromY + dy * t;
+                int row = 0, col = 0;
+                world_->WorldToTile(px, py, row, col);
+                if (world_->IsBlockingBullet(row, col)) {
+                    const float tb = static_cast<float>(i - 1) / static_cast<float>(steps);
+                    toX = s.fromX + dx * tb;
+                    toY = s.fromY + dy * tb;
+                    break;
+                }
+            }
+        }
+
+        // 屏幕坐标 + 长度上限（逻辑像素 24）
+        float x0 = (s.fromX - cameraX_) * zoom_;
+        float y0 = (s.fromY - cameraY_) * zoom_;
+        float x1 = (toX - cameraX_) * zoom_;
+        float y1 = (toY - cameraY_) * zoom_;
+        const float len = std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+        constexpr float kMaxLen = 24.0f;
+        if (len > kMaxLen && len > 0.0f) {
+            const float k = kMaxLen / len;
+            x0 = x1 - (x1 - x0) * k;
+            y0 = y1 - (y1 - y0) * k;
+        }
+
+        const Uint8 alpha = static_cast<Uint8>(235.0f * life);
+        // 枪弹用暖白；命中段略亮，射程到期段略暗
+        SDL_SetRenderDrawColor(renderer_, 255,
+                               s.impact ? 232 : 220,
+                               s.impact ? 180 : 160,
+                               alpha);
+        // SDL 没有画线粗细：按 1.5~3 逻辑像素画 1~3 条平行线
+        const int w = 1 + static_cast<int>(life * 2.0f);
+        const float dx = x1 - x0, dy = y1 - y0;
+        const float len2 = std::sqrt(dx * dx + dy * dy);
+        const float nx = (len2 > 0.001f) ? -dy / len2 : 0.0f;
+        const float ny = (len2 > 0.001f) ? dx / len2 : 1.0f;
+        for (int i = 0; i < w; ++i) {
+            const float off = static_cast<float>(i) - (static_cast<float>(w) - 1.0f) * 0.5f;
+            SDL_RenderDrawLineF(renderer_,
+                                x0 + nx * off, y0 + ny * off,
+                                x1 + nx * off, y1 + ny * off);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 开镜覆盖层（契约 v1 第 4 节）
+// 最小占位实现：按 transition 收拢的暗角 + 镜筒圆环 + 中心准星。
+// 只使用已有 logicalW/H 坐标，不做命中或相机计算；表现归 UI 方（PIX-10）替换。
+// ---------------------------------------------------------------------------
+void CS2DRenderer::DrawScopeOverlay(const Presentation::ScopeView& scope,
+                                    int viewW, int viewH) {
+    if (!renderer_) return;
+    const float t = std::clamp(scope.transition, 0.0f, 1.0f);
+    if (t <= 0.001f || viewW <= 0 || viewH <= 0) return;
+
+    const float cx = static_cast<float>(viewW) * 0.5f;
+    const float cy = static_cast<float>(viewH) * 0.5f;
+    const float minDim = static_cast<float>(std::min(viewW, viewH));
+    // 窗口从整屏收拢到 0.84 * 短边，过渡完成即是"镜筒"
+    const float half = minDim * (0.5f - 0.08f * t);
+
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer_, 4, 6, 8, static_cast<Uint8>(215.0f * t));
+    const SDL_FRect top    = { 0.0f, 0.0f, static_cast<float>(viewW), cy - half };
+    const SDL_FRect bottom = { 0.0f, cy + half, static_cast<float>(viewW), cy - half };
+    const SDL_FRect left   = { 0.0f, cy - half, cx - half, half * 2.0f };
+    const SDL_FRect right  = { cx + half, cy - half, cx - half, half * 2.0f };
+    SDL_RenderFillRectF(renderer_, &top);
+    SDL_RenderFillRectF(renderer_, &bottom);
+    SDL_RenderFillRectF(renderer_, &left);
+    SDL_RenderFillRectF(renderer_, &right);
+
+    // 镜筒边缘：一圈深色 + 一圈细亮线
+    SDL_SetRenderDrawColor(renderer_, 12, 16, 20, static_cast<Uint8>(200.0f * t));
+    for (int i = 0; i < 6; ++i) {
+        const float rr = half - static_cast<float>(i);
+        SDL_FRect ring = { cx - rr, cy - rr, rr * 2.0f, rr * 2.0f };
+        SDL_RenderDrawRectF(renderer_, &ring);
+    }
+    SDL_SetRenderDrawColor(renderer_, 210, 225, 235, static_cast<Uint8>(110.0f * t));
+    SDL_FRect ring = { cx - half, cy - half, half * 2.0f, half * 2.0f };
+    SDL_RenderDrawRectF(renderer_, &ring);
+
+    // 中心准星：小圆 + 十字，幅度随 t 收敛
+    const float dot = 2.0f;
+    SDL_SetRenderDrawColor(renderer_, 235, 245, 250, static_cast<Uint8>(220.0f * t));
+    SDL_FRect center = { cx - dot, cy - dot, dot * 2.0f, dot * 2.0f };
+    SDL_RenderFillRectF(renderer_, &center);
+    const float tick = 10.0f + 6.0f * t;
+    SDL_RenderDrawLineF(renderer_, cx - tick, cy, cx - dot * 2.0f, cy);
+    SDL_RenderDrawLineF(renderer_, cx + dot * 2.0f, cy, cx + tick, cy);
+    SDL_RenderDrawLineF(renderer_, cx, cy - tick, cx, cy - dot * 2.0f);
+    SDL_RenderDrawLineF(renderer_, cx, cy + dot * 2.0f, cx, cy + tick);
 }
 
 void CS2DRenderer::DrawThrownGrenade(int weaponId, float worldX, float worldY,

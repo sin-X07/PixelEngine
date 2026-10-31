@@ -78,6 +78,9 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
         bots_.clear();
         botAi_.clear();
         bullets_.clear();
+        bulletVisuals_.clear();
+        nextBulletVisualId_ = 1;
+        ResetScope(Presentation::ScopeResetReason::MatchExit);
         player_ = Player{};
         player_.alive = false;
     }
@@ -89,6 +92,10 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
 void CS2DGame::ResetToNewMatch() {
     bots_.clear();
     bullets_.clear();
+    bulletVisuals_.clear();
+    nextBulletVisualId_ = 1;
+    // 新一局/换队：开镜立即归零
+    ResetScope(Presentation::ScopeResetReason::RoundRestart);
     grenades_.clear();
     smokes_.clear();
     fires_.clear();
@@ -193,79 +200,183 @@ bool CS2DGame::IsPlayerInBuyZone() const {
     return false;
 }
 
-bool CS2DGame::TryBuy(WeaponId id, AudioManager* audio) {
-    if (id == WeaponId::None) return false;
-    if (!IsBuyPhase()) return false;
-    if (!player_.alive) return false;
-    if (!IsPlayerInBuyZone()) return false;
+// ---------------------------------------------------------------------------
+// 购买契约 v1（第 3 节）：判定 / 提交 / 兼容包装
+// ---------------------------------------------------------------------------
 
-    const WeaponDef& def = WeaponDB::Get(id);
-    if (def.price <= 0) return false;
-    // 阵营隔离（照抄 CS2）：本阵营不能购买的枪一律拒绝
-    if (!WeaponDB::TeamAllowed(id, player_.team == Team::T)) return false;
-    if (player_.money < def.price) return false;
+// 只看「时窗」：死斗没有回合计时（区域与存活由调用方分别判断），
+// 其余模式复用 round_.Elapsed() 与原比赛结束规则。
+// 不能直接用 IsBuyPhase()：它把区域/存活/模式混在一起，会让失败原因错位。
+bool CS2DGame::IsBuyWindowOpen() const {
+    if (mode_ == MatchMode::DeathMatch) return true;
+    if (teams_.MatchOver()) return false;
+    return round_.Elapsed() <= Tuning::BuyWindowSeconds;
+}
 
+int CS2DGame::PurchasePriceOf(const Presentation::BuyRequest& request) const {
+    if (request.kind == Presentation::BuyKind::Armor) {
+        if (request.armorTier == 1) return 650;
+        if (request.armorTier == 2) return 1000;
+        return 0;
+    }
+    const int idx = static_cast<int>(request.weapon);
+    if (idx <= 0 || idx >= WeaponDB::kWeaponCount) return 0;
+    return WeaponDB::Get(request.weapon).price;
+}
+
+int CS2DGame::PurchaseQuantityOf(const Presentation::BuyRequest& request) const {
+    if (request.kind == Presentation::BuyKind::Armor) {
+        // tier1 = 满甲即已拥有；tier2 = 满甲且有头盔才算已拥有
+        if (player_.armor >= 100 &&
+            (request.armorTier == 1 || player_.helmet)) {
+            return 1;
+        }
+        return 0;
+    }
+    const WeaponDef& def = WeaponDB::Get(request.weapon);
     switch (def.slot) {
-        case WeaponSlotKind::Primary:
-            player_.SetSlotWeapon(0, id);
-            player_.weaponSlot = 0;
-            player_.LoadAmmoFromSlot();
-            player_.reloading = false;
-            player_.reloadTimer = 0.0f;
-            playerHoldingC4_ = false;
-            break;
-        case WeaponSlotKind::Secondary:
-            player_.SetSlotWeapon(1, id);
-            player_.weaponSlot = 1;
-            player_.LoadAmmoFromSlot();
-            player_.reloading = false;
-            player_.reloadTimer = 0.0f;
-            playerHoldingC4_ = false;
-            break;
-        case WeaponSlotKind::Melee:
-            player_.weapons[2] = id;
-            break;
-        case WeaponSlotKind::Grenade: {
-            if (player_.grenadeCount >= Player::MAX_GRENADES) return false;
-            // 闪光最多 2 个，其它每种最多 1 个
-            const int limit = (id == WeaponId::GrenadeFlash) ? 2 : 1;
-            if (player_.CountGrenade(id) >= limit) return false;
-            player_.grenades[player_.grenadeCount++] = id;
-            player_.SyncActiveGrenade();
-            break;
+        case WeaponSlotKind::Primary:   return (player_.weapons[0] == request.weapon) ? 1 : 0;
+        case WeaponSlotKind::Secondary: return (player_.weapons[1] == request.weapon) ? 1 : 0;
+        case WeaponSlotKind::Melee:     return (player_.weapons[2] == request.weapon) ? 1 : 0;
+        case WeaponSlotKind::Grenade:   return player_.CountGrenade(request.weapon);
+    }
+    return 0;
+}
+
+Presentation::BuyCode CS2DGame::EvaluatePurchase(
+    const Presentation::BuyRequest& request) const {
+    using Presentation::BuyCode;
+
+    // 1) 非法请求 / 非售卖项：先校验 enum，再索引 WeaponDB
+    if (request.kind == Presentation::BuyKind::Armor) {
+        if (request.armorTier < 1 || request.armorTier > 2) return BuyCode::InvalidItem;
+    } else {
+        const int idx = static_cast<int>(request.weapon);
+        if (idx <= 0 || idx >= WeaponDB::kWeaponCount) return BuyCode::InvalidItem;
+        const WeaponDef& def = WeaponDB::Get(request.weapon);
+        if (def.price <= 0) return BuyCode::InvalidItem;                    // 刀 / C4 不售卖
+        if (def.slot == WeaponSlotKind::Melee) return BuyCode::InvalidItem;
+    }
+
+    // 2) 存活 → 时窗 → 区域 → 阵营（固定优先序，保证失败原因稳定可测）
+    if (!player_.alive) return BuyCode::PlayerDead;
+    if (!IsBuyWindowOpen()) return BuyCode::WindowClosed;
+    if (!IsPlayerInBuyZone()) return BuyCode::OutsideBuyZone;
+    if (request.kind == Presentation::BuyKind::Weapon &&
+        !WeaponDB::TeamAllowed(request.weapon, player_.team == Team::T)) {
+        return BuyCode::TeamRestricted;
+    }
+
+    // 3) 已拥有：同一把主/副武器不再重复扣款补弹；
+    //    投掷物可叠加，容量由下一步的 InventoryFull / ItemLimitReached 判定
+    {
+        const bool isGrenade =
+            request.kind == Presentation::BuyKind::Weapon &&
+            WeaponDB::Get(request.weapon).slot == WeaponSlotKind::Grenade;
+        if (!isGrenade && PurchaseQuantityOf(request) > 0) {
+            return BuyCode::AlreadyEquipped;
         }
     }
 
-    player_.money -= def.price;
-    economy_.Clamp(player_.money);
+    // 4) 投掷物容量：总数 → 同类数量
+    if (request.kind == Presentation::BuyKind::Weapon) {
+        const WeaponDef& def = WeaponDB::Get(request.weapon);
+        if (def.slot == WeaponSlotKind::Grenade) {
+            if (player_.grenadeCount >= Player::MAX_GRENADES) return BuyCode::InventoryFull;
+            const int limit = (request.weapon == WeaponId::GrenadeFlash) ? 2 : 1;
+            if (player_.CountGrenade(request.weapon) >= limit) {
+                return BuyCode::ItemLimitReached;
+            }
+        }
+    }
 
-    std::cout << "[Buy] " << def.name << " ($" << def.price
-              << ") 余额 $" << player_.money << std::endl;
+    // 5) 金额
+    const int price = PurchasePriceOf(request);
+    if (price <= 0) return BuyCode::InvalidItem;
+    if (player_.money < price) return BuyCode::InsufficientFunds;
+
+    return BuyCode::Ok;
+}
+
+Presentation::BuyResult CS2DGame::ExecutePurchase(
+    const Presentation::BuyRequest& request, AudioManager* audio) {
+    Presentation::BuyResult result;
+    result.request = request;
+    result.code = EvaluatePurchase(request);      // 点击时重新判定
+    result.moneyAfter = player_.money;
+    result.quantityAfter = PurchaseQuantityOf(request);
+
+    if (result.code != Presentation::BuyCode::Ok) {
+        return result;                            // 失败：金额 / 装备 / 音效都不动
+    }
+
+    if (request.kind == Presentation::BuyKind::Armor) {
+        const int tier  = request.armorTier;
+        const int price = PurchasePriceOf(request);
+        player_.money -= price;
+        economy_.Clamp(player_.money);
+        player_.armor = 100;
+        if (tier == 2) player_.helmet = true;
+        std::cout << "[Buy] " << (tier == 2 ? "护甲+头盔" : "护甲")
+                  << " ($" << price << ") 余额 $" << player_.money << std::endl;
+    } else {
+        const WeaponDef& def = WeaponDB::Get(request.weapon);
+        switch (def.slot) {
+            case WeaponSlotKind::Primary:
+                player_.SetSlotWeapon(0, request.weapon);
+                player_.weaponSlot = 0;
+                player_.LoadAmmoFromSlot();
+                player_.reloading = false;
+                player_.reloadTimer = 0.0f;
+                playerHoldingC4_ = false;
+                break;
+            case WeaponSlotKind::Secondary:
+                player_.SetSlotWeapon(1, request.weapon);
+                player_.weaponSlot = 1;
+                player_.LoadAmmoFromSlot();
+                player_.reloading = false;
+                player_.reloadTimer = 0.0f;
+                playerHoldingC4_ = false;
+                break;
+            case WeaponSlotKind::Melee:
+                player_.weapons[2] = request.weapon;
+                break;
+            case WeaponSlotKind::Grenade:
+                player_.grenades[player_.grenadeCount++] = request.weapon;
+                player_.SyncActiveGrenade();
+                break;
+        }
+        player_.money -= def.price;
+        economy_.Clamp(player_.money);
+        std::cout << "[Buy] " << def.name << " ($" << def.price
+                  << ") 余额 $" << player_.money << std::endl;
+        // 购买替换了当前手持武器 → 开镜必须归零
+        if (def.slot == WeaponSlotKind::Primary || def.slot == WeaponSlotKind::Secondary) {
+            ResetScope(Presentation::ScopeResetReason::WeaponChanged);
+        }
+    }
+
     if (audio) audio->PlaySound(SoundEffect::EQUIP);
-        return true;
+    result.moneyAfter = player_.money;
+    result.quantityAfter = PurchaseQuantityOf(request);
+    return result;
+}
+
+// 兼容包装：旧调用点保持原签名，成功只执行一次，不递归、不重复扣款。
+bool CS2DGame::TryBuy(WeaponId id, AudioManager* audio) {
+    Presentation::BuyRequest r;
+    r.kind   = Presentation::BuyKind::Weapon;
+    r.weapon = id;
+    return ExecutePurchase(r, audio).code == Presentation::BuyCode::Ok;
 }
 
 // 购买护甲：tier 1=护甲($650) 2=护甲+头盔($1000)
 bool CS2DGame::TryBuyArmor(int tier, AudioManager* audio) {
-    if (tier < 1 || tier > 2) return false;
-    if (!IsBuyPhase() || !player_.alive || !IsPlayerInBuyZone()) return false;
-
-    const int price = (tier == 1) ? 650 : 1000;
-    if (player_.money < price) return false;
-
-    // 已满甲（且已带头盔，或本次只买护甲）则无需重复购买
-    if (player_.armor >= 100 && (tier == 1 || player_.helmet)) return false;
-
-    player_.money -= price;
-    economy_.Clamp(player_.money);
-
-    player_.armor = 100;
-    if (tier == 2) player_.helmet = true;
-
-    std::cout << "[Buy] " << (tier == 2 ? "护甲+头盔" : "护甲")
-              << " ($" << price << ") 余额 $" << player_.money << std::endl;
-    if (audio) audio->PlaySound(SoundEffect::EQUIP);
-        return true;
+    Presentation::BuyRequest r;
+    r.kind      = Presentation::BuyKind::Armor;
+    r.weapon    = WeaponId::None;
+    r.armorTier = tier;
+    return ExecutePurchase(r, audio).code == Presentation::BuyCode::Ok;
 }
 
 // ============================================================================
@@ -494,6 +605,8 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
     player_.reloading   = false;
     player_.reloadTimer = 0.0f;
     playerHoldingC4_ = (slot == 4);
+    // 切枪（含投掷物自动切回）→ 开镜立即归零
+    ResetScope(Presentation::ScopeResetReason::WeaponChanged);
 
     // 切枪有金属声，附近敌人能听见（半径见 Tuning::HearSwitchRadius）
     EmitSound(SoundEventType::WeaponSwitch, player_.x, player_.y, player_.team, -1);
@@ -532,6 +645,95 @@ std::string CS2DGame::GetWeaponNameFor(const Player& p) const {
 }
 
 // ============================================================================
+// 开镜（契约 v1 第 4 节）：玩法层唯一状态，表现层只读快照
+// ============================================================================
+
+bool CS2DGame::IsScopeSupported(WeaponId id) {
+    if (id == WeaponId::None) return false;
+    // 配置入口仍是 WeaponDef::scoped（狙 / AUG / SG553）
+    return WeaponDB::Get(id).scoped;
+}
+
+void CS2DGame::ResetScope(Presentation::ScopeResetReason reason) {
+    (void)reason;   // 重置原因只用于诊断；重置本身固定且幂等
+    const WeaponId cur = player_.CurrentWeapon().id;
+    scope_.weapon       = cur;
+    scope_.supported    = IsScopeSupported(cur);
+    scope_.active       = false;
+    scope_.transition   = 0.0f;
+    scope_.zoomMultiplier = 1.0f;
+}
+
+Presentation::ScopeView CS2DGame::GetScopeView() const {
+    Presentation::ScopeView view = scope_;
+    const WeaponId cur = player_.CurrentWeapon().id;
+    view.weapon    = cur;
+    view.supported = IsScopeSupported(cur);
+    if (!view.supported || !player_.alive) {
+        view.active         = false;
+        view.transition     = 0.0f;
+        view.zoomMultiplier = 1.0f;
+    }
+    return view;
+}
+
+void CS2DGame::UpdateScopeInput(bool rightClicked, bool gameplayInputAllowed) {
+    const WeaponId cur = player_.CurrentWeapon().id;
+
+    // 输入被挡住（暂停 / 买枪 / 选边 / 失焦 / 转场）：立即归零，且不消费边沿
+    if (!gameplayInputAllowed) {
+        ResetScope(Presentation::ScopeResetReason::InputBlocked);
+        return;
+    }
+    if (!player_.alive) {
+        ResetScope(Presentation::ScopeResetReason::PlayerDied);
+        return;
+    }
+    // 防御：当前武器与快照不一致（切枪 / 掉落 / 自动切回）→ 归零
+    if (cur != scope_.weapon) {
+        ResetScope(Presentation::ScopeResetReason::WeaponChanged);
+    }
+    if (player_.reloading) {
+        if (scope_.active) ResetScope(Presentation::ScopeResetReason::ReloadStarted);
+        return;
+    }
+    if (!rightClicked) return;
+    if (!IsScopeSupported(cur)) return;   // 不支持的武器不误触
+
+    scope_.supported = true;
+    scope_.weapon    = cur;
+    scope_.active    = !scope_.active;    // 右键一次切换开/关，无二级倍率
+}
+
+void CS2DGame::TickScope(float dt) {
+    const WeaponId cur = player_.CurrentWeapon().id;
+    scope_.weapon    = cur;
+    scope_.supported = IsScopeSupported(cur);
+    if (!player_.alive) {
+        ResetScope(Presentation::ScopeResetReason::PlayerDied);
+        return;
+    }
+    if (!scope_.supported) {
+        // 不支持开镜的武器：状态与过渡都必须归零
+        if (scope_.active || scope_.transition > 0.0f) {
+            ResetScope(Presentation::ScopeResetReason::WeaponChanged);
+        }
+        return;
+    }
+
+    const float target = scope_.active ? 1.0f : 0.0f;
+    const float step = (Presentation::kScopeTransitionSeconds > 0.0f)
+                           ? dt / Presentation::kScopeTransitionSeconds : 1.0f;
+    if (scope_.transition < target) {
+        scope_.transition = std::min(target, scope_.transition + step);
+    } else if (scope_.transition > target) {
+        scope_.transition = std::max(target, scope_.transition - step);
+    }
+    scope_.zoomMultiplier = 1.0f +
+        (Presentation::kScopeZoomMultiplier - 1.0f) * scope_.transition;
+}
+
+// ============================================================================
 // 每帧更新
 // ============================================================================
 
@@ -566,6 +768,9 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     if (!world_) return;
 
     clockSec_ += dt;
+
+    // 开镜过渡：每帧按 dt 逼近目标状态（0.12s 线性），与输入边沿解耦
+    TickScope(dt);
 
     // 切枪音效：SwitchWeaponSlot 只挂起，这里按刚切到的武器播放
     if (switchSoundPending_) {
@@ -764,6 +969,9 @@ void CS2DGame::GetTeamSpawnCenter(Team team, float& outX, float& outY) const {
 void CS2DGame::Render(int viewW, int viewH) {
     if (!renderer_ || !world_) return;
 
+    // 开镜是玩法层唯一状态：这里只取快照，不改状态
+    const Presentation::ScopeView scope = GetScopeView();
+
     // 观察者：镜头跟随队友或自由移动
     float camX = player_.x, camY = player_.y;
     if (IsSpectating()) {
@@ -775,7 +983,7 @@ void CS2DGame::Render(int viewW, int viewH) {
             camY = bots_[static_cast<size_t>(specTarget_)].y;
         }
     }
-    renderer_->UpdateCamera(camX, camY, viewW, viewH);
+    renderer_->UpdateCamera(camX, camY, viewW, viewH, scope.zoomMultiplier);
     renderer_->DrawWorld();
 
     // 烟雾画在地面层（视野雾之下）：角色、掉落物、目标标记都在它之上
@@ -789,7 +997,7 @@ void CS2DGame::Render(int viewW, int viewH) {
         renderer_->DrawFireZone(f.x, f.y, f.radius, f.age, f.life, f.maxLife, f.seed);
     }
 
-    auto fillParams = [](const Player& p, SpriteDrawParams& sp) {
+    auto fillParams = [this](const Player& p, SpriteDrawParams& sp) {
         sp.x          = p.x;
         sp.y          = p.y;
         sp.size       = p.size;
@@ -801,6 +1009,10 @@ void CS2DGame::Render(int viewW, int viewH) {
         sp.animTimer  = p.animTimer;
         sp.deathTimer = p.deathTimer;
         sp.alpha      = 255;
+        // 契约 v1 第 5 节：沿用 Team，不建立第二份阵营状态
+        sp.team        = p.team;
+        sp.friendly    = (p.team == player_.team);
+        sp.localPlayer = (&p == &player_);
     };
 
     // 队友始终可见；敌人按视野剔除
@@ -826,10 +1038,8 @@ void CS2DGame::Render(int viewW, int viewH) {
         renderer_->DrawCharacter(sp);
     }
 
-    for (const auto& b : bullets_) {
-        if (!b.active) continue;
-        renderer_->DrawBullet(b.x, b.y, b.vx, b.vy);
-    }
+    // 枪弹视觉段：玩法层已生成的唯一数据源，UI 只绘制（契约 v1 第 6 节）
+    renderer_->DrawBulletVisuals(GetBulletVisuals());
 
     // 投掷物
     for (const auto& g : grenades_) {
@@ -897,6 +1107,8 @@ void CS2DGame::Render(int viewW, int viewH) {
         renderer_->DrawVisionFog(player_.x, player_.y, player_.aimAngle);
     }
 
+    // 开镜覆盖层：世界雾之后、闪光覆盖之前（契约 v1 第 4 节）
+    renderer_->DrawScopeOverlay(scope, viewW, viewH);
 
     renderer_->DrawOverlay();
 

@@ -214,9 +214,46 @@ void CS2DGame::FireBullet(float x, float y, float angle, const WeaponDef& def,
 // 子弹
 // ============================================================================
 
+// 视觉段：只记录真实模拟位移（世界坐标），由表现层绘制；不改碰撞/伤害判定。
+void CS2DGame::AddBulletVisual(const Bullet& b, float fromX, float fromY,
+                               float toX, float toY, bool impact) {
+    Presentation::BulletVisualSegment seg;
+    seg.id               = nextBulletVisualId_++;
+    seg.weapon           = b.weapon;
+    seg.fromX            = fromX;
+    seg.fromY            = fromY;
+    seg.toX              = toX;
+    seg.toY              = toY;
+    seg.durationSeconds  = Presentation::kBulletVisualSeconds;
+    seg.remainingSeconds = Presentation::kBulletVisualSeconds;
+    seg.impact           = impact;   // 仅实际碰撞终止为 true；射程到期不算命中
+    bulletVisuals_.push_back(seg);
+
+    // 硬上限：超过 512 段丢最旧的
+    if (bulletVisuals_.size() > Presentation::kBulletVisualMaxSegments) {
+        const std::size_t drop =
+            bulletVisuals_.size() - Presentation::kBulletVisualMaxSegments;
+        bulletVisuals_.erase(bulletVisuals_.begin(), bulletVisuals_.begin() + drop);
+    }
+}
+
 void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
+    // 先让旧段随时间淡出，再加入本帧新段（寿命只在模拟里推进，Render 不消费）
+    for (auto& seg : bulletVisuals_) seg.remainingSeconds -= dt;
+    bulletVisuals_.erase(
+        std::remove_if(bulletVisuals_.begin(), bulletVisuals_.end(),
+                       [](const Presentation::BulletVisualSegment& s) {
+                           return s.remainingSeconds <= 0.0f;
+                       }),
+        bulletVisuals_.end());
+
     for (auto& bullet : bullets_) {
         if (!bullet.active) continue;
+
+        // 本步起点：段的两端都取实际模拟位置，不从速度反推
+        const float prevX = bullet.x;
+        const float prevY = bullet.y;
+        bool segImpact = false;
 
         const float stepX = bullet.vx * dt;
         const float stepY = bullet.vy * dt;
@@ -224,11 +261,19 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
         bullet.y += stepY;
         bullet.traveled += std::sqrt(stepX * stepX + stepY * stepY);
 
-        if (bullet.traveled >= bullet.maxDist) { bullet.active = false; continue; }
+        if (bullet.traveled >= bullet.maxDist) {
+            bullet.active = false;
+            AddBulletVisual(bullet, prevX, prevY, bullet.x, bullet.y, false);
+            continue;
+        }
 
         int row = 0, col = 0;
         world_->WorldToTile(bullet.x, bullet.y, row, col);
-        if (world_->IsBlockingBullet(row, col)) { bullet.active = false; continue; }
+        if (world_->IsBlockingBullet(row, col)) {
+            bullet.active = false;
+            AddBulletVisual(bullet, prevX, prevY, bullet.x, bullet.y, true);
+            continue;
+        }
 
         // ---- 命中 BOT ----
         for (size_t i = 0; i < bots_.size(); ++i) {
@@ -241,6 +286,7 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             if (dx * dx + dy * dy >= hitR * hitR) continue;
 
             bullet.active = false;
+            segImpact = true;   // 打中角色 = 实际碰撞终止
             const std::string victimName =
                 bot.name.empty() ? ("BOT#" + std::to_string(i)) : bot.name;
             {
@@ -331,6 +377,7 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             const float hitR = player_.size * 0.5f + 2.0f;
             if (dx * dx + dy * dy < hitR * hitR) {
                 bullet.active = false;
+                segImpact = true;   // 打中玩家 = 实际碰撞终止
                 damageFlashTimer_ = 0.30f;   // 玩家受伤反馈
                 if (audio) audio->PlaySound(player_.armor > 0 ? SoundEffect::ARMOR_HIT
                                                               : SoundEffect::HIT);
@@ -353,6 +400,10 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                 }
             }
         }
+
+        // 本步的视觉段：命中角色 / 命中玩家都在这里补上，
+        // 高速弹当帧失活也能留下可见的一段。
+        AddBulletVisual(bullet, prevX, prevY, bullet.x, bullet.y, segImpact);
     }
 
     bullets_.erase(std::remove_if(bullets_.begin(), bullets_.end(),
@@ -708,6 +759,11 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio, Player* ki
     victim.reloading = false;
     ++victim.deaths;
 
+    // 玩家阵亡 → 开镜立即归零（不依赖 game.Update 的 dt）
+    if (&victim == &player_) {
+        ResetScope(Presentation::ScopeResetReason::PlayerDied);
+    }
+
     // 倒地也会出声：附近单位听到后转向警戒（队友还会据此补枪）
     EmitSound(SoundEventType::Death, victim.x, victim.y, victim.team,
               (&victim == &player_) ? -1 : static_cast<int>(&victim - bots_.data()));
@@ -816,6 +872,8 @@ void CS2DGame::StartReload(Player& p, AudioManager* audio) {
 
     p.reloading   = true;
     p.reloadTimer = def.reloadTime;         // 每把枪不同，取自素材时长
+    // 换弹开始 → 开镜归零（玩家本体，BOT 无开镜状态）
+    if (&p == &player_) ResetScope(Presentation::ScopeResetReason::ReloadStarted);
 
     // 换弹声会暴露位置：附近敌人能听见（约 220px），可趁机前压
     {
@@ -1164,5 +1222,7 @@ void CS2DGame::DropCurrentWeapon() {
         std::cout << " 弹匣 " << dropMag << " 备弹 " << dropReserve;
     }
     std::cout << std::endl;
+    // 丢枪 → 开镜归零
+    ResetScope(Presentation::ScopeResetReason::WeaponChanged);
 }
 
