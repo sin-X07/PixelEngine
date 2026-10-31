@@ -287,9 +287,11 @@ void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
                                 int viewportW, int viewportH, float zoomMultiplier) {
     if (!world_) return;
 
-    // 视野是半径 VISION_RADIUS 的圆：把镜头缩放到「整圆刚好装进较窄的那一屏边」
+    // 视野是半径 VISION_RADIUS 的圆：先按「整圆刚好装进较窄的那一屏边」算 fit，
+    // 再整体放大 15% —— 画面更近、角色更大；四角雾边被裁掉属预期。
+    constexpr float kBaseZoomScale = 1.15f;
     const float minView = static_cast<float>(std::min(viewportW, viewportH));
-    const float fitZoom = minView / (2.0f * VISION_RADIUS);
+    const float fitZoom = minView / (2.0f * VISION_RADIUS) * kBaseZoomScale;
     const float baseZoom = std::clamp(fitZoom, 1.2f, 6.0f);
 
     // 开镜只乘一次倍率：zoom_ 就是实际倍率，GetZoom()/UpdateCursor 不得再乘
@@ -529,8 +531,13 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
         else if (p.friendly)    { rr = 88;  gg = 168; bb = 245; }   // 友军：蓝
 
         if (outline && outline->tex && p.animState != 3) {
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+            // 最近邻采样：1px 描边不会被双线性插值糊成 2px
+            SDL_SetTextureScaleMode(outline->tex, SDL_ScaleModeNearest);
+#endif
             SDL_SetTextureColorMod(outline->tex, rr, gg, bb);
-            SDL_SetTextureAlphaMod(outline->tex, alpha);
+            // 略降不透明度：1px 描边在放大后不会显得"重"
+            SDL_SetTextureAlphaMod(outline->tex, static_cast<Uint8>(alpha * 0.82f));
             // 轮廓素材本身就是外扩一圈，绘制框与本体相同即可贴合
             SDL_RenderCopyExF(renderer_, outline->tex, &src, &dst,
                               charAngle, &center, SDL_FLIP_NONE);

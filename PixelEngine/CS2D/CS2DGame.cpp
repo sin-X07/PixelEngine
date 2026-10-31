@@ -1098,8 +1098,9 @@ void CS2DGame::Render(int viewW, int viewH) {
     };
 
     // 队友始终可见；敌人按视野剔除。
-    // 死斗（一人成军）没有"队友"概念：**所有 BOT 常驻可见**，不按迷雾/视野半径/朝向/墙体剔除——
-    // 玩家需要看到全场的对手；队伍模式仍严格按可见性剔除，不泄露信息。
+    // 死斗（一人成军）没有"队友"概念：跳过迷雾/视野半径/朝向扇形的剔除（全场对手都要能看到），
+    // 但保留墙体遮挡（HasLineOfSight）——不会隔着墙看到人。
+    // 队伍模式仍严格按可见性剔除，不泄露信息。
     const bool applyVisionCull = player_.alive || IsSpectating();
     const bool dmMode = IsDeathMatch();
     for (const auto& bot : bots_) {
@@ -1108,6 +1109,11 @@ void CS2DGame::Render(int viewW, int viewH) {
         if (!friendly && applyVisionCull) {
             if (IsSpectating()) {
                 if (!SpectatorCanSeeEnemy(bot)) continue;
+            } else if (dmMode) {
+                if (renderer_ && !renderer_->HasLineOfSight(player_.x, player_.y,
+                                                          bot.x, bot.y)) {
+                    continue;   // 死斗：只看墙体，不看雾与朝向
+                }
             } else if (!PlayerCanSeeBot(bot)) {
                 continue;
             }
