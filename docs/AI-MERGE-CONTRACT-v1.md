@@ -49,14 +49,26 @@ struct BuyResult {
 struct ScopeView {
     WeaponId weapon = WeaponId::None;
     bool supported = false;
-    bool active = false;             // 目标状态，不等同于动画是否已完成
-    float transition = 0.0f;         // 0..1，当前视觉进度
-    float zoomMultiplier = 1.0f;     // 当前倍率，1+0.5*transition
+    bool active = false;                 // level > 0（目标状态，不等同于过渡是否完成）
+    int  level = 0;                      // v1.1 新增：0=关 / 1=1.5x / 2=2x
+    float transition = 0.0f;             // 0..1，镜框/遮罩淡入淡出进度（不是倍率进度）
+    float zoomMultiplier = 1.0f;         // 当前实际倍率（含过渡）
+    float targetZoomMultiplier = 1.0f;   // v1.1 新增：当前档位目标倍率（1.0/1.5/2.0）
 };
 enum class ScopeResetReason {
     InputBlocked, FocusLost, WeaponChanged, ReloadStarted,
     PlayerDied, RoundRestart, MatchExit
 };
+// v1.1 新增：档位表与开镜几何参数
+inline constexpr int   kScopeLevelCount = 3;
+inline constexpr float kScopeZoomLevels[kScopeLevelCount] = { 1.0f, 1.5f, 2.0f };
+inline constexpr float kScopeTransitionSeconds = 0.12f;   // 每次换档的过渡时长
+inline constexpr float kScopeCircleRadiusFrac = 0.42f;    // 镜筒半径 = 短边 × 该系数
+inline constexpr float kScopeCameraShiftMax = 0.5f;       // 相机向准星偏移上限
+// v1.1 新增：圆形可见区的唯一几何定义（渲染与测试共用，纯数学）
+inline float ComputeScopeVisibility(float centerX, float centerY, float radius,
+                                    float targetX, float targetY,
+                                    float softWidth = 0.06f);
 struct BulletVisualSegment {
     std::uint64_t id = 0;             // 对局内唯一视觉段编号
     WeaponId weapon = WeaponId::None;
@@ -126,7 +138,19 @@ Presentation::ScopeView GetScopeView() const; // 返回值快照，无消费副�
 void ResetScope(Presentation::ScopeResetReason reason); // 立即归零，幂等
 ```
 
-按右键一次切换开/关；supported 来自当前有效武器的 WeaponDef.scoped；倍率固定 1.5x，无第二级。输入允许且活着、非换弹才可切换。只改变相机和表现，不改伤害/散布/移速/射速。transition 在 CS2DGame::Update 用 dt 在0.12秒内线性趋向目标；普通关镜可过渡，ResetScope 立即 active=false/transition=0/zoomMultiplier=1。supported 依照武器变化更新。相同重置调用不产生重复副作用。
+按右键循环三档：**关 → 1.5x → 2x → 关**（`level = (level + 1) % kScopeLevelCount`）；supported 来自当前有效武器的 WeaponDef.scoped。输入允许且活着、非换弹才可切换。只改变相机与表现，不改伤害/散布/移速/射速。每次换档在 CS2DGame::Update 用 dt 在 0.12 秒内线性过渡倍率；`transition` 只在开/关时变化（1.5x ↔ 2x 换档不重播镜框淡入），`zoomMultiplier` 是当前实际倍率，`targetZoomMultiplier` 是本档目标倍率。`ResetScope` 立即 `level=0/active=false/transition=0/zoomMultiplier=1`，幂等。supported 依照武器变化更新。
+
+**v1.1 可见性**：开镜时可见区由「扇形 + 半径」改为**以准星为圆心的圆**（取代扇形，不是求交），圆外一律不可见并由视野雾遮盖（雾不透明度从 160 提到 242）。几何定义只有一份：
+
+```cpp
+// Presentation::ComputeScopeVisibility(cx, cy, radius, tx, ty, softWidth=0.06f)
+// 圆内 1、圆外 0、边缘 softWidth 内 smoothstep；墙体遮挡（HasLineOfSight）由渲染层叠加
+void CS2DRenderer::SetScopeMask(bool active, float centerX, float centerY, float radiusWorld);
+```
+
+`ComputeVisibility` 在 mask 激活时先走圆形规则（含 LOS），否则走原扇形规则——敌人剔除、`IsVisibleToPlayer`、`DrawVisionFog` 共用同一函数，因此雾与可见性不会漂移。圆形可见区半径 `世界半径 = kScopeCircleRadiusFrac * min(viewW,viewH) / zoom`。
+
+**v1.1 相机**：开镜时相机向准星方向偏移，保证准星下的世界点不随倍率漂移：`shift = f(zoom)`（1.5x→0.35、2x→0.5，其余按倍率线性），相机中心 = 玩家 + (准星世界点 − 玩家) × shift。由于 `UpdateCursor` 用 `GetZoom()` 反解世界坐标，该偏移只是把鼠标灵敏度按 `1/(1-shift)` 放大，不产生累积漂移。
 
 Engine 原有 CS2DGame::Update 签名保留。HandleInput 采集到右键边沿后存 Engine 成员，Engine::Update 在调用 game.Update 之前调用一次 UpdateScopeInput 并消费边沿；不在 HandleInput 和 Update 各切换一次。`gameplayInputAllowed = PLAYING && !buyMenuOpen_ && !sideChoicePending_ && !sidePopupOpen_ && !IsTransitionActive() && HasWindowFocus() && !ImGui::GetIO().WantCaptureMouse`。当 Update 不执行（暂停/设置/退出）时也要在状态切换路径 ResetScope；InputBlocked/FocusLost 等重置不得依赖 game.Update 得到 dt。
 
@@ -137,10 +161,13 @@ Renderer 接口由功能方声明/接线：
 ```cpp
 void UpdateCamera(float playerCenterX,float playerCenterY,
                   int viewportW,int viewportH,float zoomMultiplier=1.0f);
-void DrawScopeOverlay(const Presentation::ScopeView& scope,int viewW,int viewH);
+void SetScopeMask(bool active,float centerX,float centerY,float radiusWorld); // v1.1 新增
+void DrawScopeOverlay(const Presentation::ScopeView& scope,                   // v1.1 签名变更
+                      float centerScreenX,float centerScreenY,float radiusPx,
+                      int viewW,int viewH);
 ```
 
-CS2DGame::Render 从 GetScopeView 取当前倍率传 UpdateCamera；UpdateCamera 使用 base fitZoom*zoomMultiplier 计算相机及坐标，GetZoom 返回实际倍率；视野上限/逻辑可见半径按原 base fitZoom 计算，不能因 UI 缩放改变敌人知情规则。现有 UpdateCursor 用 GetZoom，禁止另乘1.5。预览相机 SetPreviewCamera 不受开镜影响。CS2DGame::Render 在世界雾之后、闪光覆盖之前调用 DrawScopeOverlay；UI 方实现该函数，中心/viewport 都是已有 logicalW/H 坐标，不是 macOS Retina 物理像素。UI overlay 不做命中或相机计算。功能方新增 GameUI::InGameCtx::scope（ScopeView），Engine 填充，UI 只用于提示，不再次画第二层镜框。
+CS2DGame::Render 先按倍率算相机偏移再调 UpdateCamera；`GetZoom()` 返回实际倍率，`UpdateCursor` 不二次乘；`visionRadius_` 仍按 base fitZoom 计算（开镜不改变敌人知情范围，圆形可见区单独生效）。预览相机 SetPreviewCamera 不受开镜影响。Render 在 UpdateCamera 之后、绘制角色之前调用 `SetScopeMask`，在世界雾之后、闪光覆盖之前调用 `DrawScopeOverlay`，圆心传「准星世界点投影到屏幕」的坐标（避免相机被地图边界钳制时镜筒与可见区错位）。UI 方只需按 `centerScreenX/Y + radiusPx` 画镜筒与刻度，不做命中/相机计算、不重复画遮罩。功能方新增 GameUI::InGameCtx::scope（ScopeView），Engine 填充，UI 用于提示档位（level / targetZoomMultiplier）。
 
 ## 5. CT/T：沿用 Team，不建立另一份阵营状态
 
@@ -186,13 +213,33 @@ GameUI 的菜单只通过现有 MenuCtx.backdropTex/backdropW/backdropH/backdrop
 
 - 两端从干净构建目录 `cmake -S PixelEngine -B build/<platform>`，再 `cmake --build build/<platform> --parallel`；Windows 先采用仓库 README 要求的 MinGW UCRT 及对应生成器，Mac 用本机可用工具链，记录完整命令/版本。Mac LLM 当前使用 stub/规则回退，不能宣称 LLM 与 Windows 等价；本轮接口与 UI 不依赖真实 LLM。
 - 基础/购买测试：所有 BuyCode 可复现；Evaluate 无副作用；一次 Execute 成功只扣一次；失败快照不变；两次同枪请求第二次 AlreadyEquipped；护甲/闪光总数边界；非法 WeaponId 无越界。
-- 开镜测试：边沿只切一次；按住不抖动；切枪/丢枪/自动切回/换弹/死亡/重生/暂停/设置/失焦/选边/买枪/新回合/退出均正确归零；不同 dt 下0.12s过渡；鼠标相对位移转换取实际 GetZoom；DrawScopeOverlay 空实现替换后确认真正在运行。
+- 开镜测试：边沿只切一次；按住不抖动；三档循环 关→1.5x→2x→关 且每档 0.12s 过渡；圆形可见区（圆内可见、圆外不可见、软边渐变、与朝向无关）；切枪/丢枪/自动切回/换弹/死亡/重生/暂停/设置/失焦/选边/买枪/新回合/退出均正确归零；鼠标相对位移转换取实际 GetZoom；DrawScopeOverlay 空实现替换后确认真正在运行。
 - 阵营测试：None/T/CT、chooseSide 0/1 显式映射；只给可见角色标记；死斗不显示爆破职责。
 - 枪弹测试：512上限、0.08s清理、重复Render无副作用、最后一段保留、穿墙视觉裁剪、不同帧率/缩放；DrawThrownGrenade 回归，烟雾火区/闪光遮挡保留。
 - 生命周期：退出/重建 renderer 前 cache.Shutdown，UI 借用资源不得重复释放；小鸡模型失败不崩；两端文件路径大小写一致。
 - 每条 Issue/PR 交付模板：base SHA / head SHA / 契约版本 / 修改文件和函数 / 新旧调用点 / 测试命令与逐项结果 / 截图或录屏 / 对方待验项。没执行写“未验证”；不能仅以截图或 stub 能链接就关闭功能任务。
 - 这次只制定契约和任务，不代表上述接口已实现、已编译或已验证。
 
-## 10. 实现进度（功能方追加，非契约正文）
+## 10. 变更记录
+
+### v1.1（2026-10-31，功能方提出，需求方确认）
+
+开镜从「单级 1.5x + 屏幕中心镜框」改为：
+
+1. **三档循环**：右键 关 → 1.5x → 2x → 关（`level` 字段；`kScopeZoomLevels`；每次换档 0.12s 过渡）。
+2. **圆形可见区取代扇形**：开镜时可见区 = 以准星为圆心的圆（软边），圆外不可见并由更实的雾遮盖；
+   `Presentation::ComputeScopeVisibility` 是唯一几何定义，`CS2DRenderer::SetScopeMask` 消费。
+3. **相机向准星偏移**：1.5x → 0.35、2x → 0.5，保证准星下的世界点不随倍率漂移。
+4. **`DrawScopeOverlay` 签名变更**：新增 `centerScreenX/centerScreenY/radiusPx`，圆筒由 CS2DGame
+   按准星世界点投影给出；UI 方只画表现，不重复画遮罩。
+
+影响面：`PresentationContract.hpp`（ScopeView 字段 + 档位表 + 几何函数）、`CS2DGame`（档位/过渡/相机偏移/
+SetScopeMask 接线）、`CS2DRenderer`（SetScopeMask、ComputeVisibility 圆形分支、DrawScopeOverlay 新签名）、
+`Engine`（无改动）、`GameUI::InGameCtx.scope`（多两个字段，UI 可用于显示档位）、回归测试与 PIX-10 说明。
+
+未变更：右键边沿与 `gameplayInputAllowed` 门控、所有归零路径、`GetZoom` 不二次乘、`visionRadius_` 仍按
+baseZoom 计算、伤害/散布/移速/射速不受影响。
+
+## 11. 实现进度（功能方追加，非契约正文）
 
 见 `docs/handoff-windows-ai.md`：base/head SHA、逐 Issue 改动文件与函数、构建与测试命令、验证结果、对方待验项。
