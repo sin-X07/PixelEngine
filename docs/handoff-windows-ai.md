@@ -8,8 +8,9 @@ UI 方（shijin）需要接着做什么。契约正文见 [docs/AI-MERGE-CONTRAC
 | 项 | 值 |
 | --- | --- |
 | 契约版本 | v1（本仓库 `docs/AI-MERGE-CONTRACT-v1.md`，与 Linear 附件一致） |
-| base SHA | `d4a10555f83a6259a5dff0cd5a3ee97f31443dab`（= 远端 main，工作区干净时开工） |
-| head SHA | 无：改动仍在工作区（未提交）。本机 `.git` 目录不可写，见第 7 节 |
+| base SHA | `d4a10555f83a6259a5dff0cd5a3ee97f31443dab`（= 远端 main，开工时核对未前进） |
+| head SHA | `b8a19f7`（分支 `feat/pix18-contract-baseline`，已推送） |
+| PR | <https://github.com/sin-X07/PixelEngine/pull/20>（目标 `main`，待评审合并） |
 | 系统 | Windows 10 Home China 26H2，`10.0.26300`，x86_64 |
 | 编译器 | MinGW-w64 g++ 15.2.0（x86_64-win32-seh-rev0，UCRT） |
 | 构建工具 | CMake 4.3.2，生成器 `MinGW Makefiles` |
@@ -189,12 +190,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/win_accept.ps1
 
 ## 7. 未完成 / 风险
 
-- **未提交、未 push、未开 PR**：本机存在两个环境限制——
-  1) `.git` 目录不可写（`git switch -c` 报 `unable to create directory for .git/refs/heads/...`、
-  `Unable to create '.git/index.lock': Permission denied`），所以连本地分支都建不了；
-  2) 无远端凭据（`git fetch` 报 `schannel: SEC_E_NO_CREDENTIALS`）。
-  因此本轮只是工作区改动。请在有写权限的账号下按 `docs/pr-workflow.md` 建分支 → 提交 → PR，
-  建议拆 4 个提交：契约文档 / 接口基础+购买+开镜+枪弹 / 小鸡资产规范与菜单校准 / 测试与验收脚本。
+- **PR 已开、未合并**：<https://github.com/sin-X07/PixelEngine/pull/20>，按 `docs/pr-workflow.md`
+  等评审通过后再合并，不直接推 main。PR 内提交拆分：契约文档 / 接口基础+购买+开镜+枪弹 /
+  小鸡资产规范与菜单校准 / 测试与验收脚本。
 - 契约第 8 节要求"基础 PR 合并后双方基于同一 SHA 开发"；当前 shijin 尚未基于本 SHA 提交，
   `DrawScopeOverlay` / `DrawBulletVisuals` / `WeaponIconCache` 仍处于占位或最小实现阶段，
   因此 PIX-14 的"UI 消费方"验收要等 PIX-10 完成。
