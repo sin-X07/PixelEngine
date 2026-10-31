@@ -22,6 +22,12 @@ void SaveManager::Load() {
     settings_.fullscreen       = ini.GetBool ("settings", "fullscreen", false);
     settings_.targetFPS        = ini.GetInt  ("settings", "target_fps", 60);
     settings_.renderScalePct   = ini.GetInt  ("settings", "render_scale", 100);
+    settings_.fogOpacityPct    = ini.GetInt  ("settings", "fog_opacity", 100);
+    settings_.sniperDelayedScopeClose =
+        ini.GetBool("settings", "sniper_delayed_scope_close", false);
+    settings_.scopeSensitivity    = ini.GetFloat("settings", "scope_sensitivity", 1.0f);
+    settings_.scopeCrossThickness = ini.GetFloat("settings", "scope_cross_thickness", 2.0f);
+    settings_.scopeCrossDynamic   = ini.GetBool ("settings", "scope_cross_dynamic", false);
 
     // ---- 准星 ----
     settings_.crossR         = ini.GetInt  ("crosshair", "r", 255);
@@ -66,6 +72,11 @@ void SaveManager::Save() {
     ini.SetBool ("settings", "fullscreen",  settings_.fullscreen);
     ini.SetInt  ("settings", "target_fps",  settings_.targetFPS);
     ini.SetInt  ("settings", "render_scale", settings_.renderScalePct);
+    ini.SetInt  ("settings", "fog_opacity", settings_.fogOpacityPct);
+    ini.SetBool ("settings", "sniper_delayed_scope_close", settings_.sniperDelayedScopeClose);
+    ini.SetFloat("settings", "scope_sensitivity", settings_.scopeSensitivity);
+    ini.SetFloat("settings", "scope_cross_thickness", settings_.scopeCrossThickness);
+    ini.SetBool ("settings", "scope_cross_dynamic", settings_.scopeCrossDynamic);
 
     ini.SetInt  ("crosshair", "r",          settings_.crossR);
     ini.SetInt  ("crosshair", "g",          settings_.crossG);

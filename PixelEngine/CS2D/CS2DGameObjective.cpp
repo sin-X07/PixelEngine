@@ -311,7 +311,7 @@ void CS2DGame::DetonateBomb(AudioManager* audio) {
         const float d = std::sqrt(dx * dx + dy * dy);
         if (d > RADIUS) return;
         const float f = 1.0f - d / RADIUS;
-        if (ApplyDamage(p, static_cast<int>(200.0f * f))) {
+        if (ApplyDamage(p, static_cast<int>(200.0f * f), 1.0f)) {   // C4 爆炸无视护甲
             OnCombatantKilled(p, audio);
         }
     };

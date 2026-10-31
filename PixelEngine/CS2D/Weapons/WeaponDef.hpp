@@ -148,7 +148,7 @@ inline const WeaponDef kWeapons[] = {
 
     // ---------------- 手枪 ----------------
     { WeaponId::Glock18, "Glock-18", WeaponClass::Pistol, WeaponSlotKind::Secondary, WeaponTeam::T,
-      200, 30.0f, 0.18f, 700.0f, 700.0f, 1, 0.030f, false, 20, 1.99f, 0.92f, false, 0.0f,
+      200, 28.0f, 0.18f, 700.0f, 700.0f, 1, 0.030f, false, 20, 1.99f, 0.92f, false, 0.0f,
       "cs2d/sprites/glock.png", "cs2d/sprites/glock_d.png", kKillRewardPistol },
     { WeaponId::USP_S, "USP-S", WeaponClass::Pistol, WeaponSlotKind::Secondary, WeaponTeam::CT,
       200, 35.0f, 0.16f, 720.0f, 700.0f, 1, 0.026f, false, 12, 1.49f, 0.92f, false, 0.0f,
@@ -160,13 +160,13 @@ inline const WeaponDef kWeapons[] = {
       WeaponTeam::Both, 300, 38.0f, 0.12f, 700.0f, 700.0f, 1, 0.035f, true, 30, 2.10f, 0.90f, false, 0.0f,
       "cs2d/sprites/dualberettas.png", "cs2d/sprites/dualberettas_d.png", kKillRewardPistol },
     { WeaponId::P250, "P250", WeaponClass::Pistol, WeaponSlotKind::Secondary, WeaponTeam::Both,
-      300, 38.0f, 0.17f, 700.0f, 700.0f, 1, 0.028f, false, 13, 1.60f, 0.92f, false, 0.0f,
+      300, 35.0f, 0.17f, 700.0f, 700.0f, 1, 0.028f, false, 13, 1.60f, 0.92f, false, 0.0f,
       "cs2d/sprites/p250.png", "cs2d/sprites/p250_d.png", kKillRewardPistol },
     { WeaponId::FiveSeven, "Five-SeveN", WeaponClass::Pistol, WeaponSlotKind::Secondary, WeaponTeam::CT,
       500, 32.0f, 0.15f, 720.0f, 700.0f, 1, 0.026f, false, 20, 1.70f, 0.92f, false, 0.0f,
       "cs2d/sprites/fn57.png", "cs2d/sprites/fn57_d.png", kKillRewardPistol },
     { WeaponId::Tec9, "Tec-9", WeaponClass::Pistol, WeaponSlotKind::Secondary, WeaponTeam::T,
-      500, 32.0f, 0.13f, 720.0f, 700.0f, 1, 0.032f, false, 18, 1.80f, 0.92f, false, 0.0f,
+      500, 33.0f, 0.13f, 720.0f, 700.0f, 1, 0.032f, false, 18, 1.80f, 0.92f, false, 0.0f,
       "cs2d/sprites/tec9.png", "cs2d/sprites/tec9_d.png", kKillRewardPistol },
     { WeaponId::CZ75, "CZ75-Auto", WeaponClass::Pistol, WeaponSlotKind::Secondary, WeaponTeam::Both,
       500, 31.0f, 0.10f, 700.0f, 700.0f, 1, 0.038f, true, 12, 2.00f, 0.90f, false, 0.0f,
@@ -179,7 +179,7 @@ inline const WeaponDef kWeapons[] = {
       "cs2d/sprites/r8.png", "cs2d/sprites/r8_d.png", kKillRewardPistol },
     // 宙斯：1 发，无备弹；下回合自动补满（照抄 CS2）
     { WeaponId::Zeus, "Zeus x27", WeaponClass::ZeusGun, WeaponSlotKind::Secondary, WeaponTeam::Both,
-      200, 500.0f, 1.00f, 2000.0f, 60.0f, 1, 0.000f, false, 1, 0.00f, 0.95f, false, 0.0f,
+      200, 255.0f, 1.00f, 2000.0f, 60.0f, 1, 0.000f, false, 1, 0.00f, 0.95f, false, 0.0f,
       "cs2d/sprites/zeus.png", "cs2d/sprites/zeus_d.png", kKillRewardZeus },
 
     // ---------------- 冲锋枪 ----------------
@@ -190,7 +190,7 @@ inline const WeaponDef kWeapons[] = {
       1250, 26.0f, 0.070f, 680.0f, 650.0f, 1, 0.052f, true, 30, 1.80f, 0.86f, false, 90.0f,
       "cs2d/sprites/mp9.png", "cs2d/sprites/mp9_d.png", kKillRewardSMG },
     { WeaponId::MP7, "MP7", WeaponClass::SMG, WeaponSlotKind::Primary, WeaponTeam::Both,
-      1500, 29.0f, 0.075f, 680.0f, 650.0f, 1, 0.052f, true, 30, 1.85f, 0.86f, false, 90.0f,
+      1500, 30.0f, 0.075f, 680.0f, 650.0f, 1, 0.052f, true, 30, 1.85f, 0.86f, false, 90.0f,
       "cs2d/sprites/mp7.png", "cs2d/sprites/mp7_d.png", kKillRewardSMG },
     { WeaponId::MP5SD, "MP5-SD", WeaponClass::SMG, WeaponSlotKind::Primary, WeaponTeam::Both,
       1500, 27.0f, 0.075f, 680.0f, 650.0f, 1, 0.050f, true, 30, 1.83f, 0.86f, false, 90.0f,
@@ -216,7 +216,7 @@ inline const WeaponDef kWeapons[] = {
       3100, 33.0f, 0.09f, 640.0f, 800.0f, 1, 0.045f, true, 30, 1.90f, 0.80f, false, 90.0f,
       "cs2d/sprites/m4a4.png", "cs2d/sprites/m4a4_d.png", kKillRewardRifle },
     { WeaponId::M4A1S, "M4A1-S", WeaponClass::Rifle, WeaponSlotKind::Primary, WeaponTeam::CT,
-      2900, 35.0f, 0.10f, 640.0f, 800.0f, 1, 0.038f, true, 20, 1.75f, 0.80f, false, 90.0f,
+      2900, 38.0f, 0.10f, 640.0f, 800.0f, 1, 0.038f, true, 20, 1.75f, 0.80f, false, 90.0f,
       "cs2d/sprites/m4a1.png", "cs2d/sprites/m4a1_d.png", kKillRewardRifle },
     { WeaponId::SG553, "SG 553", WeaponClass::Rifle, WeaponSlotKind::Primary, WeaponTeam::T,
       3000, 30.0f, 0.095f, 640.0f, 800.0f, 1, 0.042f, true, 30, 2.00f, 0.78f, true, 90.0f,
@@ -241,16 +241,16 @@ inline const WeaponDef kWeapons[] = {
 
     // ---------------- 霰弹枪 ----------------
     { WeaponId::Nova, "Nova", WeaponClass::Shotgun, WeaponSlotKind::Primary, WeaponTeam::Both,
-      1050, 16.0f, 0.75f, 600.0f, 400.0f, 8, 0.140f, false, 8, 1.10f, 0.84f, false, 90.0f,
+      1050, 26.0f, 0.75f, 600.0f, 400.0f, 8, 0.140f, false, 8, 1.10f, 0.84f, false, 90.0f,
       "cs2d/sprites/nova.png", "cs2d/sprites/nova_d.png", kKillRewardShotgun },
     { WeaponId::XM1014, "XM1014", WeaponClass::Shotgun, WeaponSlotKind::Primary, WeaponTeam::Both,
-      2000, 14.0f, 0.30f, 600.0f, 400.0f, 8, 0.150f, true, 7, 1.50f, 0.84f, false, 90.0f,
+      2000, 20.0f, 0.30f, 600.0f, 400.0f, 8, 0.150f, true, 7, 1.50f, 0.84f, false, 90.0f,
       "cs2d/sprites/xm1014.png", "cs2d/sprites/xm1014_d.png", kKillRewardShotgun },
     { WeaponId::SawedOff, "Sawed-Off", WeaponClass::Shotgun, WeaponSlotKind::Primary, WeaponTeam::T,
-      1100, 20.0f, 0.85f, 600.0f, 350.0f, 8, 0.160f, false, 7, 1.20f, 0.84f, false, 90.0f,
+      1100, 32.0f, 0.85f, 600.0f, 350.0f, 8, 0.160f, false, 7, 1.20f, 0.84f, false, 90.0f,
       "cs2d/sprites/sawedoff.png", "cs2d/sprites/sawedoff_d.png", kKillRewardShotgun },
     { WeaponId::MAG7, "MAG-7", WeaponClass::Shotgun, WeaponSlotKind::Primary, WeaponTeam::CT,
-      1800, 18.0f, 0.80f, 600.0f, 380.0f, 8, 0.150f, false, 5, 1.15f, 0.84f, false, 90.0f,
+      1800, 30.0f, 0.80f, 600.0f, 380.0f, 8, 0.150f, false, 5, 1.15f, 0.84f, false, 90.0f,
       "cs2d/sprites/mag7.png", "cs2d/sprites/mag7_d.png", kKillRewardShotgun },
 
     // ---------------- 机枪 ----------------
@@ -308,6 +308,40 @@ inline bool TeamAllowed(WeaponId id, bool isTerrorist) {
     const WeaponTeam t = Get(id).team;
     if (t == WeaponTeam::Both) return true;
     return isTerrorist ? (t == WeaponTeam::T) : (t == WeaponTeam::CT);
+}
+
+// 护甲穿透（0..1，来自 CS2 官方 Armor% 列，与 kWeapons 同索引）
+// 来源：https://counterstrike.codexery.com/weapons （Dmg / Armor% 两列）
+// 说明：表里没有的项按武器类别取值——近战 0.85（刀）、投掷物 0.5（高爆）/0（其它）、
+//       C4 1.0；Zeus 无视护甲（1.0）。
+inline constexpr float kArmorPen[] = {
+    // None, Knife
+    1.00f, 0.85f,
+    // Glock-18, USP-S, P2000, Dual Berettas, P250, Five-SeveN, Tec-9, CZ75-Auto, Deagle, R8, Zeus
+    0.470f, 0.585f, 0.585f, 0.742f, 0.644f, 0.915f, 0.904f, 0.794f, 0.932f, 0.932f, 1.00f,
+    // MAC-10, MP9, MP7, MP5-SD, UMP-45, P90
+    0.575f, 0.600f, 0.625f, 0.625f, 0.650f, 0.690f,
+    // Galil AR, FAMAS, AK-47, M4A4, M4A1-S, SG 553, AUG
+    0.775f, 0.700f, 0.775f, 0.700f, 0.700f, 1.000f, 0.900f,
+    // SSG 08, AWP, SCAR-20, G3SG1
+    0.850f, 0.975f, 0.820f, 0.820f,
+    // Nova, XM1014, Sawed-Off, MAG-7
+    0.500f, 0.800f, 0.500f, 0.600f,
+    // M249, Negev
+    0.800f, 0.750f,
+    // 高爆雷, 闪光弹, 烟雾弹, 燃烧瓶, 燃烧弹, 诱饵弹
+    0.500f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+    // C4
+    1.00f,
+};
+inline constexpr int kArmorPenCount =
+    static_cast<int>(sizeof(kArmorPen) / sizeof(kArmorPen[0]));
+
+// 护甲穿透（0..1）；非法/越界返回 1.0（不额外减免，避免除零或误伤）
+inline float ArmorPen(WeaponId id) {
+    const int idx = static_cast<int>(id);
+    if (idx < 0 || idx >= kArmorPenCount) return 1.0f;
+    return kArmorPen[idx];
 }
 
 // 击杀奖励（按武器查表）

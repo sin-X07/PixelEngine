@@ -29,6 +29,12 @@ private:
     bool mouseLeftDown = false;
     bool mouseLeftClicked = false;
     bool mouseLeftReleased = false;
+    // 右键：down 边沿，只活一帧（开镜切换用）
+    bool mouseRightDown = false;
+    bool mouseRightClicked = false;
+
+    // 窗口焦点：SDL_WINDOWEVENT_FOCUS_GAINED/LOST 更新
+    bool windowFocused = true;
 
     // 每帧原始事件回调（供 ImGui 等 UI 后端消费）
     std::function<void(const SDL_Event&)> eventCallback;
@@ -67,4 +73,8 @@ public:
     bool IsMouseLeftDown() const { return mouseLeftDown; }
     bool IsMouseLeftClicked() const { return mouseLeftClicked; }
     bool IsMouseLeftReleased() const { return mouseLeftReleased; }
+    // 契约 v1 第 4 节：右键 down 边沿（只活一帧）与窗口焦点
+    bool IsMouseRightDown() const { return mouseRightDown; }
+    bool IsMouseRightClicked() const { return mouseRightClicked; }
+    bool HasWindowFocus() const { return windowFocused; }
 };

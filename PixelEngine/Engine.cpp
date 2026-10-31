@@ -42,6 +42,7 @@ Engine::Engine() {
 
     cs2dRenderer = std::make_unique<CS2DRenderer>();
     cs2dGame     = std::make_unique<CS2DGame>();
+    weaponIconCache_ = std::make_unique<WeaponIconCache>();
 
     gameUI->SetImGuiUI(imGuiUI.get());
 }
@@ -302,6 +303,32 @@ GameUI::Actions Engine::BuildActions() {
         saveManager->MutableSettings().radarMapZoom = v;
     };
 
+    // 视野 / 开镜（契约 v1.2）
+    a.setFogOpacity = [this](int v) {
+        v = std::clamp(v, 0, 100);
+        saveManager->MutableSettings().fogOpacityPct = v;
+        if (cs2dRenderer) cs2dRenderer->SetFogOpacityPct(v);
+    };
+    a.setSniperDelayedScopeClose = [this](bool v) {
+        saveManager->MutableSettings().sniperDelayedScopeClose = v;
+        if (cs2dGame) cs2dGame->SetDelayedScopeClose(v);
+    };
+    // 开镜准星（契约 v1.3）
+    a.setScopeCrossThickness = [this](float v) {
+        v = std::clamp(v, 1.0f, 6.0f);
+        auto& st = saveManager->MutableSettings();
+        st.scopeCrossThickness = v;
+        if (cs2dGame) cs2dGame->SetScopeCrosshair(v, st.scopeCrossDynamic);
+    };
+    a.setScopeCrossDynamic = [this](bool v) {
+        auto& st = saveManager->MutableSettings();
+        st.scopeCrossDynamic = v;
+        if (cs2dGame) cs2dGame->SetScopeCrosshair(st.scopeCrossThickness, v);
+    };
+    a.setScopeSensitivity = [this](float v) {
+        saveManager->MutableSettings().scopeSensitivity = std::clamp(v, 0.5f, 2.0f);
+    };
+
     // 显示
     a.setResolution = [this](int w, int h, int idx) {
         currentResW_ = w;
@@ -349,9 +376,10 @@ GameUI::Actions Engine::BuildActions() {
 // ============================================================================
 
 bool Engine::Initialize(const char* title, int width, int height, bool autostart, bool fastRound,
-                        int startMode, bool coachLlm, const std::string& startMap, bool openMapSelect, bool openHistory, const std::string& side) {
+                        int startMode, bool coachLlm, const std::string& startMap, bool openMapSelect, bool openHistory, const std::string& side, bool openSettings) {
     pendingStartMap_ = startMap;
     openMapSelectOnStart_ = openMapSelect;
+    openSettingsOnStart_  = openSettings;
 
     coachLlmEnabled_ = coachLlm;
     llmInitialized_ = !coachLlmEnabled_;   // --coach=rule 不初始化/拉起 LLM
@@ -417,6 +445,12 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
 
     // CS2D 渲染器（地图目录 assets/cs2d/maps）
     cs2dRenderer->Initialize(renderer, "assets/cs2d/maps", logicalW_, logicalH_);
+
+    // 武器图标缓存（契约 v1 第 3 节）：非 owning renderer，GameUI 借用
+    if (weaponIconCache_) {
+        weaponIconCache_->Initialize(renderer);
+        gameUI->SetWeaponIconCache(weaponIconCache_.get());
+    }
 
     // 主菜单实时 3D 背景（独立隐藏 OpenGL 上下文；失败时回退静态背景）
     bool canInitMenu3D = true;
@@ -498,7 +532,11 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
                   << (pendingPlayerTeam_ == Team::T ? "T" : "CT") << std::endl;
     }
 
-    if (openHistory) {
+    if (openSettingsOnStart_) {
+        // --settings：直接进设置页（验收截图用）
+        settingsReturnState = MAIN_MENU;
+        currentState = SETTINGS;
+    } else if (openHistory) {
         currentState = HISTORY;
     } else if (openMapSelectOnStart_) {
         LoadMapPreviews(renderer, mapPreviewTex_, kMapCatalogCount);
@@ -559,6 +597,13 @@ void Engine::ApplySavedSettings() {
     cs2dOverlay.radar.hudSize          = s.radarHudSize;
     cs2dOverlay.radar.mapZoom          = s.radarMapZoom;
 
+    // 视野 / 开镜（契约 v1.2 / v1.3）
+    if (cs2dRenderer) cs2dRenderer->SetFogOpacityPct(s.fogOpacityPct);
+    if (cs2dGame) {
+        cs2dGame->SetDelayedScopeClose(s.sniperDelayedScopeClose);
+        cs2dGame->SetScopeCrosshair(s.scopeCrossThickness, s.scopeCrossDynamic);
+    }
+
     // 显示
     targetFPS_     = (s.targetFPS > 0) ? s.targetFPS : 60;
     currentResIdx_ = std::clamp(s.resIdx, 0, kResCount - 1);
@@ -588,6 +633,20 @@ void Engine::ResizeLogicalViewport(int winW, int winH) {
 
     cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
     cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
+
+    {
+        // 一次性诊断：窗口 / 逻辑画布 / 渲染输出尺寸（DPI 缩放下三者可能不同）
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            int ow = 0, oh = 0;
+            if (renderer) SDL_GetRendererOutputSize(renderer, &ow, &oh);
+            std::cout << "[Viewport] window=" << winW << "x" << winH
+                      << " output=" << ow << "x" << oh
+                      << " logical=" << logicalW_ << "x" << logicalH_
+                      << " renderScale=" << pct << "%" << std::endl;
+        }
+    }
 }
 
 // ============================================================================
@@ -635,6 +694,9 @@ void Engine::Clean() {
     if (cs2dRenderer) cs2dRenderer->Clean();
     if (menu3D)       { menu3D->Shutdown(); menu3D.reset(); }
 
+    // 图标缓存必须先于 SDL_DestroyRenderer 释放（契约 v1 第 3 节）
+    if (weaponIconCache_) { weaponIconCache_->Shutdown(); }
+
     for (auto& t : sceneTex_) {
         if (t) { SDL_DestroyTexture(t); t = nullptr; }
     }
@@ -680,6 +742,9 @@ void Engine::ToggleFullscreen() {
 
 void Engine::HandleInput() {
     inputManager->ProcessEvents(renderer);
+
+    // 契约 v1 第 4 节：右键 down 边沿只在这里采集，Update 里消费一次
+    if (inputManager->IsMouseRightClicked()) scopeRightClickPending_ = true;
 
     if (inputManager->IsQuitRequested()) isRunning = false;
     if (inputManager->IsFullscreenToggleRequested()) ToggleFullscreen();
@@ -742,8 +807,12 @@ void Engine::HandleInput() {
         SDL_SetRelativeMouseMode(SDL_TRUE);
         int relX = 0, relY = 0;
         SDL_GetRelativeMouseState(&relX, &relY);
+        // 契约 v1.3：开镜时鼠标灵敏度再乘设置倍率（CS2 zoom_sensitivity_ratio 语义）
+        const float scopeSensMul =
+            (cs2dGame->GetScopeView().active && saveManager)
+                ? saveManager->GetSettings().scopeSensitivity : 1.0f;
         cs2dOverlay.UpdateCursor(relX, relY,
-                                 cs2dGame->GetMouseSensitivity(),
+                                 cs2dGame->GetMouseSensitivity() * scopeSensMul,
                                  cs2dRenderer->GetZoom(),
                                  cs2dRenderer->GetCameraX(), cs2dRenderer->GetCameraY(),
                                  logicalW_, logicalH_,
@@ -1100,6 +1169,9 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
     currentState = PLAYING;
     SDL_SetRelativeMouseMode(SDL_TRUE);
     SDL_ShowCursor(SDL_DISABLE);
+    // 调试装备（--loadout=）：延后到真正可操作的那一帧再给，避免被 LoadMap 重置
+    if (!debugLoadout_.empty()) debugLoadoutPending_ = true;
+    if (debugBuyMenu_) debugBuyMenuPending_ = true;
     cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
     cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
 
@@ -1126,14 +1198,102 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
 // 更新 / 渲染
 // ============================================================================
 
+// 调试装备：--loadout=awp / "AK-47" / 编号。仅用于验收与联调，不参与正常玩法。
+void Engine::ApplyDebugLoadout() {
+    if (debugLoadout_.empty() || !cs2dGame) return;
+
+    auto lower = [](std::string s) {
+        for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    const std::string want = lower(debugLoadout_);
+
+    WeaponId id = WeaponId::None;
+    for (int i = 1; i < WeaponDB::kWeaponCount; ++i) {
+        const WeaponId wid = static_cast<WeaponId>(i);
+        const WeaponDef& d = WeaponDB::Get(wid);
+        if (d.name && lower(d.name) == want) { id = wid; break; }
+    }
+    if (id == WeaponId::None) {
+        try {
+            const int numeric = std::stoi(debugLoadout_);
+            if (numeric > 0 && numeric < WeaponDB::kWeaponCount) {
+                id = static_cast<WeaponId>(numeric);
+            }
+        } catch (...) {
+        }
+    }
+    if (id == WeaponId::None) {
+        std::cerr << "[Debug] 未知 --loadout: " << debugLoadout_ << std::endl;
+        return;
+    }
+
+    CS2DGame::Player& p = cs2dGame->GetPlayer();
+    p.money = 16000;
+    const WeaponDef& def = WeaponDB::Get(id);
+    switch (def.slot) {
+        case WeaponSlotKind::Primary:
+            p.SetSlotWeapon(0, id);
+            p.weaponSlot = 0;
+            break;
+        case WeaponSlotKind::Secondary:
+            p.SetSlotWeapon(1, id);
+            p.weaponSlot = 1;
+            break;
+        case WeaponSlotKind::Melee:
+            p.weapons[2] = id;
+            break;
+        case WeaponSlotKind::Grenade:
+            if (p.grenadeCount < CS2DGame::Player::MAX_GRENADES) {
+                p.grenades[p.grenadeCount++] = id;
+                p.SyncActiveGrenade();
+            }
+            break;
+    }
+    p.LoadAmmoFromSlot();
+    std::cout << "[Debug] 调试装备: " << def.name
+              << " (金钱 $" << p.money << ")" << std::endl;
+}
+
 void Engine::Update(float dt) {
-    if (currentState != PLAYING) return;
+    if (currentState != PLAYING) {
+        // 暂停 / 设置 / 退出 / 主菜单：不跑 game.Update，开镜也必须立即归零
+        scopeRightClickPending_ = false;
+        if (cs2dGame) cs2dGame->ResetScope(Presentation::ScopeResetReason::InputBlocked);
+        return;
+    }
     UpdateSideSpawnTransition();
-    if (sideChoicePending_ || sidePopupOpen_) return;   // 等待游戏内选阵营
+    if (sideChoicePending_ || sidePopupOpen_) {
+        // 选阵营期间同理：边沿丢弃 + 状态归零，不依赖 game.Update 的 dt
+        scopeRightClickPending_ = false;
+        if (cs2dGame) cs2dGame->ResetScope(Presentation::ScopeResetReason::InputBlocked);
+        return;   // 等待游戏内选阵营
+    }
 
     // E 键用于拆包（按住）
     const Uint8* kbNow = SDL_GetKeyboardState(nullptr);
     const bool interactHeld = kbNow[SDL_SCANCODE_E];
+
+    // 调试装备只应用一次（验收截图用；正常启动不会走到这里）
+    if (debugLoadoutPending_) {
+        ApplyDebugLoadout();
+        debugLoadoutPending_ = false;
+    }
+    if (debugBuyMenuPending_ && cs2dGame && cs2dGame->IsBuyPhase()) {
+        buyMenuOpen_ = true;
+        debugBuyMenuPending_ = false;
+    }
+
+    // 开镜：每帧最多提交一次右键边沿（买枪/选边/失焦/转场/ImGui 捕获 mouse 时不允许）
+    const bool scopeRightClicked = scopeRightClickPending_;
+    scopeRightClickPending_ = false;
+    const bool gameplayInputAllowed =
+        currentState == PLAYING && cs2dGame &&
+        !buyMenuOpen_ && !sideChoicePending_ && !sidePopupOpen_ &&
+        !IsTransitionActive() &&
+        inputManager->HasWindowFocus() &&
+        !ImGui::GetIO().WantCaptureMouse;
+    cs2dGame->UpdateScopeInput(scopeRightClicked, gameplayInputAllowed);
 
     cs2dGame->Update(dt, cs2dMouseDown, cs2dWorldMouseX, cs2dWorldMouseY,
                      cs2dKeyW, cs2dKeyA, cs2dKeyS, cs2dKeyD,
@@ -1149,6 +1309,9 @@ void Engine::Update(float dt) {
             RecordMatchHistory(false);
             std::cout << "[CS2D] 比赛结束，返回主菜单" << std::endl;
             buyMenuOpen_ = false;
+            // 离开对局：开镜归零（契约 v1 第 4 节）
+            cs2dGame->ResetScope(Presentation::ScopeResetReason::MatchExit);
+            scopeRightClickPending_ = false;
             currentState = MAIN_MENU;
             SDL_SetRelativeMouseMode(SDL_FALSE);
             SDL_ShowCursor(SDL_ENABLE);
@@ -1570,6 +1733,12 @@ void Engine::Render() {
         ctx.radarBgAlpha          = cs2dOverlay.radar.bgAlpha;
         ctx.radarHudSize          = cs2dOverlay.radar.hudSize;
         ctx.radarMapZoom          = cs2dOverlay.radar.mapZoom;
+        ctx.fogOpacityPct         = saveManager ? saveManager->GetSettings().fogOpacityPct : 100;
+        ctx.sniperDelayedScopeClose =
+            saveManager ? saveManager->GetSettings().sniperDelayedScopeClose : false;
+        ctx.scopeSensitivity    = saveManager ? saveManager->GetSettings().scopeSensitivity : 1.0f;
+        ctx.scopeCrossThickness = saveManager ? saveManager->GetSettings().scopeCrossThickness : 2.0f;
+        ctx.scopeCrossDynamic   = saveManager ? saveManager->GetSettings().scopeCrossDynamic : false;
 
         ctx.resW         = currentResW_;
         ctx.resH         = currentResH_;
@@ -1894,6 +2063,9 @@ void Engine::Render() {
         ictx.bombDropped  = cs2dGame->IsBombDropped();
         ictx.bombIntel    = cs2dGame->HasBombIntel();
         ictx.plantProgress = cs2dGame->GetPlantProgress() / 3.0f;
+        // 契约 v1 第 4、5 节：阵营与开镜状态由 Engine 填充，UI 只读
+        ictx.playerTeam = cs2dGame->GetPlayer().team;
+        ictx.scope      = cs2dGame->GetScopeView();
         if (ictx.spectating) {
             ictx.spectateTarget = cs2dGame->GetSpectatedName();
         }
@@ -1920,6 +2092,8 @@ void Engine::Render() {
     // 进入游戏后的阵营选择弹窗（游戏画面在背后，HUD 暂时隐藏）
     if (sidePopupOpen_) {
         GameUI::SideSelectCtx sctx;
+        // 契约 v1 第 5 节：爆破模式标记由实际 MatchMode 填充
+        sctx.bombMode = (currentMatchMode_ == MatchMode::BombDefusal);
         sctx.mapName = "古代遗迹";
         for (int i = 0; i < kMapCatalogCount; ++i) {
             if (currentMapRel_.find(kMapCatalog[i].tmj) != std::string::npos ||
@@ -2043,7 +2217,23 @@ void Engine::SaveAudioConfig() {
     ini.Save(path);
 }
 
-// 买枪菜单：由 WeaponDB 生成条目，点击回调直接调用 CS2DGame::TryBuy
+// 买枪菜单：由 WeaponDB 生成快照，点击回调走 ExecutePurchase（契约 v1 第 3 节）
+static const char* BuyCategoryLabel(WeaponClass cls) {
+    switch (cls) {
+        case WeaponClass::Pistol:     return "手枪";
+        case WeaponClass::SMG:        return "冲锋枪";
+        case WeaponClass::Rifle:      return "步枪";
+        case WeaponClass::Sniper:     return "狙击枪";
+        case WeaponClass::Shotgun:    return "霰弹枪";
+        case WeaponClass::MachineGun: return "机枪";
+        case WeaponClass::Grenade:    return "投掷物";
+        case WeaponClass::Melee:      return "近战";
+        case WeaponClass::ZeusGun:    return "手枪";
+        case WeaponClass::Bomb:       return "任务物品";
+    }
+    return "";
+}
+
 void Engine::RenderBuyMenu() {
     GameUI::BuyMenuCtx bctx;
     bctx.money  = cs2dGame->GetPlayerMoney();
@@ -2053,7 +2243,9 @@ void Engine::RenderBuyMenu() {
     }
 
     const CS2DGame::Player& p = cs2dGame->GetPlayer();
+    bctx.playerTeam = p.team;
     const bool isTerrorist = (p.team == Team::T);
+
     for (int i = 1; i < static_cast<int>(WeaponId::Count); ++i) {
         const WeaponId wid = static_cast<WeaponId>(i);
         const WeaponDef& def = WeaponDB::Get(wid);
@@ -2067,52 +2259,48 @@ void Engine::RenderBuyMenu() {
         it.price      = def.price;
         it.affordable = (bctx.money >= def.price);
 
+        // 新字段：唯一判定来源是 EvaluatePurchase（无副作用）
+        it.request.kind   = Presentation::BuyKind::Weapon;
+        it.request.weapon = wid;
+        it.availability   = cs2dGame->EvaluatePurchase(it.request);
+        it.owned          = (it.availability == Presentation::BuyCode::AlreadyEquipped);
+        it.iconPath       = (def.iconPath ? def.iconPath : "");
+        it.categoryLabel  = BuyCategoryLabel(def.cls);
+        it.magazine       = def.magazine;
+        it.automatic      = def.automatic;
+        it.scopeSupported = def.scoped;
+
         switch (def.slot) {
             case WeaponSlotKind::Primary:   it.group = 0; break;
             case WeaponSlotKind::Secondary: it.group = 1; break;
             case WeaponSlotKind::Melee:     it.group = 2; break;
             case WeaponSlotKind::Grenade:   it.group = 3; break;
         }
-        if (def.slot == WeaponSlotKind::Grenade) {
-            // 投掷物有数量概念：闪光 2 个，其它 1 个，满了才标记为已拥有
-            const int limit = (def.id == WeaponId::GrenadeFlash) ? 2 : 1;
-            it.owned = (p.CountGrenade(def.id) >= limit ||
-                        p.grenadeCount >= CS2DGame::Player::MAX_GRENADES);
-        } else {
-            for (int s = 0; s < 4; ++s) {
-                if (static_cast<int>(p.weapons[s]) == i && s == it.group) {
-                    it.owned = true;
-                    break;
-                }
-            }
-        }
         bctx.items.push_back(it);
     }
 
-    // 护甲条目（用负数 weaponId 编码：-1=护甲 -2=护甲+头盔）
-    {
-        const int money = bctx.money;
-        GameUI::BuyItem k1;
-        k1.kind = 1; k1.armorTier = 1; k1.weaponId = -1;
-        k1.name = "护甲"; k1.price = 650; k1.group = 4;
-        k1.affordable = (money >= 650);
-        k1.owned = (p.armor >= 100);
-        bctx.items.push_back(k1);
-
-        GameUI::BuyItem k2;
-        k2.kind = 1; k2.armorTier = 2; k2.weaponId = -2;
-        k2.name = "护甲+头盔"; k2.price = 1000; k2.group = 4;
-        k2.affordable = (money >= 1000);
-        k2.owned = (p.armor >= 100 && p.helmet);
-        bctx.items.push_back(k2);
+    // 护甲条目（武器侧用 kind=Armor；旧 weaponId 负数编码只保留作兼容）
+    for (int tier = 1; tier <= 2; ++tier) {
+        GameUI::BuyItem k;
+        k.kind = 1;
+        k.armorTier = tier;
+        k.weaponId = -tier;
+        k.name = (tier == 2) ? "护甲+头盔" : "护甲";
+        k.price = (tier == 2) ? 1000 : 650;
+        k.group = 4;
+        k.affordable = (bctx.money >= k.price);
+        k.request.kind = Presentation::BuyKind::Armor;
+        k.request.weapon = WeaponId::None;
+        k.request.armorTier = tier;
+        k.availability = cs2dGame->EvaluatePurchase(k.request);
+        k.owned = (k.availability == Presentation::BuyCode::AlreadyEquipped);
+        k.categoryLabel = "护甲";
+        bctx.items.push_back(k);
     }
 
-    gameUI->DrawBuyMenu(bctx, [this](int id) {
-        if (id < 0) {
-            cs2dGame->TryBuyArmor(-id, audioManager.get());      // -1 → 护甲, -2 → 护甲+头盔
-        } else {
-            cs2dGame->TryBuy(static_cast<WeaponId>(id), audioManager.get());
-        }
+    gameUI->DrawBuyMenu(bctx, [this](const Presentation::BuyRequest& r) {
+        // 一帧最多一次：DrawBuyMenu 内部保证，这里只负责提交与返回真实结果
+        return cs2dGame->ExecutePurchase(r, audioManager.get());
     });
 }
 

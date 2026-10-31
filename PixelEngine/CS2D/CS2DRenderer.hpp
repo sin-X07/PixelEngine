@@ -2,6 +2,8 @@
 #include "Tuning.hpp"
 #include "CS2DWorld.hpp"
 #include "Weapons/WeaponDef.hpp"
+#include "../Core/Types.hpp"
+#include "../Core/PresentationContract.hpp"
 #include <SDL2/SDL.h>
 #include <SDL_image.h>
 #include <vector>
@@ -25,6 +27,10 @@ struct SpriteDrawParams {
     float animTimer  = 0.0f;
     float deathTimer = 0.0f;
     Uint8 alpha      = 255;
+    // 契约 v1 第 5 节：阵营/标识只复用「已通过可见性剔除」的 sprite
+    Team  team        = Team::None;
+    bool  friendly    = false;   // 相对当前观察者
+    bool  localPlayer = false;   // 本地玩家自己
 };
 
 // 序列帧精灵图元数据：3 行 × 2 列，共 6 帧移动姿态
@@ -46,8 +52,10 @@ public:
 
     void SetWorld(const CS2DWorld* world);
 
+    // zoomMultiplier：开镜倍率（契约 v1 第 4 节）。GetZoom() 返回 base*multiplier，
+    // 逻辑视野半径始终按 baseZoom 计算，不因开镜改变敌人知情规则。
     void UpdateCamera(float playerCenterX, float playerCenterY,
-                      int viewportW, int viewportH);
+                      int viewportW, int viewportH, float zoomMultiplier = 1.0f);
 
     // 背景 + tile 层
     void DrawWorld();
@@ -58,6 +66,18 @@ public:
 
     // 子弹 / 准星
     void DrawBullet(float x, float y, float vx, float vy);
+    // 枪弹视觉段（契约 v1 第 6 节）：数据由 CS2DGame 产出，这里只绘制。
+    // 注意：表现实现归 UI 方（PIX-17）；当前为可运行的最小占位实现。
+    void DrawBulletVisuals(const std::vector<Presentation::BulletVisualSegment>& segments);
+    // 开镜覆盖层（契约 v1.3）：表现实现归 UI 方（PIX-10）；
+    // 当前为可运行的最小占位实现，接线与调用时序由功能方保证。
+    // 参数里 centerX/Y、radiusPx、crossThickness、crossGap 都是逻辑画布坐标，
+    // 由 CS2DGame 按准星世界点投影 + 设置项算好，UI 不做命中/相机计算。
+    void DrawScopeOverlay(const Presentation::ScopeOverlayParams& p);
+    // 契约 v1.1：开镜时可见区改为以 (centerX, centerY) 为圆心、radiusWorld 为半径的圆，
+    // 取代原有「扇形 + 半径」规则；ComputeVisibility 与敌人剔除、视野雾共用这份状态。
+    void SetScopeMask(bool active, float centerX, float centerY, float radiusWorld);
+    bool IsScopeMaskActive() const { return scopeMaskActive_; }
     // 飞行中的投掷物：按类型画对应的旋转图标（替代原来的 bullet 占位）
     void DrawThrownGrenade(int weaponId, float worldX, float worldY, float spinDeg);
     // 掉在地上的武器：用 _d 图标（与 HUD 同一套素材），带轻微上下浮动
@@ -112,6 +132,12 @@ public:
     // 命中反馈（屏幕坐标，X 形准星）与受伤红色边缘
     void DrawHitMarker(float screenX, float screenY, float scale, Uint8 alpha);
     void DrawDamageVignette(Uint8 alpha);
+
+    // 契约 v1.2：迷雾透明度（0..100%）。只改视觉 alpha，不改可见性判定，
+    // 也不影响烟雾弹/火区等独立表现（它们各有自己的贴图与 alpha）。
+    void SetFogOpacityPct(int pct);
+    int  FogOpacityPct() const { return fogOpacityPct_; }
+    int  EffectiveFogAlpha() const;   // 供 HUD/测试查询当前实际雾 alpha（0..255）
 
     // 视线检查（供 CS2DGame 使用）
     bool HasLineOfSight(float fromX, float fromY, float toX, float toY) const;
@@ -206,6 +232,7 @@ private:
     static constexpr float VISION_CONE_DEG   = Tuning::VisionConeDeg;
     static constexpr float VISION_ANGLE_SOFT = Tuning::VisionAngleSoftDeg;
     static constexpr Uint8 VISION_FOG_ALPHA  = 160;     // 不可见区半透明上限
+    static constexpr Uint8 SCOPE_FOG_ALPHA   = 242;     // 开镜时镜外的雾（"看不见"而非"看不清"）
     static constexpr Uint8 VISION_FOG_R      = 200;     // 浅灰遮罩颜色
     static constexpr Uint8 VISION_FOG_G      = 200;
     static constexpr Uint8 VISION_FOG_B      = 200;
@@ -214,6 +241,15 @@ private:
     std::vector<Uint8> visionPixels_;
     int maskW_ = 0;
     int maskH_ = 0;
+
+    // 开镜圆形可见区（契约 v1.1）：active 时 ComputeVisibility 改用圆形规则
+    bool  scopeMaskActive_ = false;
+    float scopeMaskX_ = 0.0f;
+    float scopeMaskY_ = 0.0f;
+    float scopeMaskR_ = 0.0f;
+
+    // 迷雾透明度设置（契约 v1.2）：只缩放雾的 alpha，不改可见性
+    int   fogOpacityPct_ = 100;
 
     void CreateVisionTexture();   // 创建/重建视野 streaming 纹理
 

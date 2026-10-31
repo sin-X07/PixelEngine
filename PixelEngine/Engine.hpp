@@ -4,6 +4,7 @@
 #include "Input/InputManager.hpp"
 #include "Graphics/ImGuiUI.hpp"
 #include "Graphics/GameUI.hpp"
+#include "Graphics/WeaponIconCache.hpp"
 #include "Graphics/Menu3D.hpp"
 #include "Storage/SaveManager.hpp"
 #include "CS2D/CS2DRenderer.hpp"
@@ -55,6 +56,10 @@ private:
     bool  cs2dKeyShift = false, cs2dKeyR = false;
     bool  buyMenuOpen_ = false;   // 买枪菜单开关
     bool  showScoreboard_ = false; // Tab 按住显示记分板
+    // 契约 v1 第 4 节：右键 down 边沿在 HandleInput 采集，Engine::Update 只消费一次
+    bool  scopeRightClickPending_ = false;
+    // 武器图标缓存：GameUI 借用，Engine 负责生命周期（必须早于 SDL_DestroyRenderer）
+    std::unique_ptr<WeaponIconCache> weaponIconCache_;
     MatchMode currentMatchMode_ = MatchMode::TeamElimination;   // 暂停页"重新开始"用
 
     // 买枪菜单渲染
@@ -195,6 +200,7 @@ private:
     std::string currentMapRel_;          // 当前对局地图（重新开始时沿用）
     Team        pendingPlayerTeam_ = Team::CT;
     bool openMapSelectOnStart_ = false;  // --mapselect
+    bool openSettingsOnStart_  = false;  // --settings（验收截图用）
     void* menuBgTex_ = nullptr;   // 主菜单背景图
     int   menuBgW_ = 0, menuBgH_ = 0;
     void* mapPreviewTex_[8] = {nullptr, nullptr, nullptr, nullptr,
@@ -208,15 +214,27 @@ private:
     void Update(float dt);
     void Render();
     void ResizeLogicalViewport(int w, int h);
+    // 调试钩子（仅 --loadout=<武器名/编号> 时生效，用于验收截图与联调）
+    void ApplyDebugLoadout();
+    std::string debugLoadout_;
+    bool        debugLoadoutPending_ = false;
+    bool        debugBuyMenu_ = false;
+    bool        debugBuyMenuPending_ = false;
 
 public:
     Engine();
     ~Engine();
 
+    // --loadout=<武器显示名或 WeaponId 编号>：进入对局后直接装备并给满金钱
+    void SetDebugLoadout(const std::string& spec) { debugLoadout_ = spec; }
+    // --buymenu：进入对局后自动打开一次购买菜单（验收截图用）
+    void SetDebugBuyMenu(bool on) { debugBuyMenu_ = on; }
+
     bool Initialize(const char* title, int width, int height, bool autostart = false,
                     bool fastRound = false, int startMode = 1, bool coachLlm = true,
                     const std::string& startMap = std::string(),
-                    bool openMapSelect = false, bool openHistory = false, const std::string& side = "");
+                    bool openMapSelect = false, bool openHistory = false,
+                    const std::string& side = "", bool openSettings = false);
     void Run();
     void Clean();
     void ToggleFullscreen();

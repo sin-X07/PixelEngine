@@ -36,6 +36,9 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
     if (!renderer || !game) return;
 
     // 准星
+    // 契约 v1.3：开镜期间不画普通准星，改用镜筒里的大十字（四象限）
+    const Presentation::ScopeView scope = game->GetScopeView();
+    const bool scoped = scope.active && scope.supported;
     // 准星尺寸随 UI 缩放（设置里的数值是 1920x1080 基准）
     float crosshairGap = crosshair.gap * g_uiScale;
     if (crosshair.dynamic) {
@@ -43,10 +46,12 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
         crosshairGap += game->GetCrosshairBloom() *
                         Tuning::CrosshairBloomMaxPx * g_uiScale;
     }
-    renderer->DrawCrosshair(virtCursorX, virtCursorY,
-                            crosshair.r, crosshair.g, crosshair.b, crosshair.a,
-                            crosshair.thickness * g_uiScale, crosshair.centerDot,
-                            crosshair.length * g_uiScale, crosshairGap);
+    if (!scoped) {
+        renderer->DrawCrosshair(virtCursorX, virtCursorY,
+                                crosshair.r, crosshair.g, crosshair.b, crosshair.a,
+                                crosshair.thickness * g_uiScale, crosshair.centerDot,
+                                crosshair.length * g_uiScale, crosshairGap);
+    }
 
     // 顶部计分板已由 GameUI（ImGui）统一绘制，此处不再重复绘制
 

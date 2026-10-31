@@ -1071,7 +1071,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             if (bot.shootCooldown > 0.0f) bot.shootCooldown -= dt;
             if (bot.shootCooldown <= 0.0f) {
                 if (target == &player_) {
-                    if (ApplyDamage(player_, static_cast<int>(def.damage * 0.33f))) {
+                    if (ApplyDamage(player_, static_cast<int>(def.damage * 0.33f), WeaponDB::ArmorPen(def.id))) {
                         OnCombatantKilled(player_, audio, &bot);
                     }
                 }

@@ -134,6 +134,19 @@ private:
     };
     std::array<ChickenState, 3> chickenState_{};
     std::mt19937 chickenRng_{ std::random_device{}() };
+    // ---- 小鸡步态校准（数值来源：assets/models/chickensoft/manifest.md）----
+    // 模型 y 向上，1 单位 = 1 米，实测 AABB 高度 1.843；基础动画 walk 循环 0.8s。
+    static constexpr float kChickenModelHeight = 1.843f;
+    static constexpr float kWalkClipSeconds    = 0.8f;
+    static constexpr float kRunClipSeconds     = 0.5333f;
+    // 一次 walk 循环的期望位移（按身高折算），用于避免滑步
+    static constexpr float kChickenStrideBodyHeights = 1.0f;
+    // 基准世界速度：dist=6 处的移动速度（世界单位/秒），透视按 dist 缩放
+    static constexpr float kChickenBaseSpeed   = 1.05f;
+    // Draw 用的世界缩放（距离补偿，保证屏幕上三只鸡大小接近）
+    float ChickenWorldScale(const ChickenState& s) const;
+    // 动画时间倍率：让「每秒位移 / 每循环步幅」与 walk 循环时长对齐，消除滑步
+    float ChickenAnimTimeScale(const ChickenState& s) const;
     void InitChickenState();
     void UpdateChickens(float dt);
     void PickChickenTarget(int index);

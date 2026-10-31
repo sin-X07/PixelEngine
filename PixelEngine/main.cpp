@@ -37,6 +37,9 @@ int main(int argc, char* argv[]) {
     bool openMapSelect = false;  // --mapselect 直接打开地图选择界面（调试）
     bool openHistory = false;    // --history 直接打开历史记录（调试）
     std::string sideArg;        // --side=t|ct 指定玩家阵营（调试）
+    std::string loadoutArg;     // --loadout=<武器名/编号> 进入对局后直接装备（调试）
+    bool openBuyMenu = false;   // --buymenu 进入对局后自动打开购买菜单（调试）
+    bool openSettings = false;  // --settings 直接打开设置页（验收截图用）
     for (int i = 1; i < argc; ++i) {
         if (!argv[i]) continue;
         const std::string a(argv[i]);
@@ -54,9 +57,17 @@ int main(int argc, char* argv[]) {
         if (a.rfind("--side=", 0) == 0) {
             sideArg = a.substr(7);
         }
+        if (a.rfind("--loadout=", 0) == 0) {
+            loadoutArg = a.substr(10);
+        }
+        if (a == "--buymenu") openBuyMenu = true;
+        if (a == "--settings") openSettings = true;
     }
 
-    if (engine.Initialize("CS2D Pixel", 800, 600, autostart, fastRound, startMode, coachLlm, startMap, openMapSelect, openHistory, sideArg)) {
+    engine.SetDebugLoadout(loadoutArg);
+    engine.SetDebugBuyMenu(openBuyMenu);
+
+    if (engine.Initialize("CS2D Pixel", 800, 600, autostart, fastRound, startMode, coachLlm, startMap, openMapSelect, openHistory, sideArg, openSettings)) {
         engine.Run();
     }
 

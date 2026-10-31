@@ -83,6 +83,11 @@ void CS2DGame::BeginNewRound(AudioManager* audio) {
 }
 
 void CS2DGame::RespawnAllForRound(bool carryWeapons) {
+    // 新回合：开镜归零 + 枪弹视觉段清空（契约 v1 第 5、6 节）
+    ResetScope(Presentation::ScopeResetReason::RoundRestart);
+    bulletVisuals_.clear();
+    nextBulletVisualId_ = 1;
+
     // 玩家：上回合存活 → 保留原有武器/护甲/投掷物；阵亡 → 回到起始手枪
     const bool playerSurvived = carryWeapons && player_.alive;
 
