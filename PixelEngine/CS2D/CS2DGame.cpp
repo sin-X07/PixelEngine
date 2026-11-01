@@ -171,6 +171,7 @@ void CS2DGame::RestartMatchWithTeam(Team t) {
 }
 
 void CS2DGame::Reset() {
+    dmLoadout_ = DmLoadout{};   // 新对局不沿用上一局的死斗装备
     ResetToNewMatch();
 }
 
@@ -353,6 +354,12 @@ Presentation::BuyResult CS2DGame::ExecutePurchase(
         // 购买替换了当前手持武器 → 开镜必须归零
         if (def.slot == WeaponSlotKind::Primary || def.slot == WeaponSlotKind::Secondary) {
             ResetScope(Presentation::ScopeResetReason::WeaponChanged);
+            // 死斗：记住这次买到的装备，下次重生自动装配（仍可继续购买）
+            if (mode_ == MatchMode::DeathMatch) {
+                dmLoadout_.primary   = player_.weapons[0];
+                dmLoadout_.secondary = player_.weapons[1];
+                dmLoadout_.valid     = true;
+            }
         }
     }
 
@@ -479,6 +486,19 @@ void CS2DGame::SpawnPlayer() {
         else                                       player_.SetSlotWeapon(sl, player_.weapons[sl]);
     }
     player_.SaveAmmoToSlot();
+
+    // 死斗：重生自动装配「上一次购买的武器」（武器免费沿用；金钱仍为 16000，可继续购买）
+    if (mode_ == MatchMode::DeathMatch && dmLoadout_.valid) {
+        if (dmLoadout_.primary != WeaponId::None) {
+            player_.SetSlotWeapon(0, dmLoadout_.primary);
+        }
+        if (dmLoadout_.secondary != WeaponId::None) {
+            player_.SetSlotWeapon(1, dmLoadout_.secondary);
+        }
+        player_.weaponSlot = (player_.weapons[0] != WeaponId::None) ? 0 : 1;
+        player_.LoadAmmoFromSlot();
+    }
+
     player_.reloading  = false;
     player_.reloadTimer = 0.0f;
     player_.stealth    = false;

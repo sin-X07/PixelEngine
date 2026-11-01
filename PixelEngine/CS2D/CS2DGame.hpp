@@ -631,9 +631,25 @@ public:
     void SpectatorBegin();
     void SpectatorEnd();
     // 音效听者位置：观战时以镜头/被观战者为准
+    // 死斗：记住"上一次购买的武器"，每次重生自动装配（仍可在重生后继续购买）
+    struct DmLoadout {
+        WeaponId primary = WeaponId::None;
+        WeaponId secondary = WeaponId::None;
+        bool valid = false;
+    };
+    const DmLoadout& GetDmLoadout() const { return dmLoadout_; }
+    // 把当前武器槽记为"上一次购买的装备"（调试装备也走这里，便于验收重生装配）
+    void RememberCurrentLoadoutAsDm() {
+        if (mode_ != MatchMode::DeathMatch) return;
+        dmLoadout_.primary   = player_.weapons[0];
+        dmLoadout_.secondary = player_.weapons[1];
+        dmLoadout_.valid     = (dmLoadout_.primary != WeaponId::None ||
+                                dmLoadout_.secondary != WeaponId::None);
+    }
     // 死斗：阵亡后原地停留（死亡镜头），不进入观察者、不切到其他 BOT
     bool IsDeathCam() const { return deathCam_; }
     bool deathCam_ = false;
+    DmLoadout dmLoadout_;   // 死斗重生装配用（Reset 时清空）
     float ListenerX() const;
     float ListenerY() const;
     Team GetMatchWinner() const { return teams_.MatchWinner(); }

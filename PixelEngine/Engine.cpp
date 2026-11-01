@@ -1252,6 +1252,8 @@ void Engine::ApplyDebugLoadout() {
             break;
     }
     p.LoadAmmoFromSlot();
+    // 死斗：调试装备也记入"上一次购买"，这样重生后仍然沿用（验收用）
+    cs2dGame->RememberCurrentLoadoutAsDm();
     std::cout << "[Debug] 调试装备: " << def.name
               << " (金钱 $" << p.money << ")" << std::endl;
 }

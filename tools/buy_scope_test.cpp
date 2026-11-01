@@ -606,6 +606,35 @@ static void TestDamageAndScopeShot() {
         check(sawRespawn, "死斗阵亡后自动重生");
         check(!dmCam.IsDeathCam(), "重生后退出死亡镜头");
 
+        // ---- 死斗：重生自动装配上一次购买的武器，且仍可继续购买 ----
+        {
+            CS2DGame loot;
+            if (!LoadDeathMatch(loot)) return;
+            loot.GetPlayer().money = 16000;
+            const Presentation::BuyResult br =
+                loot.ExecutePurchase(WeaponReq(WeaponId::M4A4), nullptr);
+            check(br.code == Presentation::BuyCode::Ok, "死斗买 M4A4 成功（CT 阵营可买）");
+            check(loot.GetDmLoadout().valid, "死斗购买后记录装备");
+            check(loot.GetDmLoadout().primary == WeaponId::M4A4, "记录的主武器 = M4A4");
+            loot.DebugKillPlayerForTest();
+            bool respawned2 = false;
+            for (int i = 0; i < 300; ++i) {
+                loot.Update(1.0f / 60.0f, false, loot.GetPlayer().x, loot.GetPlayer().y,
+                            false, false, false, false, false, false, false, nullptr);
+                if (loot.GetPlayer().alive) { respawned2 = true; break; }
+            }
+            check(respawned2, "死斗阵亡后重生");
+            check(loot.GetPlayer().weapons[0] == WeaponId::M4A4, "重生后自动装上 M4A4");
+            check(loot.GetPlayer().weaponSlot == 0, "重生后默认手持主武器");
+            const WeaponDef& ak = WeaponDB::Get(WeaponId::M4A4);
+            check(loot.GetPlayer().ammo == ak.magazine, "重生后主武器弹匣满");
+            check(loot.GetPlayer().money == 16000, "重生后金钱仍为 $16000（还能继续买）");
+            const Presentation::BuyResult br2 =
+                loot.ExecutePurchase(WeaponReq(WeaponId::M4A1S), nullptr);
+            check(br2.code == Presentation::BuyCode::Ok, "重生后仍可购买武器");
+            check(loot.GetDmLoadout().primary == WeaponId::M4A1S, "新购买会更新记录");
+        }
+
         // 对照：团队模式阵亡仍进入观察者
         CS2DGame teamCam;
         teamCam.SetMatchMode(MatchMode::TeamElimination);
