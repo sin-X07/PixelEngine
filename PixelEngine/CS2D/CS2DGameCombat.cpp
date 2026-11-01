@@ -793,8 +793,17 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio, Player* ki
               (&victim == &player_) ? -1 : static_cast<int>(&victim - bots_.data()));
 
     // 击杀归属（自己炸自己 / 环境伤害不计入）
-    // 玩家阵亡 → 进入观察者模式
-    if (&victim == &player_) SpectatorBegin();
+    // 玩家阵亡：
+    //   死斗（一人成军）→ 原地「死亡镜头」：镜头停在阵亡位置等重生，**不切去观战任何 BOT**；
+    //   其它模式 → 进入观察者模式（跟队友 / 自由视角）。
+    if (&victim == &player_) {
+        if (mode_ == MatchMode::DeathMatch) {
+            SpectatorEnd();
+            deathCam_ = true;
+        } else {
+            SpectatorBegin();
+        }
+    }
 
     // 敌方阵亡位置也是一种情报（会衰减）
     if (victim.team != player_.team) {

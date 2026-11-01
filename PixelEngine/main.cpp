@@ -40,6 +40,7 @@ int main(int argc, char* argv[]) {
     std::string loadoutArg;     // --loadout=<武器名/编号> 进入对局后直接装备（调试）
     bool openBuyMenu = false;   // --buymenu 进入对局后自动打开购买菜单（调试）
     bool openSettings = false;  // --settings 直接打开设置页（验收截图用）
+    bool killPlayer = false;    // --killplayer 进对局 2s 后杀死玩家（验收死亡镜头用）
     for (int i = 1; i < argc; ++i) {
         if (!argv[i]) continue;
         const std::string a(argv[i]);
@@ -62,10 +63,12 @@ int main(int argc, char* argv[]) {
         }
         if (a == "--buymenu") openBuyMenu = true;
         if (a == "--settings") openSettings = true;
+        if (a == "--killplayer") killPlayer = true;
     }
 
     engine.SetDebugLoadout(loadoutArg);
     engine.SetDebugBuyMenu(openBuyMenu);
+    engine.SetDebugKillPlayer(killPlayer);
 
     if (engine.Initialize("CS2D Pixel", 800, 600, autostart, fastRound, startMode, coachLlm, startMap, openMapSelect, openHistory, sideArg, openSettings)) {
         engine.Run();

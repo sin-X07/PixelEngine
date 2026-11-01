@@ -219,6 +219,8 @@ private:
     std::string debugLoadout_;
     bool        debugLoadoutPending_ = false;
     bool        debugBuyMenu_ = false;
+    bool        debugKillPlayer_ = false;   // --killplayer（验收死亡镜头用）
+    float       debugKillDelay_ = -1.0f;    // >=0 时倒计时，归零杀一次
     bool        debugBuyMenuPending_ = false;
 
 public:
@@ -229,6 +231,7 @@ public:
     void SetDebugLoadout(const std::string& spec) { debugLoadout_ = spec; }
     // --buymenu：进入对局后自动打开一次购买菜单（验收截图用）
     void SetDebugBuyMenu(bool on) { debugBuyMenu_ = on; }
+    void SetDebugKillPlayer(bool on) { debugKillPlayer_ = on; }
 
     bool Initialize(const char* title, int width, int height, bool autostart = false,
                     bool fastRound = false, int startMode = 1, bool coachLlm = true,

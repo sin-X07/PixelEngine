@@ -420,6 +420,12 @@ public:
     Player&          GetPlayer()      { return player_; }
     const Player&    GetPlayer() const { return player_; }
 
+    // 仅回归测试使用：走真实死亡流程（OnCombatantKilled）杀死玩家，
+    // 用来验证「死斗 = 原地死亡镜头、其它模式 = 观察者」这类模式相关的镜头行为。
+    void DebugKillPlayerForTest() {
+        if (player_.alive) OnCombatantKilled(player_, nullptr, nullptr);
+    }
+
     std::vector<Player>&       GetBOTs()       { return bots_; }
     const std::vector<Player>& GetBOTs() const { return bots_; }
     const std::vector<Bullet>& GetBullets() const { return bullets_; }
@@ -625,6 +631,9 @@ public:
     void SpectatorBegin();
     void SpectatorEnd();
     // 音效听者位置：观战时以镜头/被观战者为准
+    // 死斗：阵亡后原地停留（死亡镜头），不进入观察者、不切到其他 BOT
+    bool IsDeathCam() const { return deathCam_; }
+    bool deathCam_ = false;
     float ListenerX() const;
     float ListenerY() const;
     Team GetMatchWinner() const { return teams_.MatchWinner(); }

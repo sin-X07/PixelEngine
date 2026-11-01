@@ -587,6 +587,32 @@ static void TestDamageAndScopeShot() {
         check(!team.IsDeathMatch(), "团队模式标记 = false");
         check(!team.IsHostileTeam(Team::T, Team::T), "团队模式：同队不敌对");
         check(team.IsHostileTeam(Team::T, Team::CT), "团队模式：跨队敌对");
+
+        // ---- 死斗阵亡：原地死亡镜头，不观战任何 BOT ----
+        CS2DGame dmCam;
+        if (!LoadDeathMatch(dmCam)) return;
+        check(!dmCam.IsSpectating(), "死斗存活时不处于观察者");
+        dmCam.DebugKillPlayerForTest();
+        check(!dmCam.IsSpectating(), "死斗阵亡：不进入观察者（不观战 BOT）");
+        check(dmCam.IsDeathCam(), "死斗阵亡：进入原地死亡镜头");
+        // 3s 后自动重生；重生瞬间立即断言语义（FFA 下复活后可能马上又被打死，
+        // 所以不能等循环结束再检查"是否活着"）
+        bool sawRespawn = false;
+        for (int i = 0; i < 300; ++i) {
+            dmCam.Update(1.0f / 60.0f, false, dmCam.GetPlayer().x, dmCam.GetPlayer().y,
+                         false, false, false, false, false, false, false, nullptr);
+            if (dmCam.GetPlayer().alive) { sawRespawn = true; break; }
+        }
+        check(sawRespawn, "死斗阵亡后自动重生");
+        check(!dmCam.IsDeathCam(), "重生后退出死亡镜头");
+
+        // 对照：团队模式阵亡仍进入观察者
+        CS2DGame teamCam;
+        teamCam.SetMatchMode(MatchMode::TeamElimination);
+        if (!teamCam.LoadMap(MapPath(), nullptr, true)) return;
+        teamCam.DebugKillPlayerForTest();
+        check(teamCam.IsSpectating(), "团队模式阵亡：进入观察者");
+        check(!teamCam.IsDeathCam(), "团队模式没有死亡镜头");
     }
     {
         // 换弹期间不能开镜；正在开镜时进入换弹也必须退镜（兜底在 TickScope）。

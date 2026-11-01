@@ -24,6 +24,7 @@ int CS2DGame::NextTeammateBot(int from, int dir) const {
 }
 
 void CS2DGame::SpectatorBegin() {
+    if (mode_ == MatchMode::DeathMatch) return;   // 死斗：死亡镜头，不观战 BOT
     specMode_ = SpectateMode::Follow;
     specFreeX_ = player_.x;
     specFreeY_ = player_.y;
@@ -37,6 +38,7 @@ void CS2DGame::SpectatorEnd() {
 }
 
 void CS2DGame::SpectatorToggle() {
+    if (mode_ == MatchMode::DeathMatch) return;   // 死斗不允许切观战视角
     if (specMode_ == SpectateMode::Follow) {
         // 切到自由视角：从当前跟随目标的位置起步
         if (specTarget_ >= 0 && specTarget_ < static_cast<int>(bots_.size())) {
@@ -56,12 +58,14 @@ void CS2DGame::SpectatorToggle() {
 }
 
 void CS2DGame::SpectatorCycle(int dir) {
+    if (mode_ == MatchMode::DeathMatch) return;
     if (specMode_ != SpectateMode::Follow) return;
     const int found = NextTeammateBot(specTarget_, dir);
     if (found >= 0) specTarget_ = found;
 }
 
 void CS2DGame::SpectatorMoveFree(float dx, float dy, float dt) {
+    if (mode_ == MatchMode::DeathMatch) return;
     if (specMode_ != SpectateMode::Free || !world_) return;
 
     const float speed = 420.0f;

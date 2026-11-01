@@ -241,3 +241,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/win_accept.ps1
 - 验证：`gameplay_tests` 132 通过 0 失败；截图 `01-main-menu` / `02-ingame-hud` / `03-buy-menu` /
   `04-scope-15x` / `05-scope-20x` / `06-settings`。
 - 未验证：720p/16:10、逐场景录屏、真实 LLM、macOS 全部项。
+## 9. 死斗死亡镜头与调试参数（2026-11-01）
+
+- **死斗阵亡 = 原地死亡镜头**：`OnCombatantKilled` 在 `MatchMode::DeathMatch` 下只置 `deathCam_`
+  并 `SpectatorEnd()`，不进入观察者；相机继续以玩家（阵亡点）为中心，`SpawnPlayer()` 时清除。
+  观察者的三个入口（`SpectatorBegin/Toggle/Cycle`、`SpectatorMoveFree`）在死斗下直接 return，
+  防止空格/左右键把镜头切到别的 BOT。
+- HUD：死斗阵亡时显示「阵亡 · 等待重生」（`GameUI::DrawInGame`，条件 `!spectating && playerTeam==None && health<=0`）。
+- 回归：`gameplay_tests` 覆盖「死斗阵亡不进观察者 + 进死亡镜头 + 重生后清除」「团队模式阵亡仍进观察者」。
+- 新调试参数 `--killplayer`：进对局 2s 后杀死玩家、之后每 8s 一次，用于验收死亡镜头截图。

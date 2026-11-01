@@ -440,6 +440,7 @@ bool CS2DGame::PickSpawnForTeam(Team team, float& outX, float& outY) {
 
 void CS2DGame::SpawnPlayer() {
     SpectatorEnd();
+    deathCam_ = false;   // 死斗重生：退出死亡镜头
 
     player_.alive      = true;
     player_.health     = 100;
@@ -1101,7 +1102,7 @@ void CS2DGame::Render(int viewW, int viewH) {
     // 死斗（一人成军）没有"队友"概念：跳过迷雾/视野半径/朝向扇形的剔除（全场对手都要能看到），
     // 但保留墙体遮挡（HasLineOfSight）——不会隔着墙看到人。
     // 队伍模式仍严格按可见性剔除，不泄露信息。
-    const bool applyVisionCull = player_.alive || IsSpectating();
+    const bool applyVisionCull = player_.alive || IsSpectating() || deathCam_;
     const bool dmMode = IsDeathMatch();
     for (const auto& bot : bots_) {
         if (!bot.alive && bot.deathTimer > 2.0f) continue;

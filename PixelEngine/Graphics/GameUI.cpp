@@ -2258,6 +2258,12 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
         DrawImGuiTextCentered(imGuiUI, ctx.hintText.c_str(), 512.0f, 245, 200, 90, 255, 22);
     }
 
+    // 死斗：阵亡后是「原地死亡镜头」，不是观战——给一个明确的等待重生提示
+    if (!ctx.spectating && ctx.playerTeam == Team::None && ctx.health <= 0) {
+        const float yWait = ImGui::GetIO().DisplaySize.y - UI(96.0f) - UI(26.0f);
+        DrawImGuiTextCentered(imGuiUI, "阵亡 · 等待重生", yWait, 240, 128, 118, 240, 22);
+    }
+
     // 开镜档位提示（PIX-8：只读 InGameCtx.scope，不维护第二套状态；镜框由 DrawScopeOverlay 独占）
     if (ctx.scope.active) {
         char scopeBuf[48];

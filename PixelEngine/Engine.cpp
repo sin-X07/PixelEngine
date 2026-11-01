@@ -1172,6 +1172,7 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
     // 调试装备（--loadout=）：延后到真正可操作的那一帧再给，避免被 LoadMap 重置
     if (!debugLoadout_.empty()) debugLoadoutPending_ = true;
     if (debugBuyMenu_) debugBuyMenuPending_ = true;
+    if (debugKillPlayer_) debugKillDelay_ = 2.0f;   // --killplayer：进对局 2s 后杀一次
     cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
     cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
 
@@ -1282,6 +1283,15 @@ void Engine::Update(float dt) {
     if (debugBuyMenuPending_ && cs2dGame && cs2dGame->IsBuyPhase()) {
         buyMenuOpen_ = true;
         debugBuyMenuPending_ = false;
+    }
+    // 调试死亡镜头（--killplayer）：进对局 2s 后按真实死亡流程杀一次玩家
+    if (debugKillDelay_ >= 0.0f && cs2dGame) {
+        debugKillDelay_ -= dt;
+        if (debugKillDelay_ <= 0.0f) {
+            // 周期性杀死玩家（每 8s 一次），方便验收截图总能落在死亡镜头窗口内
+            debugKillDelay_ = 8.0f;
+            cs2dGame->DebugKillPlayerForTest();
+        }
     }
 
     // 开镜：每帧最多提交一次右键边沿（买枪/选边/失焦/转场/ImGui 捕获 mouse 时不允许）
