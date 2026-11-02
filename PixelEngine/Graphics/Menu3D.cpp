@@ -509,16 +509,40 @@ void Menu3D::PickChickenTarget(int index) {
 }
 
 void Menu3D::UpdateChickens(float dt) {
+    std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
     for (int i = 0; i < static_cast<int>(chickens_.size()) && i < 3; ++i) {
         ChickenState& s = chickenState_[i];
-        s.repathTimer -= dt;
-        if (s.repathTimer <= 0.0f) PickChickenTarget(i);
+        // 玩家在定制菜单里指定了非「散步」姿势时，不接管该鸡的动画与节奏
+        const bool wanderDriven = custom_.pose[i + 2] == 0;
 
+        // ---- 休息相（啄食/张望）：原地播 idle，计时结束再出发 ----
+        if (s.resting) {
+            s.restTimer -= dt;
+            // 轻微左右张望，避免完全定格
+            s.yaw += 9.0f * dt * std::sin(s.restTimer * 2.1f);
+            if (s.restTimer <= 0.0f) {
+                s.resting = false;
+                PickChickenTarget(i);
+                if (wanderDriven && chickens_[i]) chickens_[i]->PlayAnimation("walk");
+            }
+            continue;
+        }
+
+        s.repathTimer -= dt;
         float dx = s.targetX - s.x;
         float dz = s.targetZ - s.z;
         float dist = std::sqrt(dx * dx + dz * dz);
-        if (dist <= 0.06f) {
-            // 到点后立刻换下一个方向，保证主界面里一直有鸡在走
+        if (dist <= 0.06f || s.repathTimer <= 0.0f) {
+            // 到点或走够一段：大概率停下啄食/张望几秒（更像真鸡），否则直接换方向
+            if (wanderDriven && dist01(chickenRng_) < 0.65f) {
+                s.resting  = true;
+                s.restTimer = 1.6f + 2.6f * dist01(chickenRng_);
+                if (chickens_[i] && !chickens_[i]->PlayAnimation("idle")) {
+                    chickens_[i]->PlayAnimation("walk");   // idle 缺失则保持走动
+                    s.resting = false;
+                }
+                if (s.resting) continue;
+            }
             PickChickenTarget(i);
             dx = s.targetX - s.x;
             dz = s.targetZ - s.z;

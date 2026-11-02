@@ -1493,9 +1493,9 @@ static const char* BuyCodeText(Presentation::BuyCode code) {
 void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
     const std::function<Presentation::BuyResult(const Presentation::BuyRequest&)>& onBuy) {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    const float w = UI(600.0f);
+    const float w = UI(680.0f);
     // 高度跟着视口走，小窗口也不会被裁掉；内容超出时右侧出现滚动条
-    const float h = std::min(UI(470.0f), viewport->WorkSize.y - UI(48.0f));
+    const float h = std::min(UI(560.0f), viewport->WorkSize.y - UI(48.0f));
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (viewport->WorkSize.x - w) * 0.5f,
                                   viewport->WorkPos.y + (viewport->WorkSize.y - h) * 0.5f),
                             ImGuiCond_Always);
@@ -1547,8 +1547,8 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
             const char* reason = BuyCodeText(it.availability);
 
             // ---- 卡片式条目：图标 / 名称 / 类别 / 价格 + 状态色（PIX-9）----
-            const float cardW = UI(182.0f);
-            const float cardH = UI(62.0f);
+            const float cardW = UI(208.0f);
+            const float cardH = UI(70.0f);
             ImGui::PushID(&it);
             ImGui::InvisibleButton("##card", ImVec2(cardW, cardH));
             const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
@@ -1581,7 +1581,7 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
             dl->AddRectFilled(p0, ImVec2(p0.x + UI(3.0f), p1.y), strip, UI(5.0f));
 
             // 图标：借用 WeaponIconCache（cache owning，UI 借用，不 Destroy）
-            const float iconBox = UI(34.0f);
+            const float iconBox = UI(40.0f);
             const ImVec2 iconPos(p0.x + UI(9.0f), p0.y + (cardH - iconBox) * 0.5f);
             SDL_Texture* iconTex = nullptr;
             if (weaponIconCache_ && !it.iconPath.empty()) {
@@ -1614,16 +1614,16 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
             const float textX = p0.x + UI(9.0f) + iconBox + UI(8.0f);
             const ImU32 nameCol = enabled ? IM_COL32(236, 242, 248, 255)
                                           : IM_COL32(150, 158, 168, 255);
-            dl->AddText(ImVec2(textX, p0.y + UI(9.0f)), nameCol, it.name.c_str());
+            dl->AddText(ImVec2(textX, p0.y + UI(11.0f)), nameCol, it.name.c_str());
             char sub[64];
             snprintf(sub, sizeof(sub), "%s%s", it.categoryLabel.c_str(),
                      it.scopeSupported ? " · 可开镜" : "");
-            dl->AddText(ImVec2(textX, p0.y + UI(28.0f)),
+            dl->AddText(ImVec2(textX, p0.y + UI(32.0f)),
                         enabled ? IM_COL32(140, 160, 180, 255) : IM_COL32(104, 112, 124, 255), sub);
             char price[32];
             snprintf(price, sizeof(price), "$%d", it.price);
             const ImVec2 priceSz = ImGui::CalcTextSize(price);
-            dl->AddText(ImVec2(p1.x - UI(9.0f) - priceSz.x, p0.y + UI(9.0f)),
+            dl->AddText(ImVec2(p1.x - UI(9.0f) - priceSz.x, p0.y + UI(11.0f)),
                         enabled ? IM_COL32(240, 200, 120, 255) : IM_COL32(130, 122, 108, 255), price);
             // 已装备 / 已带满角标
             if (it.availability == Presentation::BuyCode::AlreadyEquipped) {
@@ -1801,7 +1801,7 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
         IM_COL32(4, 7, 10, static_cast<int>(178.0f * alpha)));
 
     const float w = UI(680.0f);
-    const float h = UI(330.0f);
+    const float h = UI(400.0f);
     ImGui::SetNextWindowPos(
         ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
                vp->WorkPos.y + vp->WorkSize.y * 0.5f),
@@ -1833,7 +1833,7 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
 
     const float btnW = (w - UI(72.0f)) * 0.5f;
     const float btnH = UI(112.0f);
-    const float btnY = UI(116.0f);
+    const float btnY = UI(124.0f);
 
     auto sideCard = [&](int side, const char* name, const char* role,
                         const char* desc, ImVec4 accent, float x) {
@@ -1842,7 +1842,7 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
         ImGui::TextColored(accent, "%s", name);
         ImGui::TextDisabled("%s", role);
         ImGui::TextWrapped("%s", desc);
-        ImGui::Dummy(ImVec2(0.0f, UI(8.0f)));
+        ImGui::Dummy(ImVec2(0.0f, UI(16.0f)));
         ImGui::PushStyleColor(ImGuiCol_Button, accent);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
                               ImVec4(accent.x + 0.08f, accent.y + 0.08f, accent.z + 0.08f, 1.0f));
@@ -1850,7 +1850,7 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.06f, 0.08f, 0.10f, 1.0f));
         char label[64];
         snprintf(label, sizeof(label), "以 %s 开始", side == 0 ? "T" : "CT");
-        if (ImGui::Button(label, ImVec2(btnW, UI(40.0f)))) {
+        if (ImGui::Button(label, ImVec2(btnW, UI(46.0f)))) {
             if (actions.playClick) actions.playClick();
             if (actions.chooseSide) actions.chooseSide(side);
         }
@@ -1858,16 +1858,21 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
         ImGui::EndGroup();
     };
 
-    sideCard(0, "T  恐怖分子", "进攻方 · 携带 C4",
-             "拿到炸弹后按住 E 在包点安装", ImVec4(0.94f, 0.67f, 0.27f, 1.0f),
-             UI(24.0f));
-    sideCard(1, "CT  反恐精英", "防守方 · 拆除 C4",
-             "阻止下包，或在包点按住 E 拆弹", ImVec4(0.35f, 0.67f, 0.96f, 1.0f),
-             UI(24.0f) + btnW + UI(24.0f));
+    // 职责文案按模式区分：非爆破模式不写下包/拆包（PIX-7，与全屏选边一致）
+    const char* tRolePop  = ctx.bombMode ? "进攻方 · 携带 C4" : "进攻方";
+    const char* tDescPop  = ctx.bombMode ? "拿到炸弹后按住 E 在包点安装"
+                                         : "歼灭全部敌人，与队友配合清点";
+    const char* ctRolePop = ctx.bombMode ? "防守方 · 拆除 C4" : "防守方";
+    const char* ctDescPop = ctx.bombMode ? "阻止下包，或在包点按住 E 拆弹"
+                                         : "歼灭全部敌人，卡点防守注意进攻方向";
+    sideCard(0, "T  恐怖分子", tRolePop, tDescPop,
+             ImVec4(0.94f, 0.67f, 0.27f, 1.0f), UI(24.0f));
+    sideCard(1, "CT  反恐精英", ctRolePop, ctDescPop,
+             ImVec4(0.35f, 0.67f, 0.96f, 1.0f), UI(24.0f) + btnW + UI(24.0f));
 
     const float rndW = UI(190.0f);
-    const float rndH = UI(36.0f);
-    ImGui::SetCursorPos(ImVec2((w - rndW) * 0.5f, UI(246.0f)));
+    const float rndH = UI(40.0f);
+    ImGui::SetCursorPos(ImVec2((w - rndW) * 0.5f, UI(304.0f)));
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.22f, 0.28f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.33f, 0.41f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.18f, 0.23f, 1.0f));
@@ -1877,7 +1882,7 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
     }
     ImGui::PopStyleColor(3);
 
-    ImGui::SetCursorPos(ImVec2(0.0f, h - UI(22.0f)));
+    ImGui::SetCursorPos(ImVec2(0.0f, h - UI(26.0f)));
     const char* hint = "选择后将重建首回合（不重新加载地图）";
     const float hintW = ImGui::CalcTextSize(hint).x;
     ImGui::SetCursorPosX((w - hintW) * 0.5f);

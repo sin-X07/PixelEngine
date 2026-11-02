@@ -131,6 +131,9 @@ private:
         float targetZ = 0.0f;
         float repathTimer = 0.0f;
         float speed = 0.8f;
+        // 走-停-啄食节奏：resting=true 时原地播 idle（啄食/张望），计时结束再继续走
+        bool  resting = false;
+        float restTimer = 0.0f;
     };
     std::array<ChickenState, 3> chickenState_{};
     std::mt19937 chickenRng_{ std::random_device{}() };
