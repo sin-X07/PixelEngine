@@ -17,11 +17,13 @@ SDL_Texture* WeaponIconCache::Get(const std::string& relativePath) {
     auto it = textures_.find(relativePath);
     if (it != textures_.end()) return it->second;   // 可能缓存的是 nullptr（失败占位）
 
-    const std::string path = PathUtils::ResolveAppPath(relativePath);
+    const std::string withRoot = (relativePath.rfind("assets/", 0) == 0)
+                                     ? relativePath : ("assets/" + relativePath);
+    const std::string path = PathUtils::ResolveAppPath(withRoot);
     SDL_Texture* tex = IMG_LoadTexture(renderer_, path.c_str());
     if (!tex) {
         // 失败也写入缓存：只报一次，之后不再每帧重试
-        std::cerr << "[WeaponIconCache] 图标加载失败: " << relativePath
+        std::cerr << "[WeaponIconCache] 图标加载失败: " << withRoot
                   << " (" << IMG_GetError() << ")" << std::endl;
         textures_.emplace(relativePath, nullptr);
         return nullptr;

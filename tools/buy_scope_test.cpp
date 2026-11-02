@@ -43,6 +43,11 @@ static bool LoadDeathMatch(CS2DGame& game, bool resetMatch = true) {
         return false;
     }
     if (resetMatch) game.Reset();   // 死斗下重生会把金钱设为 16000
+    // 死斗是真正的 FFA：BOT 会主动打玩家。把测试用玩家的血量拉高，
+    // 让"与非战斗相关"的用例（开镜档位/过渡/切枪）不被 BOT 打死打断；
+    // 需要验证死亡的用例会自己把血量清零。
+    game.GetPlayer().health = 100000;
+    game.GetPlayer().maxHealth = 100000;
     return true;
 }
 
@@ -517,6 +522,150 @@ static void TestDamageAndScopeShot() {
         check(aClamp == 160, "越界值被 clamp 到 100%");
         renderer.SetFogOpacityPct(100);
     }
+
+    std::printf("\n===== 修复项回归（连发开镜 / 换弹中开镜）=====\n");
+    {
+        // 可连发的开镜武器（AUG / SG 553 / SCAR-20 / G3SG1）：必须能**开镜连射**，
+        // 每打一发不自动退镜；「延迟关镜」对它们没有意义（本来就不关）。
+        CS2DGame game;
+        if (!LoadDeathMatch(game)) return;
+        game.GetPlayer().money = 16000;
+        check(game.ExecutePurchase(WeaponReq(WeaponId::AUG)).code == Presentation::BuyCode::Ok,
+              "买 AUG 成功（可连发 + 可开镜）");
+        game.GetPlayer().SetSlotWeapon(0, WeaponId::AUG);
+        game.SwitchWeaponSlot(0);
+        game.SetDelayedScopeClose(true);            // 最坏情况：延迟关镜开着
+        // 死斗是 FFA：BOT 会攻击玩家（这正是本轮要的行为）。为了让用例只考察"开镜是否被射击打断"，
+        // 这里把玩家的血量拉高，避免半秒内被打死（死亡也会正确退镜，但那不是本用例的目标）。
+        game.GetPlayer().health = 10000;
+        game.GetPlayer().armor = 100;
+        game.UpdateScopeInput(true, true);
+        check(game.GetScopeView().level == 1, "AUG 开镜到 1.5x");
+        const float aimX = game.GetPlayer().x + std::cos(game.GetPlayer().aimAngle) * 60.0f;
+        const float aimY = game.GetPlayer().y + std::sin(game.GetPlayer().aimAngle) * 60.0f;
+        for (int i = 0; i < 30; ++i) {              // 连射半秒
+            game.Update(1.0f / 60.0f, true, aimX, aimY,
+                        false, false, false, false, false, false, false, nullptr);
+        }
+        check(game.GetScopeView().level == 1,
+              "可连发开镜武器：按住连射期间保持开镜（不会每发退镜）");
+    }
+    {
+        // 单发狙（AWP）：开枪后退镜；拉栓冷却（shootCooldown>0）期间不能重新开镜。
+        CS2DGame game;
+        if (!LoadDeathMatch(game)) return;
+        game.GetPlayer().money = 16000;
+        game.ExecutePurchase(WeaponReq(WeaponId::AWP));
+        game.GetPlayer().SetSlotWeapon(0, WeaponId::AWP);
+        game.SwitchWeaponSlot(0);
+        game.SetDelayedScopeClose(false);
+        game.UpdateScopeInput(true, true);
+        check(game.GetScopeView().level == 1, "AWP 开镜到 1.5x");
+        const float aimX = game.GetPlayer().x + std::cos(game.GetPlayer().aimAngle) * 60.0f;
+        const float aimY = game.GetPlayer().y + std::sin(game.GetPlayer().aimAngle) * 60.0f;
+        game.Update(1.0f / 60.0f, true, aimX, aimY,
+                    false, false, false, false, false, false, false, nullptr);
+        check(game.GetScopeView().level == 0, "AWP 开枪后退镜");
+        check(game.GetPlayer().shootCooldown > 0.0f, "AWP 进入拉栓冷却");
+        game.UpdateScopeInput(true, true);
+        check(game.GetScopeView().level == 0, "拉栓冷却期间右键不能开镜");
+        game.GetPlayer().shootCooldown = 0.0f;      // 模拟拉栓结束
+        game.UpdateScopeInput(true, true);
+        check(game.GetScopeView().level == 1, "拉栓结束后可以重新开镜");
+    }
+    {
+        // 死斗 FFA：同队也互为敌人；非死斗才按队伍判定。
+        CS2DGame dm;
+        if (!LoadDeathMatch(dm)) return;
+        check(dm.IsDeathMatch(), "死斗模式标记 = true");
+        check(dm.IsHostileTeam(Team::T, Team::T), "死斗：同队也敌对（一人成军）");
+        check(dm.IsHostileTeam(Team::CT, Team::CT), "死斗：CT 之间也敌对");
+
+        CS2DGame team;
+        team.SetMatchMode(MatchMode::TeamElimination);
+        if (!team.LoadMap(MapPath(), nullptr, true)) return;
+        check(!team.IsDeathMatch(), "团队模式标记 = false");
+        check(!team.IsHostileTeam(Team::T, Team::T), "团队模式：同队不敌对");
+        check(team.IsHostileTeam(Team::T, Team::CT), "团队模式：跨队敌对");
+
+        // ---- 死斗阵亡：原地死亡镜头，不观战任何 BOT ----
+        CS2DGame dmCam;
+        if (!LoadDeathMatch(dmCam)) return;
+        check(!dmCam.IsSpectating(), "死斗存活时不处于观察者");
+        dmCam.DebugKillPlayerForTest();
+        check(!dmCam.IsSpectating(), "死斗阵亡：不进入观察者（不观战 BOT）");
+        check(dmCam.IsDeathCam(), "死斗阵亡：进入原地死亡镜头");
+        // 3s 后自动重生；重生瞬间立即断言语义（FFA 下复活后可能马上又被打死，
+        // 所以不能等循环结束再检查"是否活着"）
+        bool sawRespawn = false;
+        for (int i = 0; i < 300; ++i) {
+            dmCam.Update(1.0f / 60.0f, false, dmCam.GetPlayer().x, dmCam.GetPlayer().y,
+                         false, false, false, false, false, false, false, nullptr);
+            if (dmCam.GetPlayer().alive) { sawRespawn = true; break; }
+        }
+        check(sawRespawn, "死斗阵亡后自动重生");
+        check(!dmCam.IsDeathCam(), "重生后退出死亡镜头");
+
+        // ---- 死斗：重生自动装配上一次购买的武器，且仍可继续购买 ----
+        {
+            CS2DGame loot;
+            if (!LoadDeathMatch(loot)) return;
+            loot.GetPlayer().money = 16000;
+            const Presentation::BuyResult br =
+                loot.ExecutePurchase(WeaponReq(WeaponId::M4A4), nullptr);
+            check(br.code == Presentation::BuyCode::Ok, "死斗买 M4A4 成功（CT 阵营可买）");
+            check(loot.GetDmLoadout().valid, "死斗购买后记录装备");
+            check(loot.GetDmLoadout().primary == WeaponId::M4A4, "记录的主武器 = M4A4");
+            loot.DebugKillPlayerForTest();
+            bool respawned2 = false;
+            for (int i = 0; i < 300; ++i) {
+                loot.Update(1.0f / 60.0f, false, loot.GetPlayer().x, loot.GetPlayer().y,
+                            false, false, false, false, false, false, false, nullptr);
+                if (loot.GetPlayer().alive) { respawned2 = true; break; }
+            }
+            check(respawned2, "死斗阵亡后重生");
+            check(loot.GetPlayer().weapons[0] == WeaponId::M4A4, "重生后自动装上 M4A4");
+            check(loot.GetPlayer().weaponSlot == 0, "重生后默认手持主武器");
+            const WeaponDef& ak = WeaponDB::Get(WeaponId::M4A4);
+            check(loot.GetPlayer().ammo == ak.magazine, "重生后主武器弹匣满");
+            check(loot.GetPlayer().money == 16000, "重生后金钱仍为 $16000（还能继续买）");
+            const Presentation::BuyResult br2 =
+                loot.ExecutePurchase(WeaponReq(WeaponId::M4A1S), nullptr);
+            check(br2.code == Presentation::BuyCode::Ok, "重生后仍可购买武器");
+            check(loot.GetDmLoadout().primary == WeaponId::M4A1S, "新购买会更新记录");
+        }
+
+        // 对照：团队模式阵亡仍进入观察者
+        CS2DGame teamCam;
+        teamCam.SetMatchMode(MatchMode::TeamElimination);
+        if (!teamCam.LoadMap(MapPath(), nullptr, true)) return;
+        teamCam.DebugKillPlayerForTest();
+        check(teamCam.IsSpectating(), "团队模式阵亡：进入观察者");
+        check(!teamCam.IsDeathCam(), "团队模式没有死亡镜头");
+    }
+    {
+        // 换弹期间不能开镜；正在开镜时进入换弹也必须退镜（兜底在 TickScope）。
+        CS2DGame game;
+        if (!LoadDeathMatch(game)) return;
+        game.GetPlayer().money = 16000;
+        game.ExecutePurchase(WeaponReq(WeaponId::AWP));
+        game.GetPlayer().SetSlotWeapon(0, WeaponId::AWP);
+        game.SwitchWeaponSlot(0);
+
+        game.GetPlayer().reloading = true;
+        game.UpdateScopeInput(true, true);
+        check(game.GetScopeView().level == 0, "换弹中右键不能开镜");
+        game.GetPlayer().reloading = false;
+
+        game.UpdateScopeInput(true, true);
+        check(game.GetScopeView().level == 1, "停止换弹后可开镜");
+        // 开镜状态下进入换弹：下一帧 Update 的 TickScope 必须兜底归零
+        game.GetPlayer().reloading = true;
+        game.Update(1.0f / 60.0f, false, game.GetPlayer().x, game.GetPlayer().y,
+                    false, false, false, false, false, false, false, nullptr);
+        check(game.GetScopeView().level == 0, "开镜中进入换弹 → 自动退镜");
+        game.GetPlayer().reloading = false;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -597,12 +746,19 @@ static void TestBulletVisuals() {
     game.Render(800, 600);
     check(game.GetBulletVisuals().size() == snapshot, "重复 Render 不改变视觉段");
 
-    // 0.08s 后自然清理
+    // 0.08s 后自然清理（死斗 FFA 下 BOT 也会开火，所以只验证"本次射击之前的段"已清空，
+    // 不能假设整个 vector 为空）
+    std::uint64_t lastIdBefore = 0;
+    for (const auto& s : game.GetBulletVisuals()) lastIdBefore = std::max(lastIdBefore, s.id);
     for (int i = 0; i < 10; ++i) {
         game.Update(0.02f, false, p.x, p.y,
                     false, false, false, false, false, false, false, nullptr);
     }
-    check(game.GetBulletVisuals().empty(), "0.2s 内视觉段按 0.08s 寿命清理干净");
+    bool staleLeft = false;
+    for (const auto& s : game.GetBulletVisuals()) {
+        if (s.id <= lastIdBefore) staleLeft = true;
+    }
+    check(!staleLeft, "0.2s 内旧视觉段按 0.08s 寿命清理干净");
 
     // 上限 512：连发 600 帧以上不应超过上限
     for (int i = 0; i < 700; ++i) {

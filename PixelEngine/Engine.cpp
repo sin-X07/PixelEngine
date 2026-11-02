@@ -1172,6 +1172,7 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
     // 调试装备（--loadout=）：延后到真正可操作的那一帧再给，避免被 LoadMap 重置
     if (!debugLoadout_.empty()) debugLoadoutPending_ = true;
     if (debugBuyMenu_) debugBuyMenuPending_ = true;
+    if (debugKillPlayer_) debugKillDelay_ = 2.0f;   // --killplayer：进对局 2s 后杀一次
     cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
     cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
 
@@ -1251,6 +1252,8 @@ void Engine::ApplyDebugLoadout() {
             break;
     }
     p.LoadAmmoFromSlot();
+    // 死斗：调试装备也记入"上一次购买"，这样重生后仍然沿用（验收用）
+    cs2dGame->RememberCurrentLoadoutAsDm();
     std::cout << "[Debug] 调试装备: " << def.name
               << " (金钱 $" << p.money << ")" << std::endl;
 }
@@ -1282,6 +1285,15 @@ void Engine::Update(float dt) {
     if (debugBuyMenuPending_ && cs2dGame && cs2dGame->IsBuyPhase()) {
         buyMenuOpen_ = true;
         debugBuyMenuPending_ = false;
+    }
+    // 调试死亡镜头（--killplayer）：进对局 2s 后按真实死亡流程杀一次玩家
+    if (debugKillDelay_ >= 0.0f && cs2dGame) {
+        debugKillDelay_ -= dt;
+        if (debugKillDelay_ <= 0.0f) {
+            // 周期性杀死玩家（每 8s 一次），方便验收截图总能落在死亡镜头窗口内
+            debugKillDelay_ = 8.0f;
+            cs2dGame->DebugKillPlayerForTest();
+        }
     }
 
     // 开镜：每帧最多提交一次右键边沿（买枪/选边/失焦/转场/ImGui 捕获 mouse 时不允许）
@@ -2018,6 +2030,7 @@ void Engine::Render() {
         ictx.scoreCT          = cs2dGame->GetScoreCT();
         ictx.roundNumber      = cs2dGame->GetRoundNumber();
         ictx.roundRemainingSec = static_cast<int>(cs2dGame->GetRoundRemaining());
+        ictx.roundPhase = static_cast<int>(cs2dGame->GetRoundPhase());
         ictx.aliveT           = cs2dGame->AliveCount(Team::T);
         ictx.aliveCT          = cs2dGame->AliveCount(Team::CT);
         ictx.money            = status.money;
@@ -2064,7 +2077,9 @@ void Engine::Render() {
         ictx.bombIntel    = cs2dGame->HasBombIntel();
         ictx.plantProgress = cs2dGame->GetPlantProgress() / 3.0f;
         // 契约 v1 第 4、5 节：阵营与开镜状态由 Engine 填充，UI 只读
-        ictx.playerTeam = cs2dGame->GetPlayer().team;
+        // 修复：死斗一人成军，UI 不再按 T/CT 分队展示
+        ictx.playerTeam = (currentMatchMode_ == MatchMode::DeathMatch)
+                              ? Team::None : cs2dGame->GetPlayer().team;
         ictx.scope      = cs2dGame->GetScopeView();
         if (ictx.spectating) {
             ictx.spectateTarget = cs2dGame->GetSpectatedName();

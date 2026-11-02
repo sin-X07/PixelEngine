@@ -420,6 +420,12 @@ public:
     Player&          GetPlayer()      { return player_; }
     const Player&    GetPlayer() const { return player_; }
 
+    // 仅回归测试使用：走真实死亡流程（OnCombatantKilled）杀死玩家，
+    // 用来验证「死斗 = 原地死亡镜头、其它模式 = 观察者」这类模式相关的镜头行为。
+    void DebugKillPlayerForTest() {
+        if (player_.alive) OnCombatantKilled(player_, nullptr, nullptr);
+    }
+
     std::vector<Player>&       GetBOTs()       { return bots_; }
     const std::vector<Player>& GetBOTs() const { return bots_; }
     const std::vector<Bullet>& GetBullets() const { return bullets_; }
@@ -625,6 +631,25 @@ public:
     void SpectatorBegin();
     void SpectatorEnd();
     // 音效听者位置：观战时以镜头/被观战者为准
+    // 死斗：记住"上一次购买的武器"，每次重生自动装配（仍可在重生后继续购买）
+    struct DmLoadout {
+        WeaponId primary = WeaponId::None;
+        WeaponId secondary = WeaponId::None;
+        bool valid = false;
+    };
+    const DmLoadout& GetDmLoadout() const { return dmLoadout_; }
+    // 把当前武器槽记为"上一次购买的装备"（调试装备也走这里，便于验收重生装配）
+    void RememberCurrentLoadoutAsDm() {
+        if (mode_ != MatchMode::DeathMatch) return;
+        dmLoadout_.primary   = player_.weapons[0];
+        dmLoadout_.secondary = player_.weapons[1];
+        dmLoadout_.valid     = (dmLoadout_.primary != WeaponId::None ||
+                                dmLoadout_.secondary != WeaponId::None);
+    }
+    // 死斗：阵亡后原地停留（死亡镜头），不进入观察者、不切到其他 BOT
+    bool IsDeathCam() const { return deathCam_; }
+    bool deathCam_ = false;
+    DmLoadout dmLoadout_;   // 死斗重生装配用（Reset 时清空）
     float ListenerX() const;
     float ListenerY() const;
     Team GetMatchWinner() const { return teams_.MatchWinner(); }
@@ -689,6 +714,17 @@ public:
         int armorLoss = 0;      // 护甲点数消耗
     };
     static ArmorDamageResult ResolveArmorDamage(int amount, float armorPen, int armorPoints);
+
+    // 敌我判定（死斗 = 真正的 FFA 混战：除自己外所有人都是敌人）。
+    // 玩法层所有"是否敌对"的判断都必须走这里，不要再散落 `team == team`。
+    bool IsHostileTeam(Team a, Team b) const {
+        if (mode_ == MatchMode::DeathMatch) return true;
+        return a != b;
+    }
+    bool IsHostile(const Player& a, const Player& b) const {
+        return &a != &b && IsHostileTeam(a.team, b.team);
+    }
+    bool IsDeathMatch() const { return mode_ == MatchMode::DeathMatch; }
     int  GetPlayerArmor()  const { return player_.armor; }
     int  GetPlayerHealth()    const { return player_.health; }
     int  GetPlayerMaxHealth() const { return player_.maxHealth; }

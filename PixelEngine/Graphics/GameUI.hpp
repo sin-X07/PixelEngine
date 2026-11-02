@@ -171,6 +171,7 @@ public:
         int   scoreCT = 0;
         int   roundNumber = 0;
         int   roundRemainingSec = 0;
+        int   roundPhase = 3;         // 0=热身 1=冻结 2=购买 3=交战 4=结算（PIX-8）
         int   aliveT = 0;
         int   aliveCT = 0;
         int   money = 0;
