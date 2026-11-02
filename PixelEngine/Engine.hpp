@@ -2,6 +2,7 @@
 #include "Core/Types.hpp"
 #include "Audio/AudioManager.hpp"
 #include "Input/InputManager.hpp"
+#include "Input/FireInputGate.hpp"
 #include "Graphics/ImGuiUI.hpp"
 #include "Graphics/GameUI.hpp"
 #include "Graphics/WeaponIconCache.hpp"
@@ -50,6 +51,7 @@ private:
 
     // 输入状态（HandleInput 采集 → Update 消费）
     bool  cs2dMouseDown = false;
+    FireInputGate fireInputGate_;
     float cs2dWorldMouseX = 0.0f;
     float cs2dWorldMouseY = 0.0f;
     bool  cs2dKeyW = false, cs2dKeyA = false, cs2dKeyS = false, cs2dKeyD = false;
