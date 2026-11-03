@@ -233,15 +233,17 @@ ImFont* ImGuiUI::GetFont(int size) const {
 
 void ImGuiUI::BeginFrame() {
     if (!initialized) return;
+    // Input is in window coordinates even while the engine renders a scene
+    // texture. SDL_RenderWindowToLogical reads the CURRENT render target's
+    // viewport/scale, so poll the platform backend with the window selected.
+    SDL_Texture* sceneTarget = SDL_GetRenderTarget(renderer);
+    if (sceneTarget) SDL_SetRenderTarget(renderer, nullptr);
     ImGui_ImplSDL2_NewFrame();
+    if (sceneTarget) SDL_SetRenderTarget(renderer, sceneTarget);
     ImGui_ImplSDLRenderer2_NewFrame();
 
-    // 引擎以固定逻辑分辨率（800x600）渲染，全屏时 SDL 会把逻辑画布等比放大到窗口；
-    // 但 imgui_impl_sdl2 默认把 DisplaySize 设为窗口物理尺寸、鼠标坐标使用窗口像素，
-    // 与 SDL_Renderer 的逻辑坐标系不一致，导致全屏后按钮的鼠标命中区停留在左上角的
-    // 800x600 区域。这里把 ImGui 统一改回渲染逻辑坐标系：
-    //   1) DisplaySize 使用渲染器的逻辑尺寸；
-    //   2) 每帧用 SDL_RenderWindowToLogical 把窗口鼠标坐标换算成逻辑坐标。
+    // Match the SDL renderer's logical canvas. Mouse events and the backend's
+    // fallback poll both use this same coordinate space (no second override).
     int logicalW = 0;
     int logicalH = 0;
     SDL_RenderGetLogicalSize(renderer, &logicalW, &logicalH);
@@ -249,18 +251,6 @@ void ImGuiUI::BeginFrame() {
         ImGuiIO& io = ImGui::GetIO();
         io.DisplaySize = ImVec2(static_cast<float>(logicalW), static_cast<float>(logicalH));
         io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
-
-        // 后端每帧会用"全局鼠标位置 - 窗口位置"回填窗口像素坐标，这里在 NewFrame 后
-        // 覆盖成逻辑坐标（最后写入者生效，ImGui::NewFrame 读取的就是换算后的值）。
-        if (SDL_GetWindowFlags(window) & SDL_WINDOW_MOUSE_FOCUS) {
-            int mouseX = 0;
-            int mouseY = 0;
-            SDL_GetMouseState(&mouseX, &mouseY);
-            float logicalX = 0.0f;
-            float logicalY = 0.0f;
-            SDL_RenderWindowToLogical(renderer, mouseX, mouseY, &logicalX, &logicalY);
-            io.AddMousePosEvent(logicalX, logicalY);
-        }
     }
 
     ImGui::NewFrame();
@@ -268,6 +258,10 @@ void ImGuiUI::BeginFrame() {
 
 void ImGuiUI::EndFrame() {
     if (!initialized) return;
+    // 所有可交互控件统一显示手型；控件自己设置过光标（输入框、禁用项）时不覆盖
+    if (ImGui::IsAnyItemHovered() && ImGui::GetMouseCursor() == ImGuiMouseCursor_Arrow) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
     ImGui::Render();
     ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
 }

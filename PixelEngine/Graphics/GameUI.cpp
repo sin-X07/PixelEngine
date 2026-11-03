@@ -294,6 +294,35 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         if (actions.playClick) actions.playClick();
         if (action) action();
     };
+    // 二次确认页：返回 0=未选择 / 1=取消 / 2=确认
+    auto confirmPage = [&](const char* title, const char* sub,
+                           const char* cancelLabel, const char* confirmLabel) {
+        const float vpH = viewport->WorkSize.y;
+        const float titleH = UI(38.0f);
+        const float subH   = UI(28.0f);
+        const float gap1   = UI(18.0f);
+        const float gap2   = UI(30.0f);
+        const float blockH = titleH + subH + gap1 + gap2 + buttonH;
+        const float yLocal = std::max(UI(16.0f), (vpH - blockH) * 0.5f);
+
+        DrawMenuBackdrop(ImGui::GetWindowDrawList(), viewport->WorkPos, viewport->WorkSize);
+        DrawImGuiTextCentered(imGuiUI_, title,
+                              viewport->WorkPos.y + yLocal, 255, 255, 255, 255, 26);
+        DrawTitleAccent(ImGui::GetWindowDrawList(), centerX,
+                        viewport->WorkPos.y + yLocal + UI(34.0f), UI(36.0f));
+        DrawImGuiTextCentered(imGuiUI_, sub,
+                              viewport->WorkPos.y + yLocal + titleH, 200, 200, 200, 255, 18);
+
+        int choice = 0;
+        const float btnY = yLocal + titleH + subH + gap1 + gap2;
+        ImGui::SetCursorPosY(btnY);
+        ImGui::SetCursorPosX(centerX - buttonW - UI(15.0f));
+        if (ImGui::Button(cancelLabel, ImVec2(buttonW, buttonH))) choice = 1;
+        ImGui::SetCursorPosY(btnY);
+        ImGui::SetCursorPosX(centerX + UI(15.0f));
+        if (ImGui::Button(confirmLabel, ImVec2(buttonW, buttonH))) choice = 2;
+        return choice;
+    };
 
     // ---------------- 主菜单 ----------------
     if (ctx.state == MAIN_MENU) {
@@ -372,6 +401,38 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
     }
     // ---------------- 暂停 ----------------
     else if (ctx.state == PAUSED) {
+        // 确认状态只属于这次暂停：离开暂停页（如 ESC 继续游戏）后再回来要回到按钮列表
+        static bool restartConfirm = false;
+        static float pageAlpha = 1.0f;
+        static int pendingChoice = 0; // 1=open, 2=back, 3=restart
+        static int  lastPausedFrame = -2;
+        const int frame = ImGui::GetFrameCount();
+        if (frame != lastPausedFrame + 1) {
+            restartConfirm = false;
+            pageAlpha = 1.0f;
+            pendingChoice = 0;
+        }
+        lastPausedFrame = frame;
+        const float step = ImGui::GetIO().DeltaTime / 0.15f;
+        if (pendingChoice) {
+            pageAlpha = std::max(0.0f, pageAlpha - step);
+            if (pageAlpha == 0.0f) {
+                const int choice = pendingChoice;
+                pendingChoice = 0;
+                restartConfirm = choice == 1;
+                if (choice == 3) actions.startMatch();
+            }
+        } else pageAlpha = std::min(1.0f, pageAlpha + step);
+        ImDrawList* pageDrawList = ImGui::GetWindowDrawList();
+        const int firstVertex = pageDrawList->VtxBuffer.Size;
+        ImGui::BeginDisabled(pendingChoice != 0 || pageAlpha < 1.0f);
+
+        if (restartConfirm) {
+            const int choice = confirmPage("确认重新开始", "当前对局进度将不会被保存",
+                                           "返回", "重新开始");
+            if (choice == 1) doClick([&] { pendingChoice = 2; });
+            if (choice == 2) doClick([&] { pendingChoice = 3; });
+        } else {
         // 标题 + 5 个按钮整块垂直居中
         const float vpH = viewport->WorkSize.y;
         const float sp  = ImGui::GetStyle().ItemSpacing.y;
@@ -389,36 +450,26 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 
         ImGui::SetCursorPosY(yLocal + titleH + gap1);
         if (bigButton("继续游戏")) doClick([&] { actions.resumeGame(); });
-        if (bigButton("重新开始")) doClick([&] { actions.startMatch(); });
+        if (bigButton("重新开始")) doClick([&] { pendingChoice = 1; });
         if (bigButton("设置"))     doClick([&] { actions.openSettings(PAUSED); });
         if (bigButton("退出游戏")) doClick([&] { actions.confirmExit(false); });
         if (bigButton("退出桌面")) doClick([&] { actions.confirmExit(true); });
+        }
+        ImGui::EndDisabled();
+        // Fade explicit draw-list colors as well as ImGui widgets.
+        const float alpha = pageAlpha * pageAlpha * (3.0f - 2.0f * pageAlpha);
+        for (int v = firstVertex; v < pageDrawList->VtxBuffer.Size; ++v) {
+            ImU32& color = pageDrawList->VtxBuffer[v].col;
+            const unsigned oldAlpha = (color >> IM_COL32_A_SHIFT) & 0xff;
+            color = (color & ~(0xffu << IM_COL32_A_SHIFT)) |
+                (static_cast<unsigned>(oldAlpha * alpha) << IM_COL32_A_SHIFT);
+        }
     }
     // ---------------- 退出确认 ----------------
     else if (ctx.state == EXIT_CONFIRM) {
-        const float vpH = viewport->WorkSize.y;
-        const float titleH = UI(38.0f);
-        const float subH   = UI(28.0f);
-        const float gap1   = UI(18.0f);
-        const float gap2   = UI(30.0f);
-        const float blockH = titleH + subH + gap1 + gap2 + buttonH;
-        const float yLocal = std::max(UI(16.0f), (vpH - blockH) * 0.5f);
-
-        DrawMenuBackdrop(ImGui::GetWindowDrawList(), viewport->WorkPos, viewport->WorkSize);
-        DrawImGuiTextCentered(imGuiUI_, "确认退出",
-                              viewport->WorkPos.y + yLocal, 255, 255, 255, 255, 26);
-        DrawTitleAccent(ImGui::GetWindowDrawList(), centerX,
-                        viewport->WorkPos.y + yLocal + UI(34.0f), UI(36.0f));
-        DrawImGuiTextCentered(imGuiUI_, "当前对局进度将不会被保存",
-                              viewport->WorkPos.y + yLocal + titleH, 200, 200, 200, 255, 18);
-
-        const float btnY = yLocal + titleH + subH + gap1 + gap2;
-        ImGui::SetCursorPosY(btnY);
-        ImGui::SetCursorPosX(centerX - buttonW - UI(15.0f));
-        if (ImGui::Button("返回游戏", ImVec2(buttonW, buttonH))) doClick([&] { actions.goState(PAUSED); });
-        ImGui::SetCursorPosY(btnY);
-        ImGui::SetCursorPosX(centerX + UI(15.0f));
-        if (ImGui::Button("退出", ImVec2(buttonW, buttonH))) doClick([&] { actions.quitApp(); });
+        const int choice = confirmPage("确认退出", "当前对局进度将不会被保存", "返回游戏", "退出");
+        if (choice == 1) doClick([&] { actions.goState(PAUSED); });
+        if (choice == 2) doClick([&] { actions.quitApp(); });
     }
     // ---------------- 设置 ----------------
     else if (ctx.state == SETTINGS) {
@@ -822,9 +873,10 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
         ImGui::PushID(i);
         bool hovered = false;
         if (interactive) {
-            ImGui::InvisibleButton("card", ImVec2(cardW, cardH));
+            // 松开时才算点击：按下后移出卡片再松开可以取消
+            const bool released = ImGui::InvisibleButton("card", ImVec2(cardW, cardH));
             hovered = ImGui::IsItemHovered();
-            if (ImGui::IsItemClicked()) {
+            if (released) {
                 if (actions.playClick) actions.playClick();
                 if (actions.selectMapChoice) actions.selectMapChoice(i);
             }
@@ -1169,9 +1221,9 @@ void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
         // 交互层：整张卡片一个隐形按钮，避免图像/文字抢焦点
         ImGui::SetCursorScreenPos(cp);
         ImGui::PushID(i);
-        ImGui::InvisibleButton("card", ImVec2(cardW, cardH));
+        const bool released = ImGui::InvisibleButton("card", ImVec2(cardW, cardH));
         const bool hovered = ImGui::IsItemHovered();
-        if (ImGui::IsItemClicked()) {
+        if (released) {
             if (actions.playClick) actions.playClick();
             if (actions.selectMap) actions.selectMap(i);
         }
@@ -1372,8 +1424,6 @@ void GameUI::DrawHistory(const HistoryCtx& ctx, const Actions& actions) {
         for (int i = count - 1; i >= 0; --i) {
             const MatchRecord& r = (*ctx.records)[static_cast<size_t>(i)];
             const ImVec2 p = ImGui::GetCursorScreenPos();
-            const bool hovered = ImGui::IsMouseHoveringRect(
-                p, ImVec2(p.x + panelW, p.y + rowH));
             const bool win  = (r.result == "win");
             const bool lose = (r.result == "lose");
             const ImU32 accent = win ? Palette::U32(Palette::Ally())
@@ -1382,9 +1432,6 @@ void GameUI::DrawHistory(const HistoryCtx& ctx, const Actions& actions) {
 
             if ((i % 2) == 0) {
                 dl->AddRectFilled(p, ImVec2(p.x + panelW, p.y + rowH), IM_COL32(255, 255, 255, 6));
-            }
-            if (hovered) {
-                dl->AddRectFilled(p, ImVec2(p.x + panelW, p.y + rowH), IM_COL32(120, 160, 200, 22));
             }
             dl->AddRectFilled(ImVec2(p.x, p.y + UI(12.0f)),
                               ImVec2(p.x + UI(3.0f), p.y + rowH - UI(12.0f)), accent);
@@ -1493,9 +1540,9 @@ static const char* BuyCodeText(Presentation::BuyCode code) {
 void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
     const std::function<Presentation::BuyResult(const Presentation::BuyRequest&)>& onBuy) {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    const float w = UI(600.0f);
+    const float w = UI(680.0f);
     // 高度跟着视口走，小窗口也不会被裁掉；内容超出时右侧出现滚动条
-    const float h = std::min(UI(470.0f), viewport->WorkSize.y - UI(48.0f));
+    const float h = std::min(UI(560.0f), viewport->WorkSize.y - UI(48.0f));
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (viewport->WorkSize.x - w) * 0.5f,
                                   viewport->WorkPos.y + (viewport->WorkSize.y - h) * 0.5f),
                             ImGuiCond_Always);
@@ -1504,7 +1551,8 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
     ImGui::Begin("##BuyMenu", nullptr,
                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
-                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
+                 ImGuiWindowFlags_NoScrollWithMouse);
 
     // 一帧最多提交一次购买请求：提交后本帧其余条目只显示旧快照
     bool submittedThisFrame = false;
@@ -1512,6 +1560,7 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
     // 上一条结果提示（UI 自己保存，不写 CS2DGame）
     static std::string flashText;
     static float       flashUntil = -1.0f;
+    static bool        flashOk = false;
 
     ImGui::TextColored(ImVec4(0.95f, 0.82f, 0.35f, 1.0f), "购买菜单");
     ImGui::SameLine(0.0f, UI(24.0f));
@@ -1519,13 +1568,21 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
     ImGui::SameLine(0.0f, UI(24.0f));
     ImGui::TextDisabled("[B] 关闭");
 
-    if (!ctx.canBuy && !ctx.hint.empty()) {
-        ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "%s", ctx.hint.c_str());
-    }
+    // 提示行始终占一行：文字出现或消失时卡片不能移动，否则下一次点击会落到别的武器上
     if (!flashText.empty() && ImGui::GetTime() < flashUntil) {
-        ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "%s", flashText.c_str());
+        ImGui::TextColored(flashOk ? ImVec4(0.47f, 0.82f, 0.59f, 1.0f)
+                                   : ImVec4(0.95f, 0.45f, 0.45f, 1.0f),
+                           "%s", flashText.c_str());
+    } else if (!ctx.canBuy && !ctx.hint.empty()) {
+        ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "%s", ctx.hint.c_str());
+    } else {
+        ImGui::TextUnformatted(" ");
     }
     ImGui::Separator();
+
+    // 只滚动卡片区：余额和购买结果提示始终可见
+    ImGui::BeginChild("##buyItems", ImVec2(0.0f, 0.0f), false,
+                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
     static const char* kGroupNames[] = { "主武器", "副武器", "近战", "投掷物", "护甲" };
     for (int g = 0; g < 5; ++g) {
@@ -1547,14 +1604,18 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
             const char* reason = BuyCodeText(it.availability);
 
             // ---- 卡片式条目：图标 / 名称 / 类别 / 价格 + 状态色（PIX-9）----
-            const float cardW = UI(182.0f);
-            const float cardH = UI(62.0f);
-            ImGui::PushID(&it);
-            ImGui::InvisibleButton("##card", ImVec2(cardW, cardH));
+            const float cardW = UI(208.0f);
+            const float cardH = UI(70.0f);
+            // Stable across per-frame BuyMenuCtx allocations and mouse press/release.
+            ImGui::PushID(static_cast<int>(it.request.kind));
+            ImGui::PushID(it.request.kind == Presentation::BuyKind::Armor
+                ? it.request.armorTier : static_cast<int>(it.request.weapon));
+            // 松开时才算点击：按下后移出卡片再松开可以取消，避免误买
+            const bool released = ImGui::InvisibleButton("##card", ImVec2(cardW, cardH));
             const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
             const bool held    = ImGui::IsItemActive();
-            bool clicked = false;
-            if (enabled && ImGui::IsItemClicked()) clicked = true;
+            const bool clicked = enabled && released;
+            if (hovered && !enabled) ImGui::SetMouseCursor(ImGuiMouseCursor_NotAllowed);
 
             ImDrawList* dl = ImGui::GetWindowDrawList();
             const ImVec2 p0 = ImGui::GetItemRectMin();
@@ -1565,6 +1626,7 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
             if (enabled && hovered) bg = held ? IM_COL32(52, 66, 84, 245) : IM_COL32(38, 50, 66, 240);
             ImU32 border = enabled ? IM_COL32(52, 68, 86, 190) : IM_COL32(38, 44, 52, 160);
             if (enabled && hovered) border = Palette::U32(Palette::Accent());
+            else if (hovered) border = IM_COL32(104, 116, 132, 220);   // 禁用项也回应悬停
             dl->AddRectFilled(p0, p1, bg, UI(5.0f));
             dl->AddRect(p0, p1, border, UI(5.0f), 0, UI(enabled && hovered ? 2.0f : 1.0f));
 
@@ -1581,7 +1643,7 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
             dl->AddRectFilled(p0, ImVec2(p0.x + UI(3.0f), p1.y), strip, UI(5.0f));
 
             // 图标：借用 WeaponIconCache（cache owning，UI 借用，不 Destroy）
-            const float iconBox = UI(34.0f);
+            const float iconBox = UI(40.0f);
             const ImVec2 iconPos(p0.x + UI(9.0f), p0.y + (cardH - iconBox) * 0.5f);
             SDL_Texture* iconTex = nullptr;
             if (weaponIconCache_ && !it.iconPath.empty()) {
@@ -1614,31 +1676,42 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
             const float textX = p0.x + UI(9.0f) + iconBox + UI(8.0f);
             const ImU32 nameCol = enabled ? IM_COL32(236, 242, 248, 255)
                                           : IM_COL32(150, 158, 168, 255);
-            dl->AddText(ImVec2(textX, p0.y + UI(9.0f)), nameCol, it.name.c_str());
+            dl->AddText(ImVec2(textX, p0.y + UI(11.0f)), nameCol, it.name.c_str());
             char sub[64];
             snprintf(sub, sizeof(sub), "%s%s", it.categoryLabel.c_str(),
                      it.scopeSupported ? " · 可开镜" : "");
-            dl->AddText(ImVec2(textX, p0.y + UI(28.0f)),
+            dl->AddText(ImVec2(textX, p0.y + UI(32.0f)),
                         enabled ? IM_COL32(140, 160, 180, 255) : IM_COL32(104, 112, 124, 255), sub);
             char price[32];
             snprintf(price, sizeof(price), "$%d", it.price);
             const ImVec2 priceSz = ImGui::CalcTextSize(price);
-            dl->AddText(ImVec2(p1.x - UI(9.0f) - priceSz.x, p0.y + UI(9.0f)),
+            dl->AddText(ImVec2(p1.x - UI(9.0f) - priceSz.x, p0.y + UI(11.0f)),
                         enabled ? IM_COL32(240, 200, 120, 255) : IM_COL32(130, 122, 108, 255), price);
-            // 已装备 / 已带满角标
-            if (it.availability == Presentation::BuyCode::AlreadyEquipped) {
-                dl->AddText(ImVec2(p1.x - UI(9.0f) - ImGui::CalcTextSize("已装备").x,
-                                   p1.y - UI(20.0f)), IM_COL32(120, 210, 150, 220), "已装备");
-            } else if (it.availability == Presentation::BuyCode::ItemLimitReached ||
-                       it.availability == Presentation::BuyCode::InventoryFull) {
-                dl->AddText(ImVec2(p1.x - UI(9.0f) - ImGui::CalcTextSize("已带满").x,
-                                   p1.y - UI(20.0f)), IM_COL32(210, 170, 110, 220), "已带满");
+            // 状态角标：不用悬停也能看出为什么买不了
+            const char* badge = nullptr;
+            ImU32 badgeCol = 0;
+            switch (it.availability) {
+                case Presentation::BuyCode::AlreadyEquipped:
+                    badge = "已装备";   badgeCol = IM_COL32(120, 210, 150, 220); break;
+                case Presentation::BuyCode::ItemLimitReached:
+                case Presentation::BuyCode::InventoryFull:
+                    badge = "已带满";   badgeCol = IM_COL32(210, 170, 110, 220); break;
+                case Presentation::BuyCode::InsufficientFunds:
+                    badge = "钱不够";   badgeCol = IM_COL32(230, 120, 110, 230); break;
+                case Presentation::BuyCode::TeamRestricted:
+                    badge = "阵营不符"; badgeCol = IM_COL32(150, 160, 176, 220); break;
+                default: break;
+            }
+            if (badge) {
+                dl->AddText(ImVec2(p1.x - UI(9.0f) - ImGui::CalcTextSize(badge).x,
+                                   p1.y - UI(20.0f)), badgeCol, badge);
             }
 
             if (clicked && onBuy) {
                 const Presentation::BuyResult res = onBuy(it.request);
                 submittedThisFrame = true;
-                if (res.code == Presentation::BuyCode::Ok) {
+                flashOk = (res.code == Presentation::BuyCode::Ok);
+                if (flashOk) {
                     displayMoney = res.moneyAfter;
                     flashText = std::string(it.name) + " 已购买";
                     flashUntil = static_cast<float>(ImGui::GetTime()) + 1.6f;
@@ -1653,12 +1726,14 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
                 ImGui::SetTooltip("%s", reason);
             }
             ImGui::PopID();
+            ImGui::PopID();
 
             ++col;
             if (col % 3 != 0) ImGui::SameLine();
         }
     }
 
+    ImGui::EndChild();
     ImGui::End();
     ImGui::PopStyleColor();
 }
@@ -1801,7 +1876,7 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
         IM_COL32(4, 7, 10, static_cast<int>(178.0f * alpha)));
 
     const float w = UI(680.0f);
-    const float h = UI(330.0f);
+    const float h = UI(400.0f);
     ImGui::SetNextWindowPos(
         ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
                vp->WorkPos.y + vp->WorkSize.y * 0.5f),
@@ -1833,7 +1908,7 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
 
     const float btnW = (w - UI(72.0f)) * 0.5f;
     const float btnH = UI(112.0f);
-    const float btnY = UI(116.0f);
+    const float btnY = UI(124.0f);
 
     auto sideCard = [&](int side, const char* name, const char* role,
                         const char* desc, ImVec4 accent, float x) {
@@ -1842,7 +1917,7 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
         ImGui::TextColored(accent, "%s", name);
         ImGui::TextDisabled("%s", role);
         ImGui::TextWrapped("%s", desc);
-        ImGui::Dummy(ImVec2(0.0f, UI(8.0f)));
+        ImGui::Dummy(ImVec2(0.0f, UI(16.0f)));
         ImGui::PushStyleColor(ImGuiCol_Button, accent);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
                               ImVec4(accent.x + 0.08f, accent.y + 0.08f, accent.z + 0.08f, 1.0f));
@@ -1850,7 +1925,7 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.06f, 0.08f, 0.10f, 1.0f));
         char label[64];
         snprintf(label, sizeof(label), "以 %s 开始", side == 0 ? "T" : "CT");
-        if (ImGui::Button(label, ImVec2(btnW, UI(40.0f)))) {
+        if (ImGui::Button(label, ImVec2(btnW, UI(46.0f)))) {
             if (actions.playClick) actions.playClick();
             if (actions.chooseSide) actions.chooseSide(side);
         }
@@ -1871,8 +1946,8 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
              accentFor(Team::CT), UI(24.0f) + btnW + UI(24.0f));
 
     const float rndW = UI(190.0f);
-    const float rndH = UI(36.0f);
-    ImGui::SetCursorPos(ImVec2((w - rndW) * 0.5f, UI(246.0f)));
+    const float rndH = UI(40.0f);
+    ImGui::SetCursorPos(ImVec2((w - rndW) * 0.5f, UI(304.0f)));
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.22f, 0.28f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.33f, 0.41f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.18f, 0.23f, 1.0f));
@@ -1882,7 +1957,7 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
     }
     ImGui::PopStyleColor(3);
 
-    ImGui::SetCursorPos(ImVec2(0.0f, h - UI(22.0f)));
+    ImGui::SetCursorPos(ImVec2(0.0f, h - UI(26.0f)));
     const char* hint = "选择后将重建首回合（不重新加载地图）";
     const float hintW = ImGui::CalcTextSize(hint).x;
     ImGui::SetCursorPosX((w - hintW) * 0.5f);

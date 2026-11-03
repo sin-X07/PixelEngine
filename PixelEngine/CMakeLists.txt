@@ -210,3 +210,15 @@ if(BUILD_GAMEPLAY_TESTS)
         target_link_options(gameplay_tests PRIVATE -mconsole -static -static-libgcc -static-libstdc++)
     endif()
 endif()
+
+# Focused UI input regressions; no visible window is required.
+option(BUILD_UI_INPUT_TESTS "Build UI ID and SDL coordinate regressions" OFF)
+if(BUILD_UI_INPUT_TESTS)
+    add_executable(ui_buy_id_test ../tools/ui_buy_id_test.cpp
+        ThirdParty/imgui/imgui.cpp ThirdParty/imgui/imgui_draw.cpp
+        ThirdParty/imgui/imgui_widgets.cpp ThirdParty/imgui/imgui_tables.cpp)
+    target_include_directories(ui_buy_id_test PRIVATE ThirdParty/imgui)
+    add_executable(ui_mouse_coordinates_test ../tools/ui_mouse_coordinates_test.cpp)
+    target_compile_definitions(ui_mouse_coordinates_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(ui_mouse_coordinates_test PRIVATE SDL2::SDL2)
+endif()
