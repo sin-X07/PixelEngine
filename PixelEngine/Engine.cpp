@@ -404,7 +404,7 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
     currentResH_ = kResolutions[currentResIdx_].h;
 
     window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                              currentResW_, currentResH_, SDL_WINDOW_SHOWN);
+                              currentResW_, currentResH_, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (!window) {
         std::cerr << "窗口创建失败: " << SDL_GetError() << std::endl;
         return false;
@@ -483,18 +483,10 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
         }
     }
 
-    // ImGui 后端消费原始 SDL 事件（窗口↔逻辑坐标换算）
-    inputManager->SetEventCallback([this](const SDL_Event& e) {
-        if (e.type == SDL_MOUSEMOTION) {
-            SDL_Event converted = e;
-            float lx = 0.0f, ly = 0.0f;
-            SDL_RenderWindowToLogical(renderer, e.motion.x, e.motion.y, &lx, &ly);
-            converted.motion.x = static_cast<Sint32>(lx);
-            converted.motion.y = static_cast<Sint32>(ly);
-            ImGui_ImplSDL2_ProcessEvent(&converted);
-        } else {
-            ImGui_ImplSDL2_ProcessEvent(&e);
-        }
+    // SDL's logical-size event filter has already converted mouse events.
+    // Converting motion again shifts ImGui hit targets when the window is scaled.
+    inputManager->SetEventCallback([](const SDL_Event& e) {
+        ImGui_ImplSDL2_ProcessEvent(&e);
     });
 
     // LLM BOT 延迟到首次开局加载（黑屏加载阶段），避免启动菜单前阻塞。
@@ -713,7 +705,10 @@ void Engine::ToggleFullscreen() {
     const Uint32 flags = SDL_GetWindowFlags(window);
     if (flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) {
         // 退出全屏：回到已选分辨率
-        SDL_SetWindowFullscreen(window, 0);
+        if (SDL_SetWindowFullscreen(window, 0) != 0) {
+            std::cerr << "[Window] Exit fullscreen failed: " << SDL_GetError() << std::endl;
+            return;
+        }
         SDL_Rect usable;
         SDL_GetDisplayUsableBounds(0, &usable);
         if (SDL_RectEmpty(&usable)) usable = { 0, 0, currentResW_, currentResH_ };
@@ -727,7 +722,10 @@ void Engine::ToggleFullscreen() {
     } else {
         // 进入全屏：桌面全屏（不切显示模式，避免闪屏/重排）
         // 逻辑尺寸仍按所选分辨率，多余区域由 SDL 自动 letterbox
-        SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+        if (SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP) != 0) {
+            std::cerr << "[Window] Enter fullscreen failed: " << SDL_GetError() << std::endl;
+            return;
+        }
         { int ow = 0, oh = 0; SDL_GetRendererOutputSize(renderer, &ow, &oh);
           ResizeLogicalViewport(ow, oh); }
         isFullscreen = true;
@@ -742,6 +740,11 @@ void Engine::ToggleFullscreen() {
 
 void Engine::HandleInput() {
     inputManager->ProcessEvents(renderer);
+    const bool nativeFullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+    if (nativeFullscreen != isFullscreen) {
+        isFullscreen = nativeFullscreen;
+        saveManager->MutableSettings().fullscreen = isFullscreen;
+    }
 
     // 契约 v1 第 4 节：右键 down 边沿只在这里采集，Update 里消费一次
     if (inputManager->IsMouseRightClicked()) scopeRightClickPending_ = true;
@@ -1996,7 +1999,28 @@ void Engine::Render() {
                 }
                 hovered3D_ = hit;
 
-                if (hit >= 0 && !uiHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                // Require a complete click in the lobby, not the press used to
+                // activate/open the window. Dragging off a character cancels.
+                static int pressedObject = -1;
+                static int lastLobbyFrame = -2;
+                static bool clickArmed = false;
+                const int lobbyFrame = ImGui::GetFrameCount();
+                if (lobbyFrame != lastLobbyFrame + 1 ||
+                    !inputManager->HasWindowFocus()) {
+                    pressedObject = -1;
+                    clickArmed = false;
+                }
+                lastLobbyFrame = lobbyFrame;
+                const bool released = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+                if (clickArmed && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                    pressedObject = (!uiHovered ? hit : -1);
+                const bool selectObject = clickArmed && released && hit >= 0 &&
+                    hit == pressedObject && !uiHovered;
+                if (released) pressedObject = -1;
+                if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && !released &&
+                    inputManager->HasWindowFocus()) clickArmed = true;
+
+                if (selectObject) {
                     focused3D_ = hit;
                     focusAnimStartMs_ = SDL_GetTicks64();
                     focus3DProgress_ = 0.0f;
