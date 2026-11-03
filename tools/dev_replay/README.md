@@ -86,3 +86,35 @@ python tools/dev_replay/compare_benchmark.py \
 
 **注意**：赛后空闲不计入回合时长（`GetMatchWinner()` 一旦确定就停止仿真）。
 `alive_t_end/alive_ct_end` 取**结算阶段**的存活数（不是下一回合重生后的值）。
+## AI 决策冲突检查（P3）
+
+```bash
+dev_replay_runner --ticks=150000 --seed=1 --map=dust_2 --conflicts=conflicts.csv
+```
+
+默认规则（低噪声）：`defusing_moving`（拆包中明显移动）、`defusing_unplanted`
+（交战期拆未下包的包）、`path_broken`（寻路索引/目标连续 0.5s 不一致）、
+`dual_goal`（小队 hold 与教练 plan hold 相距 >160px）。
+`duplicate_hold`（两人抢同一点）噪声大，需加 `--noisy-conflicts` 才启用。
+同一 (回合, BOT, 规则) 每回合只报一次。
+
+## 输入日志与回放（P3）
+
+```bash
+# 录制（脚本玩家；真人录制见下）
+dev_replay_runner --ticks=150000 --seed=1 --journal=session.journal --hash=rec.hash.txt
+
+# 回放（按日志重建同一局，最后与日志里的 final_hash 比对）
+dev_replay_runner --replay=session.journal --hash=rep.hash.txt
+python tools/dev_replay/diff_hash_logs.py rec.hash.txt rep.hash.txt
+```
+
+格式：`PXINPUT1` 头（map/seed/viewport/脚本策略/final_hash）+ 每 tick 一行
+`tick mouseDown aimX aimY W A S D Shift Reload Interact buyWeapon buyArmorTier`。
+
+**两条坑（都踩过）**：
+1. 购买是"动作"，不是移动输入——不写进日志，回放会在第一个购买期分叉（tick ~481）。
+2. 浮点必须全精度写（`%.9g`）：`%.3f` 的舍入会让瞄准角差 0.001 rad，几十 tick 后完全分叉。
+
+真人录制（`--record`）需要 Engine 侧打点，尚未接入；当前用同一份格式记录脚本玩家，
+已验证"输入 + 种子"能逐 tick 完整复现（dust_2 / mirage 各一局，final_hash 一致、diff 0 行）。

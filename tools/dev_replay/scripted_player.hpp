@@ -41,6 +41,9 @@ public:
         bool  w = false, a = false, s = false, d = false;
         bool  shift = false;
         bool  reload = false;
+        // 本 tick 的"动作"：购买。同样是输入的一部分，必须进日志才能复现。
+        int   buyWeapon = 0;      // WeaponId 数值，0 = 不购买
+        int   buyArmorTier = 0;   // 1/2，0 = 不购买
     };
 
     // 每 tick 调用一次：读取只读状态 → 产出本帧输入
@@ -49,7 +52,7 @@ public:
         const CS2DGame::Player& me = game.GetPlayer();
 
         ++tick_;
-        BuyIfNeeded(game);
+        BuyIfNeeded(game, in);
 
         // 死亡/观战：不产生输入（等回合重生）
         if (!me.alive) {
@@ -182,8 +185,9 @@ private:
         MoveToward(in, px, py);
     }
 
-    // ---- 购买：固定顺序，购买期内每 tick 尝试一次（失败无副作用）----
-    void BuyIfNeeded(CS2DGame& game) {
+    // ---- 购买决策：只产出"想买什么"，由调用方执行并记入输入日志 ----
+    // 购买属于"动作"，不是移动输入；不记进日志的话回放会在第一个购买期就分叉。
+    void BuyIfNeeded(CS2DGame& game, Inputs& in) {
         if (!game.IsBuyPhase()) return;
         const CS2DGame::Player& me = game.GetPlayer();
         if (!me.alive) return;
@@ -192,26 +196,14 @@ private:
         const int money = game.GetPlayerMoney();
 
         if (me.weapons[0] == WeaponId::None) {
-            // 主武器：优先步枪，买不起就冲锋枪
             const WeaponId want = (team == Team::CT) ? WeaponId::M4A4 : WeaponId::AK47;
             const WeaponId fallback = (team == Team::CT) ? WeaponId::MP9 : WeaponId::GalilAR;
-            Presentation::BuyRequest r;
-            r.kind = Presentation::BuyKind::Weapon;
-            r.weapon = want;
-            if (game.ExecutePurchase(r, nullptr).code != Presentation::BuyCode::Ok) {
-                r.weapon = fallback;
-                game.ExecutePurchase(r, nullptr);
-            }
+            if (money >= WeaponDB::Get(want).price) in.buyWeapon = static_cast<int>(want);
+            else if (money >= WeaponDB::Get(fallback).price) in.buyWeapon = static_cast<int>(fallback);
             return;
         }
-        if (me.armor < 50 && money >= 650) {
-            Presentation::BuyRequest r;
-            r.kind = Presentation::BuyKind::Armor;
-            r.armorTier = 1;
-            game.ExecutePurchase(r, nullptr);
-        }
+        if (me.armor < 50 && money >= 650) in.buyArmorTier = 1;
     }
-
     static constexpr float kEngageRange = 520.0f;   // 视野内可交战距离上限
 
     const CS2DGame::Player* lastTarget_ = nullptr;

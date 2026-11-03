@@ -87,12 +87,14 @@ def main():
         return delta
 
     print()
-    t_db = sc["t"] - sb["t"]
-    ct_db = sc["ct"] - sb["ct"]
-    print(f"[compare] 胜场 T {sb['t']} -> {sc['t']} ({t_db:+d})   "
-          f"CT {sb['ct']} -> {sc['ct']} ({ct_db:+d})")
-    if abs(t_db) >= 3 or abs(ct_db) >= 3:
-        warns.append(f"胜场变化达到阈值：T {t_db:+d} / CT {ct_db:+d}")
+    # 用胜率比较：两次运行的样本数可能不同，直接比胜场会误报
+    rt_b, rt_c = sb["t"] / sb["n"], sc["t"] / sc["n"]
+    print(f"[compare] T 胜率 {rt_b:.1%} -> {rt_c:.1%} ({(rt_c - rt_b) * 100:+.1f}pp)"
+          f"   [T {sb['t']}/{sb['n']} -> {sc['t']}/{sc['n']}]")
+    if sb["n"] != sc["n"]:
+        print(f"[compare] 注意：样本数不同（{sb['n']} vs {sc['n']}），已改用胜率比较")
+    if abs(rt_c - rt_b) >= 0.15:
+        warns.append(f"T 胜率变化 {(rt_c - rt_b) * 100:+.1f}pp（阈值 15pp）")
 
     d_rounds = show("平均回合数", sb["rounds"], sc["rounds"], "{:.1f}")
     d_avg = show("平均回合时长(tick)", sb["avg_round"], sc["avg_round"], "{:.0f}")
