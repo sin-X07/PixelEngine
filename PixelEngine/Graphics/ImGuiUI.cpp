@@ -268,6 +268,10 @@ void ImGuiUI::BeginFrame() {
 
 void ImGuiUI::EndFrame() {
     if (!initialized) return;
+    // 所有可交互控件统一显示手型；控件自己设置过光标（输入框、禁用项）时不覆盖
+    if (ImGui::IsAnyItemHovered() && ImGui::GetMouseCursor() == ImGuiMouseCursor_Arrow) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
     ImGui::Render();
     ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
 }
