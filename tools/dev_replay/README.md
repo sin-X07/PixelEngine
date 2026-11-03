@@ -62,3 +62,27 @@ git grep PIXEL_DEV_        # 应为 0
 
 生产侧唯一保留物是 `CS2D/Visibility/VisibilityQuery.*`：它让玩法层不再依赖
 `CS2DRenderer`，属长期改进，不做工具也该有。
+
+## 批量基准与比较（P2）
+
+```bash
+# 3 图 × 10 种子，约 16 秒
+build-dev/dev_replay_runner.exe --ticks=150000 \
+    --maps=dust_2,mirage,ancient_ruins --seeds=1-10 \
+    --out=build-evidence/current --tag=$(git rev-parse --short HEAD)
+
+# 与基线比较（胜场/回合数/回合时长/道具/玩家 K/D）
+python tools/dev_replay/compare_benchmark.py \
+    tools/dev_replay/baseline/summary.csv build-evidence/current/summary.csv
+```
+
+输出：
+
+| 文件 | 内容 |
+| --- | --- |
+| `summary.csv` | 每局一行（首行 `# PXBENCH1 tag=... 参数`）：胜者、比分、回合数、平均回合 tick、下包/拆包、玩家 K/D、final hash |
+| `<map>-s<seed>.rounds.csv` | 该局每个回合一行：胜者、时长、双方击杀、首杀 tick、存活、经济 |
+| `<map>-s<seed>.hash.txt` | 逐 tick 哈希（体积大，默认只在需要定位分歧时保留） |
+
+**注意**：赛后空闲不计入回合时长（`GetMatchWinner()` 一旦确定就停止仿真）。
+`alive_t_end/alive_ct_end` 取**结算阶段**的存活数（不是下一回合重生后的值）。
