@@ -1,6 +1,7 @@
 #pragma once
 #include "Tuning.hpp"
 #include "CS2DWorld.hpp"
+#include "Visibility/VisibilityQuery.hpp"
 #include "Weapons/WeaponDef.hpp"
 #include "../Core/Types.hpp"
 #include "../Core/PresentationContract.hpp"
@@ -176,6 +177,8 @@ private:
     // 玩家视野半径：随视口/缩放动态更新，覆盖屏幕边缘但不超过上限。
     float visionRadius_ = Tuning::VisionRadius;
     static constexpr float MAX_PLAYER_VISION_RADIUS = 320.0f;
+    // 视线/视野几何的唯一实现（不再依赖 SDL）：渲染器只同步参数，判定在 VisibilityQuery
+    VisibilityQuery vis_;
 
     int viewW_ = 800;        // 逻辑视口尺寸（供 tile 剔除与视野纹理重建）
     int viewH_ = 600;

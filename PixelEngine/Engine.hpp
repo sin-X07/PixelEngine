@@ -243,4 +243,23 @@ public:
     void Run();
     void Clean();
     void ToggleFullscreen();
+
+#ifdef PIXEL_DEV_REPLAY
+    // 开发期输入录制（--record=path）：格式与 tools/dev_replay/replay.hpp 的 PXINPUT2 一致。
+    // 生产构建不定义 PIXEL_DEV_REPLAY，以下代码完全不参与编译。
+    void SetRecordPath(const std::string& path) { recordPath_ = path; }
+#endif
+
+private:
+#ifdef PIXEL_DEV_REPLAY
+    void OpenRecordFileIfNeeded();
+    void CloseRecordFile();
+    std::string recordPath_;
+    std::FILE*  recordFile_ = nullptr;
+    uint32_t    recordTick_ = 0;
+    int         recBuyWeapon_ = 0;
+    int         recBuyArmorTier_ = 0;
+    int         recSwitchSlot_ = 0;
+    bool        recScopeToggle_ = false;
+#endif
 };

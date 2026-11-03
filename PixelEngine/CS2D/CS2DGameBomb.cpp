@@ -68,7 +68,7 @@ void CS2DGame::UpdateBombItem(float dt) {
             if (SegmentBlockedBySmoke(p.x, p.y, bombDropX_, bombDropY_)) return false;
             // 玩家用动态屏幕视野（可到屏幕边缘）；BOT 仍用自身固定视野。
             if (&p == &player_) {
-                return renderer_->IsVisibleToPlayer(p.x, p.y, p.aimAngle,
+                return visibility_.IsVisibleToPlayer(p.x, p.y, p.aimAngle,
                                                     bombDropX_, bombDropY_);
             }
             const float dx = bombDropX_ - p.x;
@@ -76,7 +76,7 @@ void CS2DGame::UpdateBombItem(float dt) {
             if (dx * dx + dy * dy > BOT_VIEW_RADIUS * BOT_VIEW_RADIUS) return false;
             if (!InViewCone(p.x, p.y, p.aimAngle, bombDropX_, bombDropY_, BOT_VIEW_RADIUS))
                 return false;
-            return renderer_->HasLineOfSight(p.x, p.y, bombDropX_, bombDropY_);
+            return visibility_.HasLineOfSight(p.x, p.y, bombDropX_, bombDropY_);
         };
         if (ctSees(player_)) {
             bombIntel_ = true; bombIntelX_ = bombDropX_; bombIntelY_ = bombDropY_;

@@ -671,6 +671,9 @@ void Engine::Run() {
 // ============================================================================
 
 void Engine::Clean() {
+#ifdef PIXEL_DEV_REPLAY
+    CloseRecordFile();
+#endif
     if (cleaned) return;
     cleaned = true;
     isRunning = false;
@@ -1175,6 +1178,9 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
     // 调试装备（--loadout=）：延后到真正可操作的那一帧再给，避免被 LoadMap 重置
     if (!debugLoadout_.empty()) debugLoadoutPending_ = true;
     if (debugBuyMenu_) debugBuyMenuPending_ = true;
+#ifdef PIXEL_DEV_REPLAY
+    OpenRecordFileIfNeeded();
+#endif
     if (debugKillPlayer_) debugKillDelay_ = 2.0f;   // --killplayer：进对局 2s 后杀一次
     cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
     cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
@@ -1261,6 +1267,36 @@ void Engine::ApplyDebugLoadout() {
               << " (金钱 $" << p.money << ")" << std::endl;
 }
 
+#ifdef PIXEL_DEV_REPLAY
+// ---------------------------------------------------------------------------
+// 开发期输入录制：打开/关闭 journal（生产构建不编译）。
+// 录制时固定随机种子 —— 否则回放无法复现；种子写进文件头。
+// ---------------------------------------------------------------------------
+void Engine::OpenRecordFileIfNeeded() {
+    if (recordPath_.empty() || recordFile_) return;
+    recordFile_ = std::fopen(recordPath_.c_str(), "wb");
+    if (!recordFile_) {
+        std::cerr << "[Record] 无法写入: " << recordPath_ << std::endl;
+        return;
+    }
+    constexpr uint32_t kRecordSeed = 20261103u;
+    if (cs2dGame) cs2dGame->SetRngSeed(kRecordSeed);
+    recordTick_ = 0;
+    std::fprintf(recordFile_,
+                 "# PXINPUT2 map=%s seed=%u viewport=%dx%d aimTurn=0.00 aimErr=0.0 "
+                 "reaction=0 tag=human\n",
+                 currentMapId_.c_str(), kRecordSeed, logicalW_, logicalH_);
+    std::cout << "[Record] 开始录制: " << recordPath_ << " (seed=" << kRecordSeed << ")"
+              << std::endl;
+}
+
+void Engine::CloseRecordFile() {
+    if (!recordFile_) return;
+    std::fclose(recordFile_);
+    recordFile_ = nullptr;
+    std::cout << "[Record] 录制结束: " << recordTick_ << " tick" << std::endl;
+}
+#endif
 void Engine::Update(float dt) {
     if (currentState != PLAYING) {
         fireInputGate_.Block();
@@ -1310,12 +1346,30 @@ void Engine::Update(float dt) {
         !IsTransitionActive() &&
         inputManager->HasWindowFocus() &&
         !ImGui::GetIO().WantCaptureMouse;
+#ifdef PIXEL_DEV_REPLAY
+    if (scopeRightClicked && gameplayInputAllowed) recScopeToggle_ = true;
+#endif
     cs2dGame->UpdateScopeInput(scopeRightClicked, gameplayInputAllowed);
 
     // Use fresh button state, not the aim input cached before the buy menu opened.
     const bool fireDown = fireInputGate_.Update(
         inputManager->IsMouseLeftDown(), gameplayInputAllowed);
 
+#ifdef PIXEL_DEV_REPLAY
+    if (recordFile_) {
+        std::fprintf(recordFile_,
+                     "%u %d %.9g %.9g %d %d %d %d %d %d %d %d %d %d %d\n",
+                     recordTick_++, fireDown ? 1 : 0, cs2dWorldMouseX, cs2dWorldMouseY,
+                     cs2dKeyW ? 1 : 0, cs2dKeyA ? 1 : 0, cs2dKeyS ? 1 : 0, cs2dKeyD ? 1 : 0,
+                     cs2dKeyShift ? 1 : 0, cs2dKeyR ? 1 : 0, interactHeld ? 1 : 0,
+                     recScopeToggle_ ? 1 : 0, recSwitchSlot_,
+                     recBuyWeapon_, recBuyArmorTier_);
+        recScopeToggle_ = false;
+        recSwitchSlot_ = 0;
+        recBuyWeapon_ = 0;
+        recBuyArmorTier_ = 0;
+    }
+#endif
     cs2dGame->Update(dt, fireDown, cs2dWorldMouseX, cs2dWorldMouseY,
                      cs2dKeyW, cs2dKeyA, cs2dKeyS, cs2dKeyD,
                      cs2dKeyShift, cs2dKeyR, interactHeld,
@@ -2345,7 +2399,14 @@ void Engine::RenderBuyMenu() {
 
     gameUI->DrawBuyMenu(bctx, [this](const Presentation::BuyRequest& r) {
         // 一帧最多一次：DrawBuyMenu 内部保证，这里只负责提交与返回真实结果
-        return cs2dGame->ExecutePurchase(r, audioManager.get());
+        const Presentation::BuyResult res = cs2dGame->ExecutePurchase(r, audioManager.get());
+#ifdef PIXEL_DEV_REPLAY
+        if (res.code == Presentation::BuyCode::Ok) {
+            if (r.kind == Presentation::BuyKind::Armor) recBuyArmorTier_ = r.armorTier;
+            else recBuyWeapon_ = static_cast<int>(r.weapon);
+        }
+#endif
+        return res;
     });
 }
 
