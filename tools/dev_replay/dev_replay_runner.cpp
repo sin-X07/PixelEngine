@@ -11,6 +11,7 @@
 
 #include "../../PixelEngine/CS2D/CS2DGame.hpp"
 #include "../../PixelEngine/Core/PathUtils.hpp"
+#include "scripted_player.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -25,6 +26,9 @@ struct Options {
     std::string map = "dust_2";
     int   viewportW = 1728;         // 固定逻辑视口（16:10 下的默认逻辑尺寸）
     int   viewportH = 1080;
+    float aimTurnRate = 3.0f;    // 脚本玩家转身速率 rad/s
+    float aimErrorDeg = 2.5f;    // 脚本玩家瞄准误差（±度）
+    int   reactionTicks = 15;
 };
 
 Options ParseArgs(int argc, char** argv) {
@@ -34,6 +38,9 @@ Options ParseArgs(int argc, char** argv) {
         if (a.rfind("--ticks=", 0) == 0)      o.ticks = std::atoi(a.c_str() + 8);
         else if (a.rfind("--seed=", 0) == 0)  o.seed  = std::atoi(a.c_str() + 7);
         else if (a.rfind("--map=", 0) == 0)   o.map   = a.substr(6);
+        else if (a.rfind("--aim-turn=", 0) == 0) o.aimTurnRate = static_cast<float>(std::atof(a.c_str() + 11));
+        else if (a.rfind("--reaction=", 0) == 0) o.reactionTicks = std::atoi(a.c_str() + 11);
+        else if (a.rfind("--aim-error=", 0) == 0) o.aimErrorDeg = static_cast<float>(std::atof(a.c_str() + 12));
         else if (a.rfind("--viewport=", 0) == 0) {
             const std::string v = a.substr(11);
             const size_t x = v.find('x');
@@ -70,16 +77,21 @@ int main(int argc, char** argv) {
         VisibilityQuery::RadiusForViewport(opt.viewportW, opt.viewportH));
 
     const float dt = 1.0f / 60.0f;
-    const float aimX = game.GetPlayer().x + 100.0f;
-    const float aimY = game.GetPlayer().y;
 
     int aliveBotsFirst = 0;
     for (const auto& b : game.GetBOTs()) if (b.alive) ++aliveBotsFirst;
 
+    // 脚本玩家：第 10 个单位也由脚本驱动，保住 5v5 对称（不藏玩家、不做 4v5 旁路）
+    dev_replay::ScriptedPlayer::Params sp;
+    sp.turnRate = opt.aimTurnRate;
+    sp.reactionTicks = opt.reactionTicks;
+    sp.aimErrorDeg = opt.aimErrorDeg;
+    dev_replay::ScriptedPlayer script(sp);
     for (int t = 0; t < opt.ticks; ++t) {
-        // 玩家保持静止（脚本玩家在 P0.5 接入），只看仿真能否稳定推进
-        game.Update(dt, false, aimX, aimY,
-                    false, false, false, false, false, false, false,
+        const auto in = script.Think(game, dt);
+        game.Update(dt, in.mouseDown, in.aimX, in.aimY,
+                    in.w, in.a, in.s, in.d,
+                    in.shift, in.reload, false,
                     nullptr);
     }
 
@@ -91,6 +103,8 @@ int main(int argc, char** argv) {
     std::printf("[dev_replay] bots=%zu alive(first)=%d alive(last)=%d  visionRadius=%.2f\n",
                 game.GetBOTs().size(), aliveBotsFirst, aliveBotsLast,
                 game.Visibility().VisionRadius());
+    std::printf("[dev_replay] player kills=%d deaths=%d money=%d\n",
+                game.GetPlayerKills(), game.GetPlayerDeaths(), game.GetPlayerMoney());
     std::printf("[dev_replay] score T=%d CT=%d round=%d phase=%d\n",
                 game.GetScoreT(), game.GetScoreCT(),
                 game.GetRoundNumber(), static_cast<int>(game.GetRoundPhase()));
