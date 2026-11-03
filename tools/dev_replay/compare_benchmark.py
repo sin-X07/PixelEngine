@@ -50,8 +50,18 @@ def stats(rows):
     defuses = sum(int(r["defuses"]) for r in rows) / n
     pk = sum(int(r["player_kills"]) for r in rows)
     pd = sum(int(r["player_deaths"]) for r in rows)
+
+    def avg(key, default=0.0):
+        if key not in rows[0]:
+            return default
+        return sum(float(r[key]) for r in rows) / n
+
     return dict(n=n, t=t, ct=ct, rounds=rounds, avg_round=avg_round,
-                plants=plants, defuses=defuses, pk=pk, pd=pd)
+                plants=plants, defuses=defuses, pk=pk, pd=pd,
+                still=avg("still_pct"), idle=avg("idle_pct"),
+                path_eff=avg("path_eff"), damage=avg("dmg_per_round"),
+                fb_win=avg("fb_win_pct"), plant_near=avg("plant_near"),
+                defuse_near=avg("defuse_near"), conflicts=avg("ai_conflicts"))
 
 
 def main():
@@ -108,6 +118,43 @@ def main():
         warns.append(f"平均回合时长变化 {d_avg / sb['avg_round'] * 100:+.0f}%（阈值 20%）")
     if abs(d_rounds) >= 2.0:
         warns.append(f"平均回合数变化 {d_rounds:+.1f}")
+
+    # ---- 决策质量（BOT 行为直接相关的指标）----
+    def quality(key, label, fmt, unit=""):
+        if key not in sb or key not in sc:
+            return None
+        a, b = float(sb[key]), float(sc[key])
+        d = b - a
+        print(f"[compare] {label:<16} {fmt.format(a):>10}{unit} -> {fmt.format(b):>10}{unit}   "
+              f"({d:+.2f})")
+        return d
+
+    if all(k in sb for k in ("still", "idle", "path_eff", "damage", "fb_win",
+                             "plant_near", "defuse_near")):
+        print()
+        print("[compare] ---- 决策质量 ----")
+        d_still = quality("still", "原地不动占比", "{:.1f}", "%")
+        d_idle = quality("idle", "发呆占比", "{:.1f}", "%")
+        d_eff = quality("path_eff", "路径效率", "{:.2f}")
+        d_dmg = quality("damage", "每回合伤害", "{:.0f}")
+        d_fb = quality("fb_win", "首杀转化率", "{:.1f}", "%")
+        quality("plant_near", "下包点人数", "{:.2f}")
+        quality("defuse_near", "拆包点人数", "{:.2f}")
+        d_conf = quality("conflicts", "AI 冲突/局", "{:.2f}")
+
+        # 质量阈值：这些是"行为退化"的早期信号
+        if d_still is not None and d_still >= 10.0:
+            warns.append(f"原地不动占比上升 {d_still:+.1f}pp（阈值 10pp）")
+        if d_idle is not None and d_idle >= 10.0:
+            warns.append(f"发呆占比上升 {d_idle:+.1f}pp（阈值 10pp）")
+        if d_eff is not None and d_eff <= -0.10:
+            warns.append(f"路径效率下降 {d_eff:+.2f}（阈值 0.10，越低越绕路）")
+        if d_dmg is not None and sb["damage"] > 0 and d_dmg / max(1.0, sb["damage"]) <= -0.15:
+            warns.append(f"每回合伤害下降 {d_dmg / sb['damage'] * 100:+.0f}%（阈值 15%）")
+        if d_fb is not None and d_fb <= -10.0:
+            warns.append(f"首杀转化率下降 {d_fb:+.1f}pp（阈值 10pp）")
+        if d_conf is not None and d_conf > 0:
+            warns.append(f"AI 冲突增加 {d_conf:+.2f}/局")
 
     print()
     if warns:

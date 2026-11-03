@@ -141,6 +141,10 @@ struct Summary {
     int   playerKills = 0, playerDeaths = 0;
     uint64_t finalHash = 0;
     int   conflicts = 0;      // AI 决策冲突条数（0 表示没触发任何规则）
+    // 决策质量（整局平均）
+    double stillPct = 0.0, idlePct = 0.0, pathEff = 0.0;
+    double damagePerRound = 0.0, fbWinPct = 0.0;
+    double plantNear = 0.0, defuseNear = 0.0;
     int lastTick_ = 0;
 };
 
@@ -308,6 +312,27 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
         if (r.defuse) ++s.defuses;
     }
     s.rounds = static_cast<int>(rows.size());
+    if (!rows.empty()) {
+        double still = 0, idle = 0, eff = 0, dmg = 0, fbw = 0, pn = 0, dn = 0;
+        int fbRounds = 0;
+        for (const auto& r : rows) {
+            still += (r.stillRatioT + r.stillRatioCT) * 0.5;
+            idle  += (r.idleRatioT + r.idleRatioCT) * 0.5;
+            eff   += (r.pathEffT + r.pathEffCT) * 0.5;
+            dmg   += static_cast<double>(r.damageT + r.damageCT);
+            if (r.firstBloodTeam != Team::None) { fbw += r.fbWinnerMatched ? 1.0 : 0.0; ++fbRounds; }
+            pn += r.plantNearT;
+            dn += r.defuseNearCT;
+        }
+        const double n = static_cast<double>(rows.size());
+        s.stillPct = still / n;
+        s.idlePct = idle / n;
+        s.pathEff = eff / n;
+        s.damagePerRound = dmg / n;
+        s.fbWinPct = fbRounds > 0 ? fbw / static_cast<double>(fbRounds) : 0.0;
+        s.plantNear = pn / n;
+        s.defuseNear = dn / n;
+    }
     s.avgRoundTicks = rows.empty() ? 0.0 : sumTicks / static_cast<double>(rows.size());
     s.scoreT = game.GetScoreT();
     s.scoreCT = game.GetScoreCT();
@@ -408,6 +433,10 @@ int main(int argc, char** argv) {
         std::printf("[dev_replay] final_hash=%016" PRIx64 "\n", s.finalHash);
         std::printf("[dev_replay] player kills=%d deaths=%d  ai_conflicts=%d\n",
                     s.playerKills, s.playerDeaths, s.conflicts);
+        std::printf("[dev_replay] quality still=%.1f%% idle=%.1f%% pathEff=%.2f dmg/round=%.0f fbWin=%.0f%% "
+                    "plantNear=%.1f defuseNear=%.1f\n",
+                    s.stillPct * 100, s.idlePct * 100, s.pathEff, s.damagePerRound,
+                    s.fbWinPct * 100, s.plantNear, s.defuseNear);
         std::printf("[dev_replay] score T=%d CT=%d winner=%s rounds=%d avgRoundTicks=%.0f "
                     "plants=%d defuses=%d\n",
                     s.scoreT, s.scoreCT, dev_replay::TeamTag(s.winner),
@@ -430,7 +459,8 @@ int main(int argc, char** argv) {
                  opt.aimTurnRate, opt.aimErrorDeg, opt.reactionTicks);
     std::fprintf(summary,
                  "map,seed,winner,score_t,score_ct,rounds,ticks,avg_round_ticks,"
-                 "plants,defuses,player_kills,player_deaths,ai_conflicts,final_hash\n");
+                 "plants,defuses,player_kills,player_deaths,ai_conflicts,still_pct,idle_pct,"
+                 "path_eff,dmg_per_round,fb_win_pct,plant_near,defuse_near,final_hash\n");
 
     int games = 0, tWins = 0, ctWins = 0, failed = 0;
     double sumAvgRoundTicks = 0.0;
@@ -449,11 +479,12 @@ int main(int argc, char** argv) {
             sumPlants += s.plants;
             sumDefuses += s.defuses;
             std::fprintf(summary,
-                         "%s,%d,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%d,%d,%016" PRIx64 "\n",
+                         "%s,%d,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%d,%d,%.1f,%.1f,%.2f,%.0f,%.1f,%.2f,%.2f,%016" PRIx64 "\n",
                          s.map.c_str(), s.seed, dev_replay::TeamTag(s.winner),
                          s.scoreT, s.scoreCT, s.rounds, s.ticks, s.avgRoundTicks,
                          s.plants, s.defuses, s.playerKills, s.playerDeaths, s.conflicts,
-                         s.finalHash);
+                         s.stillPct * 100, s.idlePct * 100, s.pathEff, s.damagePerRound,
+                         s.fbWinPct * 100, s.plantNear, s.defuseNear, s.finalHash);
         }
     }
     std::fclose(summary);
