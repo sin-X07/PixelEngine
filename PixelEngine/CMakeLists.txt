@@ -108,6 +108,8 @@ set(SOURCES
     CS2D/CS2DGameCombat.cpp
     CS2D/CS2DGameBots.cpp
     CS2D/CS2DGameSpectate.cpp
+    CS2D/Visibility/VisibilityQuery.cpp
+    CS2D/Visibility/VisibilityQuery.hpp
     CS2D/TacticalIntel.hpp
     CS2D/TacticalIntel.cpp
     CS2D/SoundEvents.hpp
@@ -208,5 +210,35 @@ if(BUILD_GAMEPLAY_TESTS)
         # 测试是控制台程序，且不链接 SDL2main（避免 main→SDL_main 重命名），
         # 显式选择控制台启动对象
         target_link_options(gameplay_tests PRIVATE -mconsole -static -static-libgcc -static-libstdc++)
+    endif()
+endif()
+
+# ----------------------------------------------------------------------------
+# 开发期确定性/回放工具（默认 OFF；整个 tools/dev_replay/ 与这一段都可整体删除）
+# ----------------------------------------------------------------------------
+option(BUILD_DEV_REPLAY_TOOLS "Build dev-only determinism/replay runner" OFF)
+if(BUILD_DEV_REPLAY_TOOLS)
+    set(DEV_TOOL_SOURCES ${SOURCES})
+    list(REMOVE_ITEM DEV_TOOL_SOURCES main.cpp Engine.cpp Engine.hpp)
+    add_executable(dev_replay_runner
+        ${DEV_TOOL_SOURCES}
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/dev_replay/dev_replay_runner.cpp"
+    )
+    target_include_directories(dev_replay_runner PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/imgui
+        ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/imgui/backends
+    )
+    target_compile_definitions(dev_replay_runner PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(dev_replay_runner PRIVATE
+        SDL2::SDL2
+        SDL2_mixer::SDL2_mixer-static
+        SDL2_image::SDL2_image-static
+    )
+    if(WIN32)
+        target_link_libraries(dev_replay_runner PRIVATE ws2_32 winhttp opengl32)
+    endif()
+    if(MINGW)
+        target_link_options(dev_replay_runner PRIVATE -mconsole)
     endif()
 endif()

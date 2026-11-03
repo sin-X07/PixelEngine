@@ -203,7 +203,7 @@ void CS2DGame::UpdateTeamContacts(float dt) {
             // 上报同样受朝向限制：背后看不到的东西不能报告
             if (!InViewCone(b.x, b.y, b.aimAngle, e.x, e.y, BOT_SPOT_RADIUS)) return;
             if (SegmentBlockedBySmoke(b.x, b.y, e.x, e.y)) return;
-            if (renderer_ && !renderer_->HasLineOfSight(b.x, b.y, e.x, e.y)) return;
+            if (!visibility_.HasLineOfSight(b.x, b.y, e.x, e.y)) return;
 
             ReportContact(b.team, id, e.x, e.y);
         };
@@ -261,7 +261,7 @@ const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& ou
         // 视野扇形：和玩家同一套几何，背后看不见
         if (!InViewCone(self.x, self.y, self.aimAngle, e.x, e.y, BOT_VIEW_RADIUS)) return;
         if (SegmentBlockedBySmoke(self.x, self.y, e.x, e.y)) return;
-        if (renderer_ && !renderer_->HasLineOfSight(self.x, self.y, e.x, e.y)) return;
+        if (!visibility_.HasLineOfSight(self.x, self.y, e.x, e.y)) return;
 
         if (d2 < bestD2) { bestD2 = d2; best = &e; }
     };

@@ -40,6 +40,9 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
     if (!world_->Build(mapData)) return false;
 
     if (renderer_) renderer_->SetWorld(world_.get());
+    // 玩法层自己持有一份几何查询：无渲染器（无头仿真）也能做视线/可见性判定
+    visibility_.SetWorld(world_.get());
+    visibility_.SetVisionRadius(renderer_ ? renderer_->GetVisionRadius() : Tuning::VisionRadius);
 
     // 烘焙寻路网格（角色半径 3.5，略大于命中盒半宽）
     pathFinder_.Build(*world_, Tuning::PathAgentRadius);
@@ -1073,6 +1076,7 @@ void CS2DGame::Render(int viewW, int viewH) {
         camY += (aimWorldY_ - player_.y) * shift;
     }
     renderer_->UpdateCamera(camX, camY, viewW, viewH, scope.zoomMultiplier);
+    visibility_.SetVisionRadius(renderer_->GetVisionRadius());
 
     // 契约 v1.1：开镜时可见区改为以准星为圆心的圆，镜外由视野雾遮盖。
     // 半径以「屏幕像素 / 当前倍率」换算成世界半径，保证与屏幕上的镜筒一致。
@@ -1082,8 +1086,10 @@ void CS2DGame::Render(int viewW, int viewH) {
     if (scopeMaskOn) {
         const float zoomNow = std::max(0.001f, renderer_->GetZoom());
         renderer_->SetScopeMask(true, aimWorldX_, aimWorldY_, scopeRadiusPx / zoomNow);
+        visibility_.SetScopeMask(true, aimWorldX_, aimWorldY_, scopeRadiusPx / zoomNow);
     } else {
         renderer_->SetScopeMask(false, 0.0f, 0.0f, 0.0f);
+        visibility_.ClearScopeMask();
     }
 
     renderer_->DrawWorld();
@@ -1131,7 +1137,7 @@ void CS2DGame::Render(int viewW, int viewH) {
         // 死斗：先按墙体遮挡剔除（只看墙、不看雾与朝向）——这一步必须独立于 friendly，
         // 否则会被"死斗没有友军"的判断短路掉，变成全图透视。
         if (dmMode && applyVisionCull && renderer_ &&
-            !renderer_->HasLineOfSight(player_.x, player_.y, bot.x, bot.y)) {
+            !visibility_.HasLineOfSight(player_.x, player_.y, bot.x, bot.y)) {
             continue;
         }
         const bool friendly = dmMode ? true : (bot.team == player_.team);
@@ -1174,7 +1180,7 @@ void CS2DGame::Render(int viewW, int viewH) {
     if (bombDropped_) {
         bool visible = (player_.team == Team::T) || bombIntel_ || IsSpectating();
         if (!visible && player_.alive && renderer_) {
-            visible = renderer_->IsVisibleToPlayer(player_.x, player_.y, player_.aimAngle,
+            visible = visibility_.IsVisibleToPlayer(player_.x, player_.y, player_.aimAngle,
                                                     bombDropX_, bombDropY_) &&
                       !SegmentBlockedBySmoke(player_.x, player_.y, bombDropX_, bombDropY_);
         }

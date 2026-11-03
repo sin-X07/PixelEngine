@@ -681,7 +681,7 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
                 if (d >= Tuning::FlashRadius) return {0.0f, 0.0f};
 
                 // 墙后看不到闪光：不闪（避免隔墙致盲）
-                if (renderer_ && !renderer_->HasLineOfSight(g.x, g.y, t.x, t.y)) {
+                if (!visibility_.HasLineOfSight(g.x, g.y, t.x, t.y)) {
                     return {0.0f, 0.0f};
                 }
 

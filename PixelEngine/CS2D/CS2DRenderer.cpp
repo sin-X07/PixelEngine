@@ -129,6 +129,7 @@ void CS2DRenderer::Clean() {
 void CS2DRenderer::SetWorld(const CS2DWorld* world) {
     Clean();
     world_ = world;
+    vis_.SetWorld(world);
     failedLoads_ = 0;
     if (!world_) return;
 
@@ -289,10 +290,8 @@ void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
 
     // 视野是半径 VISION_RADIUS 的圆：先按「整圆刚好装进较窄的那一屏边」算 fit，
     // 再整体放大 15% —— 画面更近、角色更大；四角雾边被裁掉属预期。
-    constexpr float kBaseZoomScale = 1.15f;
-    const float minView = static_cast<float>(std::min(viewportW, viewportH));
-    const float fitZoom = minView / (2.0f * VISION_RADIUS) * kBaseZoomScale;
-    const float baseZoom = std::clamp(fitZoom, 1.2f, 6.0f);
+    // 公式已抽到 VisibilityQuery，无头仿真用同一个函数算半径，保证判定一致。
+    const float baseZoom = VisibilityQuery::BaseZoomForViewport(viewportW, viewportH);
 
     // 开镜只乘一次倍率：zoom_ 就是实际倍率，GetZoom()/UpdateCursor 不得再乘
     zoomMultiplier = std::clamp(zoomMultiplier, 0.25f, 4.0f);
@@ -302,15 +301,9 @@ void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
     const float viewH = static_cast<float>(viewportH) / zoom_;
 
     // 玩家视野：正前方要能看到屏幕边缘，但必须有上限，避免 BOT 在屏幕外开火。
-    // 加一个软边宽度，让屏幕四角落在"完全点亮"区内，而不是刚好卡在雾边。
     // 关键：按 baseZoom 计算（不是开镜后的 zoom_），否则开镜会缩小敌人知情半径。
-    const float baseViewW = static_cast<float>(viewportW) / baseZoom;
-    const float baseViewH = static_cast<float>(viewportH) / baseZoom;
-    const float halfW = baseViewW * 0.5f;
-    const float halfH = baseViewH * 0.5f;
-    const float screenHalfDiag = std::sqrt(halfW * halfW + halfH * halfH);
-    visionRadius_ = std::clamp(screenHalfDiag + VISION_SOFT_EDGE, VISION_RADIUS,
-                               MAX_PLAYER_VISION_RADIUS);
+    visionRadius_ = VisibilityQuery::RadiusForViewport(viewportW, viewportH, baseZoom);
+    vis_.SetVisionRadius(visionRadius_);
 
     float totalW = world_->GetMapPixelW();
     float totalH = world_->GetMapPixelH();
@@ -1025,6 +1018,9 @@ void CS2DRenderer::SetScopeMask(bool active, float centerX, float centerY,
     scopeMaskX_ = centerX;
     scopeMaskY_ = centerY;
     scopeMaskR_ = radiusWorld;
+    // 开镜圆形可见区同步给几何查询：ComputeVisibility 用它取代扇形 + 半径
+    if (active) vis_.SetScopeMask(true, centerX, centerY, radiusWorld);
+    else        vis_.ClearScopeMask();
 }
 
 // ---------------------------------------------------------------------------
@@ -1234,89 +1230,16 @@ void CS2DRenderer::DrawWeaponStatus(int weaponId, int ammo, int magazine,
 // 视野遮罩
 // ============================================================================
 
+// 几何判定已抽到 VisibilityQuery（不依赖 SDL），渲染器只做转发。
+// 见 CS2D/Visibility/VisibilityQuery.hpp：无头仿真与渲染共用同一份实现。
 bool CS2DRenderer::HasLineOfSight(float fromX, float fromY, float toX, float toY) const {
-    if (!world_) return false;
-
-    const int tileW = world_->GetTileWidth();
-    const int tileH = world_->GetTileHeight();
-    const float dx = toX - fromX;
-    const float dy = toY - fromY;
-    const float dist = std::sqrt(dx * dx + dy * dy);
-    if (dist < 1.0f) return true;
-
-    const int steps = std::max(2, static_cast<int>(dist / (std::min(tileW, tileH) * 0.5f)));
-    for (int i = 0; i <= steps; ++i) {
-        const float t = static_cast<float>(i) / steps;
-        const float sx = fromX + dx * t;
-        const float sy = fromY + dy * t;
-        int row, col;
-        world_->WorldToTile(sx, sy, row, col);
-        if (world_->IsBlockingBullet(row, col)) return false;
-    }
-    return true;
+    return vis_.HasLineOfSight(fromX, fromY, toX, toY);
 }
 
-// ---- 玩家视野可见度：距离 × 120° 扇形 × 墙体遮挡 ----
 float CS2DRenderer::ComputeVisibility(float playerX, float playerY, float aimAngle,
                                      float targetX, float targetY) const {
-    if (!world_) return 0.0f;
-
-    // ---- 契约 v1.1：开镜时改用「以准星为圆心的圆」取代扇形 + 半径 ----
-    // 几何定义与回归测试共用 Presentation::ComputeScopeVisibility；墙体遮挡仍然生效。
-    if (scopeMaskActive_) {
-        const float circleFactor = Presentation::ComputeScopeVisibility(
-            scopeMaskX_, scopeMaskY_, scopeMaskR_, targetX, targetY);
-        if (circleFactor <= 0.0f) return 0.0f;
-        if (world_ && !HasLineOfSight(playerX, playerY, targetX, targetY)) return 0.0f;
-        return circleFactor;
-    }
-
-    const float deltaX = targetX - playerX;
-    const float deltaY = targetY - playerY;
-    const float dist = std::sqrt(deltaX * deltaX + deltaY * deltaY);
-
-    // 1) 距离因子：半径内 1.0，边缘 smoothstep → 0.0
-    const float radius = visionRadius_;
-    const float fullyLitRadius = radius - VISION_SOFT_EDGE;
-    float distFactor = 0.0f;
-    if (dist <= fullyLitRadius) {
-        distFactor = 1.0f;
-    } else if (dist < radius) {
-        float blend = (dist - fullyLitRadius) / VISION_SOFT_EDGE;
-        blend = blend * blend * (3.0f - 2.0f * blend);  // smoothstep
-        distFactor = 1.0f - blend;
-    }
-    if (distFactor <= 0.0f) return 0.0f;   // 超出半径，无需再算
-
-    // 2) 角度因子：以玩家朝向为中心的 120° 扇形，扇形外完全不可见
-    const float halfConeRad  = (VISION_CONE_DEG * 0.5f - VISION_ANGLE_SOFT * 0.5f)
-                               * 3.14159265f / 180.0f;
-    const float angleSoftRad = VISION_ANGLE_SOFT * 3.14159265f / 180.0f;
-
-    const float targetAngle = std::atan2(deltaY, deltaX);
-    float diff = targetAngle - aimAngle;
-    while (diff > 3.14159265f)  diff -= 6.28318531f;
-    while (diff < -3.14159265f) diff += 6.28318531f;
-    const float absDiff = std::abs(diff);
-
-    float coneFactor = 0.0f;
-    if (absDiff <= halfConeRad) {
-        coneFactor = 1.0f;
-    } else if (absDiff < halfConeRad + angleSoftRad) {
-        float blend = (absDiff - halfConeRad) / angleSoftRad;
-        blend = blend * blend * (3.0f - 2.0f * blend);  // smoothstep
-        coneFactor = 1.0f - blend;
-    }
-    if (coneFactor <= 0.0f) return 0.0f;   // 扇形外，跳过射线检测
-
-    // 3) 视线遮挡：被墙挡则完全不可见
-    if (!HasLineOfSight(playerX, playerY, targetX, targetY)) return 0.0f;
-
-    return std::min(distFactor, coneFactor);
+    return vis_.ComputeVisibility(playerX, playerY, aimAngle, targetX, targetY);
 }
-
-// 烟雾云：用同心圆近似柔和边缘
-// 生成 128×128 的柔和烟雾贴图：径向衰减 × fBm 噪声，边缘完全透明
 void CS2DRenderer::CreateSmokeTexture() {
     if (smokeTex_) { SDL_DestroyTexture(smokeTex_); smokeTex_ = nullptr; }
     if (!renderer_) return;

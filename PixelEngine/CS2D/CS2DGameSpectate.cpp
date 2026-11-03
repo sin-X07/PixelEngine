@@ -86,7 +86,7 @@ bool CS2DGame::SpectatorCanSeeEnemy(const Player& e) const {
         if (dx * dx + dy * dy > Tuning::VisionRadius * Tuning::VisionRadius) return false;
         if (!InViewCone(f.x, f.y, f.aimAngle, e.x, e.y, Tuning::VisionRadius)) return false;
         if (SegmentBlockedBySmoke(f.x, f.y, e.x, e.y)) return false;
-        if (renderer_ && !renderer_->HasLineOfSight(f.x, f.y, e.x, e.y)) return false;
+        if (!visibility_.HasLineOfSight(f.x, f.y, e.x, e.y)) return false;
         return true;
     };
 

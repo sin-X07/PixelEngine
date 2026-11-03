@@ -1,5 +1,6 @@
 #pragma once
 #include "CS2DWorld.hpp"
+#include "Visibility/VisibilityQuery.hpp"
 #include "CS2DRenderer.hpp"
 #include "Teams/TeamManager.hpp"
 #include "Coach/CoachTypes.hpp"
@@ -414,6 +415,9 @@ public:
 
     // ---- 访问器 ----
     CS2DWorld&       GetWorld()       { return *world_; }
+    // 视线/视野几何（玩法层与之共用同一实现，不再依赖渲染器）
+    VisibilityQuery&       Visibility()       { return visibility_; }
+    const VisibilityQuery& Visibility() const { return visibility_; }
     const CS2DWorld& GetWorld() const { return *world_; }
     CS2DRenderer*    GetRenderer()    { return renderer_; }
 
@@ -499,6 +503,8 @@ public:
 
     // ---- 阵营 / 回合 ----
     MatchMode  GetMatchMode()   const { return mode_; }
+    // 固定随机种子（确定性测试 / 无头基准 / 回放用）。正常游玩不调用。
+    void       SetRngSeed(uint32_t seed) { rng_.seed(seed); }
     void       SetMatchMode(MatchMode m) { mode_ = m; }
 
     int  GetScoreT()      const { return teams_.ScoreT(); }
@@ -791,6 +797,7 @@ public:
 
 private:
     std::unique_ptr<CS2DWorld> world_;
+    VisibilityQuery visibility_;   // 视线/视野判定的唯一实现（无 SDL 依赖）
     CS2DRenderer* renderer_ = nullptr;
     std::string mapId_;            // 如 dust_2 / ancient_ruins / mirage
     std::string playbookId_;       // 战术库文件名（不含 .txt）；空则回退 mapId_

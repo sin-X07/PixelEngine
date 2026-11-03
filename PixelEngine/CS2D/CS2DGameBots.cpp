@@ -16,16 +16,16 @@ bool CS2DGame::BotCanSeePlayer(const Player& bot) const {
     const float dx = player_.x - bot.x;
     const float dy = player_.y - bot.y;
     if (std::sqrt(dx * dx + dy * dy) > BOT_VIEW_RADIUS) return false;
-    if (!renderer_) return true;
-    return renderer_->HasLineOfSight(bot.x, bot.y, player_.x, player_.y);
+    if (!visibility_.World()) return true;   // 无世界数据时保持宽松语义（测试/初始化阶段）
+    return visibility_.HasLineOfSight(bot.x, bot.y, player_.x, player_.y);
 }
 
 bool CS2DGame::PlayerCanSeeBot(const Player& bot) const {
     if (!bot.alive) return false;
     // 烟雾遮挡
     if (SegmentBlockedBySmoke(player_.x, player_.y, bot.x, bot.y)) return false;
-    if (!renderer_) return true;
-    return renderer_->IsVisibleToPlayer(player_.x, player_.y, player_.aimAngle,
+    if (!visibility_.World()) return true;   // 无世界数据时保持宽松语义（测试/初始化阶段）
+    return visibility_.IsVisibleToPlayer(player_.x, player_.y, player_.aimAngle,
                                         bot.x, bot.y);
 }
 
