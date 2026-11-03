@@ -20,6 +20,7 @@
 #include "CS2D/CS2DGame.hpp"
 #include "Core/PathUtils.hpp"
 #include "Core/PresentationContract.hpp"
+#include "Input/FireInputGate.hpp"
 
 static int g_fail = 0;
 static int g_pass = 0;
@@ -92,6 +93,21 @@ static void TestBuyCodes() {
           "护甲 tier=0 → InvalidItem");
     check(game.EvaluatePurchase(ArmorReq(3)) == Presentation::BuyCode::InvalidItem,
           "护甲 tier=3 → InvalidItem");
+
+    // Invalid kinds must never bypass team restrictions or mutate inventory.
+    for (int invalidKind : {-1, 999}) {
+        auto request = WeaponReq(WeaponId::AK47);
+        request.kind = static_cast<Presentation::BuyKind>(invalidKind);
+        const int money = game.GetPlayerMoney();
+        const WeaponId primary = game.GetPlayer().weapons[0];
+        check(game.EvaluatePurchase(request) == Presentation::BuyCode::InvalidItem,
+              "非法 BuyKind 判定为 InvalidItem");
+        const auto result = game.ExecutePurchase(request);
+        check(result.code == Presentation::BuyCode::InvalidItem,
+              "非法 BuyKind 提交仍被拒绝");
+        check(game.GetPlayerMoney() == money && game.GetPlayer().weapons[0] == primary,
+              "非法 BuyKind 不扣款、不装备");
+    }
 
     // --- AlreadyEquipped：CT 起始 USP-S ---
     check(game.EvaluatePurchase(WeaponReq(WeaponId::USP_S)) ==
@@ -769,10 +785,26 @@ static void TestBulletVisuals() {
           "视觉段不超过 512 上限");
 }
 
+static void TestFireInputGate() {
+    FireInputGate gate;
+    check(gate.Update(true, true), "正常对局可按住射击");
+    check(!gate.Update(true, false), "持枪开菜单立即屏蔽射击");
+    check(!gate.Update(false, false), "菜单中松开不射击");
+    check(!gate.Update(true, false), "菜单点击不射击");
+    check(!gate.Update(true, true), "关闭菜单时仍按住不射击");
+    check(!gate.Update(false, true), "回到对局先释放扳机");
+    check(gate.Update(true, true), "重新点击后恢复射击");
+    gate.Block();
+    check(!gate.Update(true, true), "暂停或选边后持按不会误开枪");
+    check(!gate.Update(false, true), "暂停后释放扳机");
+    check(gate.Update(true, true), "暂停后重新点击恢复射击");
+}
+
 int main() {
     std::printf("===== 合并契约 v1 玩法回归测试 =====\n");
     std::printf("地图: %s\n", MapPath());
 
+    TestFireInputGate();
     TestBuyCodes();
     TestBuyDeadAndWindow();
     TestScope();

@@ -249,6 +249,8 @@ Presentation::BuyCode CS2DGame::EvaluatePurchase(
     using Presentation::BuyCode;
 
     // 1) 非法请求 / 非售卖项：先校验 enum，再索引 WeaponDB
+    if (request.kind != Presentation::BuyKind::Weapon &&
+        request.kind != Presentation::BuyKind::Armor) return BuyCode::InvalidItem;
     if (request.kind == Presentation::BuyKind::Armor) {
         if (request.armorTier < 1 || request.armorTier > 2) return BuyCode::InvalidItem;
     } else {

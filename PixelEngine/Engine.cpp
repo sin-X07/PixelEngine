@@ -1260,6 +1260,7 @@ void Engine::ApplyDebugLoadout() {
 
 void Engine::Update(float dt) {
     if (currentState != PLAYING) {
+        fireInputGate_.Block();
         // 暂停 / 设置 / 退出 / 主菜单：不跑 game.Update，开镜也必须立即归零
         scopeRightClickPending_ = false;
         if (cs2dGame) cs2dGame->ResetScope(Presentation::ScopeResetReason::InputBlocked);
@@ -1267,6 +1268,7 @@ void Engine::Update(float dt) {
     }
     UpdateSideSpawnTransition();
     if (sideChoicePending_ || sidePopupOpen_) {
+        fireInputGate_.Block();
         // 选阵营期间同理：边沿丢弃 + 状态归零，不依赖 game.Update 的 dt
         scopeRightClickPending_ = false;
         if (cs2dGame) cs2dGame->ResetScope(Presentation::ScopeResetReason::InputBlocked);
@@ -1307,7 +1309,11 @@ void Engine::Update(float dt) {
         !ImGui::GetIO().WantCaptureMouse;
     cs2dGame->UpdateScopeInput(scopeRightClicked, gameplayInputAllowed);
 
-    cs2dGame->Update(dt, cs2dMouseDown, cs2dWorldMouseX, cs2dWorldMouseY,
+    // Use fresh button state, not the aim input cached before the buy menu opened.
+    const bool fireDown = fireInputGate_.Update(
+        inputManager->IsMouseLeftDown(), gameplayInputAllowed);
+
+    cs2dGame->Update(dt, fireDown, cs2dWorldMouseX, cs2dWorldMouseY,
                      cs2dKeyW, cs2dKeyA, cs2dKeyS, cs2dKeyD,
                      cs2dKeyShift, cs2dKeyR, interactHeld,
                      audioManager.get());

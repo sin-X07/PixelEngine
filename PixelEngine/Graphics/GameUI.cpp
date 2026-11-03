@@ -1901,17 +1901,17 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
         ImGui::EndGroup();
     };
 
-    // 职责文案按模式区分：非爆破模式不写下包/拆包（PIX-7，与全屏选边一致）
-    const char* tRolePop  = ctx.bombMode ? "进攻方 · 携带 C4" : "进攻方";
-    const char* tDescPop  = ctx.bombMode ? "拿到炸弹后按住 E 在包点安装"
-                                         : "歼灭全部敌人，与队友配合清点";
-    const char* ctRolePop = ctx.bombMode ? "防守方 · 拆除 C4" : "防守方";
-    const char* ctDescPop = ctx.bombMode ? "阻止下包，或在包点按住 E 拆弹"
-                                         : "歼灭全部敌人，卡点防守注意进攻方向";
-    sideCard(0, "T  恐怖分子", tRolePop, tDescPop,
-             ImVec4(0.94f, 0.67f, 0.27f, 1.0f), UI(24.0f));
-    sideCard(1, "CT  反恐精英", ctRolePop, ctDescPop,
-             ImVec4(0.35f, 0.67f, 0.96f, 1.0f), UI(24.0f) + btnW + UI(24.0f));
+    const auto accentFor = [](Team team) {
+        const SDL_Color color = GetTeamVisualStyle(team).accent;
+        return ImVec4(color.r / 255.0f, color.g / 255.0f,
+                      color.b / 255.0f, color.a / 255.0f);
+    };
+    sideCard(0, "T  恐怖分子", ctx.bombMode ? "进攻方 · 携带 C4" : "T 方 · 团队协作",
+             ctx.bombMode ? "拿到炸弹后按住 E 在包点安装" : "与队友配合，歼灭全部敌人",
+             accentFor(Team::T), UI(24.0f));
+    sideCard(1, "CT  反恐精英", ctx.bombMode ? "防守方 · 拆除 C4" : "CT 方 · 团队协作",
+             ctx.bombMode ? "阻止下包，或在包点按住 E 拆弹" : "与队友配合，歼灭全部敌人",
+             accentFor(Team::CT), UI(24.0f) + btnW + UI(24.0f));
 
     const float rndW = UI(190.0f);
     const float rndH = UI(40.0f);
