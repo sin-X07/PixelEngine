@@ -12,11 +12,13 @@
 #include "../../PixelEngine/CS2D/CS2DGame.hpp"
 #include "../../PixelEngine/Core/PathUtils.hpp"
 #include "scripted_player.hpp"
+#include "digest.hpp"
 
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <cinttypes>
 
 namespace {
 
@@ -29,6 +31,7 @@ struct Options {
     float aimTurnRate = 3.0f;    // 脚本玩家转身速率 rad/s
     float aimErrorDeg = 2.5f;    // 脚本玩家瞄准误差（±度）
     int   reactionTicks = 15;
+    std::string hashPath;    // 非空时逐 tick 写 "tick hash" 文本（供 diff）
 };
 
 Options ParseArgs(int argc, char** argv) {
@@ -41,6 +44,7 @@ Options ParseArgs(int argc, char** argv) {
         else if (a.rfind("--aim-turn=", 0) == 0) o.aimTurnRate = static_cast<float>(std::atof(a.c_str() + 11));
         else if (a.rfind("--reaction=", 0) == 0) o.reactionTicks = std::atoi(a.c_str() + 11);
         else if (a.rfind("--aim-error=", 0) == 0) o.aimErrorDeg = static_cast<float>(std::atof(a.c_str() + 12));
+        else if (a.rfind("--hash=", 0) == 0) o.hashPath = a.substr(7);
         else if (a.rfind("--viewport=", 0) == 0) {
             const std::string v = a.substr(11);
             const size_t x = v.find('x');
@@ -87,13 +91,35 @@ int main(int argc, char** argv) {
     sp.reactionTicks = opt.reactionTicks;
     sp.aimErrorDeg = opt.aimErrorDeg;
     dev_replay::ScriptedPlayer script(sp);
+
+    std::FILE* hashFile = nullptr;
+    if (!opt.hashPath.empty()) {
+        hashFile = std::fopen(opt.hashPath.c_str(), "wb");
+        if (!hashFile) {
+            std::fprintf(stderr, "[dev_replay] 无法写入哈希日志: %s\n", opt.hashPath.c_str());
+            return 1;
+        }
+        // 头部：记录复现所需的全部参数（baseline 版本化的第一部分）
+        std::fprintf(hashFile,
+                     "# magic=PXHASH1 map=%s seed=%d ticks=%d viewport=%dx%d "
+                     "aimTurn=%.2f aimErr=%.1f reaction=%d\n",
+                     opt.map.c_str(), opt.seed, opt.ticks, opt.viewportW, opt.viewportH,
+                     opt.aimTurnRate, opt.aimErrorDeg, opt.reactionTicks);
+    }
+
+    uint64_t finalHash = 0;
     for (int t = 0; t < opt.ticks; ++t) {
         const auto in = script.Think(game, dt);
         game.Update(dt, in.mouseDown, in.aimX, in.aimY,
                     in.w, in.a, in.s, in.d,
                     in.shift, in.reload, false,
                     nullptr);
+        finalHash = dev_replay::SnapshotTick(game, static_cast<uint64_t>(t));
+        if (hashFile) {
+            std::fprintf(hashFile, "%d %016" PRIx64 "\n", t, finalHash);
+        }
     }
+    if (hashFile) std::fclose(hashFile);
 
     int aliveBotsLast = 0;
     for (const auto& b : game.GetBOTs()) if (b.alive) ++aliveBotsLast;
@@ -103,6 +129,7 @@ int main(int argc, char** argv) {
     std::printf("[dev_replay] bots=%zu alive(first)=%d alive(last)=%d  visionRadius=%.2f\n",
                 game.GetBOTs().size(), aliveBotsFirst, aliveBotsLast,
                 game.Visibility().VisionRadius());
+    std::printf("[dev_replay] final_hash=%016" PRIx64 "\n", finalHash);
     std::printf("[dev_replay] player kills=%d deaths=%d money=%d\n",
                 game.GetPlayerKills(), game.GetPlayerDeaths(), game.GetPlayerMoney());
     std::printf("[dev_replay] score T=%d CT=%d round=%d phase=%d\n",

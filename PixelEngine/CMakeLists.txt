@@ -223,6 +223,7 @@ if(BUILD_DEV_REPLAY_TOOLS)
     add_executable(dev_replay_runner
         ${DEV_TOOL_SOURCES}
         "${CMAKE_CURRENT_SOURCE_DIR}/../tools/dev_replay/dev_replay_runner.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/dev_replay/digest.cpp"
     )
     target_include_directories(dev_replay_runner PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
