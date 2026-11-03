@@ -116,5 +116,32 @@ python tools/dev_replay/diff_hash_logs.py rec.hash.txt rep.hash.txt
 1. 购买是"动作"，不是移动输入——不写进日志，回放会在第一个购买期分叉（tick ~481）。
 2. 浮点必须全精度写（`%.9g`）：`%.3f` 的舍入会让瞄准角差 0.001 rad，几十 tick 后完全分叉。
 
-真人录制（`--record`）需要 Engine 侧打点，尚未接入；当前用同一份格式记录脚本玩家，
-已验证"输入 + 种子"能逐 tick 完整复现（dust_2 / mirage 各一局，final_hash 一致、diff 0 行）。
+
+## 真人输入录制（Engine 侧，dev 构建）
+
+```bash
+# 构建 dev 版（EngineApp 会带上 PIXEL_DEV_REPLAY）
+cmake -S PixelEngine -B build-dev -DBUILD_DEV_REPLAY_TOOLS=ON
+cmake --build build-dev --target EngineApp
+
+# 录制：进对局后固定种子（20261103）并写 journal
+build-dev/EngineApp.exe --autostart --record=session.journal
+
+# 回放（真人日志没有 final_hash，只回放不校验）
+build-dev/dev_replay_runner.exe --replay=session.journal --hash=played.hash.txt
+```
+
+- 录制内容：每 tick 的 `mouseDown / aimX,aimY / WASD / Shift / R / E`，以及
+  **购买、切枪、开镜**三类动作（它们不是移动输入，不记就无法复现）。
+- 生产构建不定义 `PIXEL_DEV_REPLAY`，`Engine` 里的录制代码整块不存在（已核对 release 编译）。
+- 真人日志没有 `final_hash`（Engine 侧不算哈希），所以回放只报告 `NO_EXPECTED_HASH`；
+  要严格校验，用脚本玩家录制（带 `--hash` 的 runner 路径）。
+
+## 已验证 / 未验证
+
+| 项 | 状态 |
+| --- | --- |
+| 脚本玩家录制 → 回放（dust_2、mirage） | ✅ final_hash 一致、逐 tick diff 0 行 |
+| 真人录制产生 journal（dev 构建） | ✅ 可回放（206 tick） |
+| 真人录制 → 回放一致性 | ⚠ 未验证（Engine 不产哈希；需人工对比或后续补哈希） |
+| 冲突检查在真实对局中的噪声水平 | ⚠ 只在脚本对局上跑过（每局 0–2 条） |

@@ -255,6 +255,8 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
             fr.aimY = in.aimY;
             fr.w = in.w; fr.a = in.a; fr.s = in.s; fr.d = in.d;
             fr.shift = in.shift; fr.reload = in.reload;
+            fr.scopeToggle = false;
+            fr.switchSlot = 0;
             fr.buyWeapon = in.buyWeapon;
             fr.buyArmorTier = in.buyArmorTier;
             journalFrames.push_back(fr);
@@ -359,7 +361,9 @@ int RunReplay(const Options& opt) {
     const float dt = 1.0f / 60.0f;
     uint64_t finalHash = 0;
     for (const auto& fr : frames) {
+        if (fr.switchSlot > 0) game.SwitchWeaponSlot(fr.switchSlot);
         ApplyBuy(game, fr.buyWeapon, fr.buyArmorTier);
+        if (fr.scopeToggle) game.UpdateScopeInput(true, true);
         game.Update(dt, fr.mouseDown, fr.aimX, fr.aimY,
                     fr.w, fr.a, fr.s, fr.d,
                     fr.shift, fr.reload, fr.interact,
@@ -373,7 +377,12 @@ int RunReplay(const Options& opt) {
     std::printf("[replay] map=%s seed=%d frames=%zu\n", jh.map.c_str(), jh.seed, frames.size());
     std::printf("[replay] final_hash=%016" PRIx64 "  expected=%016" PRIx64 "\n",
                 finalHash, jh.finalHash);
-    if (jh.hasFinalHash && finalHash != jh.finalHash) {
+    if (!jh.hasFinalHash) {
+        std::printf("[replay] NO_EXPECTED_HASH：日志没有 final_hash（真人录制），"
+                    "仅回放，未做一致性校验\n");
+        return 0;
+    }
+    if (finalHash != jh.finalHash) {
         std::printf("[replay] MISMATCH：输入 + 种子没能复现该局（先用 diff_hash_logs 定位）\n");
         return 1;
     }

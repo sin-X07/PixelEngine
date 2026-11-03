@@ -218,6 +218,8 @@ endif()
 # ----------------------------------------------------------------------------
 option(BUILD_DEV_REPLAY_TOOLS "Build dev-only determinism/replay runner" OFF)
 if(BUILD_DEV_REPLAY_TOOLS)
+    # 让 EngineApp 编译 --record 输入录制代码（生产构建不定义，代码完全不存在）
+    target_compile_definitions(EngineApp PRIVATE PIXEL_DEV_REPLAY)
     set(DEV_TOOL_SOURCES ${SOURCES})
     list(REMOVE_ITEM DEV_TOOL_SOURCES main.cpp Engine.cpp Engine.hpp)
     add_executable(dev_replay_runner
