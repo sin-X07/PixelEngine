@@ -213,6 +213,18 @@ if(BUILD_GAMEPLAY_TESTS)
     endif()
 endif()
 
+# Focused UI input regressions; no visible window is required.
+option(BUILD_UI_INPUT_TESTS "Build UI ID and SDL coordinate regressions" OFF)
+if(BUILD_UI_INPUT_TESTS)
+    add_executable(ui_buy_id_test ../tools/ui_buy_id_test.cpp
+        ThirdParty/imgui/imgui.cpp ThirdParty/imgui/imgui_draw.cpp
+        ThirdParty/imgui/imgui_widgets.cpp ThirdParty/imgui/imgui_tables.cpp)
+    target_include_directories(ui_buy_id_test PRIVATE ThirdParty/imgui)
+    add_executable(ui_mouse_coordinates_test ../tools/ui_mouse_coordinates_test.cpp)
+    target_compile_definitions(ui_mouse_coordinates_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(ui_mouse_coordinates_test PRIVATE SDL2::SDL2)
+endif()
+
 # ----------------------------------------------------------------------------
 # 开发期确定性/回放工具（默认 OFF；整个 tools/dev_replay/ 与这一段都可整体删除）
 # ----------------------------------------------------------------------------

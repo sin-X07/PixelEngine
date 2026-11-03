@@ -617,7 +617,13 @@ static void ImGui_ImplSDL2_UpdateMouseData()
             int window_x, window_y, mouse_x_global, mouse_y_global;
             SDL_GetGlobalMouseState(&mouse_x_global, &mouse_y_global);
             SDL_GetWindowPosition(bd->Window, &window_x, &window_y);
-            io.AddMousePosEvent((float)(mouse_x_global - window_x), (float)(mouse_y_global - window_y));
+            float mouse_x = (float)(mouse_x_global - window_x);
+            float mouse_y = (float)(mouse_y_global - window_y);
+            // PixelEngine: polled window coordinates must match SDL's already
+            // logical-scaled motion events. Never enqueue a second coordinate space.
+            if (bd->Renderer != nullptr)
+                SDL_RenderWindowToLogical(bd->Renderer, (int)mouse_x, (int)mouse_y, &mouse_x, &mouse_y);
+            io.AddMousePosEvent(mouse_x, mouse_y);
         }
     }
 }
