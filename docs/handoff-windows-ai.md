@@ -250,3 +250,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/win_accept.ps1
 - HUD：死斗阵亡时显示「阵亡 · 等待重生」（`GameUI::DrawInGame`，条件 `!spectating && playerTeam==None && health<=0`）。
 - 回归：`gameplay_tests` 覆盖「死斗阵亡不进观察者 + 进死亡镜头 + 重生后清除」「团队模式阵亡仍进观察者」。
 - 新调试参数 `--killplayer`：进对局 2s 后杀死玩家、之后每 8s 一次，用于验收死亡镜头截图。
+## 10. 开发工具：确定性基准 / 回放（PIX-21）
+
+- 目录：`tools/dev_replay/`（外挂，gitignore 之外的源码，可整目录删除）。
+- **操作手册：`tools/dev_replay/WORKFLOW.md`** —— 改完 BOT 逻辑后的标准流程、
+  指标字典与判读规则、基线管理、故障排查、命令速查。
+- 构建：`cmake -S PixelEngine -B build-dev -DBUILD_DEV_REPLAY_TOOLS=ON`
+  → `dev_replay_runner.exe`（无头跑仿真）与带 `--record` 的 `EngineApp.exe`。
+- 生产侧唯一保留物：`CS2D/Visibility/VisibilityQuery.*`（玩法层不再依赖渲染器）。
