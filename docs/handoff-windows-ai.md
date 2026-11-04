@@ -251,6 +251,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/win_accept.ps1
 - 回归：`gameplay_tests` 覆盖「死斗阵亡不进观察者 + 进死亡镜头 + 重生后清除」「团队模式阵亡仍进观察者」。
 - 新调试参数 `--killplayer`：进对局 2s 后杀死玩家、之后每 8s 一次，用于验收死亡镜头截图。
 ## 10. 开发工具：确定性基准 / 回放（PIX-21）
+`n> AI 行为的完整说明书（决策树/教练/LLM）见 [ai-decision-reference.md](ai-decision-reference.md)。
 
 - 目录：`tools/dev_replay/`（外挂，gitignore 之外的源码，可整目录删除）。
 - **操作手册：`tools/dev_replay/WORKFLOW.md`** —— 改完 BOT 逻辑后的标准流程、
