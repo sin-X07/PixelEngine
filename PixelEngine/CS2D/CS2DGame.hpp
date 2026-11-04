@@ -316,7 +316,11 @@ public:
         float lastX = 0.0f, lastY = 0.0f;
         float stuckTimer = 0.0f;
 
-        // 教练计划指定的驻守点（hasPlanHold=true 时优先于默认目标）
+        // ---- 目标（唯一真源）----
+        // 教练计划与小队轮转都可能给出驻守点；两者统一经 SetBotGoal() 写入，
+        // 来源优先级 Coach > Squad，避免两套目标互相覆盖（曾长期产生 dual_goal 冲突）。
+        enum class GoalSource : unsigned char { None = 0, Squad = 1, Coach = 2 };
+        GoalSource goalSource = GoalSource::None;
         bool  hasPlanHold = false;
         float planHoldX = 0.0f, planHoldY = 0.0f;
         std::string goalArea;
@@ -486,6 +490,13 @@ public:
     const BotRuntime& AiAt(size_t i) const;
     size_t AiIndexOf(const Player& p) const;
     void   ResetBotAi(size_t i);
+
+    // ---- 目标唯一写入入口 ----
+    // 所有"该去哪守着"的写入（教练计划 / 小队轮转 / 游走换点）都必须走这里：
+    // 来源优先级 Coach > Squad，低优先级不会覆盖高优先级；同时同步 squad_ 的镜像字段，
+    // 保证 hasPlanHold/planHold 与 hasHold/hold 永远一致。
+    void SetBotGoal(size_t i, float x, float y, BotRuntime::GoalSource src, bool force = false);
+    void ClearBotGoal(size_t i);
 
     // ---- 目标物（爆破）----
     bool  IsBombPlanted()   const { return bombPlanted_; }
