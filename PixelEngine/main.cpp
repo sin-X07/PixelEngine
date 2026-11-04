@@ -5,6 +5,8 @@
 #endif
 #include <filesystem>
 #include "Engine.hpp"
+#include "Core/BuildInfo.hpp"
+#include <iostream>
 #include "Core/PathUtils.hpp"
 
 int main(int argc, char* argv[]) {
@@ -64,10 +66,11 @@ int main(int argc, char* argv[]) {
         }
         if (a == "--buymenu") openBuyMenu = true;
         if (a == "--settings") openSettings = true;
-        if (a == "--killplayer") killPlayer = true;
+        if (BuildInfo::kDevTools && a == "--killplayer") killPlayer = true;
         if (a.rfind("--record=", 0) == 0) recordPath = a.substr(9);
     }
 
+    std::cout << "[Build] " << BuildInfo::Display() << std::endl;
     engine.SetDebugLoadout(loadoutArg);
     engine.SetDebugBuyMenu(openBuyMenu);
     engine.SetDebugKillPlayer(killPlayer);
@@ -75,7 +78,7 @@ int main(int argc, char* argv[]) {
     if (!recordPath.empty()) engine.SetRecordPath(recordPath);
 #endif
 
-    if (engine.Initialize("CS2D Pixel", 800, 600, autostart, fastRound, startMode, coachLlm, startMap, openMapSelect, openHistory, sideArg, openSettings)) {
+    if (engine.Initialize(("CS2D Pixel " + BuildInfo::Display()).c_str(), 800, 600, autostart, fastRound, startMode, coachLlm, startMap, openMapSelect, openHistory, sideArg, openSettings)) {
         engine.Run();
     }
 
