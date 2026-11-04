@@ -97,12 +97,15 @@ float VisibilityQuery::BaseZoomForViewport(int viewportW, int viewportH) {
     return std::clamp(fitZoom, 1.2f, 6.0f);
 }
 
-float VisibilityQuery::RadiusForViewport(int viewportW, int viewportH, float baseZoom) {
-    if (baseZoom <= 0.0f) return Tuning::VisionRadius;
-    const float baseViewW = static_cast<float>(viewportW) / baseZoom;
-    const float baseViewH = static_cast<float>(viewportH) / baseZoom;
-    const float halfW = baseViewW * 0.5f;
-    const float halfH = baseViewH * 0.5f;
-    const float screenHalfDiag = std::sqrt(halfW * halfW + halfH * halfH);
-    return std::clamp(screenHalfDiag + kSoftEdge, Tuning::VisionRadius, kMaxRadius);
+float VisibilityQuery::RadiusForViewport(int, int, float) {
+    // PIX-20: preserve the former 1728x1080 reference view, independently
+    // of the actual viewport, aspect ratio and camera zoom.
+    static const float radius = [] {
+        const float zoom = BaseZoomForViewport(1728, 1080);
+        const float halfW = 864.0f / zoom;
+        const float halfH = 540.0f / zoom;
+        return std::clamp(std::sqrt(halfW * halfW + halfH * halfH) + kSoftEdge,
+                          Tuning::VisionRadius, kMaxRadius);
+    }();
+    return radius;
 }
