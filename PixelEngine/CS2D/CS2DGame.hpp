@@ -16,6 +16,7 @@
 #include "../Core/PresentationContract.hpp"
 #include <SDL2/SDL.h>
 #include <string>
+#include <map>
 #include <cstdio>
 #include <vector>
 #include <deque>
@@ -327,6 +328,17 @@ public:
         float planHoldX = 0.0f, planHoldY = 0.0f;
         std::string goalArea;
 
+        // ---- 交火机动记忆（防前后抖动 / 侧拉乱换向）----
+        int   moveLatch = 0;             // +1 前进 / -1 后退 / 0 无
+        float moveLatchTimer = 0.0f;     // 方向保持剩余时间
+        float strafeSide = 1.0f;         // 侧拉方向：+1 / -1
+        float strafeSideTimer = 0.0f;    // 侧拉方向保持剩余时间
+        int   prevLatch = 0;             // 上一帧的前进/后退方向（度量翻转用）
+        float assistCooldown = 0.0f;     // 支援前压冷却
+        std::string searchArea;          // 正在搜的区域名
+        float searchTimer = 0.0f;        // 在该区域的确认计时
+        float lookAngle = -99.0f;        // 守点时应该看的方向（弧度，tactics [look]）
+
         // ---- 决策 trace 的上一帧快照（仅在开启 trace 时写入，不影响玩法）----
         int   traceTarget   = -2;    // 上一帧锁定的敌人（-2 无）
         int   traceStance   = 0;
@@ -417,6 +429,19 @@ public:
     // 当前地图 id（与 MapCatalog / coach/<mapId>.txt 对齐）
     const std::string& GetMapId() const { return mapId_; }
     const TacticsTable& Tactics() const { return tactics_; }
+
+    // ---- 行为计数（开发期度量，不影响玩法）----
+    struct DebugCounters {
+        int intentChanges = 0;    // 队伍意图变更次数
+        int roleSwitches  = 0;    // BOT 角色变更次数
+        int assistPushes  = 0;    // 支援前压次数
+        int nadeThrows    = 0;    // 成功投掷
+        int nadeSkips     = 0;    // 因落点不可行放弃
+        int searchVisits  = 0;    // 搜点次数（到达未搜区域）
+        int renewals      = 0;    // 计划到期续期次数
+    };
+    const DebugCounters& Counters() const { return counters_; }
+    DebugCounters& MutableCounters() { return counters_; }
 
     // ---- 决策 trace（开发期）：把 BOT 的决策变化写成 CSV，用于解释"为什么这么走" ----
     // 只在显式开启时写文件；关闭时零开销、零行为影响。
@@ -841,6 +866,14 @@ private:
     TacticsTable tactics_;         // 每图战术表（areas / slots），缺失则回退代码默认
     std::FILE* decisionTrace_ = nullptr;   // 决策 trace 输出（dev-only，nullptr=关闭）
     uint64_t   traceTick_ = 0;             // 当前 tick（由 Update 递增）
+    DebugCounters counters_;
+    // 角色动态重算（带冷却与滞回）
+    std::vector<float> roleChangedAt_;   // 每个 BOT 上次换角色时刻
+    float roleRefreshTimer_ = 0.0f;
+    int   roleAliveSnapshot_ = -1;
+    // 搜点白名单：每个区域最近一次被确认"已搜"的回合时刻（-100=未搜）
+    std::map<std::string, float> areaSearchedAt_[2];
+    void RefreshSearchAreas();           // 回合开始重置白名单
     std::string playbookId_;       // 战术库文件名（不含 .txt）；空则回退 mapId_
     std::string mapSourcePath_;    // LoadMap 时的 resolved TMJ 路径
 
@@ -887,6 +920,10 @@ private:
         int   callsThisRound = 0;            // 本回合已调用次数（上限 8）
         int   gen = 0;                       // 代际号
         std::string reason;                  // HUD 显示用
+        int   appliedIntent = -1;            // 上一次真正下发的意图（度量变更次数）
+        int   changesThisRound = 0;          // 本回合意图变更次数（变更预算）
+        int   sameSideStreak = 0;            // 连续打同一侧的次数（防重复但不至于一次就换）
+        float lastIntentChangeSec = -100.0f; // 上次意图变更时刻（变更预算用）
 
         // 本回合统计（回合结束写入 memory）
         std::vector<RoundMemo::Death> deaths;
@@ -1088,7 +1125,8 @@ private:
     static SoundEffect ReloadSoundFor(WeaponId id);
 
     // ---- 小队协同 ----
-    void AssignSquadRoles();            // 回合开始时分配 突破/支援/断后
+    void AssignSquadRoles(bool dynamic = false);
+    void RefreshRolesForTeam(Team t);   // 只补"断档"的角色，不重排全部（避免角色churn）            // 回合开始时分配 突破/支援/断后
     void UpdateSquadFocus(float dt);    // 周期性选集火目标（含掩护偏好）
     const Player* ResolveFocus(const SquadOrder& order) const;
 
@@ -1133,6 +1171,8 @@ private:
     void UpdateBullets(float dt, class AudioManager* audio);
     void UpdateGrenades(float dt, class AudioManager* audio);
     void ThrowGrenade(Player& thrower, float aimAngle, class AudioManager* audio = nullptr);
+    // 投掷前校验：落点可行走 + 有视线 + 距离合理；失败则尝试偏移角度，全失败就不扔。
+    bool PlanGrenadeThrow(const Player& bot, float tx, float ty, float& outAngle) const;
     void ExplodeGrenade(const Grenade& g, class AudioManager* audio);
     bool SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) const;
     void RespawnBOT(Player& bot);

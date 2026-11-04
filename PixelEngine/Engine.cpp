@@ -2443,6 +2443,11 @@ void Engine::InitLLM() {
     if (ok) {
         std::cout << "[LLM] 就绪 (server: " << cfg.serverUrl
                   << (cfg.autoLaunch ? ", 自动拉起" : "") << ")" << std::endl;
+
+        // 预热：冷启动后的第一个请求要初始化 CUDA 图/预填充，经常超过教练等待时间。
+        // 先发一个极小请求把首帧成本付掉，避免第一回合战术请求超时。
+        llmController_->AskRaw("You are a warmup helper.", "ok", 1,
+                               [](const std::string&) {});
     } else {
         std::cout << "[LLM] 不可用, 教练回退规则引擎" << std::endl;
     }

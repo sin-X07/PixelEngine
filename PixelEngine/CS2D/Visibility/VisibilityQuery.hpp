@@ -58,9 +58,9 @@ public:
     // ---- 视口 → 镜头/视野换算（渲染与无头仿真共用同一公式）----
     // baseZoom：让「整圆刚好装进较窄的那一屏边」并整体放大 kBaseZoomScale
     static float BaseZoomForViewport(int viewportW, int viewportH);
-    // 由视口与 baseZoom 推出玩家视野半径（软边 + 上限）
+    // 固定世界半径，保持旧 1728×1080 基准；参数仅保留调用兼容
     static float RadiusForViewport(int viewportW, int viewportH, float baseZoom);
-    // 便捷：直接给出该视口对应的视野半径
+    // 便捷：各视口返回同一世界半径
     static float RadiusForViewport(int viewportW, int viewportH) {
         return RadiusForViewport(viewportW, viewportH, BaseZoomForViewport(viewportW, viewportH));
     }

@@ -800,10 +800,31 @@ static void TestFireInputGate() {
     check(gate.Update(true, true), "暂停后重新点击恢复射击");
 }
 
+static void TestFixedVisionRadius() {
+    const float reference = VisibilityQuery::RadiusForViewport(1728, 1080);
+    check(std::fabs(reference - 189.8f) < 0.1f, "PIX-20 preserves reference world radius");
+    VisibilityQuery baseline;
+    baseline.SetVisionRadius(reference);
+    for (const auto viewport : std::vector<std::pair<int, int>>{{1280,720}, {1920,1080}, {2560,1600}, {800,1200}}) {
+        VisibilityQuery query;
+        query.SetVisionRadius(VisibilityQuery::RadiusForViewport(viewport.first, viewport.second));
+        bool same = query.VisionRadius() == reference;
+        for (int distance = 0; distance <= 350; ++distance) {
+            same = same && query.ComputeVisibility(0,0,0,static_cast<float>(distance),0)
+                        == baseline.ComputeVisibility(0,0,0,static_cast<float>(distance),0);
+        }
+        check(same, "PIX-20 visibility matches across viewport sizes and aspect ratios");
+    }
+    check(VisibilityQuery::RadiusForViewport(1280,720,1.2f)
+          == VisibilityQuery::RadiusForViewport(2560,1600,6.0f),
+          "PIX-20 camera zoom does not change world radius");
+}
+
 int main() {
     std::printf("===== 合并契约 v1 玩法回归测试 =====\n");
     std::printf("地图: %s\n", MapPath());
 
+    TestFixedVisionRadius();
     TestFireInputGate();
     TestBuyCodes();
     TestBuyDeadAndWindow();

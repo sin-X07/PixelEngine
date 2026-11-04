@@ -27,6 +27,8 @@ public:
 
     // 单节读取：返回该节的键值表（不存在时返回空 map 的引用）
     const Section& GetSection(const std::string& section) const;
+    // 全部 section（战术表按 [look.*] 前缀扫描时用）
+    const Data& GetAll() const { return data_; }
 
     // 取值（带默认值；键不存在或无法转换时返回 def）
     std::string GetString(const std::string& section, const std::string& key,
