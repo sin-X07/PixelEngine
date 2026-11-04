@@ -300,8 +300,7 @@ void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
     const float viewW = static_cast<float>(viewportW) / zoom_;
     const float viewH = static_cast<float>(viewportH) / zoom_;
 
-    // 玩家视野：正前方要能看到屏幕边缘，但必须有上限，避免 BOT 在屏幕外开火。
-    // 关键：按 baseZoom 计算（不是开镜后的 zoom_），否则开镜会缩小敌人知情半径。
+    // PIX-20：固定世界半径（旧 1728×1080 基准），不随视口或开镜倍率变化。
     visionRadius_ = VisibilityQuery::RadiusForViewport(viewportW, viewportH, baseZoom);
     vis_.SetVisionRadius(visionRadius_);
 

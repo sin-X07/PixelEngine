@@ -259,3 +259,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/win_accept.ps1
 - 构建：`cmake -S PixelEngine -B build-dev -DBUILD_DEV_REPLAY_TOOLS=ON`
   → `dev_replay_runner.exe`（无头跑仿真）与带 `--record` 的 `EngineApp.exe`。
 - 生产侧唯一保留物：`CS2D/Visibility/VisibilityQuery.*`（玩法层不再依赖渲染器）。
+
+## PIX-20 固定世界视野半径
+
+普通玩法视野固定为旧 1728×1080 视口、未开镜时的世界半径（约 189.8 世界单位）。实际分辨率、宽高比和 baseZoom 不再改变此半径。镜头缩放、雾的绘制算法和开镜圆形可见区保持原有规则。此约定覆盖上文按 baseZoom 推导普通视野半径的描述。宽屏或窄屏下可见范围将与旧值有所不同，属于有意统一玩法范围。
