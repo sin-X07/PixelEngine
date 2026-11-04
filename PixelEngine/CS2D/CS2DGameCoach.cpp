@@ -75,6 +75,16 @@ bool CS2DGame::AreaCenterByName(const std::string& name, float& ox, float& oy) c
 // 在现有区域里找一个名字包含关键词的区域（不区分大小写）
 std::string CS2DGame::AreaHint(const std::string& key) const {
     if (!world_ || key.empty()) return std::string();
+    // 1) 战术表优先：每张图的实际区域命名不同（Dust2 的 Long/Short、Mirage 的 A_Site 等），
+    //    由 assets/config/tactics/<map>.ini 描述，新图接入不用改代码。
+    {
+        std::string mapped;
+        if (tactics_.Area(key, mapped)) {
+            for (const auto& a : world_->GetAreas()) {
+                if (SameNoCase(a.name, mapped)) return a.name;
+            }
+        }
+    }
     std::string want = key;
     std::transform(want.begin(), want.end(), want.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -403,7 +413,44 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
 // ---------------------------------------------------------------------------
 // 规则教练
 // ---------------------------------------------------------------------------
+static const char* TacticsIntentKey(PlanIntent intent) {
+    switch (intent) {
+        case PlanIntent::RushA:   return "RushA";
+        case PlanIntent::RushB:   return "RushB";
+        case PlanIntent::SplitA:  return "SplitA";
+        case PlanIntent::SplitB:  return "SplitB";
+        case PlanIntent::StackA:  return "StackA";
+        case PlanIntent::StackB:  return "StackB";
+        case PlanIntent::RetakeA: return "RetakeA";
+        case PlanIntent::RetakeB: return "RetakeB";
+        case PlanIntent::Save:    return "Save";
+        case PlanIntent::FakeThenOther: return "Fake";
+        default:                  return "Default";
+    }
+}
+
+// 战术表覆盖：表里存在该 (队伍, 意图) 的槽位配置时，用它替换代码里的默认分兵。
+// 表里没有就保持代码默认 → 战术表是可选增强，不会让旧图行为突变。
+void CS2DGame::ApplyTacticsSlots(Team t, TeamPlan& plan) {
+    if (!tactics_.loaded) return;
+    const char* teamKey = (t == Team::T) ? "T" : "CT";
+    const auto* slots = tactics_.Slots(teamKey, TacticsIntentKey(plan.intent));
+    if (!slots) return;
+    if (!plan.templateDefault) return;   // 只覆盖通用分兵模板，事件整形计划保持原样
+
+    for (size_t i = 0; i < plan.slots.size(); ++i) {
+        plan.slots[i] = (*slots)[i];
+        plan.slots[i].area = tactics_.ResolveArea(plan.slots[i].area);
+    }
+}
+
 TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
+    TeamPlan plan = RuleCoachCore(t, ev);
+    ApplyTacticsSlots(t, plan);
+    return plan;
+}
+
+TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
     CoachState& st = CoachFor(t);
     TeamPlan plan;
     plan.intent = PlanIntent::Default;
@@ -418,6 +465,8 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
         plan.slots[2] = { CoachRole::Lurk,    mid, true, true  };
         plan.slots[3] = { CoachRole::Anchor,  b1,  true, false };
         plan.slots[4] = { CoachRole::Support, b2,  true, false };
+        // 通用分兵模板：允许被 assets/config/tactics/<map>.ini 的 [slots.*] 覆盖
+        plan.templateDefault = true;
     };
 
     // 侧翼区域按「关键词 → 找不到就退回本侧包点」解析：
@@ -611,6 +660,7 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
             plan.reason = "A 点连续失手，改速推 B";
             for (auto& sl : plan.slots) sl = { CoachRole::Entry, bLong, true, false };
             plan.slots[4] = { CoachRole::Anchor, bSite, true, false };
+            plan.templateDefault = true;
         } else if (avoidB && !avoidA) {
             plan.intent = PlanIntent::RushA;
             plan.target = "A";
@@ -618,6 +668,7 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
             plan.reason = "B 点连续失手，改速推 A";
             for (auto& sl : plan.slots) sl = { CoachRole::Entry, aLong, true, false };
             plan.slots[4] = { CoachRole::Anchor, aSite, true, false };
+            plan.templateDefault = true;
         } else {
             plan.intent = PlanIntent::Default;
             plan.reason = "默认开局，A/B 分兵找机会";
@@ -626,6 +677,7 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
     } else {
         plan.intent = PlanIntent::Default;
         plan.reason = "常规守点，A/B 各两人压中路";
+        plan.templateDefault = true;
         plan.slots[0] = { CoachRole::Anchor,  aSite,  true, false };
         plan.slots[1] = { CoachRole::Support, aShort, true, false };
         plan.slots[2] = { CoachRole::Entry,   mid,    true, true  };

@@ -71,6 +71,31 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
     std::cout << "[Map] mapId=" << mapId_ << " playbook=" << playbookId_
               << " path=" << resolvedTMJPath << std::endl;
 
+    // 每图战术表（可选）：缺失时教练回退到代码里的默认分兵与关键字扫描。
+    // 战术表与地图同属 assets：<assets>/cs2d/maps/x.tmj → <assets>/config/tactics/x.ini
+    {
+        const std::filesystem::path mapPath(resolvedTMJPath);
+        const std::filesystem::path tacticsPath =
+            mapPath.parent_path().parent_path().parent_path() / "config" / "tactics" / (mapId_ + ".ini");
+        tactics_.Load(tacticsPath.string(), mapId_);
+    }
+    if (tactics_.loaded) {
+        std::cout << "[Tactics] 已加载战术表: " << mapId_
+                  << " areas=" << tactics_.areas.size()
+                  << " slotSets=" << tactics_.slots.size() << std::endl;
+        // 校验：表里写的区域名必须在这张图上真实存在，否则该槽位会退化成"无目标"
+        int bad = 0;
+        for (const auto& [alias, area] : tactics_.areas) {
+            float ax = 0.0f, ay = 0.0f;
+            if (!AreaCenterByName(area, ax, ay)) {
+                ++bad;
+                std::cerr << "[Tactics] 区域不存在: " << alias << " -> " << area
+                          << "（检查 " << mapId_ << ".ini 的 [areas]）" << std::endl;
+            }
+        }
+        if (bad == 0) std::cout << "[Tactics] 区域校验通过" << std::endl;
+    }
+
     // 预热战术库：换图即加载 + 校验区域名，不必等到第一次 LLM 请求才报错。
     CoachWarmupPlaybook();
 
