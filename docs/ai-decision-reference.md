@@ -61,7 +61,7 @@ L1  BOT 决策树（每帧）
 | 2 | `ai.defusing` 且可拆 | **原地不动**（速度清零）并 `continue` | 拆包中不做任何别的事 |
 | 3 | `lastHitTimer > 0` 且不在拆包 | 把枪口转向威胁来源 | 防背后被打还在贴包 |
 | 4 | 无目标且静止 | 原地扫描：有听觉警报 → 朝声源 ±16°；否则以扫描中心 ±60° 缓慢摆头 | 视野是 120° 扇形，不扫描会永远背对敌人 |
-| 5 | 补枪：队友 2s 内阵亡 + 同队 + `!tradePushed` + 非 Anchor + `canTrade` + 距离 ∈ [40, 350] | 冲向队友阵亡点（`tradePushed=true` 每回合一次） | `Tuning::TradeMinDist/MaxDist` |
+| 5 | 补枪：队友 3.5s 内阵亡 + 同队 + `!tradePushed` + 非 Anchor + `canTrade` + 距离 ∈ [40, 350] | 冲向队友阵亡点（`tradePushed=true` 每回合一次） | `Tuning::TradeMinDist/MaxDist` |
 | 6 | `retreatTimer > 0` 且 HP ≤ 35 | 找掩体（`FindCoverPoint`），顺带补弹 | `RetreatHealth/RetreatKeepHealth/RetreatDuration` |
 | 7 | 目标选择 | 见 §1.2 | 可见 > 听声下包/拆包 > 听声前压 |
 | 8 | 听到手雷落地 且 距离 < 110 | 反向躲开 40px（寻路），`continue` | 活下来优先于守点 |
