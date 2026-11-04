@@ -11,6 +11,34 @@
 cmake_minimum_required(VERSION 3.16)
 project(PixelGameEngine LANGUAGES CXX C)
 
+# ----------------------------------------------------------------------------
+# 构建标识（版本 / 渠道 / commit SHA）
+#   -DPE_VERSION=0.3.0            版本号
+#   -DPE_CHANNEL=release|beta|dev 渠道（只影响标题、存档后缀、dev 参数）
+# 详细用法见 docs/release-checklist.md
+# ----------------------------------------------------------------------------
+set(PE_VERSION "0.3.0" CACHE STRING "Game version (e.g. 0.3.0)")
+set(PE_CHANNEL "release" CACHE STRING "Build channel: release | beta | dev")
+set_property(CACHE PE_CHANNEL PROPERTY STRINGS release beta dev)
+
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE PE_GIT_SHA
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+if(NOT PE_GIT_SHA)
+    set(PE_GIT_SHA "unknown")
+endif()
+
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Version.hpp.in
+    ${CMAKE_CURRENT_BINARY_DIR}/gen/Version.hpp
+    @ONLY)
+include_directories(${CMAKE_CURRENT_BINARY_DIR}/gen)
+
+message(STATUS "PixelEngine ${PE_VERSION}-${PE_CHANNEL} (${PE_GIT_SHA})")
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

@@ -1,10 +1,13 @@
 #include "SaveManager.hpp"
 #include "../Core/IniFile.hpp"
 #include "../Core/PathUtils.hpp"
+#include "../Core/BuildInfo.hpp"
 #include <iostream>
 
 namespace {
-constexpr const char* kSaveFile = "cs2d_save.ini";
+// 存档按渠道隔离：dev/beta 用 cs2d_save_dev.ini（beta 为 _beta），避免开发档覆盖玩家档
+const std::string kSaveFile =
+    std::string("cs2d_save") + std::string(BuildInfo::SaveSuffix()) + ".ini";
 }
 
 void SaveManager::Load() {
