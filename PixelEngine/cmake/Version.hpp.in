@@ -1,0 +1,7 @@
+// 由 CMake configure_file 生成，请勿手工修改。
+// 源模板：PixelEngine/cmake/Version.hpp.in
+#pragma once
+
+#define PE_VERSION_STRING "@PE_VERSION@"
+#define PE_CHANNEL_STRING "@PE_CHANNEL@"
+#define PE_GIT_SHA_STRING "@PE_GIT_SHA@"

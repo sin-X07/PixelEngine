@@ -245,6 +245,24 @@ cmake --build build
 .\build\EngineApp.exe
 ```
 
+### 版本与渠道
+
+构建时会写入版本号、渠道和 commit SHA（显示在窗口标题与启动日志 `[Build] ...` 里）：
+
+```powershell
+# 玩家版
+cmake -S PixelEngine -B build-release -DCMAKE_BUILD_TYPE=Release `
+      "-DPE_VERSION=0.3.0" "-DPE_CHANNEL=release"
+# 开发版（带回放工具与 --killplayer/--record 等调试参数）
+cmake -S PixelEngine -B build-dev -DCMAKE_BUILD_TYPE=Release `
+      "-DPE_VERSION=0.3.0" "-DPE_CHANNEL=dev" -DBUILD_DEV_REPLAY_TOOLS=ON
+```
+
+- 渠道只影响：标题标识、**存档文件名**（release `cs2d_save.ini`；dev/beta 加
+  `_dev` / `_beta` 后缀）、以及是否编入 dev 专用命令行参数。不改变玩法逻辑。
+- 打可分发包：`powershell -ExecutionPolicy Bypass -File tools\package.ps1 -Version 0.3.0`
+- 发布步骤见 [docs/release-checklist.md](docs/release-checklist.md)。
+
 ### macOS 上构建（给 Mac 协作同学）
 
 项目已经用 CMake + SDL2 FetchContent，macOS 上不需要改代码路径或手装 SDL，
