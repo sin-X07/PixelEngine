@@ -454,20 +454,10 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         for (const auto& b : bots_) if (b.alive) ++alive;
         if (alive != roleAliveSnapshot_) {
             roleAliveSnapshot_ = alive;
-            // 只有"角色断档"才重算：某队没有 Entry 或没有 Anchor 时补位，
-            // 否则保持原角色（频繁换角色会改速度倍率，表现为来回跑）。
-            for (Team tm : {Team::T, Team::CT}) {
-                int entries = 0, anchors = 0;
-                for (size_t k = 0; k < bots_.size() && k < squad_.size(); ++k) {
-                    if (!bots_[k].alive || bots_[k].team != tm) continue;
-                    if (squad_[k].role == BotRole::Entry)  ++entries;
-                    if (squad_[k].role == BotRole::Anchor) ++anchors;
-                }
-                if ((entries == 0 || anchors == 0) && AliveCount(tm) >= 2) {
-                    AssignSquadRoles(true);
-                    break;
-                }
-            }
+            // 只补"断档"的角色（不整队重排）：整队重排会让角色每 2 秒洗牌，
+            // 速度倍率跟着变，表现就是来回跑。
+            if (AliveCount(Team::T) >= 2)  RefreshRolesForTeam(Team::T);
+            if (AliveCount(Team::CT) >= 2) RefreshRolesForTeam(Team::CT);
         }
     }
 
@@ -1082,7 +1072,8 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                         if (d2 < bestD2) { bestD2 = d2; bestArea = name; bx = ax; by = ay; }
                     }
                     if (!bestArea.empty()) {
-                        if (ai.searchArea != bestArea) {
+                        if (ai.searchArea != bestArea && ai.reactionLogCooldown <= 0.0f) {
+                            ai.reactionLogCooldown = 2.0f;
                             std::cout << "[Bot] #" << i << " 搜点 -> " << bestArea << std::endl;
                         }
                         ai.searchArea = bestArea;
@@ -1262,9 +1253,6 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
                 if (wanted != 0) {
                     if (ai.moveLatch == 0 || ai.moveLatchTimer <= 0.0f) {
-                        if (ai.moveLatch != 0 && ai.moveLatch != wanted) {
-                            ++counters_.directionFlips;   // 度量：前后方向翻转
-                        }
                         ai.moveLatch      = wanted;
                         ai.moveLatchTimer = Tuning::ai::StrafeDirLatch;
                     }
@@ -1356,6 +1344,8 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 bot.vx = 0.0f;
                 bot.vy = 0.0f;
             }
+
+            ai.prevLatch = ai.moveLatch;
         }
 
         // 交战朝向：可见时直接瞄准目标（带短促摆头，避免完美锁头）
@@ -1465,33 +1455,6 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 bot.shootAnimTimer = 0.12f;
                 EmitSound(SoundEventType::KnifeSwing, bot.x, bot.y, bot.team,
                           static_cast<int>(i));
-            }
-        }
-        // 搜点确认：到达未搜区域并停留 SearchConfirmSec 才算"查过"（有目标立刻作废）
-        if (!ai.searchArea.empty()) {
-            if (target) {
-                ai.searchTimer = 0.0f;
-            } else {
-                float ax = 0.0f, ay = 0.0f;
-                if (AreaCenterByName(ai.searchArea, ax, ay)) {
-                    const float dx = ax - bot.x, dy = ay - bot.y;
-                    if (dx * dx + dy * dy <
-                        Tuning::ai::SearchAreaRadius * Tuning::ai::SearchAreaRadius) {
-                        ai.searchTimer += dt;
-                        if (ai.searchTimer >= Tuning::ai::SearchConfirmSec) {
-                            const int ti = (bot.team == Team::T) ? 0 : 1;
-                            areaSearchedAt_[ti][ai.searchArea] = GetRoundElapsed();
-                            ++counters_.searchVisits;
-                            ai.searchArea.clear();
-                            ai.searchTimer = 0.0f;
-                        }
-                    } else {
-                        ai.searchTimer = 0.0f;
-                    }
-                } else {
-                    ai.searchArea.clear();
-                    ai.searchTimer = 0.0f;
-                }
             }
         }
 

@@ -150,7 +150,8 @@ struct Summary {
     double pathShort = 0.0, pathMid = 0.0, pathLong = 0.0;
     // 行为度量（来自 CS2DGame::Counters）：用来判断"抖动/变更"是否被抑制
     int intentChanges = 0, roleSwitches = 0, assistPushes = 0;
-    int nadeThrows = 0, nadeSkips = 0, searchVisits = 0, renewals = 0, directionFlips = 0;
+    int nadeThrows = 0, nadeSkips = 0, searchVisits = 0, renewals = 0;
+    int dirReversals = 0;
     int lastTick_ = 0;
 };
 
@@ -323,6 +324,7 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
     if (!rows.empty()) {
         double still = 0, idle = 0, eff = 0, dmg = 0, fbw = 0, pn = 0, dn = 0;
         double effS = 0, effM = 0, effL = 0; int nS = 0, nM = 0, nL = 0;
+        int reversals = 0;
         int fbRounds = 0;
         for (const auto& r : rows) {
             still += (r.stillRatioT + r.stillRatioCT) * 0.5;
@@ -335,6 +337,7 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
             if (r.pathNShort > 0) { effS += r.pathEffShort; ++nS; }
             if (r.pathNMid   > 0) { effM += r.pathEffMid;   ++nM; }
             if (r.pathNLong  > 0) { effL += r.pathEffLong;  ++nL; }
+            reversals += r.dirReversals;
         }
         const double n = static_cast<double>(rows.size());
         s.stillPct = still / n;
@@ -347,6 +350,7 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
         s.pathShort = nS > 0 ? effS / nS : 0.0;
         s.pathMid   = nM > 0 ? effM / nM : 0.0;
         s.pathLong  = nL > 0 ? effL / nL : 0.0;
+        s.dirReversals = reversals;
     }
     s.avgRoundTicks = rows.empty() ? 0.0 : sumTicks / static_cast<double>(rows.size());
     s.scoreT = game.GetScoreT();
@@ -365,7 +369,6 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
         s.nadeSkips     = c.nadeSkips;
         s.searchVisits  = c.searchVisits;
         s.renewals      = c.renewals;
-        s.directionFlips= c.directionFlips;
     }
     s.ok = true;
 
@@ -459,9 +462,9 @@ int main(int argc, char** argv) {
         std::printf("[dev_replay] final_hash=%016" PRIx64 "\n", s.finalHash);
         std::printf("[dev_replay] player kills=%d deaths=%d  ai_conflicts=%d\n",
                     s.playerKills, s.playerDeaths, s.conflicts);
-        std::printf("[dev_replay] behavior intentChg=%d roleSw=%d assist=%d nade=%d/%d search=%d renew=%d flip=%d\n",
+        std::printf("[dev_replay] behavior intentChg=%d roleSw=%d assist=%d nade=%d/%d search=%d renew=%d dirRev=%d\n",
                     s.intentChanges, s.roleSwitches, s.assistPushes, s.nadeThrows, s.nadeSkips,
-                    s.searchVisits, s.renewals, s.directionFlips);
+                    s.searchVisits, s.renewals, s.dirReversals);
         std::printf("[dev_replay] quality still=%.1f%% idle=%.1f%% pathEff=%.2f dmg/round=%.0f fbWin=%.0f%% "
                     "plantNear=%.1f defuseNear=%.1f\n",
                     s.stillPct * 100, s.idlePct * 100, s.pathEff, s.damagePerRound,
@@ -492,7 +495,7 @@ int main(int argc, char** argv) {
                  "path_eff,path_eff_short,path_eff_mid,path_eff_long,"
                  "dmg_per_round,fb_win_pct,plant_near,defuse_near,"
                  "intent_changes,role_switches,assist_pushes,nade_throws,nade_skips,"
-                 "search_visits,renewals,direction_flips,final_hash\n");
+                 "search_visits,renewals,dir_reversals,final_hash\n");
 
     int games = 0, tWins = 0, ctWins = 0, failed = 0;
     double sumAvgRoundTicks = 0.0;
@@ -520,7 +523,7 @@ int main(int argc, char** argv) {
                          s.pathShort, s.pathMid, s.pathLong, s.damagePerRound,
                          s.fbWinPct * 100, s.plantNear, s.defuseNear,
                          s.intentChanges, s.roleSwitches, s.assistPushes, s.nadeThrows,
-                         s.nadeSkips, s.searchVisits, s.renewals, s.directionFlips,
+                         s.nadeSkips, s.searchVisits, s.renewals, s.dirReversals,
                          s.finalHash);
         }
     }

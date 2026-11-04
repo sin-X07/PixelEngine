@@ -280,6 +280,48 @@ const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& ou
 // 小队协同：分工与集火
 // ============================================================================
 
+// 只补"断档"的角色：某队没有 Entry → 把最靠前的补成 Entry；
+// 没有 Anchor → 把最靠后的补成 Anchor。其它 BOT 的角色保持不动
+// （整队重排会让角色每 2 秒洗牌一次，速度倍率跟着变，表现为来回跑）。
+void CS2DGame::RefreshRolesForTeam(Team t) {
+    if (!world_ || bots_.empty()) return;
+    if (roleChangedAt_.size() != bots_.size()) roleChangedAt_.assign(bots_.size(), -100.0f);
+
+    int entries = 0, anchors = 0;
+    for (size_t i = 0; i < bots_.size() && i < squad_.size(); ++i) {
+        if (!bots_[i].alive || bots_[i].team != t) continue;
+        if (squad_[i].role == BotRole::Entry)  ++entries;
+        if (squad_[i].role == BotRole::Anchor) ++anchors;
+    }
+    if (entries > 0 && anchors > 0) return;
+
+    // 选候选：Entry 取"最靠前"（离敌方质心最近），Anchor 取"最靠后"，且不在冷却中
+    float ex = 0.0f, ey = 0.0f;
+    if (!EnemySpawnCentroid(t, ex, ey)) return;
+
+    int bestEntry = -1, bestAnchor = -1;
+    float bestEntryD2 = 1e18f, bestAnchorD2 = -1.0f;
+    for (size_t i = 0; i < bots_.size() && i < squad_.size(); ++i) {
+        if (!bots_[i].alive || bots_[i].team != t) continue;
+        if (clockSec_ - roleChangedAt_[i] < Tuning::ai::RoleSwitchCooldown) continue;
+        if (squad_[i].role == BotRole::Entry || squad_[i].role == BotRole::Anchor) continue;
+        const float dx = bots_[i].x - ex, dy = bots_[i].y - ey;
+        const float d2 = dx * dx + dy * dy;
+        if (d2 < bestEntryD2)  { bestEntryD2 = d2;  bestEntry = static_cast<int>(i); }
+        if (d2 > bestAnchorD2) { bestAnchorD2 = d2; bestAnchor = static_cast<int>(i); }
+    }
+
+    if (entries == 0 && bestEntry >= 0) {
+        squad_[static_cast<size_t>(bestEntry)].role = BotRole::Entry;
+        roleChangedAt_[static_cast<size_t>(bestEntry)] = clockSec_;
+        ++counters_.roleSwitches;
+    }
+    if (anchors == 0 && bestAnchor >= 0 && bestAnchor != bestEntry) {
+        squad_[static_cast<size_t>(bestAnchor)].role = BotRole::Anchor;
+        roleChangedAt_[static_cast<size_t>(bestAnchor)] = clockSec_;
+        ++counters_.roleSwitches;
+    }
+}
 // 重置搜点白名单（每回合开始调用）：所有区域标记为"未搜"
 void CS2DGame::RefreshSearchAreas() {
     for (int t = 0; t < 2; ++t) areaSearchedAt_[t].clear();

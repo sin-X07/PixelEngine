@@ -333,6 +333,7 @@ public:
         float moveLatchTimer = 0.0f;     // 方向保持剩余时间
         float strafeSide = 1.0f;         // 侧拉方向：+1 / -1
         float strafeSideTimer = 0.0f;    // 侧拉方向保持剩余时间
+        int   prevLatch = 0;             // 上一帧的前进/后退方向（度量翻转用）
         float assistCooldown = 0.0f;     // 支援前压冷却
         std::string searchArea;          // 正在搜的区域名
         float searchTimer = 0.0f;        // 在该区域的确认计时
@@ -436,7 +437,6 @@ public:
         int assistPushes  = 0;    // 支援前压次数
         int nadeThrows    = 0;    // 成功投掷
         int nadeSkips     = 0;    // 因落点不可行放弃
-        int directionFlips= 0;    // 交火机动方向翻转
         int searchVisits  = 0;    // 搜点次数（到达未搜区域）
         int renewals      = 0;    // 计划到期续期次数
     };
@@ -1114,7 +1114,8 @@ private:
     static SoundEffect ReloadSoundFor(WeaponId id);
 
     // ---- 小队协同 ----
-    void AssignSquadRoles(bool dynamic = false);            // 回合开始时分配 突破/支援/断后
+    void AssignSquadRoles(bool dynamic = false);
+    void RefreshRolesForTeam(Team t);   // 只补"断档"的角色，不重排全部（避免角色churn）            // 回合开始时分配 突破/支援/断后
     void UpdateSquadFocus(float dt);    // 周期性选集火目标（含掩护偏好）
     const Player* ResolveFocus(const SquadOrder& order) const;
 

@@ -897,8 +897,9 @@ void CS2DGame::CoachApplyPlan(Team t) {
             std::uniform_real_distribution<float> jit(-18.0f, 18.0f);
             cx = bot.x + jit(rng_);
             cy = bot.y + jit(rng_);
-            SetBotGoal(i, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
+            // goalArea 必须在 SetBotGoal 之前写好：SetBotGoal 用它查战术表 [look] 的守点朝向
             ai.goalArea = std::string();
+            SetBotGoal(i, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
             // 计划点到达后不要退回默认包点：把小队岗位固定在当前点。
             squad_[i].site = -1;
             ++holdOk;
@@ -920,8 +921,8 @@ void CS2DGame::CoachApplyPlan(Team t) {
                     cy = sites[static_cast<size_t>(areaSite)].cy;
                 }
             }
+            ai.goalArea = so.area;   // 先写区域名，SetBotGoal 才能查到 [look] 朝向
             SetBotGoal(i, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
-            ai.goalArea = so.area;
             // 小队岗位与教练计划保持一致；计划点到达后继续守这个区域，
             // 而不是被 AssignSquadRoles 的轮转岗位拉回另一侧。
             squad_[i].site = areaSite;
@@ -977,8 +978,8 @@ void CS2DGame::CoachApplyPlan(Team t) {
             const size_t ci = static_cast<size_t>(bombCarrier_);
             auto& cai = AiAt(ci);
             auto& csq = squad_[ci];
+            cai.goalArea  = siteArea;   // 先写区域名，SetBotGoal 才能查到 [look] 朝向
             SetBotGoal(ci, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
-            cai.goalArea  = siteArea;
             csq.site      = siteIdx;
             csq.role      = BotRole::Entry;   // 跟突破组进点，而不是当断后
             csq.canRotate = false;
