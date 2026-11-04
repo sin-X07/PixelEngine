@@ -2157,6 +2157,7 @@ void Engine::Render() {
         // 观察者 / C4
         ictx.spectating   = cs2dGame->IsSpectating();
         ictx.spectateMode = (cs2dGame->GetSpectateMode() == CS2DGame::SpectateMode::Free) ? 1 : 0;
+        ictx.c4CarrierName = cs2dGame->GetFriendlyC4CarrierName();
         ictx.hasC4        = cs2dGame->PlayerHasC4();
         ictx.holdingC4    = cs2dGame->PlayerHoldingC4();
         ictx.bombDropped  = cs2dGame->IsBombDropped();
