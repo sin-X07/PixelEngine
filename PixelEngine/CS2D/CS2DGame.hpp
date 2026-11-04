@@ -561,6 +561,16 @@ public:
         return bombCarrier_ == -1 && player_.team == Team::T &&
                !bombPlanted_ && !bombDropped_;
     }
+    // Team-only objective information: never expose the enemy carrier to CT.
+    std::string GetFriendlyC4CarrierName() const {
+        if (mode_ != MatchMode::BombDefusal || player_.team != Team::T ||
+            bombPlanted_ || bombDropped_) return {};
+        if (bombCarrier_ == -1 && player_.alive) return "你";
+        if (bombCarrier_ < 0 || bombCarrier_ >= static_cast<int>(bots_.size())) return {};
+        const auto& carrier = bots_[static_cast<size_t>(bombCarrier_)];
+        if (!carrier.alive || carrier.team != Team::T) return {};
+        return carrier.name.empty() ? "BOT#" + std::to_string(bombCarrier_) : carrier.name;
+    }
     bool PlayerHoldingC4() const { return playerHoldingC4_; }
     bool IsBombDropped() const { return bombDropped_; }
     float BombDropX() const { return bombDropX_; }

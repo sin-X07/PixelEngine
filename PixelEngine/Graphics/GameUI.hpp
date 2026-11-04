@@ -214,6 +214,7 @@ public:
         bool   spectating     = false;
         int    spectateMode   = 0;      // 0 跟随, 1 自由
         std::string spectateTarget;     // 被观战 BOT 的昵称
+        std::string c4CarrierName;     // T 方队内已知携带者，其他情况为空
         bool   hasC4          = false;
         bool   holdingC4      = false;   // C4 拿在手上（按 5）
         bool   bombDropped    = false;   // C4 掉在地上

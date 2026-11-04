@@ -2326,6 +2326,11 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
     // 观察者 / C4 底部提示
     {
         const float yBase = ImGui::GetIO().DisplaySize.y - UI(96.0f);
+        if (!ctx.c4CarrierName.empty()) {
+            const std::string carrierText = "C4 携带者：" + ctx.c4CarrierName;
+            DrawImGuiTextCentered(imGuiUI, carrierText.c_str(), yBase - UI(30.0f),
+                                  255, 210, 100, 255, 20);
+        }
         if (ctx.spectating) {
             if (ctx.spectateMode == 1) {
                 DrawImGuiTextCentered(imGuiUI,
