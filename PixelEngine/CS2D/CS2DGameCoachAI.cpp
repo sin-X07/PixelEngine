@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cmath>
 #include <iostream>
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include "../Core/PathUtils.hpp"
@@ -417,7 +418,7 @@ const std::string& LoadCoachPlaybook(const std::string& playbookId) {
     if (it != cache.end()) return it->second;
 
     // 约 10KB 手册 ≈ 3.8k tokens；llama-server 单槽 4096，留出 user 摘要与输出。
-    constexpr size_t kMaxTotalBookBytes = 10000;
+    constexpr size_t kMaxTotalBookBytes = 8000;
     std::string body;
 
     const std::string common =
@@ -480,7 +481,8 @@ std::string BuildSystemPrompt(const CS2DWorld* world,
       << " target: A / B / MID / 空；已下包时必须是包点侧\n"
       << " tempo: slow/normal/fast\n"
       << " ttl_s: 指令有效秒数（3~30），场面易变给小值\n"
-      << " slots: 最多 5 个，slot 0~4，area 必须是下面「可选区域」之一\n"
+      << " slots: 最多 5 个，slot 0~4，area 必须是下面「可选区域」之一；"
+         "尽量给满 5 个，不要用 *_Spawn（出生点不是战术位置）\n"
       << " reason: 不超过 20 个汉字，只用于日志\n"
       << "当前地图: " << mapId << "\n";
     if (world) {
@@ -695,6 +697,14 @@ bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* worl
                 !ContainsCI(allow.areas, area)) {
                 continue;      // 区域不在合法闭集内：跳过这个 slot
             }
+            // 出生点不是战术位置：LLM 偶尔会把人全塞回 spawn，直接跳过该 slot
+            {
+                std::string lower = area;
+                for (char& c : lower) {
+                    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                }
+                if (lower.find("spawn") != std::string::npos) continue;
+            }
             if (!area.empty() && world) {
                 std::string canonical;
                 for (const auto& a : world->GetAreas()) {
@@ -823,6 +833,11 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
                                               st.lastOrder, world_.get(),
                                               st.memory, allow);
 
+    if (std::getenv("PIXEL_LOG_COACH_DIGEST")) {
+        std::cout << "[CoachDigest] team=" << TeamName(t) << "\n" << user
+                  << "\n[/CoachDigest]" << std::endl;
+    }
+
     st.llmPending     = true;
     st.llmAnswered    = false;
     st.llmGen         = st.gen;
@@ -833,9 +848,17 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
 
     const int gen = st.gen;
 
+    if (std::getenv("PIXEL_LOG_COACH_RAW")) {
+        std::cout << "[CoachRawReq] " << TeamName(t) << " user_len=" << user.size()
+                  << std::endl;
+    }
     coachLlm_(BuildSystemPrompt(world_.get(), mapId_, playbookId_), user, 260,
               BuildCoachSchema(allow),
               [this, t, gen](const std::string& raw) {
+                  if (std::getenv("PIXEL_LOG_COACH_RAW")) {
+                      std::cout << "[CoachRaw] " << TeamName(t) << " " << raw
+                                << " [/CoachRaw]" << std::endl;
+                  }
                   std::lock_guard<std::mutex> lock(coachLlmMutex_);
                   coachLlmResults_.push_back(CoachLlmResult{t, gen, raw, false});
               });
@@ -964,6 +987,15 @@ void CS2DGame::CoachDrainLlm() {
             else if (st.llmEventType == static_cast<int>(CoachEventType::BombPlanted) ||
                      st.llmEventType == static_cast<int>(CoachEventType::DefuseStarted)) floorTtl = 12.0f;
             ttl = std::min(30.0f, std::max(ttl, floorTtl));
+        }
+
+        // LLM 常常只给 1-2 个槽位：空缺槽位用当前计划（规则分兵）补齐，
+        // 否则 ApplyPlan 会把没写到的 BOT 目标清空 → 站桩发呆。
+        for (size_t si = 0; si < plan.slots.size(); ++si) {
+            if (!plan.slots[si].area.empty()) continue;
+            if (st.plan.valid && !st.plan.slots[si].area.empty()) {
+                plan.slots[si] = st.plan.slots[si];
+            }
         }
 
         plan.gen       = st.gen;

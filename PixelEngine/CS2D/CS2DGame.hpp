@@ -912,6 +912,7 @@ private:
         std::string reason;                  // HUD 显示用
         int   appliedIntent = -1;            // 上一次真正下发的意图（度量变更次数）
         int   changesThisRound = 0;          // 本回合意图变更次数（变更预算）
+        int   sameSideStreak = 0;            // 连续打同一侧的次数（防重复但不至于一次就换）
         float lastIntentChangeSec = -100.0f; // 上次意图变更时刻（变更预算用）
 
         // 本回合统计（回合结束写入 memory）

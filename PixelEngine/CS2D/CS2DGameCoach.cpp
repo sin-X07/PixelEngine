@@ -756,6 +756,12 @@ void CS2DGame::SanitizeCoachPlan(Team t, TeamPlan& plan) {
     const bool allOneSide = (sideA > 0 && sideB == 0) || (sideB > 0 && sideA == 0);
 
     auto reshapeDefault = [&]() {
+        // 记录 LLM 原意，便于区分"模型本来就没想法"与"被整形规则吃掉"
+        std::cout << "[Sanitize] " << TeamName(t) << " 整形: "
+                  << IntentName(plan.intent)
+                  << (plan.target.empty() ? "" : ("->" + plan.target))
+                  << " slots(A=" << sideA << ",B=" << sideB << ")"
+                  << " → 默认分兵" << std::endl;
         const std::string aSite  = AreaHint("A_Site");
         const std::string bSite  = AreaHint("B_Site");
         const std::string mid    = AreaHint("Mid");
@@ -828,7 +834,7 @@ void CS2DGame::SanitizeCoachPlan(Team t, TeamPlan& plan) {
         const std::string other = (side == "A") ? "B" : "A";
         const float heatSide  = intel_.HeatOfSide(world_.get(), side);
         const float heatOther = intel_.HeatOfSide(world_.get(), other);
-        if (intel_.ObservationCount() < 2 || heatSide - heatOther < 0.8f) {
+        if (intel_.ObservationCount() < 1 || heatSide - heatOther < 0.4f) {
             reshapeDefault();
             plan.reason += "（无情报不赌点）";
             std::cout << "[Coach] CT 防单点：stack_" << side

@@ -220,6 +220,7 @@ constexpr int   IntentMaxChanges    = 2;       // 每回合最多变更次数
 constexpr float IntentChangeCooldown = 6.0f;   // 两次变更最短间隔
 constexpr float IntentRenewSec      = 8.0f;    // 到期续期时长
 constexpr float SilentSeconds       = 30.0f;   // 无接触多久算"沉默期"
+constexpr int   SameSideStreakLimit = 3;      // 连续同一侧打几次才强制换边（1=每两次必换）
 
 }  // namespace ai
 

@@ -425,3 +425,46 @@ Long   = Long
 3. CT `Stack` 的情报门槛（≥2 条 且 威胁差 ≥0.8）是经验值，值得用 `--trace` 标定。
 4. LLM 目前只能选 intent/target/tempo + 槽位区域；若要用战术表驱动更多，需扩展 schema。
 5. `--trace` 已可用（`kind ∈ target/stance/maneuver/goal/defusing`），可作为调参依据。
+
+---
+
+## 9. LLM 链路实测（2026-11，qwen2.5-7b-instruct-q4_k_m / llama-server）
+
+### 9.1 实测命令
+
+```powershell
+# 1) 让引擎自动拉起 llama-server（llm.ini 的 auto_launch=1）
+.\build-dev\EngineApp.exe --autostart --mode=1 --side=ct --map=dust_2
+
+# 2) 想看喂给模型的摘要 / 模型原始回包：
+$env:PIXEL_LOG_COACH_DIGEST=1
+$env:PIXEL_LOG_COACH_RAW=1
+```
+
+### 9.2 实测中修掉的问题（都会导致"LLM 无回复/指令单一"）
+
+| 症状 | 根因 | 修复 |
+| --- | --- | --- |
+| 全部 "LLM 无回复" | `-c 8192 --parallel 2` → 每槽 4096 tokens，prompt 约 4110 tokens，服务端直接 400 | 默认 `ctx=16384`（8192/槽），并可在 `llm.ini` 调 |
+| 首回合必超时 | 冷启动首帧（CUDA 图 + 4k prefill）超过接收超时 | 接收超时 10s → 60s；初始化后先发一次 warm-up 请求 |
+| 请求失败无日志 | 非 4xx 失败静默返回空串 | 记录 HTTP 状态；非 4xx 自动重试一次 |
+| LLM 只给 1 个槽 → 其余 BOT 站桩 | 空缺槽位被当作"无目标" | 空缺槽位用当前规则计划补齐 |
+| 出现 `CT_Spawn` 之类出生点槽位 | 模型把出生点当战术位 | 解析时丢弃含 `spawn` 的区域；prompt 明确禁止 |
+| 指令几乎总是"默认分兵" | `SanitizeCoachPlan` 连续同侧一回合就强制换边；CT stack 要求 ≥2 次观察且热度差 ≥0.8 | 同侧连续阈值改为 3 次；CT stack 门槛降到 ≥1 次观察且差 ≥0.4 |
+
+### 9.3 实测结果（180–240 秒对局，每局 12–13 回合）
+
+| 指标 | 实测 |
+| --- | --- |
+| LLM 采纳计划 | 6–11 条 / 180–240s |
+| 延迟 | 1.0–7.1s（均 3.5s 左右） |
+| 意图多样性 | `rush_b` / `stack_a` / `stack_b` / `default` 均出现 |
+| reason 依据 | 会引用摘要字段："敌B侧1人且已露头"、"敌经济富且首接触负于Tetris"、"上回合rush_b失败首接触被击" |
+| 整形拦截 | 约 1/6 的计划被 `[Sanitize]` 改写（多数是"无情报赌点"） |
+| 冷启动失败 | 每局开头 1–2 次空回包（已重试一次，仍失败则回退规则） |
+
+### 9.4 仍然是弱点的部分
+
+- **CT 的 LLM 计划偏保守**：多数是 `default`，只有拿到明确"某侧人多"情报时才 `stack`。
+- **摘要里没有"我方控制区"**，模型只能靠"我方站位分布 + 道具数"间接判断。
+- **冷启动 1–2 次失败**：可以再加热身（把真实 system prompt 预跑一次）彻底消除。

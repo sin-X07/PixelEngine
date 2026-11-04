@@ -30,6 +30,8 @@ LLMConfig LLMConfig::FromFile(const std::string& iniPath) {
     cfg.startupWaitSec = ini.GetInt   ("launcher", "startup_wait", cfg.startupWaitSec);
     cfg.killOnExit     = ini.GetBool  ("launcher", "kill_on_exit", cfg.killOnExit);
     cfg.jsonSchema     = ini.GetBool  ("launcher", "json_schema", cfg.jsonSchema);
+    cfg.ctxTokens      = ini.GetInt   ("launcher", "ctx",          cfg.ctxTokens);
+    cfg.parallelSlots  = ini.GetInt   ("launcher", "parallel",     cfg.parallelSlots);
 
     return cfg;
 }
@@ -151,7 +153,9 @@ bool LLMBotController::Initialize(const LLMConfig& config) {
 
         // 3. 没有 → 自动拉起
         std::cout << "[LLM] 自动启动 llama-server..." << std::endl;
-        if (LaunchServer(config.serverExePath, config.modelPath, host, port, config.ngl)) {
+        if (LaunchServer(config.serverExePath, config.modelPath,
+                         config.ctxTokens, config.parallelSlots,
+                         host, port, config.ngl)) {
 
             // 4. 等待加载完成
             std::cout << "[LLM] 等待模型加载 (最多 " << config.startupWaitSec << " 秒)..." << std::endl;
@@ -294,17 +298,18 @@ bool LLMBotController::HealthCheck(int timeoutMs) {
 
 // ---- 启动 llama-server 子进程 ----
 bool LLMBotController::LaunchServer(const std::string& exePath, const std::string& modelPath,
-                                     const std::string& host, int port, int ngl) {
+                                    int ctxTokens, int parallelSlots,
+                                    const std::string& host, int port, int ngl) {
     // 构造命令行: "llama-server.exe" -m model.gguf -ngl 99 --host 127.0.0.1 --port 9931
     std::ostringstream cmd;
     // 教练层要两队并发请求，单槽会互相挤掉：开 2 个并行槽。
-    // -c 8192 分给 2 槽 ≈ 每槽 4096 tokens；当前教练 system prompt 约 3.3~3.5k
-    // tokens，留出 user 摘要与 150 输出。加手册内容时先确认别挤爆单槽上下文。
+    // -c 16384 分给 2 槽 ≈ 每槽 8192 tokens。教练 system prompt 含手册约 5~7k tokens，
+    // 之前 -c 8192（每槽 4096）会把请求挤爆：服务端直接 400 "exceeds context size"。
     cmd << "\"" << exePath << "\""
         << " -m \"" << modelPath << "\""
         << " -ngl " << ngl
-        << " -c 8192"
-        << " --parallel 2"
+        << " -c " << ctxTokens
+        << " --parallel " << parallelSlots
         << " --host " << host
         << " --port " << port;
 
@@ -493,6 +498,18 @@ void LLMBotController::WorkerLoop() {
         } else if (ok && useSchema && !schemaLogged_.exchange(true)) {
             std::cout << "[LLM] json_schema 结构化输出已生效" << std::endl;
         }
+
+        // 非 4xx 的失败（超时 / 5xx / 连接问题）重试一次：
+        // 冷启动 prefill 偶尔会超过接收超时，重试比丢掉这一回合的战术要好。
+        if (!ok && !(useSchema && status >= 400 && status < 500)) {
+            std::cout << "[LLM] 请求失败(HTTP " << status << ")，重试一次" << std::endl;
+            raw.clear();
+            std::this_thread::sleep_for(std::chrono::milliseconds(400));
+            const bool ok2 = DoHttpRequest(req, tag, raw, &status);
+            if (!ok2) {
+                std::cout << "[LLM] 重试仍失败(HTTP " << status << ")" << std::endl;
+            }
+        }
         busy_ = false;
 
         if (rawCb) rawCb(raw);
@@ -525,8 +542,10 @@ bool LLMBotController::DoHttpRequest(const std::string& requestBody,
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession) return false;
 
-    // 设置超时：避免服务端异常时工作线程无限阻塞，从而让 Shutdown() 的 join() 卡死
-    WinHttpSetTimeouts(hSession, 3000, 3000, 5000, 10000);
+    // 设置超时：避免服务端异常时工作线程无限阻塞，从而让 Shutdown() 的 join() 卡死。
+    // 接收超时 60s：教练 prompt 约 4~6k tokens，冷启动首帧（CUDA 图 + prefill）
+    // 可能超过 25s；之前 10s/25s 都会导致"LLM 无回复"（空回包）。
+    WinHttpSetTimeouts(hSession, 5000, 5000, 5000, 60000);
 
     int wlen = MultiByteToWideChar(CP_UTF8, 0, host.c_str(), -1, nullptr, 0);
     std::wstring wh(wlen, L'\0');

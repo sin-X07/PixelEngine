@@ -33,6 +33,8 @@ struct LLMConfig {
     int    startupWaitSec  = 20;     // 自动拉起后等待模型加载最长时间
     bool   killOnExit      = true;   // 退出时终止本程序拉起的 llama-server (释放显存)
     bool   jsonSchema      = true;   // 是否尝试 response_format:json_schema
+    int    ctxTokens       = 16384;  // llama-server 总上下文（2 槽各一半）
+    int    parallelSlots   = 2;      // 并行槽数（T / CT 各一个）
 
     // 从 INI 文件解析 (失败时保留默认值, 不抛出)
     static LLMConfig FromFile(const std::string& iniPath);
@@ -93,7 +95,7 @@ private:
     bool HealthCheck(int timeoutMs = 15000);
 
     // 启动 llama-server 子进程
-    bool LaunchServer(const std::string& exePath, const std::string& modelPath,
+    bool LaunchServer(const std::string& exePath, const std::string& modelPath, int ctxTokens, int parallelSlots,
                       const std::string& host, int port, int ngl);
 
     // 终止子进程（强制，且校验确实退出）
