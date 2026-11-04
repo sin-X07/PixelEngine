@@ -303,26 +303,23 @@ void CS2DGame::AssignSquadRoles() {
         for (size_t i = 0; i < bots_.size(); ++i) {            Player& b = bots_[i];
             if (b.team == Team::T) {
                 // T：轮转分配包点，保证 A/B 都有人去
+                // 统一走 SetBotGoal：教练已指定驻守点时不覆盖（GoalSource 优先级）
                 const int site = tIdx % siteCount;
                 ++tIdx;
                 squad_[i].site = site;
-                squad_[i].hasHold = true;
-                squad_[i].holdX = sites[site].cx;
-                squad_[i].holdY = sites[site].cy;
+                SetBotGoal(i, sites[site].cx, sites[site].cy,
+                           BotRuntime::GoalSource::Squad);
             } else {
                 // CT：A / B / 中路 三线轮转
                 const int slot = ctIdx % (siteCount + 1);
                 ++ctIdx;
                 if (slot < siteCount) {
                     squad_[i].site = slot;
-                    squad_[i].hasHold = true;
-                    squad_[i].holdX = sites[slot].cx;
-                    squad_[i].holdY = sites[slot].cy;
+                    SetBotGoal(i, sites[slot].cx, sites[slot].cy,
+                               BotRuntime::GoalSource::Squad);
                 } else {
                     squad_[i].site = -1;             // 中路
-                    squad_[i].hasHold = true;
-                    squad_[i].holdX = midX;
-                    squad_[i].holdY = midY;
+                    SetBotGoal(i, midX, midY, BotRuntime::GoalSource::Squad);
                 }
             }
         }

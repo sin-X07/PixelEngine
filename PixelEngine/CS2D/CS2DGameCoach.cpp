@@ -803,15 +803,10 @@ void CS2DGame::CoachApplyPlan(Team t) {
             std::uniform_real_distribution<float> jit(-18.0f, 18.0f);
             cx = bot.x + jit(rng_);
             cy = bot.y + jit(rng_);
-            ai.hasPlanHold = true;
-            ai.planHoldX   = cx;
-            ai.planHoldY   = cy;
-            ai.goalArea    = std::string();
+            SetBotGoal(i, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
+            ai.goalArea = std::string();
             // 计划点到达后不要退回默认包点：把小队岗位固定在当前点。
-            squad_[i].site     = -1;
-            squad_[i].hasHold  = true;
-            squad_[i].holdX    = bot.x;
-            squad_[i].holdY    = bot.y;
+            squad_[i].site = -1;
             ++holdOk;
             detail << " #" << slot << "=(save)";
             squad_[i].canTrade  = false;
@@ -820,21 +815,26 @@ void CS2DGame::CoachApplyPlan(Team t) {
             continue;
         }
         if (!so.area.empty() && AreaCenterByName(so.area, cx, cy)) {
-            ai.hasPlanHold = true;
-            ai.planHoldX   = cx;
-            ai.planHoldY   = cy;
-            ai.goalArea    = so.area;
+            const int areaSite = areaSiteIndex(so.area);
+            // T 进攻期：真正的推进目标是「目标包点中心」，区域中心只当集结/架枪点。
+            // 否则 T 会停在区域边缘（例如 A_Long 中心）磨时间，进攻节奏变慢。
+            if (t == Team::T && !bombPlanted_ && !st.plan.target.empty()) {
+                const auto& sites = world_->GetBombSites();
+                if (areaSite >= 0 && areaSite < static_cast<int>(sites.size()) &&
+                    sites[static_cast<size_t>(areaSite)].name == st.plan.target) {
+                    cx = sites[static_cast<size_t>(areaSite)].cx;
+                    cy = sites[static_cast<size_t>(areaSite)].cy;
+                }
+            }
+            SetBotGoal(i, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
+            ai.goalArea = so.area;
             // 小队岗位与教练计划保持一致；计划点到达后继续守这个区域，
             // 而不是被 AssignSquadRoles 的轮转岗位拉回另一侧。
-            squad_[i].site    = areaSiteIndex(so.area);
-            squad_[i].hasHold = true;
-            squad_[i].holdX   = cx;
-            squad_[i].holdY   = cy;
+            squad_[i].site = areaSite;
             ++holdOk;
             detail << " #" << slot << "=" << so.area;
         } else {
-            ai.hasPlanHold = false;
-            squad_[i].hasHold = false;
+            ClearBotGoal(i);
             squad_[i].site = -1;
             ++holdFail;
             detail << " #" << slot << "=" << (so.area.empty() ? "(empty)" : so.area + "!");
@@ -883,16 +883,11 @@ void CS2DGame::CoachApplyPlan(Team t) {
             const size_t ci = static_cast<size_t>(bombCarrier_);
             auto& cai = AiAt(ci);
             auto& csq = squad_[ci];
-            cai.hasPlanHold = true;
-            cai.planHoldX   = cx;
-            cai.planHoldY   = cy;
-            cai.goalArea    = siteArea;
-            csq.site        = siteIdx;
-            csq.hasHold     = true;
-            csq.holdX       = cx;
-            csq.holdY       = cy;
-            csq.role        = BotRole::Entry;   // 跟突破组进点，而不是当断后
-            csq.canRotate   = false;
+            SetBotGoal(ci, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
+            cai.goalArea  = siteArea;
+            csq.site      = siteIdx;
+            csq.role      = BotRole::Entry;   // 跟突破组进点，而不是当断后
+            csq.canRotate = false;
             std::cout << "[Coach] T C4携带者 #" << bombCarrier_
                       << " 跟随主攻 " << side << std::endl;
         }
@@ -948,7 +943,7 @@ void CS2DGame::CoachResetRound() {
         st.llmPending      = false;
         st.llmAnswered     = false;
     }
-    for (size_t i = 0; i < bots_.size(); ++i) AiAt(i).hasPlanHold = false;
+    for (size_t i = 0; i < bots_.size(); ++i) ClearBotGoal(i);
 }
 
 
