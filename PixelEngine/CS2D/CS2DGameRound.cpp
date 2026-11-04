@@ -61,6 +61,7 @@ void CS2DGame::BeginNewRound(AudioManager* audio) {
     RespawnAllForRound();
     SetupObjective();   // 每回合重置包点 / C4
     AssignSquadRoles(); // 每回合按新的相对位置重新分工
+    RefreshSearchAreas();  // 搜点白名单每回合重置
     // 购买延迟：等本轮教练（尤其 LLM save/eco）先给结论，再决定是否采购。
     botBuyPending_ = true;
     botBuyDoneT_   = false;

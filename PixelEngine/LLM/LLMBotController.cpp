@@ -474,7 +474,7 @@ void LLMBotController::WorkerLoop() {
         std::string raw;
         const bool useSchema = !schema.empty() && schemaSupported_.load();
         std::string req = PromptBuilder::BuildRequestBodyEx(
-            system, body, maxTokens, 0.3f, useSchema ? schema : std::string(), true, 0);
+            system, body, maxTokens, 0.55f, useSchema ? schema : std::string(), true, 0);
 
         int status = 0;
         bool ok = DoHttpRequest(req, tag, raw, &status);
@@ -488,7 +488,7 @@ void LLMBotController::WorkerLoop() {
             }
             raw.clear();
             const std::string req2 = PromptBuilder::BuildRequestBodyEx(
-                system, body, maxTokens, 0.3f, std::string(), true, 0);
+                system, body, maxTokens, 0.55f, std::string(), true, 0);
             DoHttpRequest(req2, tag, raw);
         } else if (ok && useSchema && !schemaLogged_.exchange(true)) {
             std::cout << "[LLM] json_schema 结构化输出已生效" << std::endl;

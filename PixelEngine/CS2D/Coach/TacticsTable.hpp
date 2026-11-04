@@ -22,6 +22,7 @@
 #include <array>
 #include <map>
 #include <string>
+#include <cstdlib>
 #include <vector>
 
 #include "../../Core/IniFile.hpp"
@@ -34,6 +35,9 @@ struct TacticsTable {
     // 关键词（A_Site / Long / ...）→ 地图实际区域名
     std::map<std::string, std::string> areas;
 
+    // 区域 → 守点时应该看的方向（弧度，0=+X）；来自 [look.<area>] 0=角度(度)
+    std::map<std::string, std::vector<float>> looks;
+
     // (Team, Intent) → 5 个槽位
     std::map<std::string, std::array<SlotOrder, 5>> slots;
 
@@ -43,6 +47,7 @@ struct TacticsTable {
         mapId  = id;
         areas.clear();
         slots.clear();
+        looks.clear();
         if (id.empty()) return;
 
         IniFile ini = IniFile::Load(path);
@@ -73,6 +78,20 @@ struct TacticsTable {
                 if (any) slots[std::string(team) + "." + intent] = arr;
             }
         }
+        // [look.<区域>]  0 = 角度(度)，可写多条（守点时轮流看）
+        for (const auto& [section, sec] : ini.GetAll()) {
+            const std::string prefix = "look.";
+            if (section.rfind(prefix, 0) != 0) continue;
+            const std::string area = section.substr(prefix.size());
+            std::vector<float> dirs;
+            for (const auto& [key, val] : sec) {
+                (void)key;
+                const float deg = std::atof(StripInlineComment(val).c_str());
+                dirs.push_back(deg * 3.14159265f / 180.0f);
+            }
+            if (!dirs.empty()) looks[area] = dirs;
+        }
+
         loaded = true;
     }
 
@@ -90,6 +109,11 @@ struct TacticsTable {
                                           const std::string& intent) const {
         auto it = slots.find(team + "." + intent);
         return it == slots.end() ? nullptr : &it->second;
+    }
+
+    const std::vector<float>* Look(const std::string& area) const {
+        auto it = looks.find(area);
+        return it == looks.end() ? nullptr : &it->second;
     }
 
     // 把区域别名解析成实际区域名；不是别名就原样返回

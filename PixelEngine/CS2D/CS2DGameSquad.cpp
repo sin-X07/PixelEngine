@@ -280,8 +280,20 @@ const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& ou
 // 小队协同：分工与集火
 // ============================================================================
 
-void CS2DGame::AssignSquadRoles() {
-    squad_.assign(bots_.size(), SquadOrder{});
+// 重置搜点白名单（每回合开始调用）：所有区域标记为"未搜"
+void CS2DGame::RefreshSearchAreas() {
+    for (int t = 0; t < 2; ++t) areaSearchedAt_[t].clear();
+    if (!world_) return;
+    for (const auto& a : world_->GetAreas()) {
+        areaSearchedAt_[0][a.name] = -100.0f;
+        areaSearchedAt_[1][a.name] = -100.0f;
+    }
+}
+
+void CS2DGame::AssignSquadRoles(bool dynamic) {
+    // 动态重算只更新角色，不动已有驻守点/许可，否则每 2 秒会把计划打散
+    if (!dynamic) squad_.assign(bots_.size(), SquadOrder{});
+    else if (squad_.size() != bots_.size()) squad_.assign(bots_.size(), SquadOrder{});
     if (bots_.empty() || !world_) return;
 
     // ---- 爆破图：T 分队进攻 A/B，CT 分兵守 A/B/中路 ----
@@ -298,7 +310,7 @@ void CS2DGame::AssignSquadRoles() {
         midY = sy / siteCount;
     }
 
-    if (mode_ == MatchMode::BombDefusal && siteCount > 0) {
+    if (!dynamic && mode_ == MatchMode::BombDefusal && siteCount > 0) {
         int tIdx = 0, ctIdx = 0;
         for (size_t i = 0; i < bots_.size(); ++i) {            Player& b = bots_[i];
             if (b.team == Team::T) {
@@ -382,11 +394,23 @@ void CS2DGame::AssignSquadRoles() {
         const size_t entryCount  = std::max<size_t>(1, (cnt + 2) / 3);
         const size_t anchorCount = std::max<size_t>(1, (cnt + 3) / 4);
 
+        if (roleChangedAt_.size() != bots_.size()) roleChangedAt_.assign(bots_.size(), -100.0f);
         for (size_t k = 0; k < cnt; ++k) {
             BotRole role = BotRole::Support;
             if (k < entryCount)                        role = BotRole::Entry;
             else if (k >= cnt - anchorCount)           role = BotRole::Anchor;
-            squad_[members[k]].role = role;
+
+            const size_t bi = members[k];
+            // 动态重算带冷却：同一个 BOT 不会几秒内反复换角色（换了速度倍率就变，会来回跑）
+            if (dynamic && bi < roleChangedAt_.size() &&
+                clockSec_ - roleChangedAt_[bi] < Tuning::ai::RoleSwitchCooldown) {
+                continue;
+            }
+            if (squad_[bi].role != role) {
+                squad_[bi].role = role;
+                if (dynamic) ++counters_.roleSwitches;
+            }
+            if (bi < roleChangedAt_.size()) roleChangedAt_[bi] = clockSec_;
         }
     }
 }

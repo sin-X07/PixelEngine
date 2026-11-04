@@ -463,8 +463,14 @@ std::string BuildSystemPrompt(const CS2DWorld* world,
                               const std::string& playbookId) {
     std::ostringstream o;
     o << "你是 CS2D 战队主教练。只做战术决策，不做瞄准与走位。\n"
+      << "你的目标不是复述常识，而是针对**当前局势**给出这一回合最有利的打法：\n"
+      << "  1) 先看双方经济：我方穷而敌方更穷 → 可以半起/强起打对方经济；我方穷而敌方富 → 保枪或快打。\n"
+      << "  2) 再看信息：敌人最后出现在哪里、我方占了哪些区域、剩余时间够不够转点。\n"
+      << "  3) 最后看克制：对面连续压同一侧就换边；对面缺人就用人数优势打点；时间不足就放弃转点直接进。\n"
+      << "禁止输出与局势无关的套话；reason 必须点出你依据的是哪条信息。\n"
       << "严格只输出一个 JSON 对象：不要 YAML、不要解释、不要代码块。\n"
-      << "示例：{\"intent\":\"rush_b\",\"target\":\"B\",\"tempo\":\"fast\","
+      << "示例1（对面减员速推）：{\"intent\":\"rush_b\",\"target\":\"B\",\"tempo\":\"fast\",\"ttl_s\":12,\"reason\":\"敌方减员速推B\",\"slots\":[{\"slot\":0,\"role\":\"entry\",\"area\":\"B_Site\"}]}\n"
+      << "示例2（我方穷敌方更穷，半起打经济）：{\"intent\":\"rush_a\",\"target\":\"A\",\"tempo\":\"fast\",\"ttl_s\":10,\"reason\":\"敌更穷强起打A\",\"slots\":[{\"slot\":0,\"role\":\"entry\",\"area\":\"A_Site\"}]}\n"
          "\"ttl_s\":12,\"reason\":\"敌方减员速推B\","
          "\"slots\":[{\"slot\":0,\"role\":\"entry\",\"area\":\"A_Site\"}]}\n"
       << "字段含义：\n"
@@ -529,8 +535,31 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
     }
 
     const int avg = game.GetRoundStartEconomy(team);
-    o << " 经济" << (avg < 1800 ? "穷" : (avg < 3500 ? "中" : "富"))
+    const int oppAvg = game.GetRoundStartEconomy(TeamManager::Opponent(team));
+    auto econLabel = [](int v) { return v < 1800 ? "穷" : (v < 3500 ? "中" : "富"); };
+    o << " 经济" << econLabel(avg)
       << " 购买=" << CS2DGame::BuyPlanLabel(game.GetBuyPlan(team));
+    // 教练本来就知道双方经济（规则层 DecideBuyPlan 已在用），同步给 LLM 才能做针对性决策
+    o << " 敌经济" << econLabel(oppAvg) << "(差" << (avg - oppAvg) << ")";
+
+    // ---- 我方站位分布 + 道具库存（能不能打这一点 / 能不能道具开点）----
+    {
+        std::map<std::string, int> byArea;
+        int util = 0;
+        for (const auto& b : game.GetBOTs()) {
+            if (!b.alive || b.team != team) continue;
+            util += b.grenadeCount;
+            const std::string a = world ? world->FindAreaAt(b.x, b.y) : std::string();
+            if (!a.empty()) ++byArea[a];
+        }
+        o << "\n我方:";
+        int shown = 0;
+        for (const auto& [name, cnt] : byArea) {
+            if (shown++ >= 4) break;
+            o << " " << name << "x" << cnt;
+        }
+        o << " 道具" << util << "枚";
+    }
 
 
     // ---- 敌方分布（按包点威胁度；未知 != 空）----
@@ -804,7 +833,7 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
 
     const int gen = st.gen;
 
-    coachLlm_(BuildSystemPrompt(world_.get(), mapId_, playbookId_), user, 150,
+    coachLlm_(BuildSystemPrompt(world_.get(), mapId_, playbookId_), user, 260,
               BuildCoachSchema(allow),
               [this, t, gen](const std::string& raw) {
                   std::lock_guard<std::mutex> lock(coachLlmMutex_);

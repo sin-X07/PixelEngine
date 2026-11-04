@@ -148,6 +148,9 @@ struct Summary {
     double damagePerRound = 0.0, fbWinPct = 0.0;
     double plantNear = 0.0, defuseNear = 0.0;
     double pathShort = 0.0, pathMid = 0.0, pathLong = 0.0;
+    // 行为度量（来自 CS2DGame::Counters）：用来判断"抖动/变更"是否被抑制
+    int intentChanges = 0, roleSwitches = 0, assistPushes = 0;
+    int nadeThrows = 0, nadeSkips = 0, searchVisits = 0, renewals = 0, directionFlips = 0;
     int lastTick_ = 0;
 };
 
@@ -353,6 +356,17 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
     s.playerKills = game.GetPlayerKills();
     s.playerDeaths = game.GetPlayerDeaths();
     s.finalHash = finalHash;
+    {
+        const auto& c = game.Counters();
+        s.intentChanges = c.intentChanges;
+        s.roleSwitches  = c.roleSwitches;
+        s.assistPushes  = c.assistPushes;
+        s.nadeThrows    = c.nadeThrows;
+        s.nadeSkips     = c.nadeSkips;
+        s.searchVisits  = c.searchVisits;
+        s.renewals      = c.renewals;
+        s.directionFlips= c.directionFlips;
+    }
     s.ok = true;
 
     if (!hashPath.empty() && conflicts.Total() > 0) conflicts.PrintSummary();
@@ -445,6 +459,9 @@ int main(int argc, char** argv) {
         std::printf("[dev_replay] final_hash=%016" PRIx64 "\n", s.finalHash);
         std::printf("[dev_replay] player kills=%d deaths=%d  ai_conflicts=%d\n",
                     s.playerKills, s.playerDeaths, s.conflicts);
+        std::printf("[dev_replay] behavior intentChg=%d roleSw=%d assist=%d nade=%d/%d search=%d renew=%d flip=%d\n",
+                    s.intentChanges, s.roleSwitches, s.assistPushes, s.nadeThrows, s.nadeSkips,
+                    s.searchVisits, s.renewals, s.directionFlips);
         std::printf("[dev_replay] quality still=%.1f%% idle=%.1f%% pathEff=%.2f dmg/round=%.0f fbWin=%.0f%% "
                     "plantNear=%.1f defuseNear=%.1f\n",
                     s.stillPct * 100, s.idlePct * 100, s.pathEff, s.damagePerRound,
@@ -473,7 +490,9 @@ int main(int argc, char** argv) {
                  "map,seed,winner,score_t,score_ct,rounds,ticks,avg_round_ticks,"
                  "plants,defuses,player_kills,player_deaths,ai_conflicts,still_pct,idle_pct,"
                  "path_eff,path_eff_short,path_eff_mid,path_eff_long,"
-                 "dmg_per_round,fb_win_pct,plant_near,defuse_near,final_hash\n");
+                 "dmg_per_round,fb_win_pct,plant_near,defuse_near,"
+                 "intent_changes,role_switches,assist_pushes,nade_throws,nade_skips,"
+                 "search_visits,renewals,direction_flips,final_hash\n");
 
     int games = 0, tWins = 0, ctWins = 0, failed = 0;
     double sumAvgRoundTicks = 0.0;
@@ -492,13 +511,17 @@ int main(int argc, char** argv) {
             sumPlants += s.plants;
             sumDefuses += s.defuses;
             std::fprintf(summary,
-                         "%s,%d,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%d,%d,%.1f,%.1f,%.2f,%.2f,%.2f,%.2f,%.0f,%.1f,%.2f,%.2f,%016" PRIx64 "\n",
+                         "%s,%d,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%d,%d,%.1f,%.1f,%.2f,%.2f,%.2f,%.2f,%.0f,%.1f,%.2f,%.2f,"
+                         "%d,%d,%d,%d,%d,%d,%d,%d,%016" PRIx64 "\n",
                          s.map.c_str(), s.seed, dev_replay::TeamTag(s.winner),
                          s.scoreT, s.scoreCT, s.rounds, s.ticks, s.avgRoundTicks,
                          s.plants, s.defuses, s.playerKills, s.playerDeaths, s.conflicts,
                          s.stillPct * 100, s.idlePct * 100, s.pathEff,
                          s.pathShort, s.pathMid, s.pathLong, s.damagePerRound,
-                         s.fbWinPct * 100, s.plantNear, s.defuseNear, s.finalHash);
+                         s.fbWinPct * 100, s.plantNear, s.defuseNear,
+                         s.intentChanges, s.roleSwitches, s.assistPushes, s.nadeThrows,
+                         s.nadeSkips, s.searchVisits, s.renewals, s.directionFlips,
+                         s.finalHash);
         }
     }
     std::fclose(summary);
