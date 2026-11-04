@@ -4,6 +4,7 @@
 #include "CS2DRenderer.hpp"
 #include "Teams/TeamManager.hpp"
 #include "Coach/CoachTypes.hpp"
+#include "Coach/TacticsTable.hpp"
 #include "TacticalIntel.hpp"
 #include "SoundEvents.hpp"
 #include "Rounds/RoundManager.hpp"
@@ -406,6 +407,7 @@ public:
 
     // 当前地图 id（与 MapCatalog / coach/<mapId>.txt 对齐）
     const std::string& GetMapId() const { return mapId_; }
+    const TacticsTable& Tactics() const { return tactics_; }
     // 当前地图使用的战术库 id（MapCatalog.playbook 可覆盖；空时同 mapId_）
     const std::string& GetPlaybookId() const { return playbookId_; }
 
@@ -811,6 +813,7 @@ private:
     VisibilityQuery visibility_;   // 视线/视野判定的唯一实现（无 SDL 依赖）
     CS2DRenderer* renderer_ = nullptr;
     std::string mapId_;            // 如 dust_2 / ancient_ruins / mirage
+    TacticsTable tactics_;         // 每图战术表（areas / slots），缺失则回退代码默认
     std::string playbookId_;       // 战术库文件名（不含 .txt）；空则回退 mapId_
     std::string mapSourcePath_;    // LoadMap 时的 resolved TMJ 路径
 
@@ -906,6 +909,9 @@ private:
     void CoachOnEvent(Team t, CoachEventType type, const std::string& area = std::string());
     void CoachThink(Team t, const CoachEvent& ev);
     TeamPlan RuleCoach(Team t, const CoachEvent& ev);
+    // 规则教练的原始实现；外面套一层战术表覆盖（见 CS2DGameCoach.cpp）
+    TeamPlan RuleCoachCore(Team t, const CoachEvent& ev);
+    void ApplyTacticsSlots(Team t, TeamPlan& plan);
     void CoachApplyPlan(Team t);
     void SanitizeCoachPlan(Team t, TeamPlan& plan);   // 防单点/防重复的兜底整形
     void CoachRecordRound(Team t, bool won);
