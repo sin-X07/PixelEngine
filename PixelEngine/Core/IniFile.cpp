@@ -1,5 +1,7 @@
 #include "IniFile.hpp"
+#include "PathUtils.hpp"
 #include <fstream>
+#include <sstream>
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -24,21 +26,21 @@ std::string ToLower(std::string s) {
 }
 
 // 跳过 UTF-8 BOM (EF BB BF)
-void SkipBOM(std::ifstream& f) {
-    char bom[3];
-    if (f.read(bom, 3) && bom[0] == '\xEF' && bom[1] == '\xBB' && bom[2] == '\xBF') return;
-    f.clear();
-    f.seekg(0);
+std::string StripBOM(std::string s) {
+    if (s.size() >= 3 && static_cast<unsigned char>(s[0]) == 0xEF &&
+        static_cast<unsigned char>(s[1]) == 0xBB && static_cast<unsigned char>(s[2]) == 0xBF) {
+        s.erase(0, 3);
+    }
+    return s;
 }
 
 } // anonymous namespace
 
 IniFile IniFile::Load(const std::string& path) {
     IniFile ini;
-    std::ifstream f(path);
-    if (!f.is_open()) return ini;   // 文件缺失 → 空对象，静默
-
-    SkipBOM(f);
+    std::string text;
+    if (!PathUtils::ReadFileText(path, text)) return ini;   // 文件缺失 → 空对象，静默
+    std::istringstream f(StripBOM(text));
 
     std::string line;
     std::string section;

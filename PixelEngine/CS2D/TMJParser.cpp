@@ -143,13 +143,13 @@ static bool ParseImageLayer(const json& layer, ImageLayerDef& out) {
 
 bool TMJParser::Parse(const std::string& resolvedPath, CS2DMapData& out) {
     // 将整个文件读入字符串
-    std::ifstream ifs(resolvedPath);
-    if (!ifs) {
+    // 用 PathUtils 读文件：Windows 下安装路径含中文时 ifstream 会失败
+    std::string text;
+    if (!PathUtils::ReadFileText(resolvedPath, text)) {
         std::cerr << "[TMJParser] 无法打开 TMJ 文件: " << resolvedPath << std::endl;
         return false;
     }
-    std::stringstream buffer;
-    buffer << ifs.rdbuf();
+    std::istringstream buffer(text);
     std::string jsonStr = buffer.str();
 
     MiniJSON::Value root;
