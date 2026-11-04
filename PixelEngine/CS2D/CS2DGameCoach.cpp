@@ -217,11 +217,24 @@ void CS2DGame::CoachUpdate(float dt) {
         }
     }
 
-    // 计划过期：20 秒没有新事件就重新评估，避免守着过时计划
+    // 计划到期：默认续期（没有新信息就不该换指令）；
+    // 只有"沉默"超过 SilentSeconds 才主动重新评估一次（交给规则/LLM 思考下一步）。
     for (Team t : {Team::T, Team::CT}) {
         CoachState& st = CoachFor(t);
-        if (st.plan.valid && st.planExpiresAt > 0.0f && clockSec_ > st.planExpiresAt) {
-            st.planExpiresAt = clockSec_ + 20.0f;
+        if (!(st.plan.valid && st.planExpiresAt > 0.0f && clockSec_ > st.planExpiresAt)) continue;
+
+        const bool silentTooLong =
+            (clockSec_ - st.plan.createdAt) >= Tuning::ai::SilentSeconds;
+        if (!silentTooLong) {
+            st.planExpiresAt  = clockSec_ + Tuning::ai::IntentRenewSec;
+            st.plan.expiresAt = st.planExpiresAt;
+            ++counters_.renewals;
+            std::cout << "[Coach] " << TeamName(t) << " 计划续期（无新信息）"
+                      << " intent=" << IntentName(st.plan.intent) << std::endl;
+            continue;
+        }
+        {
+            st.planExpiresAt = clockSec_ + Tuning::ai::IntentRenewSec;
             CoachEvent ev;
             ev.type = CoachEventType::RoundStart;
             ev.priority = 0.0f;
@@ -233,10 +246,10 @@ void CS2DGame::CoachUpdate(float dt) {
             p.expiresAt = st.planExpiresAt;
             p.valid = true;
             st.plan = p;
-            st.reason = p.reason + "（计划过期，重新评估）";
+            st.reason = p.reason + "（沉默期，重新评估）";
             st.stickyLlm = false; // plan expiry sticky clear
             coachPlanChangedAt_ = clockSec_;
-            std::cout << "[Coach] " << TeamName(t) << " 计划过期 -> "
+            std::cout << "[Coach] " << TeamName(t) << " 沉默期重评估 -> "
                       << IntentName(p.intent) << std::endl;
             CoachApplyPlan(t);
         }
@@ -340,6 +353,25 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
         std::cout << "[Coach] T 执行锁定 " << st.plan.target
                   << " (ev#" << static_cast<int>(ev.type) << " no-replan)" << std::endl;
         return;
+    }
+
+    // ---- 变更预算：意图至少保持 IntentMinHold，每回合最多 IntentMaxChanges 次 ----
+    // 治"无头苍蝇"的核心：没有新信息就不换指令（新信息由 criticalEv 放行）。
+    if (!criticalEv && st.plan.valid && !bombPlanted_) {
+        const float held = clockSec_ - st.plan.createdAt;
+        const bool tooSoon = held < Tuning::ai::IntentMinHold ||
+                             (clockSec_ - st.lastIntentChangeSec) < Tuning::ai::IntentChangeCooldown;
+        const bool budgetOut = st.changesThisRound >= Tuning::ai::IntentMaxChanges;
+        if (tooSoon || budgetOut) {
+            st.planExpiresAt  = clockSec_ + Tuning::ai::IntentRenewSec;
+            st.plan.expiresAt = st.planExpiresAt;
+            ++counters_.renewals;
+            if (st.callsThisRound > 0) --st.callsThisRound;
+            std::cout << "[Coach] " << TeamName(t) << " 变更预算拦截（"
+                      << (budgetOut ? "次数已满" : "保持期未到")
+                      << "）keep " << IntentName(st.plan.intent) << std::endl;
+            return;
+        }
     }
 
     ++st.gen;
@@ -724,6 +756,12 @@ void CS2DGame::SanitizeCoachPlan(Team t, TeamPlan& plan) {
     const bool allOneSide = (sideA > 0 && sideB == 0) || (sideB > 0 && sideA == 0);
 
     auto reshapeDefault = [&]() {
+        // 记录 LLM 原意，便于区分"模型本来就没想法"与"被整形规则吃掉"
+        std::cout << "[Sanitize] " << TeamName(t) << " 整形: "
+                  << IntentName(plan.intent)
+                  << (plan.target.empty() ? "" : ("->" + plan.target))
+                  << " slots(A=" << sideA << ",B=" << sideB << ")"
+                  << " → 默认分兵" << std::endl;
         const std::string aSite  = AreaHint("A_Site");
         const std::string bSite  = AreaHint("B_Site");
         const std::string mid    = AreaHint("Mid");
@@ -796,7 +834,7 @@ void CS2DGame::SanitizeCoachPlan(Team t, TeamPlan& plan) {
         const std::string other = (side == "A") ? "B" : "A";
         const float heatSide  = intel_.HeatOfSide(world_.get(), side);
         const float heatOther = intel_.HeatOfSide(world_.get(), other);
-        if (intel_.ObservationCount() < 2 || heatSide - heatOther < 0.8f) {
+        if (intel_.ObservationCount() < 1 || heatSide - heatOther < 0.4f) {
             reshapeDefault();
             plan.reason += "（无情报不赌点）";
             std::cout << "[Coach] CT 防单点：stack_" << side
@@ -811,6 +849,16 @@ void CS2DGame::SanitizeCoachPlan(Team t, TeamPlan& plan) {
 void CS2DGame::CoachApplyPlan(Team t) {
     CoachState& st = CoachFor(t);
     if (!st.plan.valid) return;
+
+    // 度量：意图真的变了才算一次变更（HUD/日志里的 reason 抖动不算）
+    {
+        const int nowIntent = static_cast<int>(st.plan.intent);
+        if (st.appliedIntent >= 0 && nowIntent != st.appliedIntent) {
+            ++counters_.intentChanges;
+            st.lastIntentChangeSec = clockSec_;
+        }
+        st.appliedIntent = nowIntent;
+    }
 
     auto areaSiteIndex = [&](const std::string& area) -> int {
         if (area.empty() || !world_) return -1;
@@ -855,8 +903,9 @@ void CS2DGame::CoachApplyPlan(Team t) {
             std::uniform_real_distribution<float> jit(-18.0f, 18.0f);
             cx = bot.x + jit(rng_);
             cy = bot.y + jit(rng_);
-            SetBotGoal(i, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
+            // goalArea 必须在 SetBotGoal 之前写好：SetBotGoal 用它查战术表 [look] 的守点朝向
             ai.goalArea = std::string();
+            SetBotGoal(i, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
             // 计划点到达后不要退回默认包点：把小队岗位固定在当前点。
             squad_[i].site = -1;
             ++holdOk;
@@ -878,8 +927,8 @@ void CS2DGame::CoachApplyPlan(Team t) {
                     cy = sites[static_cast<size_t>(areaSite)].cy;
                 }
             }
+            ai.goalArea = so.area;   // 先写区域名，SetBotGoal 才能查到 [look] 朝向
             SetBotGoal(i, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
-            ai.goalArea = so.area;
             // 小队岗位与教练计划保持一致；计划点到达后继续守这个区域，
             // 而不是被 AssignSquadRoles 的轮转岗位拉回另一侧。
             squad_[i].site = areaSite;
@@ -935,8 +984,8 @@ void CS2DGame::CoachApplyPlan(Team t) {
             const size_t ci = static_cast<size_t>(bombCarrier_);
             auto& cai = AiAt(ci);
             auto& csq = squad_[ci];
+            cai.goalArea  = siteArea;   // 先写区域名，SetBotGoal 才能查到 [look] 朝向
             SetBotGoal(ci, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
-            cai.goalArea  = siteArea;
             csq.site      = siteIdx;
             csq.role      = BotRole::Entry;   // 跟突破组进点，而不是当断后
             csq.canRotate = false;
@@ -1119,6 +1168,8 @@ const char* CS2DGame::BuyPlanLabel(BuyPlan p) {
 //   4) 经济确实崩（已有阈值）
 bool CS2DGame::ShouldSaveNow(Team t) const {
     if (bombPlanted_) return false;
+    // 手枪局必须买：800 经济下"保枪"等于白送一回合，还会把买枪档位倒退成 Eco。
+    if (round_.RoundNumber() <= 1) return false;
     if (GetRoundElapsed() > 45.0f) return false;
     if (AliveCount(t) > AliveCount(TeamManager::Opponent(t))) return false;
 

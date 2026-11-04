@@ -170,4 +170,58 @@ constexpr float FocusCoverRadius    = 120.0f; // 掩护弱势队友的判定半�
 constexpr float FocusMateWeight     = 45.0f; // 集火偏好权重（每人）
 constexpr float FocusCoverWeight    = 60.0f; // 掩护偏好权重
 
+
+
+
+// ---------------------------------------------------------------------------
+// AI 行为增强（P0–P3）：近战 / 交火机动 / 投掷 / 支援 / 搜点 / 角色 / 指令
+// ---------------------------------------------------------------------------
+namespace ai {
+// 近战
+constexpr float MeleeReachBase   = 18.0f;   // 基础挥击距离
+constexpr float MeleeReachPerSize = 0.8f;   // 每个 body size 增加的触及距离
+constexpr float MeleeChaseRange  = 90.0f;   // 持刀时低于此距离主动贴近
+
+// 交火机动（滞回 + 沿墙滑动 + 短程寻路）
+constexpr float StrafeForwardGap = 65.0f;   // 超过 ideal+gap 才前进
+constexpr float StrafeBackGap    = 55.0f;   // 低于 ideal-gap 才后退
+constexpr float StrafeDirHold    = 0.75f;   // 侧拉方向保持秒数
+constexpr float StrafeDirLatch   = 0.50f;   // 前进/后退方向保持秒数
+constexpr float StrafeCombatPath = 260.0f;  // 交火中允许短程寻路的最大距离
+constexpr float StrafeSlideProbe = 12.0f;   // 沿墙滑动探测步长
+constexpr int   StrafeSlideAngles = 4;      // 探测角度数量（±45/±90）
+
+// 投掷物
+constexpr float NadeValidAngleStep = 15.0f; // 失败后尝试的角度步长（度）
+constexpr int   NadeValidTries      = 5;    // 最多尝试次数（含正向）
+constexpr float NadeLandingSlack    = 24.0f;// 落点可行走判定的容差
+constexpr float NadeMinLandingDist  = 60.0f;
+
+// 支援（队友交战中前压补枪）
+constexpr float AssistPushRadius    = 190.0f;  // 队友交火点距我方的最大距离
+constexpr float AssistPushMaxHealth = 70.0f;   // 队友血量低于此比例才支援（%）
+constexpr float AssistPushCooldown  = 10.0f;    // 同一 BOT 两次支援冷却
+constexpr float AssistPushHold      = 1.2f;    // 到达后停留时间
+
+// 搜点
+constexpr float SearchConfirmSec    = 1.0f;    // 进入区域后确认"已搜"的停留时间
+constexpr float SearchAreaRadius    = 160.0f;  // 判定"进入区域"的距离
+constexpr float SearchMaxDetour     = 420.0f;  // 为搜点最多绕行距离
+constexpr float SearchWindowSec     = 40.0f;   // 回合开始后可搜点的时间窗
+
+// 角色动态重算
+constexpr float RoleRefreshInterval = 2.0f;    // 重算间隔
+constexpr float RoleSwitchCooldown  = 8.0f;    // 同一 BOT 两次换角色的最短间隔
+constexpr float RoleTransitionSec   = 3.0f;    // 速度倍率过渡时间
+
+// 教练指令变更预算
+constexpr float IntentMinHold       = 10.0f;   // 意图最短保持
+constexpr int   IntentMaxChanges    = 2;       // 每回合最多变更次数
+constexpr float IntentChangeCooldown = 6.0f;   // 两次变更最短间隔
+constexpr float IntentRenewSec      = 8.0f;    // 到期续期时长
+constexpr float SilentSeconds       = 30.0f;   // 无接触多久算"沉默期"
+constexpr int   SameSideStreakLimit = 3;      // 连续同一侧打几次才强制换边（1=每两次必换）
+
+}  // namespace ai
+
 } // namespace Tuning
