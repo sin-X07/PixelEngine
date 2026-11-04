@@ -1,4 +1,5 @@
 #include "MatchHistory.hpp"
+#include "../Core/PathUtils.hpp"
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -27,8 +28,10 @@ int ToInt(const std::string& s) {
 
 std::vector<MatchRecord> Load(const std::string& path) {
     std::vector<MatchRecord> out;
-    std::ifstream in(path);
-    if (!in.is_open()) return out;
+    // 用 PathUtils 读：Windows 下用户的安装/存档路径可能含中文
+    std::string text;
+    if (!PathUtils::ReadFileText(path, text)) return out;
+    std::istringstream in(text);
 
     std::string line;
     while (std::getline(in, line)) {

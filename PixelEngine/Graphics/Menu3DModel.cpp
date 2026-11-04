@@ -170,11 +170,22 @@ bool Menu3DModel::Load(const std::string& path, const std::string& preferredAnim
     cgltf_options options{};
     cgltf_data* data = nullptr;
     const std::string resolved = PathUtils::ResolveProjectFile(path);
-    cgltf_result result = cgltf_parse_file(&options, resolved.c_str(), &data);
-    if (result != cgltf_result_success || !data) {
-        lastError_ = "cgltf_parse_file failed: " + resolved;
+
+    // 自己读文件再 cgltf_parse：cgltf_parse_file 用的是 fopen，Windows 下
+    // 路径含非 ASCII（例如 C:\Users\中文名\...）会直接失败。
+    // bytes 必须在整个 Load 期间存活：cgltf 的字符串/视图指向这块内存。
+    std::vector<uint8_t> bytes;
+    if (!PathUtils::ReadFileBytes(resolved, bytes) || bytes.empty()) {
+        lastError_ = "读取模型文件失败: " + resolved;
         return false;
     }
+    cgltf_result result = cgltf_parse(&options, bytes.data(), bytes.size(), &data);
+    if (result != cgltf_result_success || !data) {
+        lastError_ = "cgltf_parse failed: " + resolved;
+        return false;
+    }
+    // 模型内嵌 base64 buffer（data: URI），不会再去读外部文件；
+    // 仍传入路径以便将来支持外置 .bin。
     result = cgltf_load_buffers(&options, data, resolved.c_str());
     if (result != cgltf_result_success) {
         lastError_ = "cgltf_load_buffers failed";
