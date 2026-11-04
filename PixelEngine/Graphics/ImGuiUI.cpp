@@ -123,26 +123,12 @@ bool ImGuiUI::Initialize(SDL_Window* win, SDL_Renderer* ren) {
 #endif
     // [global] font= 指定路径优先（若有效）
     std::string chosen;
-    if (!fontPathOverride.empty()) {
-        FILE* f = nullptr;
-#ifdef _WIN32
-        if (fopen_s(&f, fontPathOverride.c_str(), "rb") == 0 && f) {
-#else
-        if ((f = fopen(fontPathOverride.c_str(), "rb")) != nullptr) {
-#endif
-            fclose(f);
-            chosen = fontPathOverride;
-        }
+    if (!fontPathOverride.empty() && PathUtils::FileExists(fontPathOverride)) {
+        chosen = fontPathOverride;
     }
     if (chosen.empty()) {
         for (const char* p : fontPaths) {
-            FILE* f = nullptr;
-#ifdef _WIN32
-            if (fopen_s(&f, p, "rb") == 0 && f) {
-#else
-            if ((f = fopen(p, "rb")) != nullptr) {
-#endif
-                fclose(f);
+            if (PathUtils::FileExists(p)) {
                 chosen = p;
                 break;
             }

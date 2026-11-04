@@ -214,11 +214,9 @@ std::string CleanPlaybookText(std::string raw) {
 
 std::string ReadPlaybookFile(const std::string& relPath) {
     const std::string path = PathUtils::ResolveAppPath(relPath);
-    std::ifstream in(path);
-    if (!in) return {};
-    std::ostringstream buf;
-    buf << in.rdbuf();
-    std::string cleaned = CleanPlaybookText(buf.str());
+    std::string text;
+    if (!PathUtils::ReadFileText(path, text)) return {};
+    std::string cleaned = CleanPlaybookText(text);
     if (!cleaned.empty()) {
         std::cout << "[Coach] 已加载战术库 (" << cleaned.size()
                   << " bytes): " << path << std::endl;
