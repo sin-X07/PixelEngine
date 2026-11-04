@@ -162,3 +162,41 @@ build-dev/dev_replay_runner.exe --replay=session.journal --hash=played.hash.txt
 
 判断规则：**两项以上同向变好、且没有明显恶化**才算变好；
 胜率上升但冲突/发呆上升 = 可疑。
+## 决策 trace（开发期）
+
+```bash
+build-dev/dev_replay_runner.exe --ticks=150000 --seed=1 --map=dust_2 \
+    --trace=build-evidence/trace.csv
+```
+
+只在**决策发生变化**时写一行（不是每 tick），字段：
+
+```
+tick,round,bot,team,kind,key,area,x,y
+1126,1,2,1,target,6,Mid,589.5,447.0     # 锁定 6 号敌人
+1126,1,2,1,stance,1,Mid,589.5,447.0     # 姿态 = Aggressive
+1126,1,2,1,goal,2,Mid,589.5,447.0       # 目标来源 = Coach，驻守点 Mid
+```
+
+`kind` ∈ `target / stance / maneuver / goal / defusing`；`goal` 的 `key` 是来源
+（0=Squad 1=Squad? 见 GoalSource：0=None 1=Squad 2=Coach）。
+
+用途：
+- 回答"这局为什么蹲 A 不去 B"——看该 BOT 的 `goal` 行与来源；
+- 统计分支命中率（哪类决策最常发生）；
+- 作为 LLM 的 few-shot / 行为克隆样本（状态 + 决策 + 结果都在 replay/指标里）。
+
+**零副作用**：trace 开关不影响哈希（已用同种子开/关对比验证）。
+
+## 路径效率分桶
+
+`path_eff` 会被大量短距离微调稀释，因此额外输出三档：
+
+| 列 | 含义 | 参考值（基线） |
+| --- | --- | --- |
+| `path_eff_short` | episode 直线 < 120px | 0.10–0.12 |
+| `path_eff_mid` | 120–400px | 0.51–0.68 |
+| `path_eff_long` | > 400px | 0.82–0.85 |
+
+读法：**长距离**才是"会不会走路"的指标（0.82–0.85 说明跨图寻路基本是直线）；
+短距离低是正常的（绕角、让位、微调）。

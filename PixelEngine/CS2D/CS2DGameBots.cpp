@@ -20,6 +20,82 @@
 // 现在：所有写入都走这里，来源优先级 Coach > Squad，低优先级不覆盖高优先级，
 // 并把 squad_ 镜像字段一起更新，保证只存在一个真源。
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// 决策 trace：只在「决策发生变化」时写一行，因此体积小、可读性强。
+// 记录内容：目标 / 姿态 / 机动 / 驻守点（含来源）/ 拆包状态。
+// 关闭时（decisionTrace_ == nullptr）整个函数只有一次判空。
+// ---------------------------------------------------------------------------
+void CS2DGame::EnableDecisionTrace(const std::string& path) {
+    CloseDecisionTrace();
+    decisionTrace_ = std::fopen(path.c_str(), "wb");
+    if (!decisionTrace_) {
+        std::cerr << "[Trace] 无法写入: " << path << std::endl;
+        return;
+    }
+    std::fprintf(decisionTrace_,
+                 "tick,round,bot,team,kind,key,area,x,y\n");
+    std::cout << "[Trace] 决策 trace 已开启: " << path << std::endl;
+}
+
+void CS2DGame::CloseDecisionTrace() {
+    if (!decisionTrace_) return;
+    std::fclose(decisionTrace_);
+    decisionTrace_ = nullptr;
+}
+
+void CS2DGame::TraceBotDecision(size_t i, const Player* target) {
+    if (!decisionTrace_ || i >= bots_.size()) return;
+    auto& ai = AiAt(i);
+    const Player& b = bots_[i];
+
+    int targetIdx = -2;
+    if (target) {
+        if (target == &player_) targetIdx = -1;
+        else {
+            for (size_t j = 0; j < bots_.size(); ++j) {
+                if (&bots_[j] == target) { targetIdx = static_cast<int>(j); break; }
+            }
+        }
+    }
+    const int stance   = static_cast<int>(ai.stance);
+    const int maneuver = static_cast<int>(ai.maneuver);
+    const int goalSrc  = static_cast<int>(ai.goalSource);
+    const int team     = static_cast<int>(b.team);
+
+    auto emit = [&](const char* kind, const std::string& key) {
+        std::fprintf(decisionTrace_, "%llu,%d,%zu,%d,%s,%s,%s,%.1f,%.1f\n",
+                     static_cast<unsigned long long>(traceTick_), GetRoundNumber(),
+                     i, team, kind, key.c_str(), ai.goalArea.c_str(),
+                     ai.planHoldX, ai.planHoldY);
+    };
+
+    if (targetIdx != ai.traceTarget) {
+        emit("target", targetIdx < 0 ? "none" : std::to_string(targetIdx));
+        ai.traceTarget = targetIdx;
+    }
+    if (stance != ai.traceStance) {
+        emit("stance", std::to_string(stance));
+        ai.traceStance = stance;
+    }
+    if (maneuver != ai.traceManeuver) {
+        emit("maneuver", std::to_string(maneuver));
+        ai.traceManeuver = maneuver;
+    }
+    const bool goalChanged =
+        goalSrc != ai.traceGoalSrc ||
+        std::fabs(ai.planHoldX - ai.traceGoalX) > 1.0f ||
+        std::fabs(ai.planHoldY - ai.traceGoalY) > 1.0f;
+    if (goalChanged) {
+        emit("goal", ai.hasPlanHold ? std::to_string(goalSrc) : "none");
+        ai.traceGoalSrc = goalSrc;
+        ai.traceGoalX   = ai.planHoldX;
+        ai.traceGoalY   = ai.planHoldY;
+    }
+    if (ai.defusing != ai.traceDefusing) {
+        emit("defusing", ai.defusing ? "1" : "0");
+        ai.traceDefusing = ai.defusing;
+    }
+}
 void CS2DGame::SetBotGoal(size_t i, float x, float y,
                           BotRuntime::GoalSource src, bool force) {
     if (i >= bots_.size()) return;
@@ -1123,6 +1199,8 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                           static_cast<int>(i));
             }
         }
+        // 决策 trace（dev-only）：只在决策变化时写一行，关闭时零开销
+        TraceBotDecision(i, target);
     }
 
     // 死斗模式：BOT 阵亡后自动重生；团队模式由回合开始统一重生

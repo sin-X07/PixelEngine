@@ -844,6 +844,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
                       bool wPressed, bool aPressed, bool sPressed, bool dPressed,
                       bool shiftPressed, bool rPressed, bool interactHeld,
                       AudioManager* audio) {
+    ++traceTick_;
     // ---- 观察者输入：空格切换视角，左右键切换队友，自由视角用 WASD ----
     if (IsSpectating()) {
         static bool prevSpace = false, prevLmb = false, prevRmb = false;

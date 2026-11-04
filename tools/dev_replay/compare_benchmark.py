@@ -59,6 +59,8 @@ def stats(rows):
     return dict(n=n, t=t, ct=ct, rounds=rounds, avg_round=avg_round,
                 plants=plants, defuses=defuses, pk=pk, pd=pd,
                 still=avg("still_pct"), idle=avg("idle_pct"),
+                path_short=avg("path_eff_short"), path_mid=avg("path_eff_mid"),
+                path_long=avg("path_eff_long"),
                 path_eff=avg("path_eff"), damage=avg("dmg_per_round"),
                 fb_win=avg("fb_win_pct"), plant_near=avg("plant_near"),
                 defuse_near=avg("defuse_near"), conflicts=avg("ai_conflicts"))
@@ -136,6 +138,9 @@ def main():
         d_still = quality("still", "原地不动占比", "{:.1f}", "%")
         d_idle = quality("idle", "发呆占比", "{:.1f}", "%")
         d_eff = quality("path_eff", "路径效率", "{:.2f}")
+        quality("path_short", "  短距离(<120)", "{:.2f}")
+        quality("path_mid", "  中距离(120-400)", "{:.2f}")
+        quality("path_long", "  长距离(>400)", "{:.2f}")
         d_dmg = quality("damage", "每回合伤害", "{:.0f}")
         d_fb = quality("fb_win", "首杀转化率", "{:.1f}", "%")
         quality("plant_near", "下包点人数", "{:.2f}")

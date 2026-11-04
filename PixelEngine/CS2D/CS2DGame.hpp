@@ -16,6 +16,7 @@
 #include "../Core/PresentationContract.hpp"
 #include <SDL2/SDL.h>
 #include <string>
+#include <cstdio>
 #include <vector>
 #include <deque>
 #include <mutex>
@@ -325,6 +326,14 @@ public:
         bool  hasPlanHold = false;
         float planHoldX = 0.0f, planHoldY = 0.0f;
         std::string goalArea;
+
+        // ---- 决策 trace 的上一帧快照（仅在开启 trace 时写入，不影响玩法）----
+        int   traceTarget   = -2;    // 上一帧锁定的敌人（-2 无）
+        int   traceStance   = 0;
+        int   traceManeuver = 0;
+        int   traceGoalSrc  = 0;
+        float traceGoalX    = 0.0f, traceGoalY = 0.0f;
+        bool  traceDefusing = false;
     };
 
     struct Bullet {
@@ -408,6 +417,12 @@ public:
     // 当前地图 id（与 MapCatalog / coach/<mapId>.txt 对齐）
     const std::string& GetMapId() const { return mapId_; }
     const TacticsTable& Tactics() const { return tactics_; }
+
+    // ---- 决策 trace（开发期）：把 BOT 的决策变化写成 CSV，用于解释"为什么这么走" ----
+    // 只在显式开启时写文件；关闭时零开销、零行为影响。
+    void EnableDecisionTrace(const std::string& path);
+    void TraceBotDecision(size_t i, const Player* target);   // 内部：有变化才写一行
+    void CloseDecisionTrace();
     // 当前地图使用的战术库 id（MapCatalog.playbook 可覆盖；空时同 mapId_）
     const std::string& GetPlaybookId() const { return playbookId_; }
 
@@ -814,6 +829,8 @@ private:
     CS2DRenderer* renderer_ = nullptr;
     std::string mapId_;            // 如 dust_2 / ancient_ruins / mirage
     TacticsTable tactics_;         // 每图战术表（areas / slots），缺失则回退代码默认
+    std::FILE* decisionTrace_ = nullptr;   // 决策 trace 输出（dev-only，nullptr=关闭）
+    uint64_t   traceTick_ = 0;             // 当前 tick（由 Update 递增）
     std::string playbookId_;       // 战术库文件名（不含 .txt）；空则回退 mapId_
     std::string mapSourcePath_;    // LoadMap 时的 resolved TMJ 路径
 
