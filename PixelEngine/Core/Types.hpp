@@ -14,6 +14,7 @@ enum GameState {
     SETTINGS,       // 设置
     PLAYING,        // 对局中
     PAUSED,         // 暂停
+    RESTART_CONFIRM,// 重新开始确认（与退出确认同为独立页面，共用全局黑场转场）
     EXIT_CONFIRM    // 退出确认
 };
 

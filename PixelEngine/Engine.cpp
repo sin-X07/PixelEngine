@@ -771,7 +771,7 @@ void Engine::HandleInput() {
         } else if (currentState == SETTINGS) {
             SaveAudioConfig();
             currentState = settingsReturnState;
-        } else if (currentState == EXIT_CONFIRM) {
+        } else if (currentState == RESTART_CONFIRM || currentState == EXIT_CONFIRM) {
             currentState = PAUSED;
         } else if (currentState == MAP_SELECT || currentState == HISTORY) {
             currentState = MAIN_MENU;
@@ -1731,6 +1731,7 @@ void Engine::Render() {
     SDL_RenderClear(renderer);
 
     const bool gameplayVisible = (currentState == PLAYING || currentState == PAUSED ||
+                                  currentState == RESTART_CONFIRM ||
                                   currentState == EXIT_CONFIRM);
 
     if (gameplayVisible && !holdOldPage) {
@@ -1770,7 +1771,8 @@ void Engine::Render() {
         }
         gameUI->DrawMapSelect(mctx, BuildActions());
     } else if (currentState == MAIN_MENU || currentState == SETTINGS ||
-        currentState == PAUSED    || currentState == EXIT_CONFIRM) {
+        currentState == PAUSED    || currentState == RESTART_CONFIRM ||
+        currentState == EXIT_CONFIRM) {
         GameUI::MenuCtx ctx;
         ctx.state              = currentState;
         ctx.settingsReturnState = settingsReturnState;

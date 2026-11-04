@@ -401,38 +401,6 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
     }
     // ---------------- 暂停 ----------------
     else if (ctx.state == PAUSED) {
-        // 确认状态只属于这次暂停：离开暂停页（如 ESC 继续游戏）后再回来要回到按钮列表
-        static bool restartConfirm = false;
-        static float pageAlpha = 1.0f;
-        static int pendingChoice = 0; // 1=open, 2=back, 3=restart
-        static int  lastPausedFrame = -2;
-        const int frame = ImGui::GetFrameCount();
-        if (frame != lastPausedFrame + 1) {
-            restartConfirm = false;
-            pageAlpha = 1.0f;
-            pendingChoice = 0;
-        }
-        lastPausedFrame = frame;
-        const float step = ImGui::GetIO().DeltaTime / 0.15f;
-        if (pendingChoice) {
-            pageAlpha = std::max(0.0f, pageAlpha - step);
-            if (pageAlpha == 0.0f) {
-                const int choice = pendingChoice;
-                pendingChoice = 0;
-                restartConfirm = choice == 1;
-                if (choice == 3) actions.startMatch();
-            }
-        } else pageAlpha = std::min(1.0f, pageAlpha + step);
-        ImDrawList* pageDrawList = ImGui::GetWindowDrawList();
-        const int firstVertex = pageDrawList->VtxBuffer.Size;
-        ImGui::BeginDisabled(pendingChoice != 0 || pageAlpha < 1.0f);
-
-        if (restartConfirm) {
-            const int choice = confirmPage("确认重新开始", "当前对局进度将不会被保存",
-                                           "返回", "重新开始");
-            if (choice == 1) doClick([&] { pendingChoice = 2; });
-            if (choice == 2) doClick([&] { pendingChoice = 3; });
-        } else {
         // 标题 + 5 个按钮整块垂直居中
         const float vpH = viewport->WorkSize.y;
         const float sp  = ImGui::GetStyle().ItemSpacing.y;
@@ -450,20 +418,19 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 
         ImGui::SetCursorPosY(yLocal + titleH + gap1);
         if (bigButton("继续游戏")) doClick([&] { actions.resumeGame(); });
-        if (bigButton("重新开始")) doClick([&] { pendingChoice = 1; });
+        // 重新开始确认走独立页面（RESTART_CONFIRM），与「退出游戏」一致使用全局黑场转场；
+        // 不再用页内 alpha 淡出，避免与设置等页面切换动画不一致。
+        if (bigButton("重新开始")) doClick([&] { actions.goState(RESTART_CONFIRM); });
         if (bigButton("设置"))     doClick([&] { actions.openSettings(PAUSED); });
         if (bigButton("退出游戏")) doClick([&] { actions.confirmExit(false); });
         if (bigButton("退出桌面")) doClick([&] { actions.confirmExit(true); });
-        }
-        ImGui::EndDisabled();
-        // Fade explicit draw-list colors as well as ImGui widgets.
-        const float alpha = pageAlpha * pageAlpha * (3.0f - 2.0f * pageAlpha);
-        for (int v = firstVertex; v < pageDrawList->VtxBuffer.Size; ++v) {
-            ImU32& color = pageDrawList->VtxBuffer[v].col;
-            const unsigned oldAlpha = (color >> IM_COL32_A_SHIFT) & 0xff;
-            color = (color & ~(0xffu << IM_COL32_A_SHIFT)) |
-                (static_cast<unsigned>(oldAlpha * alpha) << IM_COL32_A_SHIFT);
-        }
+    }
+    // ---------------- 重新开始确认 ----------------
+    else if (ctx.state == RESTART_CONFIRM) {
+        const int choice = confirmPage("确认重新开始", "当前对局进度将不会被保存",
+                                       "返回", "重新开始");
+        if (choice == 1) doClick([&] { actions.goState(PAUSED); });
+        if (choice == 2) doClick([&] { actions.startMatch(); });
     }
     // ---------------- 退出确认 ----------------
     else if (ctx.state == EXIT_CONFIRM) {
