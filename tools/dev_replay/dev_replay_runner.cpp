@@ -51,6 +51,7 @@ struct Options {
     std::string replayPath;                 // 非空 → 回放模式
     std::string dumpPath;                   // 调试：逐 tick 状态 dump
     std::string conflictsPath;             // 非空 → 写 AI 冲突 CSV
+    std::string tracePath;                 // 非空 → 写 BOT 决策 trace（开发期解释"为什么这么走"）
     std::vector<std::string> conflictIgnore;   // 按 kind 忽略
     bool enableNoisyConflicts = false;         // 开启 duplicate_hold 等高噪声规则
 };
@@ -66,6 +67,7 @@ Options ParseArgs(int argc, char** argv) {
         else if (a.rfind("--out=", 0) == 0)      o.outDir = a.substr(6);
         else if (a.rfind("--tag=", 0) == 0)      o.tag = a.substr(6);
         else if (a.rfind("--conflicts=", 0) == 0) o.conflictsPath = a.substr(12);
+        else if (a.rfind("--trace=", 0) == 0) o.tracePath = a.substr(8);
         else if (a.rfind("--journal=", 0) == 0) o.journalPath = a.substr(10);
         else if (a.rfind("--replay=", 0) == 0) o.replayPath = a.substr(9);
         else if (a.rfind("--dump=", 0) == 0) o.dumpPath = a.substr(7);
@@ -145,6 +147,7 @@ struct Summary {
     double stillPct = 0.0, idlePct = 0.0, pathEff = 0.0;
     double damagePerRound = 0.0, fbWinPct = 0.0;
     double plantNear = 0.0, defuseNear = 0.0;
+    double pathShort = 0.0, pathMid = 0.0, pathLong = 0.0;
     int lastTick_ = 0;
 };
 
@@ -218,6 +221,7 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
     sp.aimErrorDeg = opt.aimErrorDeg;
     dev_replay::ScriptedPlayer script(sp);
 
+    if (!opt.tracePath.empty()) game.EnableDecisionTrace(opt.tracePath);
     dev_replay::RoundTracker tracker;
     tracker.Begin(game, 0);
 
@@ -282,6 +286,7 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
     if (hashFile) std::fclose(hashFile);
     if (conflictFile) std::fclose(conflictFile);
     if (dumpFile) std::fclose(dumpFile);
+    game.CloseDecisionTrace();
     s.conflicts = conflicts.Total();
     tracker.Finish(game, static_cast<uint64_t>(lastTick_ + 1));
 
@@ -314,6 +319,7 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
     s.rounds = static_cast<int>(rows.size());
     if (!rows.empty()) {
         double still = 0, idle = 0, eff = 0, dmg = 0, fbw = 0, pn = 0, dn = 0;
+        double effS = 0, effM = 0, effL = 0; int nS = 0, nM = 0, nL = 0;
         int fbRounds = 0;
         for (const auto& r : rows) {
             still += (r.stillRatioT + r.stillRatioCT) * 0.5;
@@ -323,6 +329,9 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
             if (r.firstBloodTeam != Team::None) { fbw += r.fbWinnerMatched ? 1.0 : 0.0; ++fbRounds; }
             pn += r.plantNearT;
             dn += r.defuseNearCT;
+            if (r.pathNShort > 0) { effS += r.pathEffShort; ++nS; }
+            if (r.pathNMid   > 0) { effM += r.pathEffMid;   ++nM; }
+            if (r.pathNLong  > 0) { effL += r.pathEffLong;  ++nL; }
         }
         const double n = static_cast<double>(rows.size());
         s.stillPct = still / n;
@@ -332,6 +341,9 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
         s.fbWinPct = fbRounds > 0 ? fbw / static_cast<double>(fbRounds) : 0.0;
         s.plantNear = pn / n;
         s.defuseNear = dn / n;
+        s.pathShort = nS > 0 ? effS / nS : 0.0;
+        s.pathMid   = nM > 0 ? effM / nM : 0.0;
+        s.pathLong  = nL > 0 ? effL / nL : 0.0;
     }
     s.avgRoundTicks = rows.empty() ? 0.0 : sumTicks / static_cast<double>(rows.size());
     s.scoreT = game.GetScoreT();
@@ -460,7 +472,8 @@ int main(int argc, char** argv) {
     std::fprintf(summary,
                  "map,seed,winner,score_t,score_ct,rounds,ticks,avg_round_ticks,"
                  "plants,defuses,player_kills,player_deaths,ai_conflicts,still_pct,idle_pct,"
-                 "path_eff,dmg_per_round,fb_win_pct,plant_near,defuse_near,final_hash\n");
+                 "path_eff,path_eff_short,path_eff_mid,path_eff_long,"
+                 "dmg_per_round,fb_win_pct,plant_near,defuse_near,final_hash\n");
 
     int games = 0, tWins = 0, ctWins = 0, failed = 0;
     double sumAvgRoundTicks = 0.0;
@@ -479,11 +492,12 @@ int main(int argc, char** argv) {
             sumPlants += s.plants;
             sumDefuses += s.defuses;
             std::fprintf(summary,
-                         "%s,%d,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%d,%d,%.1f,%.1f,%.2f,%.0f,%.1f,%.2f,%.2f,%016" PRIx64 "\n",
+                         "%s,%d,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%d,%d,%.1f,%.1f,%.2f,%.2f,%.2f,%.2f,%.0f,%.1f,%.2f,%.2f,%016" PRIx64 "\n",
                          s.map.c_str(), s.seed, dev_replay::TeamTag(s.winner),
                          s.scoreT, s.scoreCT, s.rounds, s.ticks, s.avgRoundTicks,
                          s.plants, s.defuses, s.playerKills, s.playerDeaths, s.conflicts,
-                         s.stillPct * 100, s.idlePct * 100, s.pathEff, s.damagePerRound,
+                         s.stillPct * 100, s.idlePct * 100, s.pathEff,
+                         s.pathShort, s.pathMid, s.pathLong, s.damagePerRound,
                          s.fbWinPct * 100, s.plantNear, s.defuseNear, s.finalHash);
         }
     }

@@ -224,15 +224,48 @@ buy_t, buy_ct, plant_near_t, defuse_near_ct
 2. PR 描述里写清"改了哪个指标、变化多少、为什么这是预期"；
 3. 合并到 main 后，用新 commit 重跑 60 局并覆盖基线。
 
-### 刷新命令
+### 刷新命令（一条）
 
 ```powershell
-build-dev\dev_replay_runner.exe --ticks=150000 `
-  --maps=dust_2,mirage,ancient_ruins --seeds=1-20 `
-  --out=build-evidence\baseline-gen --tag=$(git rev-parse --short HEAD)
-
-Copy-Item build-evidence\baseline-gen\summary.csv tools\dev_replay\baseline\summary.csv -Force
+powershell -ExecutionPolicy Bypass -File tools\refresh_baseline.ps1
 ```
+
+它做四件事：跑 60 局（约 30 秒）→ 旧基线备份为 `summary.prev.csv` →
+覆盖 `tools\dev_replay\baseline\summary.csv` → 打印**新旧指标对照**和下一步 git 命令。
+
+可选参数：
+
+| 参数 | 作用 |
+| --- | --- |
+| `-Seeds 1-10` | 只跑 30 局（更快，但噪声更大） |
+| `-Tag v0.3.0` | 把版本号写进基线头（默认当前 commit） |
+| `-Runner <path>` | 用别的 runner |
+
+真实输出示例：
+
+```
+==> 新旧基线对照
+    指标             旧 tag=6a8554b 新 tag=137839a         变化
+    局数                       60           60       0.00
+    T 胜率                  45.0%        40.0%      -0.05
+    下包/局                  10.72        10.82      +0.10
+    原地不动                   35.1         30.0      -5.14
+    发呆                     10.2          0.5      -9.72
+    路径效率                   0.63         0.47      -0.16
+    每回合伤害                   792          795      +2.45
+    AI 冲突/局                1.05         0.05      -1.00
+```
+
+确认无误后：
+
+```powershell
+git add tools/dev_replay/baseline/summary.csv
+git commit -m "chore(baseline): 刷新基准 tag=<sha>"
+git push
+```
+
+> 注意：**基线要在行为改动合并到 main 之后、在 main 上刷新**。
+> 在功能分支上刷新会得到指向临时 commit 的基线，合并后就对不上了。
 
 ### 纪律
 

@@ -4,6 +4,7 @@
 #include "CS2DRenderer.hpp"
 #include "Teams/TeamManager.hpp"
 #include "Coach/CoachTypes.hpp"
+#include "Coach/TacticsTable.hpp"
 #include "TacticalIntel.hpp"
 #include "SoundEvents.hpp"
 #include "Rounds/RoundManager.hpp"
@@ -15,6 +16,7 @@
 #include "../Core/PresentationContract.hpp"
 #include <SDL2/SDL.h>
 #include <string>
+#include <cstdio>
 #include <vector>
 #include <deque>
 #include <mutex>
@@ -316,10 +318,22 @@ public:
         float lastX = 0.0f, lastY = 0.0f;
         float stuckTimer = 0.0f;
 
-        // 教练计划指定的驻守点（hasPlanHold=true 时优先于默认目标）
+        // ---- 目标（唯一真源）----
+        // 教练计划与小队轮转都可能给出驻守点；两者统一经 SetBotGoal() 写入，
+        // 来源优先级 Coach > Squad，避免两套目标互相覆盖（曾长期产生 dual_goal 冲突）。
+        enum class GoalSource : unsigned char { None = 0, Squad = 1, Coach = 2 };
+        GoalSource goalSource = GoalSource::None;
         bool  hasPlanHold = false;
         float planHoldX = 0.0f, planHoldY = 0.0f;
         std::string goalArea;
+
+        // ---- 决策 trace 的上一帧快照（仅在开启 trace 时写入，不影响玩法）----
+        int   traceTarget   = -2;    // 上一帧锁定的敌人（-2 无）
+        int   traceStance   = 0;
+        int   traceManeuver = 0;
+        int   traceGoalSrc  = 0;
+        float traceGoalX    = 0.0f, traceGoalY = 0.0f;
+        bool  traceDefusing = false;
     };
 
     struct Bullet {
@@ -402,6 +416,13 @@ public:
 
     // 当前地图 id（与 MapCatalog / coach/<mapId>.txt 对齐）
     const std::string& GetMapId() const { return mapId_; }
+    const TacticsTable& Tactics() const { return tactics_; }
+
+    // ---- 决策 trace（开发期）：把 BOT 的决策变化写成 CSV，用于解释"为什么这么走" ----
+    // 只在显式开启时写文件；关闭时零开销、零行为影响。
+    void EnableDecisionTrace(const std::string& path);
+    void TraceBotDecision(size_t i, const Player* target);   // 内部：有变化才写一行
+    void CloseDecisionTrace();
     // 当前地图使用的战术库 id（MapCatalog.playbook 可覆盖；空时同 mapId_）
     const std::string& GetPlaybookId() const { return playbookId_; }
 
@@ -486,6 +507,13 @@ public:
     const BotRuntime& AiAt(size_t i) const;
     size_t AiIndexOf(const Player& p) const;
     void   ResetBotAi(size_t i);
+
+    // ---- 目标唯一写入入口 ----
+    // 所有"该去哪守着"的写入（教练计划 / 小队轮转 / 游走换点）都必须走这里：
+    // 来源优先级 Coach > Squad，低优先级不会覆盖高优先级；同时同步 squad_ 的镜像字段，
+    // 保证 hasPlanHold/planHold 与 hasHold/hold 永远一致。
+    void SetBotGoal(size_t i, float x, float y, BotRuntime::GoalSource src, bool force = false);
+    void ClearBotGoal(size_t i);
 
     // ---- 目标物（爆破）----
     bool  IsBombPlanted()   const { return bombPlanted_; }
@@ -800,6 +828,9 @@ private:
     VisibilityQuery visibility_;   // 视线/视野判定的唯一实现（无 SDL 依赖）
     CS2DRenderer* renderer_ = nullptr;
     std::string mapId_;            // 如 dust_2 / ancient_ruins / mirage
+    TacticsTable tactics_;         // 每图战术表（areas / slots），缺失则回退代码默认
+    std::FILE* decisionTrace_ = nullptr;   // 决策 trace 输出（dev-only，nullptr=关闭）
+    uint64_t   traceTick_ = 0;             // 当前 tick（由 Update 递增）
     std::string playbookId_;       // 战术库文件名（不含 .txt）；空则回退 mapId_
     std::string mapSourcePath_;    // LoadMap 时的 resolved TMJ 路径
 
@@ -895,6 +926,9 @@ private:
     void CoachOnEvent(Team t, CoachEventType type, const std::string& area = std::string());
     void CoachThink(Team t, const CoachEvent& ev);
     TeamPlan RuleCoach(Team t, const CoachEvent& ev);
+    // 规则教练的原始实现；外面套一层战术表覆盖（见 CS2DGameCoach.cpp）
+    TeamPlan RuleCoachCore(Team t, const CoachEvent& ev);
+    void ApplyTacticsSlots(Team t, TeamPlan& plan);
     void CoachApplyPlan(Team t);
     void SanitizeCoachPlan(Team t, TeamPlan& plan);   // 防单点/防重复的兜底整形
     void CoachRecordRound(Team t, bool won);

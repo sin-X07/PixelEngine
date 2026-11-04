@@ -11,6 +11,124 @@
 // 回答「这个 BOT 这一帧做什么」
 // ============================================================================
 
+// ---------------------------------------------------------------------------
+// 目标唯一写入入口
+//
+// 背景：教练计划写 ai.planHold*，小队轮转会写 squad_[i].hold*，两边各写各的，
+// 导致同一 BOT 同时存在两个相距很远的"驻守点"（dual_goal 冲突），
+// 决策树只能在两套字段间隐式挑一个，行为随刷新时序抖动。
+// 现在：所有写入都走这里，来源优先级 Coach > Squad，低优先级不覆盖高优先级，
+// 并把 squad_ 镜像字段一起更新，保证只存在一个真源。
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// 决策 trace：只在「决策发生变化」时写一行，因此体积小、可读性强。
+// 记录内容：目标 / 姿态 / 机动 / 驻守点（含来源）/ 拆包状态。
+// 关闭时（decisionTrace_ == nullptr）整个函数只有一次判空。
+// ---------------------------------------------------------------------------
+void CS2DGame::EnableDecisionTrace(const std::string& path) {
+    CloseDecisionTrace();
+    decisionTrace_ = std::fopen(path.c_str(), "wb");
+    if (!decisionTrace_) {
+        std::cerr << "[Trace] 无法写入: " << path << std::endl;
+        return;
+    }
+    std::fprintf(decisionTrace_,
+                 "tick,round,bot,team,kind,key,area,x,y\n");
+    std::cout << "[Trace] 决策 trace 已开启: " << path << std::endl;
+}
+
+void CS2DGame::CloseDecisionTrace() {
+    if (!decisionTrace_) return;
+    std::fclose(decisionTrace_);
+    decisionTrace_ = nullptr;
+}
+
+void CS2DGame::TraceBotDecision(size_t i, const Player* target) {
+    if (!decisionTrace_ || i >= bots_.size()) return;
+    auto& ai = AiAt(i);
+    const Player& b = bots_[i];
+
+    int targetIdx = -2;
+    if (target) {
+        if (target == &player_) targetIdx = -1;
+        else {
+            for (size_t j = 0; j < bots_.size(); ++j) {
+                if (&bots_[j] == target) { targetIdx = static_cast<int>(j); break; }
+            }
+        }
+    }
+    const int stance   = static_cast<int>(ai.stance);
+    const int maneuver = static_cast<int>(ai.maneuver);
+    const int goalSrc  = static_cast<int>(ai.goalSource);
+    const int team     = static_cast<int>(b.team);
+
+    auto emit = [&](const char* kind, const std::string& key) {
+        std::fprintf(decisionTrace_, "%llu,%d,%zu,%d,%s,%s,%s,%.1f,%.1f\n",
+                     static_cast<unsigned long long>(traceTick_), GetRoundNumber(),
+                     i, team, kind, key.c_str(), ai.goalArea.c_str(),
+                     ai.planHoldX, ai.planHoldY);
+    };
+
+    if (targetIdx != ai.traceTarget) {
+        emit("target", targetIdx < 0 ? "none" : std::to_string(targetIdx));
+        ai.traceTarget = targetIdx;
+    }
+    if (stance != ai.traceStance) {
+        emit("stance", std::to_string(stance));
+        ai.traceStance = stance;
+    }
+    if (maneuver != ai.traceManeuver) {
+        emit("maneuver", std::to_string(maneuver));
+        ai.traceManeuver = maneuver;
+    }
+    const bool goalChanged =
+        goalSrc != ai.traceGoalSrc ||
+        std::fabs(ai.planHoldX - ai.traceGoalX) > 1.0f ||
+        std::fabs(ai.planHoldY - ai.traceGoalY) > 1.0f;
+    if (goalChanged) {
+        emit("goal", ai.hasPlanHold ? std::to_string(goalSrc) : "none");
+        ai.traceGoalSrc = goalSrc;
+        ai.traceGoalX   = ai.planHoldX;
+        ai.traceGoalY   = ai.planHoldY;
+    }
+    if (ai.defusing != ai.traceDefusing) {
+        emit("defusing", ai.defusing ? "1" : "0");
+        ai.traceDefusing = ai.defusing;
+    }
+}
+void CS2DGame::SetBotGoal(size_t i, float x, float y,
+                          BotRuntime::GoalSource src, bool force) {
+    if (i >= bots_.size()) return;
+    auto& ai = AiAt(i);
+
+    // T 进攻期（未下包）允许小队轮转覆盖教练的"区域站位点"：
+    // 教练给的往往是集结/架枪区域，真正往里压的包点由小队轮转持续校正。
+    // CT 与下包后的守包阶段则以教练计划为准，不被轮转拉回。
+    const bool tAttacking = (bots_[i].team == Team::T && !bombPlanted_);
+
+    if (!force && ai.hasPlanHold && !tAttacking &&
+        static_cast<int>(src) < static_cast<int>(ai.goalSource)) {
+        return;   // 教练已指定驻守点，低优先级来源不得覆盖
+    }
+    ai.hasPlanHold = true;
+    ai.goalSource  = src;
+    ai.planHoldX   = x;
+    ai.planHoldY   = y;
+    if (i < squad_.size()) {
+        squad_[i].hasHold = true;
+        squad_[i].holdX   = x;
+        squad_[i].holdY   = y;
+    }
+}
+
+void CS2DGame::ClearBotGoal(size_t i) {
+    if (i >= bots_.size()) return;
+    auto& ai = AiAt(i);
+    ai.hasPlanHold = false;
+    ai.goalSource  = BotRuntime::GoalSource::None;
+    ai.goalArea.clear();
+    if (i < squad_.size()) squad_[i].hasHold = false;
+}
 bool CS2DGame::BotCanSeePlayer(const Player& bot) const {
     if (!player_.alive || !IsHostile(player_, bot)) return false;   // 死斗 FFA：所有人都敌对
     const float dx = player_.x - bot.x;
@@ -509,8 +627,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                     const float half = bot.size * 0.5f;
                     if (world_ && !world_->CheckRectCollision(nx - half, ny - half,
                                                               bot.size, bot.size)) {
-                        ai.planHoldX = nx;
-                        ai.planHoldY = ny;
+                        SetBotGoal(i, nx, ny, ai.goalSource, /*force=*/true);
                         break;
                     }
                 }
@@ -701,9 +818,10 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 if (bot.team == Team::T) {
                     if (!bombPlanted_) {
                         // 按分队指令进攻指定包点（保证 A/B 都有人去）
-                        if (order.hasHold) {
-                            destX = order.holdX;
-                            destY = order.holdY;
+                        // 目标唯一真源：ai.hasPlanHold（教练计划与小队轮转都经 SetBotGoal 写入）
+                        if (ai.hasPlanHold) {
+                            destX = ai.planHoldX;
+                            destY = ai.planHoldY;
                             hasDest = true;
                             destIsObjective = true;
                             softHold = true;
@@ -756,10 +874,10 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                     }
                     hasDest = true;
                     destIsObjective = true;
-                } else if (order.hasHold) {
-                    // 未下包：各守 A / B / 中路
-                    destX = order.holdX;
-                    destY = order.holdY;
+                } else if (ai.hasPlanHold) {
+                    // 未下包：各守 A / B / 中路（目标唯一真源）
+                    destX = ai.planHoldX;
+                    destY = ai.planHoldY;
                     hasDest = true;
                     destIsObjective = true;
                     softHold = true;
@@ -803,7 +921,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             // 突破/支援位朝「敌方出生点质心」推进（与地图朝向无关），断后位就近游走
             if (!hasDest) {
                 // 爆破图有固定防守/进攻位：在其附近小范围活动，避免跑离岗位
-                const bool holdPost = (mode_ == MatchMode::BombDefusal && order.hasHold);
+                const bool holdPost = (mode_ == MatchMode::BombDefusal && ai.hasPlanHold);
                 const bool pushToEnemy = (order.role != BotRole::Anchor);
                 float ecx = 0.0f, ecy = 0.0f;
                 const bool hasEnemyCentroid =
@@ -819,8 +937,8 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                     for (int t = 0; t < 12; ++t) {
                         float rx = 0.0f, ry = 0.0f;
                         if (holdPost) {
-                            rx = order.holdX + static_cast<float>(rng_() % 181) - Tuning::PatrolHoldSpread;
-                            ry = order.holdY + static_cast<float>(rng_() % 181) - Tuning::PatrolHoldSpread;
+                            rx = ai.planHoldX + static_cast<float>(rng_() % 181) - Tuning::PatrolHoldSpread;
+                            ry = ai.planHoldY + static_cast<float>(rng_() % 181) - Tuning::PatrolHoldSpread;
                         } else if (hasEnemyCentroid) {
                             rx = ecx + static_cast<float>(rng_() % 521) - 260.0f;
                             ry = ecy + static_cast<float>(rng_() % 521) - 260.0f;
@@ -1081,6 +1199,8 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                           static_cast<int>(i));
             }
         }
+        // 决策 trace（dev-only）：只在决策变化时写一行，关闭时零开销
+        TraceBotDecision(i, target);
     }
 
     // 死斗模式：BOT 阵亡后自动重生；团队模式由回合开始统一重生

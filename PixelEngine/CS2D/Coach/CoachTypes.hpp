@@ -48,6 +48,8 @@ struct TeamPlan {
     Tempo       tempo  = Tempo::Normal;
     std::array<SlotOrder, 5> slots;
     std::string reason;            // 只用于 HUD / 日志
+    // 由通用分兵模板生成（可用战术表的 [slots.*] 覆盖）；事件整形生成的不覆盖
+    bool        templateDefault = false;
     int         gen = 0;           // 代际号：旧回包直接丢弃
     float       createdAt = 0.0f;
     bool        valid = false;

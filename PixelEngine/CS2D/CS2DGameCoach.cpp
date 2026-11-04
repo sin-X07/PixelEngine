@@ -75,6 +75,16 @@ bool CS2DGame::AreaCenterByName(const std::string& name, float& ox, float& oy) c
 // 在现有区域里找一个名字包含关键词的区域（不区分大小写）
 std::string CS2DGame::AreaHint(const std::string& key) const {
     if (!world_ || key.empty()) return std::string();
+    // 1) 战术表优先：每张图的实际区域命名不同（Dust2 的 Long/Short、Mirage 的 A_Site 等），
+    //    由 assets/config/tactics/<map>.ini 描述，新图接入不用改代码。
+    {
+        std::string mapped;
+        if (tactics_.Area(key, mapped)) {
+            for (const auto& a : world_->GetAreas()) {
+                if (SameNoCase(a.name, mapped)) return a.name;
+            }
+        }
+    }
     std::string want = key;
     std::transform(want.begin(), want.end(), want.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -403,7 +413,44 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
 // ---------------------------------------------------------------------------
 // 规则教练
 // ---------------------------------------------------------------------------
+static const char* TacticsIntentKey(PlanIntent intent) {
+    switch (intent) {
+        case PlanIntent::RushA:   return "RushA";
+        case PlanIntent::RushB:   return "RushB";
+        case PlanIntent::SplitA:  return "SplitA";
+        case PlanIntent::SplitB:  return "SplitB";
+        case PlanIntent::StackA:  return "StackA";
+        case PlanIntent::StackB:  return "StackB";
+        case PlanIntent::RetakeA: return "RetakeA";
+        case PlanIntent::RetakeB: return "RetakeB";
+        case PlanIntent::Save:    return "Save";
+        case PlanIntent::FakeThenOther: return "Fake";
+        default:                  return "Default";
+    }
+}
+
+// 战术表覆盖：表里存在该 (队伍, 意图) 的槽位配置时，用它替换代码里的默认分兵。
+// 表里没有就保持代码默认 → 战术表是可选增强，不会让旧图行为突变。
+void CS2DGame::ApplyTacticsSlots(Team t, TeamPlan& plan) {
+    if (!tactics_.loaded) return;
+    const char* teamKey = (t == Team::T) ? "T" : "CT";
+    const auto* slots = tactics_.Slots(teamKey, TacticsIntentKey(plan.intent));
+    if (!slots) return;
+    if (!plan.templateDefault) return;   // 只覆盖通用分兵模板，事件整形计划保持原样
+
+    for (size_t i = 0; i < plan.slots.size(); ++i) {
+        plan.slots[i] = (*slots)[i];
+        plan.slots[i].area = tactics_.ResolveArea(plan.slots[i].area);
+    }
+}
+
 TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
+    TeamPlan plan = RuleCoachCore(t, ev);
+    ApplyTacticsSlots(t, plan);
+    return plan;
+}
+
+TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
     CoachState& st = CoachFor(t);
     TeamPlan plan;
     plan.intent = PlanIntent::Default;
@@ -418,6 +465,8 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
         plan.slots[2] = { CoachRole::Lurk,    mid, true, true  };
         plan.slots[3] = { CoachRole::Anchor,  b1,  true, false };
         plan.slots[4] = { CoachRole::Support, b2,  true, false };
+        // 通用分兵模板：允许被 assets/config/tactics/<map>.ini 的 [slots.*] 覆盖
+        plan.templateDefault = true;
     };
 
     // 侧翼区域按「关键词 → 找不到就退回本侧包点」解析：
@@ -611,6 +660,7 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
             plan.reason = "A 点连续失手，改速推 B";
             for (auto& sl : plan.slots) sl = { CoachRole::Entry, bLong, true, false };
             plan.slots[4] = { CoachRole::Anchor, bSite, true, false };
+            plan.templateDefault = true;
         } else if (avoidB && !avoidA) {
             plan.intent = PlanIntent::RushA;
             plan.target = "A";
@@ -618,6 +668,7 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
             plan.reason = "B 点连续失手，改速推 A";
             for (auto& sl : plan.slots) sl = { CoachRole::Entry, aLong, true, false };
             plan.slots[4] = { CoachRole::Anchor, aSite, true, false };
+            plan.templateDefault = true;
         } else {
             plan.intent = PlanIntent::Default;
             plan.reason = "默认开局，A/B 分兵找机会";
@@ -626,6 +677,7 @@ TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
     } else {
         plan.intent = PlanIntent::Default;
         plan.reason = "常规守点，A/B 各两人压中路";
+        plan.templateDefault = true;
         plan.slots[0] = { CoachRole::Anchor,  aSite,  true, false };
         plan.slots[1] = { CoachRole::Support, aShort, true, false };
         plan.slots[2] = { CoachRole::Entry,   mid,    true, true  };
@@ -803,15 +855,10 @@ void CS2DGame::CoachApplyPlan(Team t) {
             std::uniform_real_distribution<float> jit(-18.0f, 18.0f);
             cx = bot.x + jit(rng_);
             cy = bot.y + jit(rng_);
-            ai.hasPlanHold = true;
-            ai.planHoldX   = cx;
-            ai.planHoldY   = cy;
-            ai.goalArea    = std::string();
+            SetBotGoal(i, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
+            ai.goalArea = std::string();
             // 计划点到达后不要退回默认包点：把小队岗位固定在当前点。
-            squad_[i].site     = -1;
-            squad_[i].hasHold  = true;
-            squad_[i].holdX    = bot.x;
-            squad_[i].holdY    = bot.y;
+            squad_[i].site = -1;
             ++holdOk;
             detail << " #" << slot << "=(save)";
             squad_[i].canTrade  = false;
@@ -820,21 +867,26 @@ void CS2DGame::CoachApplyPlan(Team t) {
             continue;
         }
         if (!so.area.empty() && AreaCenterByName(so.area, cx, cy)) {
-            ai.hasPlanHold = true;
-            ai.planHoldX   = cx;
-            ai.planHoldY   = cy;
-            ai.goalArea    = so.area;
+            const int areaSite = areaSiteIndex(so.area);
+            // T 进攻期：真正的推进目标是「目标包点中心」，区域中心只当集结/架枪点。
+            // 否则 T 会停在区域边缘（例如 A_Long 中心）磨时间，进攻节奏变慢。
+            if (t == Team::T && !bombPlanted_ && !st.plan.target.empty()) {
+                const auto& sites = world_->GetBombSites();
+                if (areaSite >= 0 && areaSite < static_cast<int>(sites.size()) &&
+                    sites[static_cast<size_t>(areaSite)].name == st.plan.target) {
+                    cx = sites[static_cast<size_t>(areaSite)].cx;
+                    cy = sites[static_cast<size_t>(areaSite)].cy;
+                }
+            }
+            SetBotGoal(i, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
+            ai.goalArea = so.area;
             // 小队岗位与教练计划保持一致；计划点到达后继续守这个区域，
             // 而不是被 AssignSquadRoles 的轮转岗位拉回另一侧。
-            squad_[i].site    = areaSiteIndex(so.area);
-            squad_[i].hasHold = true;
-            squad_[i].holdX   = cx;
-            squad_[i].holdY   = cy;
+            squad_[i].site = areaSite;
             ++holdOk;
             detail << " #" << slot << "=" << so.area;
         } else {
-            ai.hasPlanHold = false;
-            squad_[i].hasHold = false;
+            ClearBotGoal(i);
             squad_[i].site = -1;
             ++holdFail;
             detail << " #" << slot << "=" << (so.area.empty() ? "(empty)" : so.area + "!");
@@ -883,16 +935,11 @@ void CS2DGame::CoachApplyPlan(Team t) {
             const size_t ci = static_cast<size_t>(bombCarrier_);
             auto& cai = AiAt(ci);
             auto& csq = squad_[ci];
-            cai.hasPlanHold = true;
-            cai.planHoldX   = cx;
-            cai.planHoldY   = cy;
-            cai.goalArea    = siteArea;
-            csq.site        = siteIdx;
-            csq.hasHold     = true;
-            csq.holdX       = cx;
-            csq.holdY       = cy;
-            csq.role        = BotRole::Entry;   // 跟突破组进点，而不是当断后
-            csq.canRotate   = false;
+            SetBotGoal(ci, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
+            cai.goalArea  = siteArea;
+            csq.site      = siteIdx;
+            csq.role      = BotRole::Entry;   // 跟突破组进点，而不是当断后
+            csq.canRotate = false;
             std::cout << "[Coach] T C4携带者 #" << bombCarrier_
                       << " 跟随主攻 " << side << std::endl;
         }
@@ -948,7 +995,7 @@ void CS2DGame::CoachResetRound() {
         st.llmPending      = false;
         st.llmAnswered     = false;
     }
-    for (size_t i = 0; i < bots_.size(); ++i) AiAt(i).hasPlanHold = false;
+    for (size_t i = 0; i < bots_.size(); ++i) ClearBotGoal(i);
 }
 
 

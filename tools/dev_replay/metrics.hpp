@@ -45,6 +45,10 @@ struct RoundRow {
     float idleRatioCT = 0.0f;
     float pathEffT = 0.0f;       // 直线位移 / 实际移动距离（1 = 最直）
     float pathEffCT = 0.0f;
+    // 按 episode 直线距离分桶：短(<120) / 中(120-400) / 长(>400)。
+    // 整体 pathEff 会被大量短距离微调稀释，分桶后才能看出跨图长距离是否真在绕路。
+    float pathEffShort = 0.0f, pathEffMid = 0.0f, pathEffLong = 0.0f;
+    int   pathNShort = 0, pathNMid = 0, pathNLong = 0;
     int   damageT = 0;           // T 对 CT 造成的血量伤害
     int   damageCT = 0;
     int   moneyTEnd = 0;         // 回合结束时队伍平均余额
@@ -170,8 +174,15 @@ public:
                 acc_[i].pathing = false;
                 const float ex = b.x - acc_[i].epStartX;
                 const float ey = b.y - acc_[i].epStartY;
-                acc_[i].epStraightSum += std::sqrt(ex * ex + ey * ey);
-                acc_[i].epTravelSum += std::max(acc_[i].epTravel, 0.5);
+                const double straight = std::sqrt(static_cast<double>(ex) * ex +
+                                                  static_cast<double>(ey) * ey);
+                const double travel = std::max(acc_[i].epTravel, 0.5);
+                acc_[i].epStraightSum += straight;
+                acc_[i].epTravelSum += travel;
+                const int bucket = (straight < 120.0) ? 0 : (straight < 400.0 ? 1 : 2);
+                acc_[i].bucketStraight[bucket] += straight;
+                acc_[i].bucketTravel[bucket]   += travel;
+                ++acc_[i].bucketCount[bucket];
             }
             ++teamTicks_[ti];
             if (moved > 0.5f) teamTravel_[ti] += moved;   // 过滤原地微抖
@@ -217,6 +228,10 @@ private:
         double epTravel = 0.0;
         double epStraightSum = 0.0;
         double epTravelSum = 0.0;
+        // 按 episode 直线距离分桶累计（0=短 1=中 2=长）
+        double bucketStraight[3] = {0.0, 0.0, 0.0};
+        double bucketTravel[3]   = {0.0, 0.0, 0.0};
+        int    bucketCount[3]    = {0, 0, 0};
     };
 
     static int TeamIndex(Team t) {
@@ -309,6 +324,24 @@ private:
         row.pathEffT = eff(straight[0], traveled[0]);
         row.pathEffCT = eff(straight[1], traveled[1]);
 
+        // 分桶路径效率（两队合并统计；短/中/长各自一个比值）
+        double bStraight[3] = {0.0, 0.0, 0.0};
+        double bTravel[3]   = {0.0, 0.0, 0.0};
+        int    bCount[3]    = {0, 0, 0};
+        for (size_t i = 0; i < bots.size() && i < acc_.size(); ++i) {
+            for (int b = 0; b < 3; ++b) {
+                bStraight[b] += acc_[i].bucketStraight[b];
+                bTravel[b]   += acc_[i].bucketTravel[b];
+                bCount[b]    += acc_[i].bucketCount[b];
+            }
+        }
+        row.pathEffShort = eff(bStraight[0], bTravel[0]);
+        row.pathEffMid   = eff(bStraight[1], bTravel[1]);
+        row.pathEffLong  = eff(bStraight[2], bTravel[2]);
+        row.pathNShort = bCount[0];
+        row.pathNMid   = bCount[1];
+        row.pathNLong  = bCount[2];
+
         rows_.push_back(row);
     }
 
@@ -351,19 +384,21 @@ inline bool WriteRoundsCsv(const std::string& path, const std::vector<RoundRow>&
                  "round,winner,ticks,kills_t,kills_ct,plant,defuse,first_blood_tick,"
                  "first_blood_team,fb_win,alive_t_end,alive_ct_end,money_t_start,"
                  "money_ct_start,still_t,still_ct,idle_t,idle_ct,path_eff_t,path_eff_ct,"
+                 "path_eff_short,path_eff_mid,path_eff_long,path_n_short,path_n_mid,path_n_long,"
                  "damage_t,damage_ct,money_t_end,money_ct_end,buy_t,buy_ct,"
                  "plant_near_t,defuse_near_ct\n");
     for (const auto& r : rows) {
         std::fprintf(f,
                      "%d,%s,%d,%d,%d,%d,%d,%d,%s,%d,%d,%d,%d,%d,"
-                     "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
+                     "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%d,"
                      "%d,%d,%d,%d,%d,%d,%d,%d\n",
                      r.round, TeamTag(r.winner), r.ticks, r.killsT, r.killsCT,
                      r.plant ? 1 : 0, r.defuse ? 1 : 0, r.firstBloodTick,
                      TeamTag(r.firstBloodTeam), r.fbWinnerMatched ? 1 : 0,
                      r.aliveTEnd, r.aliveCTEnd, r.moneyTStart, r.moneyCTStart,
                      r.stillRatioT, r.stillRatioCT, r.idleRatioT, r.idleRatioCT,
-                     r.pathEffT, r.pathEffCT, r.damageT, r.damageCT,
+                     r.pathEffT, r.pathEffCT, r.pathEffShort, r.pathEffMid, r.pathEffLong,
+                     r.pathNShort, r.pathNMid, r.pathNLong, r.damageT, r.damageCT,
                      r.moneyTEnd, r.moneyCTEnd, r.buyPlanT, r.buyPlanCT,
                      r.plantNearT, r.defuseNearCT);
     }
