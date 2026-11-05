@@ -200,7 +200,9 @@ tick,round,bot,team,kind,key,area,x,y
 
 读法：**长距离**才是"会不会走路"的指标（0.82–0.85 说明跨图寻路基本是直线）；
 短距离低是正常的（绕角、让位、微调）。
-## LLM 教练 A/B 评估（--coach）
+'## LLM 教练 A/B 评估（--coach）
+
+> 30 局实测结论见 [LLM_EVAL_RESULTS.md](LLM_EVAL_RESULTS.md)。'
 
 用同一批 `map/seed/ticks` 跑两遍：一遍规则教练，一遍 LLM 教练，然后配对比较。
 

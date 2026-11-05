@@ -145,6 +145,20 @@ def main():
         la = statistics.mean(parse_float(l.get(field)) for _, l in pairs)
         print(f"{label:<18}{ra:>10.2f}{la:>10.2f}{mean:>+10.2f}")
 
+    # ---- 分地图 ----
+    by_map = {}
+    for r, l in pairs:
+        m = r["map"]
+        d = by_map.setdefault(m, [0, 0, 0])
+        d[0] += 1
+        d[1] += 1 if r.get("winner") == "T" else 0
+        d[2] += 1 if l.get("winner") == "T" else 0
+    if len(by_map) > 1:
+        print()
+        print("== 分地图（T 胜率） ==")
+        for m, (n, rt, lt) in sorted(by_map.items()):
+            print(f"  {m:<16} 规则 {rt}/{n} = {rt/n:.1%}   LLM {lt}/{n} = {lt/n:.1%}")
+
     # ---- 计划统计 ----
     plans = load_plans(args.llm)
     rule_plans = load_plans(args.rule)
