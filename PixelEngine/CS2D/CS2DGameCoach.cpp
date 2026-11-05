@@ -22,6 +22,30 @@ bool SameNoCase(const std::string& a, const std::string& b) {
     return true;
 }
 
+const char* IntentKey(PlanIntent i) {
+    switch (i) {
+        case PlanIntent::RushA:         return "rush_a";
+        case PlanIntent::RushB:         return "rush_b";
+        case PlanIntent::SplitA:        return "split_a";
+        case PlanIntent::SplitB:        return "split_b";
+        case PlanIntent::StackA:        return "stack_a";
+        case PlanIntent::StackB:        return "stack_b";
+        case PlanIntent::RetakeA:       return "retake_a";
+        case PlanIntent::RetakeB:       return "retake_b";
+        case PlanIntent::Save:          return "save";
+        case PlanIntent::FakeThenOther: return "fake";
+        default:                        return "default";
+    }
+}
+
+const char* TempoKey(Tempo tt) {
+    switch (tt) {
+        case Tempo::Fast: return "fast";
+        case Tempo::Slow: return "slow";
+        default:          return "normal";
+    }
+}
+
 const char* IntentName(PlanIntent i) {
     switch (i) {
         case PlanIntent::RushA:         return "速推A";
@@ -171,6 +195,8 @@ void CS2DGame::CoachUpdate(float dt) {
                       << std::endl;
 
             st.plan.intent = PlanIntent::Default;
+            st.plan.source = "rule";        // 转点中止属于规则改写，不算 LLM 计划
+            st.plan.latencyWall = 0.0f;
             if (!st.rotateFrom.empty()) st.plan.target = st.rotateFrom;
             st.plan.valid     = true;
             st.plan.expiresAt = clockSec_ + 10.0f;
@@ -478,6 +504,7 @@ void CS2DGame::ApplyTacticsSlots(Team t, TeamPlan& plan) {
 
 TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
     TeamPlan plan = RuleCoachCore(t, ev);
+    plan.source = "rule";     // 评估用：区分规则计划与 LLM 计划
     ApplyTacticsSlots(t, plan);
     return plan;
 }
@@ -723,6 +750,65 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
 // 计划整形：防止 LLM 连续压同一侧 / CT 默认全堆一点。
 // 只改「默认分兵」和「无情报的 stack」，不碰已下包后的 retake/stack。
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// 教练计划 trace：每下发一条计划写一行，用于 LLM vs 规则的 A/B 评估。
+// 只读数据，不参与任何玩法逻辑。
+// ---------------------------------------------------------------------------
+void CS2DGame::EnablePlanTrace(const std::string& path) {
+    ClosePlanTrace();
+    planTrace_ = std::fopen(path.c_str(), "wb");
+    if (!planTrace_) {
+        std::cerr << "[PlanTrace] 无法写入: " << path << std::endl;
+        return;
+    }
+    std::fprintf(planTrace_,
+                 "round,elapsed_s,team,intent,target,tempo,source,latency_s,reshaped,reason\n");
+    std::cout << "[PlanTrace] 计划 trace 已开启: " << path << std::endl;
+}
+
+void CS2DGame::ClosePlanTrace() {
+    if (!planTrace_) return;
+    std::fclose(planTrace_);
+    planTrace_ = nullptr;
+}
+
+void CS2DGame::TraceCoachPlan(Team t) {
+    if (!planTrace_) return;
+    const CoachState& st = CoachFor(t);
+    if (!st.plan.valid) return;
+
+    // 去重键：同一回合里"意图+目标+来源+槽位"不变就只写一行。
+    // gen 每次 CoachThink 都会变，不能进 key，否则同一计划会被写十几次。
+    std::string slotSig;
+    for (const auto& so : st.plan.slots) slotSig += so.area + ";";
+    const std::string key = std::to_string(round_.RoundNumber()) + "|" +
+                            TeamName(t) + "|" +
+                            std::to_string(static_cast<int>(st.plan.intent)) + "|" +
+                            st.plan.target + "|" + st.plan.source + "|" + slotSig;
+    if (key == planTraceKey_) return;
+    planTraceKey_ = key;
+
+    std::string reason = st.plan.reason;
+    for (char& c : reason) {
+        if (c == ',' || c == '"' || c == '\n' || c == '\r') c = ';';
+    }
+    // 截断时避免切断 UTF-8 多字节字符（否则 CSV 不是合法 UTF-8，脚本会崩）
+    if (reason.size() > 80) {
+        size_t cut = 80;
+        while (cut > 0 && (static_cast<unsigned char>(reason[cut]) & 0xC0) == 0x80) --cut;
+        reason.resize(cut);
+    }
+
+    const float latency = (st.plan.source == "llm") ? st.plan.latencyWall : 0.0f;
+
+    std::fprintf(planTrace_, "%d,%.1f,%s,%s,%s,%s,%s,%.2f,%d,\"%s\"\n",
+                 round_.RoundNumber(), GetRoundElapsed(),
+                 TeamName(t), IntentKey(st.plan.intent),
+                 st.plan.target.empty() ? "-" : st.plan.target.c_str(),
+                 TempoKey(st.plan.tempo),
+                 st.plan.source.c_str(), latency,
+                 st.plan.reshaped ? 1 : 0, reason.c_str());
+}
 void CS2DGame::SanitizeCoachPlan(Team t, TeamPlan& plan) {
     if (!world_ || bombPlanted_) return;
 
@@ -757,6 +843,7 @@ void CS2DGame::SanitizeCoachPlan(Team t, TeamPlan& plan) {
 
     auto reshapeDefault = [&]() {
         // 记录 LLM 原意，便于区分"模型本来就没想法"与"被整形规则吃掉"
+        plan.reshaped = true;
         std::cout << "[Sanitize] " << TeamName(t) << " 整形: "
                   << IntentName(plan.intent)
                   << (plan.target.empty() ? "" : ("->" + plan.target))
@@ -997,6 +1084,8 @@ void CS2DGame::CoachApplyPlan(Team t) {
     std::cout << "[Coach] Apply " << TeamName(t)
               << " holdOk=" << holdOk << " holdFail=" << holdFail
               << detail.str() << std::endl;
+
+    TraceCoachPlan(t);   // 评估用：一条计划一行（未开启 plan trace 时零开销）
 }
 
 // ---------------------------------------------------------------------------
@@ -1248,6 +1337,8 @@ void CS2DGame::CoachTryRotate(Team t) {
     plan.target    = other;
     plan.tempo     = Tempo::Fast;
     plan.reason    = cur + " 点重防，转 " + other;
+    plan.source    = "rule";        // 转点是规则触发，不算 LLM 计划
+    plan.latencyWall = 0.0f;
     plan.gen       = ++st.gen;
     plan.createdAt = clockSec_;
     plan.expiresAt = clockSec_ + 12.0f;

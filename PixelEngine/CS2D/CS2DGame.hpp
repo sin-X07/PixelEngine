@@ -16,6 +16,7 @@
 #include "../Core/PresentationContract.hpp"
 #include <SDL2/SDL.h>
 #include <string>
+#include <chrono>
 #include <map>
 #include <cstdio>
 #include <vector>
@@ -445,6 +446,13 @@ public:
 
     // ---- 决策 trace（开发期）：把 BOT 的决策变化写成 CSV，用于解释"为什么这么走" ----
     // 只在显式开启时写文件；关闭时零开销、零行为影响。
+    // ---- 教练计划 trace（评估 LLM vs 规则）：每条下发的计划写一行 ----
+    void EnablePlanTrace(const std::string& path);
+    void ClosePlanTrace();
+    void TraceCoachPlan(Team t);
+    std::FILE* planTrace_ = nullptr;
+    std::string planTraceKey_;   // 去重：同一条计划只写一次
+
     void EnableDecisionTrace(const std::string& path);
     void TraceBotDecision(size_t i, const Player* target);   // 内部：有变化才写一行
     void CloseDecisionTrace();
@@ -813,6 +821,12 @@ public:
     void SetCoachLlm(CoachLlmFn fn) { coachLlm_ = std::move(fn); }
     void SetCoachLlmEnabled(bool on) { coachLlmEnabled_ = on; }
     bool IsCoachLlmEnabled() const { return coachLlmEnabled_; }
+    // LLM 评估用：是否还有未回包的计划请求（runner 靠它把模拟节奏压到真实决策速度）
+    bool IsCoachLlmPending() const {
+        return CoachFor(Team::T).llmPending || CoachFor(Team::CT).llmPending;
+    }
+    // 无渲染的 runner 用：只收 LLM 回包，不推进仿真（否则等待会死锁）
+    void PumpCoach() { CoachDrainLlm(); }
     void CoachTryLlm(Team t, const CoachEvent& ev);
     void CoachTryDebrief(Team t);
     // 现在是否允许「保枪」：仅回合早段 + 经济崩 + 非人数优势 + 未下包
@@ -946,6 +960,8 @@ private:
         bool  llmAnswered = false;   // 本轮请求已返回（含失败/超时），购买延迟用
         int   llmGen = 0;
         float llmAt = 0.0f;
+        std::chrono::steady_clock::time_point llmWallAt;   // 发出请求的墙钟时刻
+        float llmLatencyWall = 0.0f;                       // 回包墙钟延迟（秒）
         int   llmEventType = 0;
         int   llmRoundNo = 0;
         bool  llmBombPlanted = false;

@@ -377,3 +377,27 @@ cmake --build build-tests --target gameplay_tests   # 182 通过
 
 生产侧唯一保留的是 `CS2D/Visibility/VisibilityQuery.*`——它让玩法层不再依赖渲染器，
 是长期改进，不做工具也该有。
+
+## 12. 流程 D：LLM 教练 A/B（判断"LLM 是否更合理"）
+
+前提：`llama-server` 已运行（或让 runner 自己拉起，去掉 `--coach-no-launch`）。
+
+```powershell
+# 规则组
+.\build-dev\dev_replay_runner.exe --coach=rule --ticks=150000 `
+    --maps=dust_2,mirage --seeds=1-4 --out=build-evidence/ab-rule --tag=ab-rule
+
+# LLM 组（同一批 map/seed/ticks）
+.\build-dev\dev_replay_runner.exe --coach=llm --coach-no-launch --ticks=150000 `
+    --maps=dust_2,mirage --seeds=1-4 --out=build-evidence/ab-llm --tag=ab-llm
+
+# 配对评估
+python tools/dev_replay/eval_llm.py --rule=build-evidence/ab-rule --llm=build-evidence/ab-llm
+```
+
+判读要点：
+
+1. **先看样本量**：4 图 × 4 种子只有 16 局，T 胜率置信区间约 ±20pp —— 只能看方向，不能下结论。
+2. **看计划分歧率**：如果只有 ~10%，说明 LLM 基本在复述规则，胜率差异没有意义。
+3. **看延迟**：p90 > 8s 时，计划落地时局面已变，评估要打折。
+4. **不要比 final_hash**：LLM 组是非确定性的，只比指标。

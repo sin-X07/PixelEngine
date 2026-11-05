@@ -48,6 +48,9 @@ struct TeamPlan {
     Tempo       tempo  = Tempo::Normal;
     std::array<SlotOrder, 5> slots;
     std::string reason;            // 只用于 HUD / 日志
+    std::string source = "rule";   // 计划来源：rule / llm（评估用）
+    bool        reshaped = false;  // 是否被 SanitizeCoachPlan 整形改写过
+    float       latencyWall = 0.0f; // 该计划对应的 LLM 墙钟延迟（秒；规则计划为 0）
     // 由通用分兵模板生成（可用战术表的 [slots.*] 覆盖）；事件整形生成的不覆盖
     bool        templateDefault = false;
     int         gen = 0;           // 代际号：旧回包直接丢弃

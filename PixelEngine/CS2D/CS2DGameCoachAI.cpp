@@ -839,6 +839,7 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
     }
 
     st.llmPending     = true;
+    st.llmWallAt      = std::chrono::steady_clock::now();
     st.llmAnswered    = false;
     st.llmGen         = st.gen;
     st.llmAt          = clockSec_;
@@ -934,6 +935,14 @@ void CS2DGame::CoachDrainLlm() {
 
         st.llmPending = false;
         st.llmAnswered = true;
+        // 墙钟延迟（秒）：runner 里仿真时钟会被"等决策"冻住，不能用 clockSec_ 量
+        if (std::getenv("PIXEL_LOG_COACH_RAW")) std::cout << "[CoachWall] " << TeamName(r.team) << " gen=" << r.gen
+                  << " age=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now() - st.llmWallAt).count() / 1000.0
+                  << "s ageSim=" << (clockSec_ - st.llmAt) << "s raw=" << r.raw.size() << std::endl;
+        st.llmLatencyWall = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - st.llmWallAt)
+                                .count() / 1000.0f;
 
         // 回包过期：代际号 / 回合号 / 炸弹状态任一变化都丢弃
         if (r.gen < st.gen) {
@@ -998,6 +1007,8 @@ void CS2DGame::CoachDrainLlm() {
             }
         }
 
+        plan.source      = "llm";     // 评估用：这条计划来自模型
+        plan.latencyWall = st.llmLatencyWall;
         plan.gen       = st.gen;
         plan.createdAt = clockSec_;
         plan.expiresAt = clockSec_ + ttl;      // 由模型给的 ttl_s 决定

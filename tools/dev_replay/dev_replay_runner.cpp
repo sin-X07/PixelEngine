@@ -12,6 +12,7 @@
 
 #include "../../PixelEngine/CS2D/CS2DGame.hpp"
 #include "../../PixelEngine/Core/PathUtils.hpp"
+#include "../../PixelEngine/LLM/LLMBotController.hpp"
 
 #include "conflicts.hpp"
 #include "digest.hpp"
@@ -19,7 +20,11 @@
 #include "replay.hpp"
 #include "scripted_player.hpp"
 
+#include <chrono>
 #include <cinttypes>
+#include <functional>
+#include <memory>
+#include <thread>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -29,6 +34,9 @@
 #include <vector>
 
 namespace {
+
+// --coach=llm 时初始化一次，整个批量共用（避免每局重启模型连接）
+std::unique_ptr<LLMBotController> g_llm;
 
 struct Options {
     int   ticks = 60 * 30;
@@ -54,6 +62,12 @@ struct Options {
     std::string tracePath;                 // 非空 → 写 BOT 决策 trace（开发期解释"为什么这么走"）
     std::vector<std::string> conflictIgnore;   // 按 kind 忽略
     bool enableNoisyConflicts = false;         // 开启 duplicate_hold 等高噪声规则
+
+    // ---- LLM A/B 评估 ----
+    std::string coach = "rule";       // rule | llm
+    std::string coachUrl;             // 覆盖 llm.ini 的 server url
+    bool coachNoLaunch = false;       // 不自动拉起 llama-server（要求外部已运行）
+    std::string planPath;             // 单局：计划 trace 输出路径
 };
 
 Options ParseArgs(int argc, char** argv) {
@@ -71,6 +85,10 @@ Options ParseArgs(int argc, char** argv) {
         else if (a.rfind("--journal=", 0) == 0) o.journalPath = a.substr(10);
         else if (a.rfind("--replay=", 0) == 0) o.replayPath = a.substr(9);
         else if (a.rfind("--dump=", 0) == 0) o.dumpPath = a.substr(7);
+        else if (a.rfind("--coach=", 0) == 0) o.coach = a.substr(8);
+        else if (a.rfind("--coach-url=", 0) == 0) o.coachUrl = a.substr(12);
+        else if (a == "--coach-no-launch") o.coachNoLaunch = true;
+        else if (a.rfind("--plans=", 0) == 0) o.planPath = a.substr(8);
         else if (a == "--noisy-conflicts") o.enableNoisyConflicts = true;
         else if (a.rfind("--conflict-ignore=", 0) == 0) {
             const std::string rest = a.substr(18);
@@ -201,7 +219,8 @@ void ApplyBuy(CS2DGame& game, int weapon, int armorTier) {
 
 // 跑一局：固定 1/60 步长、renderer=nullptr、audio=nullptr
 Summary RunOne(const Options& opt, const std::string& map, int seed,
-               const std::string& hashPath, const std::string& roundsCsv) {
+               const std::string& hashPath, const std::string& roundsCsv,
+               const std::string& planPath = std::string()) {
     Summary s;
     s.map = map;
     s.seed = seed;
@@ -226,6 +245,17 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
     dev_replay::ScriptedPlayer script(sp);
 
     if (!opt.tracePath.empty()) game.EnableDecisionTrace(opt.tracePath);
+
+    // ---- LLM 教练（评估用）：与真实游戏同一条链路，只是没有渲染 ----
+    if (g_llm) {
+        game.SetCoachLlm([](const std::string& sys, const std::string& usr,
+                            int maxTok, const std::string& schema,
+                            std::function<void(const std::string&)> cb) {
+            g_llm->AskRaw(sys, usr, maxTok, std::move(cb), "COACH", schema);
+        });
+        game.SetCoachLlmEnabled(true);
+    }
+    if (!planPath.empty()) game.EnablePlanTrace(planPath);
     dev_replay::RoundTracker tracker;
     tracker.Begin(game, 0);
 
@@ -281,6 +311,20 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
         tracker.Sample(game, static_cast<uint64_t>(t));
         conflicts.Check(game, static_cast<uint64_t>(t), conflictFile);
         DumpTick(dumpFile, game, static_cast<uint64_t>(t));
+
+        // LLM 评估：有未回包的计划请求时等它（真实游戏里这段是玩家看到的决策延迟）。
+        // 注意：等待时只收 LLM 回包、不推进仿真 —— 否则 pending 永远不会被清掉。
+        if (g_llm) {
+            int waitedMs = 0;
+            while (game.IsCoachLlmPending() && waitedMs < 30000) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                game.PumpCoach();
+                waitedMs += 2;
+            }
+            if (waitedMs >= 30000) {
+                std::fprintf(stderr, "[dev_replay] LLM 等待超时(>30s)，继续推进\n");
+            }
+        }
         finalHash = dev_replay::SnapshotTick(game, static_cast<uint64_t>(t));
         if (hashFile) std::fprintf(hashFile, "%d %016" PRIx64 "\n", t, finalHash);
         // 比赛已决出：停止仿真（否则赛后空闲会被算进最后一回合时长）
@@ -291,6 +335,7 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
     if (conflictFile) std::fclose(conflictFile);
     if (dumpFile) std::fclose(dumpFile);
     game.CloseDecisionTrace();
+    game.ClosePlanTrace();
     s.conflicts = conflicts.Total();
     tracker.Finish(game, static_cast<uint64_t>(lastTick_ + 1));
 
@@ -451,10 +496,34 @@ int main(int argc, char** argv) {
     if (!opt.replayPath.empty()) return RunReplay(opt);
     const bool batch = !opt.outDir.empty();
 
+    // ---- LLM 教练（--coach=llm）：整批复用一个控制器，避免每局重连 ----
+    if (opt.coach == "llm") {
+        LLMConfig cfg = LLMConfig::FromFile(
+            PathUtils::ResolveAppPath("assets/config/llm.ini"));
+        if (!cfg.serverExePath.empty())
+            cfg.serverExePath = PathUtils::ResolveAppPath(cfg.serverExePath);
+        if (!cfg.modelPath.empty())
+            cfg.modelPath = PathUtils::ResolveAppPath(cfg.modelPath);
+        if (!opt.coachUrl.empty()) cfg.serverUrl = opt.coachUrl;
+        if (opt.coachNoLaunch) cfg.autoLaunch = false;
+
+        g_llm = std::make_unique<LLMBotController>();
+        if (!g_llm->Initialize(cfg)) {
+            std::fprintf(stderr,
+                         "[dev_replay] LLM 初始化失败（检查 llama-server / llm.ini）\n");
+            return 1;
+        }
+        std::printf("[dev_replay] coach=llm url=%s autoLaunch=%d\n",
+                    cfg.serverUrl.c_str(), cfg.autoLaunch ? 1 : 0);
+    } else {
+        std::printf("[dev_replay] coach=rule\n");
+    }
+
     if (!batch) {
         const std::string roundsCsv = opt.hashPath.empty() ? std::string()
                                                           : opt.hashPath + ".rounds.csv";
-        const Summary s = RunOne(opt, opt.map, opt.seed, opt.hashPath, roundsCsv);
+        const Summary s = RunOne(opt, opt.map, opt.seed, opt.hashPath, roundsCsv,
+                                 opt.planPath);
         if (!s.ok) return 1;
         std::printf("[dev_replay] map=%s seed=%d ticks=%d aimTurn=%.2f aimErr=%.1f reaction=%d\n",
                     s.map.c_str(), s.seed, s.ticks, opt.aimTurnRate, opt.aimErrorDeg,
@@ -504,7 +573,8 @@ int main(int argc, char** argv) {
     for (const auto& map : opt.maps) {
         for (int seed : opt.seeds) {
             const std::string base = opt.outDir + "/" + map + "-s" + std::to_string(seed);
-            const Summary s = RunOne(opt, map, seed, base + ".hash.txt", base + ".rounds.csv");
+            const Summary s = RunOne(opt, map, seed, base + ".hash.txt", base + ".rounds.csv",
+                                     base + ".plans.csv");
             if (!s.ok) { ++failed; continue; }
             ++games;
             if (s.winner == Team::CT) ++ctWins;
