@@ -820,6 +820,8 @@ public:
                                           std::function<void(const std::string&)>)>;
     void SetCoachLlm(CoachLlmFn fn) { coachLlm_ = std::move(fn); }
     void SetCoachLlmEnabled(bool on) { coachLlmEnabled_ = on; }
+    // 评估加速：只在回合开始请求 LLM（跳过下包/拆包/时间不足等事件）
+    void SetCoachLlmRoundStartOnly(bool on) { coachLlmRoundStartOnly_ = on; }
     bool IsCoachLlmEnabled() const { return coachLlmEnabled_; }
     // LLM 评估用：是否还有未回包的计划请求（runner 靠它把模拟节奏压到真实决策速度）
     bool IsCoachLlmPending() const {
@@ -978,6 +980,7 @@ private:
 
     CoachLlmFn coachLlm_;
     bool coachLlmEnabled_ = true;
+    bool coachLlmRoundStartOnly_ = false;   // 评估加速：只回合开始请求 LLM
     float coachPlanChangedAt_ = 0.0f;
     struct CoachLlmResult { Team team; int gen; std::string raw; bool debrief = false; };
     std::vector<CoachLlmResult> coachLlmResults_;

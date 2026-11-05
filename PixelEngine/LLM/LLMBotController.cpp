@@ -114,6 +114,7 @@ bool LLMBotController::Initialize(const LLMConfig& config) {
     serverUrl_ = config.serverUrl;
     killOnExit_ = config.killOnExit;
     schemaSupported_ = config.jsonSchema;
+    kWorkers_ = std::clamp(config.parallelSlots, 1, 16);
 
     // 0. 若存在上次运行遗留的 PID 文件，先校验是否仍有效
     const unsigned long stalePid = ReadPidFile();
@@ -444,13 +445,29 @@ void LLMBotController::AskRaw(const std::string& systemPrompt, const std::string
     }
     if (activeWorkers_.load() == 0) {
         running_ = true;
-        for (int w = 0; w < kWorkers; ++w) {
-            if (workers_[w].joinable()) workers_[w].join();
+        workers_.resize(static_cast<size_t>(kWorkers_));
+        for (auto& th : workers_) {
+            if (th.joinable()) th.join();
         }
-        activeWorkers_ = kWorkers;
-        for (int w = 0; w < kWorkers; ++w) {
-            workers_[w] = std::thread(&LLMBotController::WorkerLoop, this);
+        activeWorkers_ = kWorkers_;
+        for (auto& th : workers_) {
+            th = std::thread(&LLMBotController::WorkerLoop, this);
         }
+    }
+}
+
+bool LLMBotController::WaitIdle(int timeoutMs) {
+    int waited = 0;
+    for (;;) {
+        bool queueEmpty = true;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            queueEmpty = queue_.empty();
+        }
+        if (queueEmpty && inFlight_.load() == 0) return true;
+        if (waited >= timeoutMs) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        waited += 5;
     }
 }
 
@@ -476,6 +493,7 @@ void LLMBotController::WorkerLoop() {
         }
 
         busy_ = true;
+        ++inFlight_;
         std::string raw;
         const bool useSchema = !schema.empty() && schemaSupported_.load();
         std::string req = PromptBuilder::BuildRequestBodyEx(
@@ -513,6 +531,7 @@ void LLMBotController::WorkerLoop() {
         busy_ = false;
 
         if (rawCb) rawCb(raw);
+        --inFlight_;
 
         {
             std::lock_guard<std::mutex> lock(mutex_);

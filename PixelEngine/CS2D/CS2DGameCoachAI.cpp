@@ -827,6 +827,9 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
             return;                 // 战术级事件交给规则层
     }
 
+    // 评估加速：只保留回合开始这一次决策（请求数约减半）
+    if (coachLlmRoundStartOnly_ && ev.type != CoachEventType::RoundStart) return;
+
     const bool lowEco = LowEconomyAverage(t);
     const CoachAllowSet allow = BuildAllowSet(t, bombPlanted_, lowEco, world_.get());
     const std::string user = BuildStateDigest(*this, t, ev, st.notes,

@@ -20,10 +20,12 @@
 #include "replay.hpp"
 #include "scripted_player.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cinttypes>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <cmath>
 #include <cstdio>
@@ -68,6 +70,11 @@ struct Options {
     std::string coachUrl;             // 覆盖 llm.ini 的 server url
     bool coachNoLaunch = false;       // 不自动拉起 llama-server（要求外部已运行）
     std::string planPath;             // 单局：计划 trace 输出路径
+    int   jobs = 1;                   // 并行局数（LLM 评估用它吃满服务端并行槽）
+    bool  llmRoundStartOnly = false;  // 只在回合开始请求 LLM（请求数减半）
+    int   coachWaitMs = 30000;        // 单次等待 LLM 回包的上限
+    std::string llmModel;             // 覆盖 llm.ini 的模型（评估加速可用 3B）
+    int   llmParallel = 0;            // 覆盖并行槽数（0=用配置）
 };
 
 Options ParseArgs(int argc, char** argv) {
@@ -88,6 +95,11 @@ Options ParseArgs(int argc, char** argv) {
         else if (a.rfind("--coach=", 0) == 0) o.coach = a.substr(8);
         else if (a.rfind("--coach-url=", 0) == 0) o.coachUrl = a.substr(12);
         else if (a == "--coach-no-launch") o.coachNoLaunch = true;
+        else if (a == "--llm-roundstart-only") o.llmRoundStartOnly = true;
+        else if (a.rfind("--jobs=", 0) == 0) o.jobs = std::max(1, std::atoi(a.c_str() + 7));
+        else if (a.rfind("--coach-wait-ms=", 0) == 0) o.coachWaitMs = std::atoi(a.c_str() + 16);
+        else if (a.rfind("--llm-model=", 0) == 0) o.llmModel = a.substr(12);
+        else if (a.rfind("--llm-parallel=", 0) == 0) o.llmParallel = std::atoi(a.c_str() + 15);
         else if (a.rfind("--plans=", 0) == 0) o.planPath = a.substr(8);
         else if (a == "--noisy-conflicts") o.enableNoisyConflicts = true;
         else if (a.rfind("--conflict-ignore=", 0) == 0) {
@@ -254,6 +266,7 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
             g_llm->AskRaw(sys, usr, maxTok, std::move(cb), "COACH", schema);
         });
         game.SetCoachLlmEnabled(true);
+        game.SetCoachLlmRoundStartOnly(opt.llmRoundStartOnly);
     }
     if (!planPath.empty()) game.EnablePlanTrace(planPath);
     dev_replay::RoundTracker tracker;
@@ -316,12 +329,12 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
         // 注意：等待时只收 LLM 回包、不推进仿真 —— 否则 pending 永远不会被清掉。
         if (g_llm) {
             int waitedMs = 0;
-            while (game.IsCoachLlmPending() && waitedMs < 30000) {
+            while (game.IsCoachLlmPending() && waitedMs < opt.coachWaitMs) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
                 game.PumpCoach();
                 waitedMs += 2;
             }
-            if (waitedMs >= 30000) {
+            if (waitedMs >= opt.coachWaitMs) {
                 std::fprintf(stderr, "[dev_replay] LLM 等待超时(>30s)，继续推进\n");
             }
         }
@@ -331,6 +344,15 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
         if (game.GetMatchWinner() != Team::None) { lastTick_ = t; break; }
         lastTick_ = t;
     }
+    // 关键：销毁 CS2DGame 前必须等所有在途 LLM 请求结束。
+    // 否则 worker 线程的回调会去锁已释放的 coachLlmMutex_ → 访问违例（曾导致 runner 随机崩溃）。
+    if (g_llm) {
+        game.SetCoachLlmEnabled(false);
+        if (!g_llm->WaitIdle(20000)) {
+            std::fprintf(stderr, "[dev_replay] 警告：LLM 未在 20s 内清空，仍可能有回调\n");
+        }
+    }
+
     if (hashFile) std::fclose(hashFile);
     if (conflictFile) std::fclose(conflictFile);
     if (dumpFile) std::fclose(dumpFile);
@@ -506,6 +528,13 @@ int main(int argc, char** argv) {
             cfg.modelPath = PathUtils::ResolveAppPath(cfg.modelPath);
         if (!opt.coachUrl.empty()) cfg.serverUrl = opt.coachUrl;
         if (opt.coachNoLaunch) cfg.autoLaunch = false;
+        if (!opt.llmModel.empty()) {
+            cfg.modelPath = PathUtils::ResolveAppPath(opt.llmModel);
+        }
+        if (opt.llmParallel > 0) {
+            cfg.parallelSlots = opt.llmParallel;
+            cfg.ctxTokens = opt.llmParallel * 8192;   // 每槽 8k
+        }
 
         g_llm = std::make_unique<LLMBotController>();
         if (!g_llm->Initialize(cfg)) {
@@ -570,11 +599,51 @@ int main(int argc, char** argv) {
     double sumAvgRoundTicks = 0.0;
     int sumRounds = 0, sumPlants = 0, sumDefuses = 0;
 
+    struct Job {
+        std::string map;
+        int seed = 0;
+        std::string base;
+        Summary s;
+    };
+    std::vector<Job> jobs;
     for (const auto& map : opt.maps) {
         for (int seed : opt.seeds) {
-            const std::string base = opt.outDir + "/" + map + "-s" + std::to_string(seed);
-            const Summary s = RunOne(opt, map, seed, base + ".hash.txt", base + ".rounds.csv",
-                                     base + ".plans.csv");
+            Job j;
+            j.map  = map;
+            j.seed = seed;
+            j.base = opt.outDir + "/" + map + "-s" + std::to_string(seed);
+            jobs.push_back(std::move(j));
+        }
+    }
+
+    // 并行跑局：LLM 的瓶颈是"等回包"，多局并行才能吃满服务端槽位。
+    // 每局有自己的 CS2DGame / 文件；共享的只有 LLM 控制器（内部有队列+锁）。
+    std::atomic<size_t> nextJob{0};
+    std::mutex printMutex;
+    auto workerFn = [&]() {
+        for (;;) {
+            const size_t i = nextJob.fetch_add(1);
+            if (i >= jobs.size()) break;
+            Job& j = jobs[i];
+            j.s = RunOne(opt, j.map, j.seed, j.base + ".hash.txt",
+                         j.base + ".rounds.csv", j.base + ".plans.csv");
+            std::lock_guard<std::mutex> lk(printMutex);
+            std::printf("[dev_replay] done %s seed=%d ok=%d winner=%s rounds=%d\n",
+                        j.map.c_str(), j.seed, j.s.ok ? 1 : 0,
+                        dev_replay::TeamTag(j.s.winner), j.s.rounds);
+            std::fflush(stdout);
+        }
+    };
+    {
+        const int n = std::max(1, std::min<int>(opt.jobs, static_cast<int>(jobs.size())));
+        std::vector<std::thread> pool;
+        for (int k = 0; k < n; ++k) pool.emplace_back(workerFn);
+        for (auto& th : pool) th.join();
+    }
+
+    for (const auto& j : jobs) {
+        {
+            const Summary& s = j.s;
             if (!s.ok) { ++failed; continue; }
             ++games;
             if (s.winner == Team::CT) ++ctWins;

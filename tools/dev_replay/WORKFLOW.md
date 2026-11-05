@@ -401,3 +401,15 @@ python tools/dev_replay/eval_llm.py --rule=build-evidence/ab-rule --llm=build-ev
 2. **看计划分歧率**：如果只有 ~10%，说明 LLM 基本在复述规则，胜率差异没有意义。
 3. **看延迟**：p90 > 8s 时，计划落地时局面已变，评估要打折。
 4. **不要比 final_hash**：LLM 组是非确定性的，只比指标。
+### 12.1 加速参数（实测 4x）
+
+```powershell
+.\build-dev\dev_replay_runner.exe --coach=llm `
+    --llm-model=llm_bot\models\qwen2.5-3b-instruct-q4_k_m.gguf `
+    --llm-parallel=4 --jobs=4 --llm-roundstart-only `
+    --ticks=150000 --maps=dust_2,mirage,ancient_ruins --seeds=1-5 `
+    --coach-no-launch --out=build-evidence/ab-llm --tag=ab-llm
+```
+
+时间构成：`决策次数 × 单次回包延迟`。7B/全事件 ≈100s/局 → 3B/回合开始 ≈25-28s/局。
+3B 只用于链路与结构评估，最终结论请换回 7B。
