@@ -193,7 +193,16 @@ def main():
                 lat.append(parse_float(p.get("latency_s")))
                 reshaped += parse_int(p.get("reshaped"))
         total_llm = sum(by_intent.values())
-        print(f"计划条数: 规则 {by_src.get('rule',0)} / LLM {total_llm}")
+        print(f"计划条数: 规则 {by_src.get('rule',0)} / LLM 采纳 {by_src.get('llm',0)}"
+              f" / 顾问(只记录) {by_src.get('llm_advisory',0)}")
+        # 采纳相关的计数（新版 runner 才有这些列）
+        lp = sum(parse_int(r.get("llm_plans")) for r in llm_rows)
+        la = sum(parse_int(r.get("llm_advisory")) for r in llm_rows)
+        ll = sum(parse_int(r.get("llm_late")) for r in llm_rows)
+        if lp or la or ll:
+            denom = lp + ll
+            print(f"LLM 决策: 采纳 {lp} / 顾问 {la} / 迟到丢弃 {ll}"
+                  + (f"  迟到率 {ll/denom:.0%}" if denom else ""))
         if total_llm:
             print("LLM 意图分布: " + ", ".join(
                 f"{k}={v}({v/total_llm:.0%})" for k, v in
@@ -203,8 +212,11 @@ def main():
                 lat_sorted = sorted(lat)
                 p50 = lat_sorted[len(lat_sorted) // 2]
                 p90 = lat_sorted[min(len(lat_sorted) - 1, int(len(lat_sorted) * 0.9))]
+                p99 = lat_sorted[min(len(lat_sorted) - 1, int(len(lat_sorted) * 0.99))]
+                slow = sum(1 for v in lat if v > 2.5) / len(lat)
                 print(f"LLM 延迟: 均值 {statistics.mean(lat):.2f}s  p50 {p50:.2f}s  "
-                      f"p90 {p90:.2f}s  max {max(lat):.2f}s")
+                      f"p90 {p90:.2f}s  p99 {p99:.2f}s  max {max(lat):.2f}s  "
+                      f">2.5s 占比 {slow:.0%}")
 
     # ---- 计划分歧率（同回合同队，第一次计划是否不同） ----
     def first_plans(plist):

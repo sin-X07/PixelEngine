@@ -269,3 +269,19 @@ LLM 评估的墙钟时间 ≈ **决策次数 × 单次回包延迟 / 并行度**
 `CS2DGame` 是 `RunOne` 的栈上对象，而 LLM 回调在 worker 线程里捕获了它。
 如果一局结束时还有在途请求，回调会去锁已释放的 `coachLlmMutex_` → **runner 随机崩溃（0xC0000005）**。
 现在 `RunOne` 返回前会 `SetCoachLlmEnabled(false)` + `g_llm->WaitIdle(20s)`，确保没有回调在飞。
+
+### 教练层可调项（环境变量）
+
+默认值就是"新行为"，可在不重新编译的情况下做 A/B：
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `PE_COACH_HYBRID` | 1 | 顾问模式：无情报优势时 LLM 只记录不执行 |
+| `PE_COACH_STALE` | 1 | 时效硬闸：期间有减员且延迟超阈值 → 丢弃 |
+| `PE_COACH_STALE_MS` | 2500 | 硬闸延迟阈值（毫秒） |
+| `PE_COACH_MAXTOK` | 120 | LLM 输出 token 上限 |
+| `PE_COACH_REASON_CHARS` | 20 | `reason` 截断字符数 |
+| `PE_COACH_PLAYBOOK` | 4000 | 战术库总字节上限 |
+| `PE_COACH_EVENTS` | high | `high`=回合开始+下包；`all`=旧行为（含拆包/时间不足/赛点） |
+
+复现"旧配置"（用于校准）：`PE_COACH_HYBRID=0 PE_COACH_STALE=0 PE_COACH_MAXTOK=260 PE_COACH_EVENTS=all PE_COACH_PLAYBOOK=8000 PE_COACH_REASON_CHARS=80`

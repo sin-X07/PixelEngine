@@ -439,6 +439,9 @@ public:
         int nadeThrows    = 0;    // 成功投掷
         int nadeSkips     = 0;    // 因落点不可行放弃
         int searchVisits  = 0;    // 搜点次数（到达未搜区域）
+        int llmPlans      = 0;    // LLM 计划被采纳
+        int llmAdvisory   = 0;    // 顾问模式：只记录不执行
+        int llmLate       = 0;    // 迟到丢弃（决策期间局面已变）
         int renewals      = 0;    // 计划到期续期次数
     };
     const DebugCounters& Counters() const { return counters_; }
@@ -450,8 +453,10 @@ public:
     void EnablePlanTrace(const std::string& path);
     void ClosePlanTrace();
     void TraceCoachPlan(Team t);
+    void TraceCoachAdvisory(Team t, const TeamPlan& plan);   // 顾问计划（只记录）
     std::FILE* planTrace_ = nullptr;
     std::string planTraceKey_;   // 去重：同一条计划只写一次
+    std::string planTraceAdvKey_; // 顾问计划去重键
 
     void EnableDecisionTrace(const std::string& path);
     void TraceBotDecision(size_t i, const Player* target);   // 内部：有变化才写一行
@@ -972,6 +977,7 @@ private:
         float llmLatencyWall = 0.0f;                       // 回包墙钟延迟（秒）
         int   llmEventType = 0;
         int   llmRoundNo = 0;
+        int   llmAliveT = 0, llmAliveCT = 0;   // 发请求时的存活数（时效性判断）
         bool  llmBombPlanted = false;
         float lastThinkAt = 0.0f;
         // true = plan from LLM; RuleCoach must not overwrite until expiry/critical.

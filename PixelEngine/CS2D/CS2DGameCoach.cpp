@@ -772,6 +772,32 @@ void CS2DGame::ClosePlanTrace() {
     planTrace_ = nullptr;
 }
 
+void CS2DGame::TraceCoachAdvisory(Team t, const TeamPlan& plan) {
+    if (!planTrace_) return;
+    std::string slotSig;
+    for (const auto& so : plan.slots) slotSig += so.area + ";";
+    const std::string key = std::to_string(round_.RoundNumber()) + "|" + TeamName(t) +
+                            "|" + IntentKey(plan.intent) + "|" + plan.target + "|" + slotSig;
+    if (key == planTraceAdvKey_) return;
+    planTraceAdvKey_ = key;
+
+    std::string reason = plan.reason;
+    for (char& c : reason) {
+        if (c == ',' || c == '"' || c == '\n' || c == '\r') c = ';';
+    }
+    if (reason.size() > 80) {
+        size_t cut = 80;
+        while (cut > 0 && (static_cast<unsigned char>(reason[cut]) & 0xC0) == 0x80) --cut;
+        reason.resize(cut);
+    }
+    std::fprintf(planTrace_, "%d,%.1f,%s,%s,%s,%s,%s,%.2f,%d,\"%s\"\n",
+                 round_.RoundNumber(), GetRoundElapsed(), TeamName(t),
+                 IntentKey(plan.intent),
+                 plan.target.empty() ? "-" : plan.target.c_str(),
+                 TempoKey(plan.tempo), "llm_advisory", plan.latencyWall,
+                 plan.reshaped ? 1 : 0, reason.c_str());
+}
+
 void CS2DGame::TraceCoachPlan(Team t) {
     if (!planTrace_) return;
     const CoachState& st = CoachFor(t);
