@@ -26,6 +26,28 @@
 
 namespace {
 
+// ---- 教练层可调项（环境变量覆盖，默认值即"新行为"）----
+int CoachEnvInt(const char* name, int def) {
+    const char* v = std::getenv(name);
+    return (v && *v) ? std::atoi(v) : def;
+}
+bool CoachEnvFlag(const char* name, bool def) {
+    const char* v = std::getenv(name);
+    return (v && *v) ? (std::atoi(v) != 0) : def;
+}
+// 按"字符数"截断 UTF-8 字符串，避免切断多字节字符
+std::string TruncateUtf8(const std::string& in, size_t maxChars) {
+    size_t chars = 0;
+    size_t i = 0;
+    while (i < in.size() && chars < maxChars) {
+        ++i;
+        while (i < in.size() && (static_cast<unsigned char>(in[i]) & 0xC0) == 0x80) ++i;
+        ++chars;
+    }
+    return in.substr(0, i);
+}
+
+
 // llama-server 结构化输出 schema（与游戏侧枚举一一对应）
 const char* kCoachSchema = R"JSON({"type":"object","additionalProperties":false,
 "required":["intent","target","tempo","ttl_s","reason"],
@@ -418,7 +440,8 @@ const std::string& LoadCoachPlaybook(const std::string& playbookId) {
     if (it != cache.end()) return it->second;
 
     // 约 10KB 手册 ≈ 3.8k tokens；llama-server 单槽 4096，留出 user 摘要与输出。
-    constexpr size_t kMaxTotalBookBytes = 8000;
+    const size_t kMaxTotalBookBytes =
+        static_cast<size_t>(CoachEnvInt("PE_COACH_PLAYBOOK", 4000));
     std::string body;
 
     const std::string common =
@@ -814,12 +837,20 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
     CoachState& st = CoachFor(t);
     if (st.llmPending) return;      // 同时只允许一个在途请求
 
+    // 默认只在「回合开始 / 下包后」问 LLM：这两处信息价值最高，也等得起。
+    // PE_COACH_EVENTS=all 可恢复"所有关键事件都问"（A/B 校准用）。
+    const bool allEvents = [] {
+        const char* v = std::getenv("PE_COACH_EVENTS");
+        return v && std::string(v) == "all";
+    }();
     switch (ev.type) {
         case CoachEventType::RoundStart:
         case CoachEventType::BombPlanted:
+            break;
         case CoachEventType::DefuseStarted:
         case CoachEventType::TimeLow:
         case CoachEventType::MatchPoint:
+            if (!allEvents) return;   // mid-round 事件等不起，直接交给规则层
             break;
         case CoachEventType::Heartbeat:
             return;    // 心跳只刷新规则（规则层在 CoachThink 里已跑），不再烧 LLM
@@ -849,6 +880,13 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
     st.llmEventType   = static_cast<int>(ev.type);
     st.llmRoundNo     = round_.RoundNumber();
     st.llmBombPlanted = bombPlanted_;
+    st.llmAliveT      = AliveCount(Team::T);
+    st.llmAliveCT     = AliveCount(Team::CT);
+
+    // 决策对比：记录"发请求这一刻"的规则计划，供事后对照
+    st.ruleSnapshot    = st.plan;
+    st.hasRuleSnapshot = true;
+    st.llmSnapshot     = TeamPlan{};
 
     const int gen = st.gen;
 
@@ -856,7 +894,8 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
         std::cout << "[CoachRawReq] " << TeamName(t) << " user_len=" << user.size()
                   << std::endl;
     }
-    coachLlm_(BuildSystemPrompt(world_.get(), mapId_, playbookId_), user, 260,
+    coachLlm_(BuildSystemPrompt(world_.get(), mapId_, playbookId_), user,
+                  CoachEnvInt("PE_COACH_MAXTOK", 120),
               BuildCoachSchema(allow),
               [this, t, gen](const std::string& raw) {
                   if (std::getenv("PIXEL_LOG_COACH_RAW")) {
@@ -954,10 +993,27 @@ void CS2DGame::CoachDrainLlm() {
         }
         if (st.llmRoundNo != round_.RoundNumber() || st.llmBombPlanted != bombPlanted_) {
             std::cout << "[Coach] " << TeamName(r.team) << " LLM 回包状态已变，丢弃" << std::endl;
+            TraceCoachDecision(r.team, "stale_state");
             continue;
+        }
+
+        // ---- 时效性闸门：决策期间发生了减员，且回包已超过阈值 → 这条计划过期 ----
+        {
+            const bool  staleOn    = CoachEnvFlag("PE_COACH_STALE", true);
+            const float staleAfter = CoachEnvInt("PE_COACH_STALE_MS", 2500) / 1000.0f;
+            const bool  aliveChanged = AliveCount(Team::T) != st.llmAliveT ||
+                                       AliveCount(Team::CT) != st.llmAliveCT;
+            if (staleOn && aliveChanged && st.llmLatencyWall > staleAfter) {
+                ++counters_.llmLate;
+                std::cout << "[Coach] " << TeamName(r.team) << " LLM 迟到丢弃("
+                          << st.llmLatencyWall << "s, 期间有减员)" << std::endl;
+                TraceCoachDecision(r.team, "late");
+                continue;
+            }
         }
         if (r.raw.empty()) {
             std::cout << "[Coach] " << TeamName(r.team) << " LLM 无回复，沿用规则计划" << std::endl;
+            TraceCoachDecision(r.team, "empty");
             continue;
         }
 
@@ -979,13 +1035,21 @@ void CS2DGame::CoachDrainLlm() {
             std::cout << "[Coach] " << TeamName(r.team)
                       << " LLM 计划非法(硬规则:plant/save)，沿用规则 | "
                       << r.raw.substr(0, 100) << std::endl;
+            TraceCoachDecision(r.team, "invalid");
             continue;
+        }
+
+        // 输出预算收紧后，reason 只留短句
+        {
+            const int maxChars = CoachEnvInt("PE_COACH_REASON_CHARS", 20);
+            if (maxChars > 0) plan.reason = TruncateUtf8(plan.reason, static_cast<size_t>(maxChars));
         }
 
         // 双保险：穷局且未下包，只接受 save（其余一律丢弃）
         if (saveAllowed && !bombPlanted_ && plan.intent != PlanIntent::Save) {
             std::cout << "[Coach] " << TeamName(r.team)
                       << " 穷局拒绝进攻性 LLM 计划，沿用规则计划" << std::endl;
+            TraceCoachDecision(r.team, "rejected_save");
             continue;
         }
 
@@ -1010,6 +1074,29 @@ void CS2DGame::CoachDrainLlm() {
             }
         }
 
+        // ---- 顾问模式：没有信息优势时只记录、不接管 ----
+        if (CoachEnvFlag("PE_COACH_HYBRID", true)) {
+            const float heatA = intel_.HeatOfSide(world_.get(), "A");
+            const float heatB = intel_.HeatOfSide(world_.get(), "B");
+            const bool  hasIntel = intel_.ObservationCount() >= 2 &&
+                                   std::max(heatA, heatB) >= 1.0f;
+            const int   gap = GetRoundStartEconomy(r.team) -
+                              GetRoundStartEconomy(TeamManager::Opponent(r.team));
+            if (!hasIntel && gap < 1500) {
+                plan.latencyWall = st.llmLatencyWall;
+                ++counters_.llmAdvisory;
+                TraceCoachAdvisory(r.team, plan);
+                std::cout << "[Coach] " << TeamName(r.team)
+                          << " LLM 顾问模式（无情报优势）→ 记录不执行: "
+                          << static_cast<int>(plan.intent) << std::endl;
+                st.llmSnapshot = plan;
+                TraceCoachDecision(r.team, "advisory");
+                continue;
+            }
+        }
+        ++counters_.llmPlans;
+
+        st.llmSnapshot = plan;
         plan.source      = "llm";     // 评估用：这条计划来自模型
         plan.latencyWall = st.llmLatencyWall;
         plan.gen       = st.gen;
@@ -1037,6 +1124,7 @@ void CS2DGame::CoachDrainLlm() {
                   << IntentLabel(plan.intent)
                   << " 目标=" << (plan.target.empty() ? "-" : plan.target)
                   << " | " << plan.reason << " [sticky]" << std::endl;
+        TraceCoachDecision(r.team, "applied");
 
         CoachApplyPlan(r.team);
     }
@@ -1050,6 +1138,7 @@ void CS2DGame::CoachDrainLlm() {
             st.llmPending = false;
             st.llmAnswered = true;
             std::cout << "[Coach] " << TeamName(t) << " LLM 超时，沿用规则计划" << std::endl;
+            TraceCoachDecision(t, "timeout");
         }
     }
 }

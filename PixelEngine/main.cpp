@@ -34,7 +34,9 @@ int main(int argc, char* argv[]) {
     bool autostart = false;
     bool fastRound = false;
     int  startMode = 1;
-    bool coachLlm = true;   // --coach=rule 关闭 LLM 教练（用于对比）
+    // 实测结论：LLM 教练相比规则教练没有可测量的提升（见 docs/llm-coach-plan.md 第 5 步），
+    // 因此默认关闭实时 LLM 教练；需要时用 --coach=llm 显式开启（分析 / 实验）。
+    bool coachLlm = false;
     std::string startMap;   // --map=<id> 指定地图（kMapCatalog 的 id）
     bool openMapSelect = false;  // --mapselect 直接打开地图选择界面（调试）
     bool openHistory = false;    // --history 直接打开历史记录（调试）
