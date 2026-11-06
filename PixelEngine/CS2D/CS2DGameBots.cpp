@@ -496,6 +496,25 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         ai.scanPhase += dt;
         if (ai.wanderTimer > 0.0f) ai.wanderTimer -= dt;
 
+        // ---- 计划卡里的投掷意图：到位过程中朝目标区域投一颗 ----
+        if (ai.utilKind > 0 && !ai.utilDone) {
+            if (bot.grenadeCount <= 0) {
+                ai.utilDone = true;
+            } else {
+                const float dx = ai.utilX - bot.x;
+                const float dy = ai.utilY - bot.y;
+                const float d2 = dx * dx + dy * dy;
+                if (d2 < 230.0f * 230.0f && d2 > 80.0f * 80.0f) {
+                    float ang = 0.0f;
+                    if (PlanGrenadeThrow(bot, ai.utilX, ai.utilY, ang)) {
+                        ThrowGrenade(bot, ang, audio);
+                        ai.utilDone = true;
+                        ++counters_.nadeThrows;
+                    }
+                }
+            }
+        }
+
 
         // 分工指令
         SquadOrder order;
@@ -665,7 +684,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // 比死后补枪更主动：队友要顶不住了才去，避免全员排队送；Anchor 与无补枪许可者不去。
         if (ai.assistCooldown > 0.0f) ai.assistCooldown -= dt;
         if (!target && !ai.defusing && order.role != BotRole::Anchor &&
-            order.canTrade && ai.assistCooldown <= 0.0f) {
+            ai.holdStyle == 0 && order.canTrade && ai.assistCooldown <= 0.0f) {
             int   bestMate = -1;
             float bestD2 = Tuning::ai::AssistPushRadius * Tuning::ai::AssistPushRadius;
             for (size_t j = 0; j < bots_.size(); ++j) {
@@ -1038,7 +1057,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
             // ---- 搜点：无目标、非断后、回合前 40s → 去最近的未搜区域 ----
             // 搜点主要给进攻方（推点途中清角落）；CT 守点乱跑会把包点让出来
-            const bool canSearch = bot.team == Team::T &&
+            const bool canSearch = bot.team == Team::T && ai.holdStyle == 0 &&
                 !target && order.role != BotRole::Anchor &&
                 GetRoundElapsed() > 12.0f &&
                 GetRoundElapsed() < Tuning::ai::SearchWindowSec &&
@@ -1393,6 +1412,9 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         const float meleeReachNow = Tuning::ai::MeleeReachBase +
                                     bot.size * Tuning::ai::MeleeReachPerSize;
         if (bot.weaponSlot >= 2 && engageDist > meleeReachNow) shouldShoot = false;
+
+        // 站姿=被动：只打贴脸，不主动拉远枪线
+        if (ai.holdStyle == 3 && engageDist > 250.0f) shouldShoot = false;
 
         // 结算展示期与回合中一致：BOT 同样可以开火
         // 枪械 / 霰弹（必须真实可见才开火，换弹中不开火）

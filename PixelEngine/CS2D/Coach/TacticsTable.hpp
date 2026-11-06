@@ -36,7 +36,12 @@ struct TacticsTable {
     std::map<std::string, std::string> areas;
 
     // 区域 → 守点时应该看的方向（弧度，0=+X）；来自 [look.<area>] 0=角度(度)
+    // 也支持 [look.T.<area>] / [look.CT.<area>]（按阵营区分）
     std::map<std::string, std::vector<float>> looks;
+
+    // 区域 → 驻守锚点（优先于区域中心）；[anchor.<area>] x=.. y=..
+    // 也支持 [anchor.T.<area>] / [anchor.CT.<area>]
+    std::map<std::string, std::pair<float, float>> anchors;
 
     // (Team, Intent) → 5 个槽位
     std::map<std::string, std::array<SlotOrder, 5>> slots;
@@ -48,6 +53,7 @@ struct TacticsTable {
         areas.clear();
         slots.clear();
         looks.clear();
+        anchors.clear();
         if (id.empty()) return;
 
         IniFile ini = IniFile::Load(path);
@@ -80,16 +86,25 @@ struct TacticsTable {
         }
         // [look.<区域>]  0 = 角度(度)，可写多条（守点时轮流看）
         for (const auto& [section, sec] : ini.GetAll()) {
-            const std::string prefix = "look.";
-            if (section.rfind(prefix, 0) != 0) continue;
-            const std::string area = section.substr(prefix.size());
-            std::vector<float> dirs;
-            for (const auto& [key, val] : sec) {
-                (void)key;
-                const float deg = std::atof(StripInlineComment(val).c_str());
-                dirs.push_back(deg * 3.14159265f / 180.0f);
+            if (section.rfind("look.", 0) == 0) {
+                const std::string area = section.substr(5);
+                std::vector<float> dirs;
+                for (const auto& [key, val] : sec) {
+                    (void)key;
+                    const float deg = std::atof(StripInlineComment(val).c_str());
+                    dirs.push_back(deg * 3.14159265f / 180.0f);
+                }
+                if (!dirs.empty()) looks[area] = dirs;
+            } else if (section.rfind("anchor.", 0) == 0) {
+                const std::string area = section.substr(7);
+                float x = 0.0f, y = 0.0f;
+                for (const auto& [key, val] : sec) {
+                    const std::string clean = StripInlineComment(val);
+                    if (key == "x") x = static_cast<float>(std::atof(clean.c_str()));
+                    else if (key == "y") y = static_cast<float>(std::atof(clean.c_str()));
+                }
+                if (x > 0.0f || y > 0.0f) anchors[area] = {x, y};
             }
-            if (!dirs.empty()) looks[area] = dirs;
         }
 
         loaded = true;
@@ -109,6 +124,11 @@ struct TacticsTable {
                                           const std::string& intent) const {
         auto it = slots.find(team + "." + intent);
         return it == slots.end() ? nullptr : &it->second;
+    }
+
+    const std::pair<float, float>* Anchor(const std::string& area) const {
+        auto it = anchors.find(area);
+        return it == anchors.end() ? nullptr : &it->second;
     }
 
     const std::vector<float>* Look(const std::string& area) const {
@@ -162,8 +182,31 @@ private:
         out.canTrade = true;
         out.canRotate = false;
         for (size_t i = 2; i < parts.size(); ++i) {
-            if (parts[i] == "noTrade") out.canTrade = false;
-            if (parts[i] == "rotate")  out.canRotate = true;
+            const std::string& p = parts[i];
+            if (p == "noTrade") { out.canTrade = false; continue; }
+            if (p == "rotate")  { out.canRotate = true; continue; }
+            // key=value 扩展：look=<Area>|lookDeg=<度>|hold=anchor|offangle|passive|util=smoke:Area
+            const size_t eq = p.find('=');
+            if (eq == std::string::npos) continue;
+            const std::string key = p.substr(0, eq);
+            const std::string val = p.substr(eq + 1);
+            if (key == "look") {
+                out.lookArea = val;
+            } else if (key == "lookDeg") {
+                out.lookAngle = static_cast<float>(std::atof(val.c_str())) * 3.14159265f / 180.0f;
+            } else if (key == "hold") {
+                if (val == "anchor")        out.hold = HoldStyle::Anchor;
+                else if (val == "offangle") out.hold = HoldStyle::OffAngle;
+                else if (val == "passive")  out.hold = HoldStyle::Passive;
+            } else if (key == "util") {
+                const size_t colon = val.find(':');
+                const std::string kind = val.substr(0, colon);
+                if (colon != std::string::npos) out.utilArea = val.substr(colon + 1);
+                if (kind == "smoke")        out.util = 1;
+                else if (kind == "flash")   out.util = 2;
+                else if (kind == "molotov") out.util = 3;
+                else if (kind == "he")      out.util = 4;
+            }
         }
         return true;
     }

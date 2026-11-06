@@ -31,6 +31,14 @@ int CoachEnvInt(const char* name, int def) {
     const char* v = std::getenv(name);
     return (v && *v) ? std::atoi(v) : def;
 }
+bool CoachSlotsEqual(const TeamPlan& a, const TeamPlan& b) {
+    for (size_t i = 0; i < a.slots.size(); ++i) {
+        if (a.slots[i].area != b.slots[i].area) return false;
+        if (a.slots[i].role != b.slots[i].role) return false;
+    }
+    return true;
+}
+
 bool CoachEnvFlag(const char* name, bool def) {
     const char* v = std::getenv(name);
     return (v && *v) ? (std::atoi(v) != 0) : def;
@@ -361,12 +369,31 @@ void ValidatePlaybookAreasOnce(const std::string& mapId, const std::string& book
         byLower.emplace(Lower(a.name), a.name);
     }
 
+    // 卡片行里的 id/字段名不是区域名：先剔掉卡片元数据再校验
+    std::string prose;
+    {
+        std::istringstream in(book);
+        std::string line;
+        while (std::getline(in, line)) {
+            const std::string t = line.substr(line.find_first_not_of(" \t") == std::string::npos
+                                                 ? line.size()
+                                                 : line.find_first_not_of(" \t"));
+            const bool meta = t.rfind("[card]", 0) == 0 || t.rfind("when:", 0) == 0 ||
+                              t.rfind("intent:", 0) == 0 || t.rfind("target:", 0) == 0 ||
+                              t.rfind("tempo:", 0) == 0 || t.rfind("ttl:", 0) == 0 ||
+                              t.rfind("slots:", 0) == 0 || t.rfind("fallback:", 0) == 0 ||
+                              (!t.empty() && std::isdigit(static_cast<unsigned char>(t[0])) &&
+                               t.find(' ') != std::string::npos);
+            if (!meta) prose += line + "\n";
+        }
+    }
+
     const std::vector<std::string> declared = ParseAreaManifest(book);
     std::vector<std::string> referenced;
-    CollectAreaReferences(book, "\"area\"", ':', referenced);
-    CollectAreaReferences(book, "area=", '=', referenced);
+    CollectAreaReferences(prose, "\"area\"", ':', referenced);
+    CollectAreaReferences(prose, "area=", '=', referenced);
     std::vector<std::string> proseTokens;
-    CollectSnakeCaseTokens(book, proseTokens);
+    CollectSnakeCaseTokens(prose, proseTokens);
 
     if (declared.empty()) {
         std::cout << "[Coach] 警告: 战术库缺少 [areas] 区域清单，跳过区域名校验 ("
@@ -441,7 +468,7 @@ const std::string& LoadCoachPlaybook(const std::string& playbookId) {
 
     // 约 10KB 手册 ≈ 3.8k tokens；llama-server 单槽 4096，留出 user 摘要与输出。
     const size_t kMaxTotalBookBytes =
-        static_cast<size_t>(CoachEnvInt("PE_COACH_PLAYBOOK", 4000));
+        static_cast<size_t>(CoachEnvInt("PE_COACH_PLAYBOOK", 20000));
     std::string body;
 
     const std::string common =
@@ -583,7 +610,60 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
             if (shown++ >= 4) break;
             o << " " << name << "x" << cnt;
         }
-        o << " 道具" << util << "枚";
+        // 道具明细（烟/闪/火/雷）：决定能不能"道具开点"
+        int smoke = 0, flash = 0, molotov = 0, he = 0;
+        for (const auto& b : game.GetBOTs()) {
+            if (!b.alive || b.team != team) continue;
+            for (WeaponId g : b.grenades) {
+                switch (g) {
+                    case WeaponId::GrenadeSmoke:      ++smoke;   break;
+                    case WeaponId::GrenadeFlash:      ++flash;   break;
+                    case WeaponId::GrenadeMolotov:
+                    case WeaponId::GrenadeIncendiary: ++molotov; break;
+                    case WeaponId::GrenadeHE:         ++he;      break;
+                    default: break;
+                }
+            }
+        }
+        o << " 道具" << util << "枚(烟" << smoke << "闪" << flash
+          << "火" << molotov << "雷" << he << ")";
+    }
+
+    // ---- 敌方武器构成（决定对枪距离/是否吃 AWP）----
+    {
+        int rifle = 0, sniper = 0, smg = 0, shotgun = 0, pistol = 0;
+        for (const auto& b : game.GetBOTs()) {
+            if (!b.alive || b.team == team) continue;
+            WeaponId best = WeaponId::None;
+            for (int slot = 0; slot <= 1; ++slot) {
+                if (b.weapons[slot] != WeaponId::None) { best = b.weapons[slot]; break; }
+            }
+            if (best == WeaponId::None) continue;
+            const WeaponDef& def = WeaponDB::Get(best);
+            switch (def.cls) {
+                case WeaponClass::Sniper:  ++sniper;  break;
+                case WeaponClass::Rifle:   ++rifle;   break;
+                case WeaponClass::SMG:     ++smg;     break;
+                case WeaponClass::Shotgun: ++shotgun; break;
+                default:                   ++pistol;  break;
+            }
+        }
+        o << "\n敌枪:";
+        if (sniper) o << " 狙" << sniper;
+        if (rifle)  o << " 步枪" << rifle;
+        if (smg)    o << " 冲锋" << smg;
+        if (shotgun)o << " 霰弹" << shotgun;
+        if (pistol) o << " 手枪" << pistol;
+        if (!sniper && !rifle && !smg && !shotgun && !pistol) o << " 未知";
+    }
+
+    // ---- 对方习惯（来自最近一回合记忆）----
+    if (!memory.empty()) {
+        const RoundMemo& m = memory.back();
+        o << "\n近局: ";
+        if (!m.target.empty()) o << "主攻" << m.target << " ";
+        if (!m.firstContactArea.empty()) o << "首触" << m.firstContactArea << " ";
+        o << (m.won ? "胜" : "负");
     }
 
 
@@ -1053,6 +1133,59 @@ void CS2DGame::CoachDrainLlm() {
             continue;
         }
 
+        // ---- 下包/回防：槽位必须来自战术模板（LLM 只决定意图/节奏）----
+        if (st.llmEventType == static_cast<int>(CoachEventType::BombPlanted)) {
+            // 语义修复：模型常在下包后返回 default→包点。这在引擎里等价于"没有守包计划"，
+            // 直接规范成 stack_<site>(T) / retake_<site>(CT)，再套模板，
+            // 避免"计划被拒 → 回退规则"这种既没执行也没信息量的结果。
+            // 目标缺失时用包点区域补出来（否则硬规则会判"下包后 target 必须等于包点侧"）
+            if (plan.target.empty() && !plantArea.empty()) {
+                const char side = AreaSideOf(plantArea);
+                if (side == 'A' || side == 'B') {
+                    plan.target = std::string(1, side);
+                    plan.reshaped = true;
+                }
+            }
+            if (plan.intent == PlanIntent::Default &&
+                (plan.target == "A" || plan.target == "B")) {
+                const bool aSide = (plan.target == "A");
+                if (r.team == Team::T) {
+                    plan.intent = aSide ? PlanIntent::StackA : PlanIntent::StackB;
+                } else {
+                    plan.intent = aSide ? PlanIntent::RetakeA : PlanIntent::RetakeB;
+                }
+                plan.reshaped = true;
+                std::cout << "[Coach] " << TeamName(r.team)
+                          << " 下包后 default→" << plan.target
+                          << " 规范化为守包/回防意图" << std::endl;
+            }
+            if (ApplySlotTemplate(r.team, plan)) plan.reshaped = true;
+        }
+
+        // ---- 只改 target、槽位不变 = 没有实际效果：视为 no-op，保留规则计划 ----
+        if (st.hasRuleSnapshot && plan.target != st.ruleSnapshot.target &&
+            CoachSlotsEqual(plan, st.ruleSnapshot)) {
+            std::cout << "[Coach] " << TeamName(r.team)
+                      << " LLM 只改 target(" << plan.target
+                      << ")、槽位未变 → 视为 no-op，保留规则计划" << std::endl;
+            st.llmSnapshot = plan;
+            TraceCoachDecision(r.team, "noop_target");
+            continue;
+        }
+
+        // ---- 计划自洽：target 与槽位必须匹配，否则回退到模板/规则 ----
+        if (!PlanTargetConsistent(r.team, plan)) {
+            if (!ApplySlotTemplate(r.team, plan) || !PlanTargetConsistent(r.team, plan)) {
+                std::cout << "[Coach] " << TeamName(r.team)
+                          << " LLM 计划不自洽(target=" << plan.target
+                          << " 与槽位不匹配) → 沿用规则" << std::endl;
+                st.llmSnapshot = plan;
+                TraceCoachDecision(r.team, "invalid_consistency");
+                continue;
+            }
+            plan.reshaped = true;
+        }
+
         // 防单点 / 防连续同侧：LLM 可能因上一局 A 赢了而一直压 A。
         SanitizeCoachPlan(r.team, plan);
 
@@ -1075,7 +1208,8 @@ void CS2DGame::CoachDrainLlm() {
         }
 
         // ---- 顾问模式：没有信息优势时只记录、不接管 ----
-        if (CoachEnvFlag("PE_COACH_HYBRID", true)) {
+        const bool advisoryExec = CoachEnvFlag("PE_COACH_ADVISORY_EXEC", false);
+        if (CoachEnvFlag("PE_COACH_HYBRID", true) && !advisoryExec) {
             const float heatA = intel_.HeatOfSide(world_.get(), "A");
             const float heatB = intel_.HeatOfSide(world_.get(), "B");
             const bool  hasIntel = intel_.ObservationCount() >= 2 &&
