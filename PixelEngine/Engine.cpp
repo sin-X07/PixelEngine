@@ -93,6 +93,12 @@ GameUI::Actions Engine::BuildActions() {
         if (s == MAP_SELECT) {
             LoadMapPreviews(renderer, mapPreviewTex_, kMapCatalogCount);
         }
+        // 从结算页返回主菜单：恢复菜单音乐并交还鼠标
+        if (currentState == MATCH_END && s == MAIN_MENU) {
+            SDL_SetRelativeMouseMode(SDL_FALSE);
+            SDL_ShowCursor(SDL_ENABLE);
+            audioManager->PlayMusic(AudioManager::MusicTrackPath(audioManager->GetMusicTrack()));
+        }
         currentState = s;
     };
     a.openSettings = [this](GameState ret) { settingsReturnState = ret; currentState = SETTINGS; };
@@ -771,6 +777,10 @@ void Engine::HandleInput() {
         } else if (currentState == SETTINGS) {
             SaveAudioConfig();
             currentState = settingsReturnState;
+        } else if (currentState == MATCH_END) {
+            // 结算页按 Esc 回主菜单（与其它页面同一套转场）
+            currentState = MAIN_MENU;
+            audioManager->PlayMusic(AudioManager::MusicTrackPath(audioManager->GetMusicTrack()));
         } else if (currentState == RESTART_CONFIRM || currentState == EXIT_CONFIRM) {
             currentState = PAUSED;
         } else if (currentState == MAP_SELECT || currentState == HISTORY) {
@@ -1375,22 +1385,33 @@ void Engine::Update(float dt) {
                      cs2dKeyShift, cs2dKeyR, interactHeld,
                      audioManager.get());
 
-    // ---- 比赛结束：展示 8 秒后自动返回主菜单 ----
+#ifdef PIXEL_DEV_REPLAY
+    // 开发期预览：PE_DEBUG_MATCH_END=1 时，进入对局 3 秒后强制结束比赛
+    if (cs2dGame && getenv("PE_DEBUG_MATCH_END") && currentState == PLAYING &&
+        !cs2dGame->IsMatchOver() && cs2dGame->GetRoundElapsed() > 3.0f) {
+        cs2dGame->DebugForceMatchEnd(Team::CT);
+    }
+#endif
+
+    // ---- 比赛结束：短暂停顿后进入结算页（不再自动弹回主菜单）----
     // 注意：这段必须放在 Update 里（HandleInput 里会被提前 return 掉），
     // 并且要在 cs2dGame->Update 之后，才能读到本帧刚累加的 matchOverTimer。
     if (cs2dGame->IsMatchOver()) {
-        constexpr float kReturnDelay = 8.0f;
-        if (cs2dGame->GetMatchOverTimer() >= kReturnDelay) {
+        // 留 1.2s 给最后的击杀/拆包播报播完，再切结算页；
+        // 切页本身走 Engine 的全局 0.9s 黑场软切（和其它页面一致）。
+        constexpr float kSettleDelay = 1.2f;
+        if (cs2dGame->GetMatchOverTimer() >= kSettleDelay) {
             RecordMatchHistory(false);
-            std::cout << "[CS2D] 比赛结束，返回主菜单" << std::endl;
+            std::cout << "[CS2D] 比赛结束，进入结算页" << std::endl;
             buyMenuOpen_ = false;
-            // 离开对局：开镜归零（契约 v1 第 4 节）
             cs2dGame->ResetScope(Presentation::ScopeResetReason::MatchExit);
             scopeRightClickPending_ = false;
-            currentState = MAIN_MENU;
+            cs2dKeyW = cs2dKeyA = cs2dKeyS = cs2dKeyD = false;
+            cs2dKeyShift = cs2dKeyR = false;
+            cs2dMouseDown = false;
             SDL_SetRelativeMouseMode(SDL_FALSE);
             SDL_ShowCursor(SDL_ENABLE);
-            audioManager->PlayMusic(AudioManager::MusicTrackPath(audioManager->GetMusicTrack()));
+            currentState = MATCH_END;
             return;
         }
     }
@@ -1732,6 +1753,7 @@ void Engine::Render() {
 
     const bool gameplayVisible = (currentState == PLAYING || currentState == PAUSED ||
                                   currentState == RESTART_CONFIRM ||
+                                  currentState == MATCH_END ||
                                   currentState == EXIT_CONFIRM);
 
     if (gameplayVisible && !holdOldPage) {
@@ -2186,7 +2208,34 @@ void Engine::Render() {
             }
         }
 
-        if (!sideChoicePending_ && !sidePopupOpen_) {
+        if (currentState == MATCH_END) {
+            // 结算页：HUD 隐藏，只留压暗的对局画面 + 记分板
+            GameUI::MatchEndCtx mctx;
+            mctx.mapName  = currentMapRel_;
+            const auto slash = mctx.mapName.find_last_of("/\\");
+            if (slash != std::string::npos) mctx.mapName = mctx.mapName.substr(slash + 1);
+            const auto dot = mctx.mapName.find_last_of('.');
+            if (dot != std::string::npos) mctx.mapName = mctx.mapName.substr(0, dot);
+            mctx.scoreT     = cs2dGame->GetScoreT();
+            mctx.scoreCT    = cs2dGame->GetScoreCT();
+            mctx.winner     = static_cast<int>(cs2dGame->GetMatchWinner());
+            mctx.roundCount = cs2dGame->GetRoundNumber();
+            const Team pt   = cs2dGame->GetPlayer().team;
+            mctx.playerTeam = static_cast<int>(pt);
+            mctx.playerTeamKnown = (pt == Team::T || pt == Team::CT);
+            for (const auto& r : cs2dGame->BuildScoreboard()) {
+                GameUI::InGameCtx::ScoreRowView v;
+                v.name     = r.name;
+                v.team     = static_cast<int>(r.team);
+                v.kills    = r.kills;
+                v.deaths   = r.deaths;
+                v.money    = r.money;
+                v.alive    = r.alive;
+                v.isPlayer = r.isPlayer;
+                mctx.rows.push_back(std::move(v));
+            }
+            gameUI->DrawMatchEnd(mctx, BuildActions());
+        } else if (!sideChoicePending_ && !sidePopupOpen_) {
             gameUI->DrawInGame(ictx, imGuiUI.get());
         }
     }

@@ -15,6 +15,7 @@ enum GameState {
     PLAYING,        // 对局中
     PAUSED,         // 暂停
     RESTART_CONFIRM,// 重新开始确认（与退出确认同为独立页面，共用全局黑场转场）
+    MATCH_END,      // 结算页面（对局结束展示战绩；与其它页面共用全局黑场转场）
     EXIT_CONFIRM    // 退出确认
 };
 

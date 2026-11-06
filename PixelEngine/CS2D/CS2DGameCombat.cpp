@@ -335,10 +335,10 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                        ? &bots_[static_cast<size_t>(bullet.ownerIdx)] : nullptr);
                 OnCombatantKilled(bot, audio, bulletKiller);
 
-                // 玩家击杀：计分 + 经济奖励 + 播报
+                // 玩家击杀：只发奖励 + 播报。
+                // 计数（playerKills_ / player_.kills）已在 OnCombatantKilled 里统一加过，
+                // 这里再 ++ 会变成"杀一个 +2"。
                 if (bullet.ownerIdx == -1) {
-                    ++playerKills_;
-                    ++player_.kills;
                     // 击杀奖励按武器类型发放（照抄 CS2）
                     player_.money += economy_.GrantKill(WeaponDB::KillReward(bullet.weapon));
                     economy_.Clamp(player_.money);

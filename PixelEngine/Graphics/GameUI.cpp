@@ -1935,6 +1935,195 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
     ImGui::PopStyleColor(2);
 }
 
+// ============================================================================
+// 对局结算页（参照 CS 的赛后记分板）
+// - 背景：对局画面压暗（不切黑），与阵营弹窗同一套"半透明遮罩"语言
+// - 页面切换动画：由 Engine 的全局 0.9s 黑场软切负责（和其它页面完全一致）
+// ============================================================================
+void GameUI::DrawMatchEnd(const MatchEndCtx& ctx, const Actions& actions) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+
+    // 背景压暗：对局画面仍在背后（与阵营弹窗同一套遮罩语言）
+    ImGui::GetBackgroundDrawList()->AddRectFilled(
+        vp->WorkPos, ImVec2(vp->WorkPos.x + vp->WorkSize.x,
+                            vp->WorkPos.y + vp->WorkSize.y),
+        IM_COL32(4, 7, 10, 196));
+
+    const float w = std::min(UI(760.0f), vp->WorkSize.x - UI(40.0f));
+    const float h = std::min(UI(600.0f), vp->WorkSize.y - UI(40.0f));
+    ImGui::SetNextWindowPos(
+        ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
+               vp->WorkPos.y + vp->WorkSize.y * 0.5f),
+        ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.043f, 0.059f, 0.078f, 0.98f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.90f, 0.72f, 0.30f, 0.85f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, UI(12.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, UI(1.5f));
+    ImGui::Begin("##matchEnd", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings);
+
+    const auto teamColor = [](Team t) {
+        const SDL_Color c = GetTeamVisualStyle(t).accent;
+        return ImVec4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, 1.0f);
+    };
+
+    // ---- 标题 ----
+    ImFont* titleFont = imGuiUI_ ? imGuiUI_->GetFont(static_cast<int>(UI(26.0f))) : nullptr;
+    if (titleFont) ImGui::PushFont(titleFont);
+    {
+        const char* title = "比赛结束";
+        const float tw = ImGui::CalcTextSize(title).x;
+        ImGui::SetCursorPos(ImVec2((w - tw) * 0.5f, UI(14.0f)));
+        ImGui::TextColored(Palette::Text(), "%s", title);
+    }
+    if (titleFont) ImGui::PopFont();
+
+    // ---- 胜方 + 比分 + 地图 ----
+    {
+        const char* verdict = (ctx.winner == 1) ? "恐怖分子胜利"
+                            : (ctx.winner == 2) ? "反恐精英胜利" : "平局";
+        const ImVec4 vc = (ctx.winner == 1) ? teamColor(Team::T)
+                        : (ctx.winner == 2) ? teamColor(Team::CT)
+                                            : Palette::TextDim();
+        const float vw = ImGui::CalcTextSize(verdict).x;
+        ImGui::SetCursorPos(ImVec2((w - vw) * 0.5f, UI(50.0f)));
+        ImGui::TextColored(vc, "%s", verdict);
+
+        char score[64];
+        snprintf(score, sizeof(score), "%d : %d", ctx.scoreT, ctx.scoreCT);
+        if (titleFont) ImGui::PushFont(titleFont);
+        const float sw = ImGui::CalcTextSize(score).x;
+        ImGui::SetCursorPos(ImVec2((w - sw) * 0.5f, UI(72.0f)));
+        ImGui::TextColored(Palette::Accent(), "%s", score);
+        if (titleFont) ImGui::PopFont();
+
+        char sub[192];
+        if (!ctx.mapName.empty()) {
+            snprintf(sub, sizeof(sub), "%s   ·   %d 回合", ctx.mapName.c_str(),
+                     ctx.roundCount);
+        } else {
+            snprintf(sub, sizeof(sub), "%d 回合", ctx.roundCount);
+        }
+        const float subW = ImGui::CalcTextSize(sub).x;
+        ImGui::SetCursorPos(ImVec2((w - subW) * 0.5f, UI(116.0f)));
+        ImGui::TextColored(Palette::TextFaint(), "%s", sub);
+    }
+
+    // ---- 两张队表（上下排列，参照 CS 记分板）----
+    {
+        std::vector<InGameCtx::ScoreRowView> tRows, ctRows;
+        for (const auto& r : ctx.rows) {
+            if (r.team == 1) tRows.push_back(r);
+            else if (r.team == 2) ctRows.push_back(r);
+        }
+        auto byScore = [](const InGameCtx::ScoreRowView& a,
+                          const InGameCtx::ScoreRowView& b) {
+            if (a.kills != b.kills) return a.kills > b.kills;
+            if (a.deaths != b.deaths) return a.deaths < b.deaths;
+            return a.name < b.name;
+        };
+        std::sort(tRows.begin(), tRows.end(), byScore);
+        std::sort(ctRows.begin(), ctRows.end(), byScore);
+
+        int mvpKills = 0;
+        for (const auto& r : ctx.rows) mvpKills = std::max(mvpKills, r.kills);
+
+        const float x      = UI(28.0f);
+        const float tableW = w - UI(56.0f);
+        const float colName  = tableW * 0.42f;
+        const float colKills = tableW * 0.18f;
+        const float colDeath = tableW * 0.18f;
+        const float rowH     = UI(24.0f);
+
+        float y = UI(140.0f);
+        auto drawTeam = [&](Team team, const char* label,
+                            const std::vector<InGameCtx::ScoreRowView>& rows) {
+            char head[64];
+            snprintf(head, sizeof(head), "%s   比分 %d", label,
+                     team == Team::T ? ctx.scoreT : ctx.scoreCT);
+            ImGui::SetCursorPos(ImVec2(x, y));
+            ImGui::TextColored(teamColor(team), "%s", head);
+            y += UI(20.0f);
+            ImGui::SetCursorPos(ImVec2(x, y));
+            ImGui::TextColored(Palette::TextFaint(), "%s", "名称");
+            ImGui::SameLine(x + colName);
+            ImGui::TextColored(Palette::TextFaint(), "%s", "击杀");
+            ImGui::SameLine(x + colName + colKills);
+            ImGui::TextColored(Palette::TextFaint(), "%s", "死亡");
+            ImGui::SameLine(x + colName + colKills + colDeath);
+            ImGui::TextColored(Palette::TextFaint(), "%s", "余额");
+            y += rowH;
+
+            for (const auto& r : rows) {
+                const bool isMvp = (r.kills > 0 && r.kills == mvpKills);
+                const ImVec4 nameCol = r.isPlayer ? Palette::Accent()
+                                      : (r.alive ? Palette::Text()
+                                                 : Palette::TextDim());
+                ImGui::SetCursorPos(ImVec2(x, y));
+                // 玩家名本身可能已经是"你"，避免出现"你（你）"
+                const bool nameHasSelf = r.name.find("你") != std::string::npos;
+                ImGui::TextColored(nameCol, "%s%s%s", isMvp ? "★ " : "",
+                                   r.name.c_str(),
+                                   (r.isPlayer && !nameHasSelf) ? "（你）" : "");
+                ImGui::SameLine(x + colName);
+                ImGui::TextColored(r.isPlayer ? Palette::Accent() : Palette::Text(),
+                                   "%d", r.kills);
+                ImGui::SameLine(x + colName + colKills);
+                ImGui::TextColored(Palette::TextDim(), "%d", r.deaths);
+                ImGui::SameLine(x + colName + colKills + colDeath);
+                ImGui::TextColored(Palette::TextDim(), "$%d", r.money);
+                y += rowH;
+            }
+            y += UI(10.0f);
+        };
+
+        drawTeam(Team::T, "T", tRows);
+        drawTeam(Team::CT, "CT", ctRows);
+    }
+
+    // ---- 底部按钮 ----
+    {
+        const float btnW = UI(170.0f);
+        const float btnH = UI(42.0f);
+        const float gap  = UI(16.0f);
+        const float totalW = btnW * 2.0f + gap;
+        const float bx = (w - totalW) * 0.5f;
+        const float by = h - UI(92.0f);
+
+        ImGui::SetCursorPos(ImVec2(bx, by));
+        ImGui::PushStyleColor(ImGuiCol_Button, Palette::Accent());
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.98f, 0.78f, 0.42f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, Palette::AccentDim());
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.06f, 0.08f, 0.10f, 1.0f));
+        if (ImGui::Button("返回主菜单", ImVec2(btnW, btnH))) {
+            if (actions.playClick) actions.playClick();
+            if (actions.goState) actions.goState(MAIN_MENU);
+        }
+        ImGui::PopStyleColor(4);
+
+        ImGui::SetCursorPos(ImVec2(bx + btnW + gap, by));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.22f, 0.28f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.33f, 0.41f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.18f, 0.23f, 1.0f));
+        if (ImGui::Button("再来一局", ImVec2(btnW, btnH))) {
+            if (actions.playClick) actions.playClick();
+            if (actions.startMatch) actions.startMatch();
+        }
+        ImGui::PopStyleColor(3);
+
+        const char* hint = "Esc 返回主菜单";
+        const float hintW = ImGui::CalcTextSize(hint).x;
+        ImGui::SetCursorPos(ImVec2((w - hintW) * 0.5f, h - UI(30.0f)));
+        ImGui::TextColored(Palette::TextFaint(), "%s", hint);
+    }
+
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
+}
+
 void GameUI::DrawLoadingOverlay(const char* title, const char* subtitle) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     const float cx = vp->WorkPos.x + vp->WorkSize.x * 0.5f;

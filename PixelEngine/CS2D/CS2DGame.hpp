@@ -730,6 +730,12 @@ public:
     float ListenerX() const;
     float ListenerY() const;
     Team GetMatchWinner() const { return teams_.MatchWinner(); }
+#ifdef PIXEL_DEV_REPLAY
+    // 开发期：直接把比分推到赛点，用于预览结算页（release 构建不存在）
+    void DebugForceMatchEnd(Team winner) {
+        for (int i = 0; i < teams_.ScoreToWin(); ++i) teams_.AddScore(winner);
+    }
+#endif
 
     // 各阵营存活人数
     int AliveCount(Team t) const;
