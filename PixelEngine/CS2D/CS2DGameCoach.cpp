@@ -772,6 +772,50 @@ void CS2DGame::ClosePlanTrace() {
     planTrace_ = nullptr;
 }
 
+bool CS2DGame::PlanTargetConsistent(Team t, const TeamPlan& plan) const {
+    (void)t;
+    if (!world_ || plan.target.empty()) return true;
+    const char want = plan.target[0];
+    if (want != 'A' && want != 'B' && want != 'M') return true;
+
+    auto sideOf = [this](const std::string& area) -> char {
+        if (area.empty()) return '?';
+        std::string low = area;
+        for (char& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (low.find("mid") != std::string::npos) return 'M';
+        float x = 0.0f, y = 0.0f;
+        if (!AreaCenterByName(area, x, y)) return '?';
+        const CS2DWorld::BombSiteDef* best = nullptr;
+        float bestD2 = 1e18f;
+        for (const auto& site : world_->GetBombSites()) {
+            const float dx = site.cx - x, dy = site.cy - y;
+            const float d2 = dx * dx + dy * dy;
+            if (d2 < bestD2) { bestD2 = d2; best = &site; }
+        }
+        return best ? best->name[0] : '?';
+    };
+
+    int matched = 0;
+    for (const auto& so : plan.slots) {
+        if (sideOf(so.area) == want) ++matched;
+    }
+    const int need = (want == 'M') ? 1 : 2;
+    return matched >= need;
+}
+
+bool CS2DGame::ApplySlotTemplate(Team t, TeamPlan& plan) {
+    const std::string teamKey = (t == Team::T) ? "T" : "CT";
+    const std::string intentKey = TacticsIntentKey(plan.intent);
+    // 先找 target 专属模板（T.Default@A），再退回通用模板（T.Default）
+    const auto* tpl = plan.target.empty()
+                          ? nullptr
+                          : tactics_.Slots(teamKey, intentKey + "@" + plan.target);
+    if (!tpl) tpl = tactics_.Slots(teamKey, intentKey);
+    if (!tpl) return false;
+    plan.slots = *tpl;
+    return true;
+}
+
 void CS2DGame::TraceCoachAdvisory(Team t, const TeamPlan& plan) {
     if (!planTrace_) return;
     std::string slotSig;
@@ -1132,7 +1176,39 @@ void CS2DGame::CoachApplyPlan(Team t) {
                 }
             }
             ai.goalArea = so.area;   // 先写区域名，SetBotGoal 才能查到 [look] 朝向
+
+            // 锚点优先：战术表 [anchor.<area>]（按阵营）给出"该站的具体点"，
+            // 比区域中心更贴近真实架点；没有锚点才用中心。
+            // 只有显式声明站姿（来自战术卡）才用锚点；规则模板保持区域中心，
+            // 避免自动生成的锚点把整队推到不可走/过于靠前的位置。
+            if (so.hold != HoldStyle::Default) {
+                const std::string teamKey = (t == Team::T) ? "T." : "CT.";
+                if (const auto* a = tactics_.Anchor(teamKey + so.area); a) {
+                    cx = a->first;
+                    cy = a->second;
+                } else if (const auto* a2 = tactics_.Anchor(so.area); a2) {
+                    cx = a2->first;
+                    cy = a2->second;
+                }
+            }
             SetBotGoal(i, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
+
+            // ---- 可执行字段：朝向 / 站姿 / 投掷 ----
+            if (so.lookAngle > -90.0f) {
+                ai.lookAngle = so.lookAngle;
+            } else if (!so.lookArea.empty()) {
+                float lx = 0.0f, ly = 0.0f;
+                if (AreaCenterByName(so.lookArea, lx, ly)) {
+                    ai.lookAngle = std::atan2(ly - cy, lx - cx);
+                }
+            }
+            ai.holdStyle = static_cast<int>(so.hold);
+            ai.utilKind  = so.util;
+            ai.utilDone  = (so.util <= 0);
+            if (so.util > 0 && !so.utilArea.empty()) {
+                float ux = 0.0f, uy = 0.0f;
+                if (AreaCenterByName(so.utilArea, ux, uy)) { ai.utilX = ux; ai.utilY = uy; }
+            }
             // 小队岗位与教练计划保持一致；计划点到达后继续守这个区域，
             // 而不是被 AssignSquadRoles 的轮转岗位拉回另一侧。
             squad_[i].site = areaSite;

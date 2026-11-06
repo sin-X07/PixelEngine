@@ -34,11 +34,26 @@ enum class BuyPlan { Eco = 0, Half, Force, Full, AntiEco };
 // 队员定位（影响移速倍率、补枪资格、远追许可）
 enum class CoachRole { Entry = 0, Support, Lurk, Anchor, Awper };
 
+// 到位后的站姿（决定"到了之后怎么守"，而不是只决定去哪）
+enum class HoldStyle {
+    Default = 0,   // 沿用现有行为
+    Anchor,        // 架点：到位后不轻易前压/不参与搜点
+    OffAngle,      // 侧身位：不站正面，减少被预瞄
+    Passive        // 被动：只打贴脸，不主动拉枪
+};
+
 struct SlotOrder {
     CoachRole   role  = CoachRole::Support;
     std::string area;              // 目标区域名（来自地图 areas 层），空=不指定
     bool        canTrade = true;   // 允许补枪
     bool        canRotate = false; // 允许自行换点
+
+    // ---- 可执行字段（LLM/战术卡 → BOT 动作）----
+    std::string lookArea;          // 到位后看向哪个区域（空=用默认：敌方出生点方向）
+    float       lookAngle = -99.0f;// 直接给角度（弧度）；-99=未指定
+    HoldStyle   hold = HoldStyle::Default;
+    int         util = 0;          // 0 无 1 烟 2 闪 3 火 4 雷
+    std::string utilArea;          // 投掷目标区域
 };
 
 // 一份完整的队伍计划

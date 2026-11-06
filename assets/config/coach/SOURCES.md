@@ -150,3 +150,22 @@
 阈值与四档+反eco 文案改写自公开 IGL/经济指南（详见仓库外 `playbook-research/ECONOMY_BRIEF.md` / `ECONOMY_SOURCES.md`）。  
 引擎差异：`EconomySystem` 胜利时连败清零（非 CS2 胜后降一档）；digest 已输出人均$/连败/有枪/敌经济/购买档。
 
+
+
+## 2026-11 扩充所用资料（V2）
+
+- Dust2 T 侧默认/控制点/A Long execute：
+  https://crosshairforge.com/dust2-t-side-strategy-guide/
+- Dust2 / Mirage / Ancient 的 T Default、CT Setup 与 executes（索引页）：
+  https://gamgem.com/counter-strike-2/strategy
+- Dust2 位置与 Mid 控制：
+  https://boostroom.com/blog/dust2-guide-cs2-best-positions-defaults-and-mid-control
+- Mirage T Default / CT Setup / Executes：
+  https://gamgem.com/counter-strike-2/strategy/mirage
+- Ancient Defaults 与 Mid 控制：
+  https://boostroom.com/blog/ancient-guide-cs2-best-defaults-how-to-take-mid
+- Mirage callouts / Mid control / rotations：
+  https://tradeupacademy.org/articles/cs2-mirage-map-guide-callouts-rotations-2026
+
+只采纳能映射到本作区域与动作的部分；无法落地（道具具体投掷线、依赖本作不存在的地形）的内容
+不写入卡片，或标 `# [advisory]`。

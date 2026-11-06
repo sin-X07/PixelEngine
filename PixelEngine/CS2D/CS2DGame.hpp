@@ -339,6 +339,11 @@ public:
         std::string searchArea;          // 正在搜的区域名
         float searchTimer = 0.0f;        // 在该区域的确认计时
         float lookAngle = -99.0f;        // 守点时应该看的方向（弧度，tactics [look]）
+        // 计划卡槽位的可执行字段（到位后的站姿 / 投掷）
+        int   holdStyle = 0;             // 0 默认 1 架点 2 侧身 3 被动
+        int   utilKind  = 0;             // 0 无 1 烟 2 闪 3 火 4 雷
+        float utilX = 0.0f, utilY = 0.0f;
+        bool  utilDone = true;
 
         // ---- 决策 trace 的上一帧快照（仅在开启 trace 时写入，不影响玩法）----
         int   traceTarget   = -2;    // 上一帧锁定的敌人（-2 无）
@@ -454,6 +459,10 @@ public:
     void ClosePlanTrace();
     void TraceCoachPlan(Team t);
     void TraceCoachAdvisory(Team t, const TeamPlan& plan);   // 顾问计划（只记录）
+    // 计划自洽：target 与槽位是否匹配（A/B 至少 2 个槽位在同侧；MID 至少 1 个）
+    bool PlanTargetConsistent(Team t, const TeamPlan& plan) const;
+    // 用战术表的 [slots.*] 模板覆盖计划槽位（下包/回防用），返回是否覆盖成功
+    bool ApplySlotTemplate(Team t, TeamPlan& plan);
     // ---- 决策对比日志：同一决策点上「规则计划 / LLM 计划 / 最终执行」----
     void EnableDecisionLog(const std::string& path);
     void CloseDecisionLog();
