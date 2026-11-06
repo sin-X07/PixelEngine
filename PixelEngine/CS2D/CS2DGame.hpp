@@ -454,6 +454,11 @@ public:
     void ClosePlanTrace();
     void TraceCoachPlan(Team t);
     void TraceCoachAdvisory(Team t, const TeamPlan& plan);   // 顾问计划（只记录）
+    // ---- 决策对比日志：同一决策点上「规则计划 / LLM 计划 / 最终执行」----
+    void EnableDecisionLog(const std::string& path);
+    void CloseDecisionLog();
+    void TraceCoachDecision(Team t, const char* status);
+    std::FILE* decisionLog_ = nullptr;
     std::FILE* planTrace_ = nullptr;
     std::string planTraceKey_;   // 去重：同一条计划只写一次
     std::string planTraceAdvKey_; // 顾问计划去重键
@@ -978,6 +983,9 @@ private:
         int   llmEventType = 0;
         int   llmRoundNo = 0;
         int   llmAliveT = 0, llmAliveCT = 0;   // 发请求时的存活数（时效性判断）
+        TeamPlan ruleSnapshot;          // 发请求那一刻的规则计划
+        TeamPlan llmSnapshot;           // LLM 解析后的计划（未整形前的原意）
+        bool  hasRuleSnapshot = false;
         bool  llmBombPlanted = false;
         float lastThinkAt = 0.0f;
         // true = plan from LLM; RuleCoach must not overwrite until expiry/critical.

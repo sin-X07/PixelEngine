@@ -883,6 +883,11 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
     st.llmAliveT      = AliveCount(Team::T);
     st.llmAliveCT     = AliveCount(Team::CT);
 
+    // 决策对比：记录"发请求这一刻"的规则计划，供事后对照
+    st.ruleSnapshot    = st.plan;
+    st.hasRuleSnapshot = true;
+    st.llmSnapshot     = TeamPlan{};
+
     const int gen = st.gen;
 
     if (std::getenv("PIXEL_LOG_COACH_RAW")) {
@@ -988,6 +993,7 @@ void CS2DGame::CoachDrainLlm() {
         }
         if (st.llmRoundNo != round_.RoundNumber() || st.llmBombPlanted != bombPlanted_) {
             std::cout << "[Coach] " << TeamName(r.team) << " LLM 回包状态已变，丢弃" << std::endl;
+            TraceCoachDecision(r.team, "stale_state");
             continue;
         }
 
@@ -1001,11 +1007,13 @@ void CS2DGame::CoachDrainLlm() {
                 ++counters_.llmLate;
                 std::cout << "[Coach] " << TeamName(r.team) << " LLM 迟到丢弃("
                           << st.llmLatencyWall << "s, 期间有减员)" << std::endl;
+                TraceCoachDecision(r.team, "late");
                 continue;
             }
         }
         if (r.raw.empty()) {
             std::cout << "[Coach] " << TeamName(r.team) << " LLM 无回复，沿用规则计划" << std::endl;
+            TraceCoachDecision(r.team, "empty");
             continue;
         }
 
@@ -1027,6 +1035,7 @@ void CS2DGame::CoachDrainLlm() {
             std::cout << "[Coach] " << TeamName(r.team)
                       << " LLM 计划非法(硬规则:plant/save)，沿用规则 | "
                       << r.raw.substr(0, 100) << std::endl;
+            TraceCoachDecision(r.team, "invalid");
             continue;
         }
 
@@ -1040,6 +1049,7 @@ void CS2DGame::CoachDrainLlm() {
         if (saveAllowed && !bombPlanted_ && plan.intent != PlanIntent::Save) {
             std::cout << "[Coach] " << TeamName(r.team)
                       << " 穷局拒绝进攻性 LLM 计划，沿用规则计划" << std::endl;
+            TraceCoachDecision(r.team, "rejected_save");
             continue;
         }
 
@@ -1079,11 +1089,14 @@ void CS2DGame::CoachDrainLlm() {
                 std::cout << "[Coach] " << TeamName(r.team)
                           << " LLM 顾问模式（无情报优势）→ 记录不执行: "
                           << static_cast<int>(plan.intent) << std::endl;
+                st.llmSnapshot = plan;
+                TraceCoachDecision(r.team, "advisory");
                 continue;
             }
         }
         ++counters_.llmPlans;
 
+        st.llmSnapshot = plan;
         plan.source      = "llm";     // 评估用：这条计划来自模型
         plan.latencyWall = st.llmLatencyWall;
         plan.gen       = st.gen;
@@ -1111,6 +1124,7 @@ void CS2DGame::CoachDrainLlm() {
                   << IntentLabel(plan.intent)
                   << " 目标=" << (plan.target.empty() ? "-" : plan.target)
                   << " | " << plan.reason << " [sticky]" << std::endl;
+        TraceCoachDecision(r.team, "applied");
 
         CoachApplyPlan(r.team);
     }
@@ -1124,6 +1138,7 @@ void CS2DGame::CoachDrainLlm() {
             st.llmPending = false;
             st.llmAnswered = true;
             std::cout << "[Coach] " << TeamName(t) << " LLM 超时，沿用规则计划" << std::endl;
+            TraceCoachDecision(t, "timeout");
         }
     }
 }

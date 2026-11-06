@@ -70,6 +70,7 @@ struct Options {
     std::string coachUrl;             // 覆盖 llm.ini 的 server url
     bool coachNoLaunch = false;       // 不自动拉起 llama-server（要求外部已运行）
     std::string planPath;             // 单局：计划 trace 输出路径
+    std::string decisionPath;         // 单局：决策对比日志（规则 vs LLM）
     int   jobs = 1;                   // 并行局数（LLM 评估用它吃满服务端并行槽）
     bool  llmRoundStartOnly = false;  // 只在回合开始请求 LLM（请求数减半）
     int   coachWaitMs = 30000;        // 单次等待 LLM 回包的上限
@@ -101,6 +102,7 @@ Options ParseArgs(int argc, char** argv) {
         else if (a.rfind("--llm-model=", 0) == 0) o.llmModel = a.substr(12);
         else if (a.rfind("--llm-parallel=", 0) == 0) o.llmParallel = std::atoi(a.c_str() + 15);
         else if (a.rfind("--plans=", 0) == 0) o.planPath = a.substr(8);
+        else if (a.rfind("--decisions=", 0) == 0) o.decisionPath = a.substr(12);
         else if (a == "--noisy-conflicts") o.enableNoisyConflicts = true;
         else if (a.rfind("--conflict-ignore=", 0) == 0) {
             const std::string rest = a.substr(18);
@@ -233,7 +235,8 @@ void ApplyBuy(CS2DGame& game, int weapon, int armorTier) {
 // 跑一局：固定 1/60 步长、renderer=nullptr、audio=nullptr
 Summary RunOne(const Options& opt, const std::string& map, int seed,
                const std::string& hashPath, const std::string& roundsCsv,
-               const std::string& planPath = std::string()) {
+               const std::string& planPath = std::string(),
+               const std::string& decisionPath = std::string()) {
     Summary s;
     s.map = map;
     s.seed = seed;
@@ -270,6 +273,7 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
         game.SetCoachLlmRoundStartOnly(opt.llmRoundStartOnly);
     }
     if (!planPath.empty()) game.EnablePlanTrace(planPath);
+    if (!decisionPath.empty()) game.EnableDecisionLog(decisionPath);
     dev_replay::RoundTracker tracker;
     tracker.Begin(game, 0);
 
@@ -359,6 +363,7 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
     if (dumpFile) std::fclose(dumpFile);
     game.CloseDecisionTrace();
     game.ClosePlanTrace();
+    game.CloseDecisionLog();
     s.conflicts = conflicts.Total();
     tracker.Finish(game, static_cast<uint64_t>(lastTick_ + 1));
 
@@ -556,7 +561,7 @@ int main(int argc, char** argv) {
         const std::string roundsCsv = opt.hashPath.empty() ? std::string()
                                                           : opt.hashPath + ".rounds.csv";
         const Summary s = RunOne(opt, opt.map, opt.seed, opt.hashPath, roundsCsv,
-                                 opt.planPath);
+                                 opt.planPath, opt.decisionPath);
         if (!s.ok) return 1;
         std::printf("[dev_replay] map=%s seed=%d ticks=%d aimTurn=%.2f aimErr=%.1f reaction=%d\n",
                     s.map.c_str(), s.seed, s.ticks, opt.aimTurnRate, opt.aimErrorDeg,
@@ -631,7 +636,8 @@ int main(int argc, char** argv) {
             if (i >= jobs.size()) break;
             Job& j = jobs[i];
             j.s = RunOne(opt, j.map, j.seed, j.base + ".hash.txt",
-                         j.base + ".rounds.csv", j.base + ".plans.csv");
+                         j.base + ".rounds.csv", j.base + ".plans.csv",
+                         j.base + ".decisions.csv");
             std::lock_guard<std::mutex> lk(printMutex);
             std::printf("[dev_replay] done %s seed=%d ok=%d winner=%s rounds=%d\n",
                         j.map.c_str(), j.seed, j.s.ok ? 1 : 0,

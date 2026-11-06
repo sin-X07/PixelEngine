@@ -798,6 +798,97 @@ void CS2DGame::TraceCoachAdvisory(Team t, const TeamPlan& plan) {
                  plan.reshaped ? 1 : 0, reason.c_str());
 }
 
+// ---------------------------------------------------------------------------
+// 决策对比日志：同一决策点，规则计划 / LLM 计划 / 最终执行 三者并排
+// ---------------------------------------------------------------------------
+static const char* CoachEventName(int type) {
+    switch (static_cast<CoachEventType>(type)) {
+        case CoachEventType::RoundStart:    return "round_start";
+        case CoachEventType::EnemySpotted:  return "enemy_spotted";
+        case CoachEventType::AllyDown:      return "ally_down";
+        case CoachEventType::EnemyDown:     return "enemy_down";
+        case CoachEventType::BombPlanted:   return "bomb_planted";
+        case CoachEventType::DefuseStarted: return "defuse_started";
+        case CoachEventType::DefuseAborted: return "defuse_aborted";
+        case CoachEventType::TimeLow:       return "time_low";
+        case CoachEventType::EconomyLow:    return "economy_low";
+        case CoachEventType::HumanDied:     return "human_died";
+        case CoachEventType::MatchPoint:    return "match_point";
+        default:                            return "heartbeat";
+    }
+}
+
+static std::string SlotsSignature(const TeamPlan& plan) {
+    std::string out;
+    for (size_t i = 0; i < plan.slots.size(); ++i) {
+        const auto& so = plan.slots[i];
+        if (i) out += ';';
+        out += std::to_string(i) + ":" + so.area + "/" +
+               std::to_string(static_cast<int>(so.role));
+    }
+    return out;
+}
+
+static std::string SanitizeField(std::string v, size_t cap = 60) {
+    for (char& c : v) {
+        if (c == ',' || c == '"' || c == '\n' || c == '\r') c = ' ';
+    }
+    if (v.size() > cap) {
+        size_t cut = cap;
+        while (cut > 0 && (static_cast<unsigned char>(v[cut]) & 0xC0) == 0x80) --cut;
+        v.resize(cut);
+    }
+    return v;
+}
+
+void CS2DGame::EnableDecisionLog(const std::string& path) {
+    CloseDecisionLog();
+    decisionLog_ = std::fopen(path.c_str(), "wb");
+    if (!decisionLog_) {
+        std::cerr << "[DecisionLog] 无法写入: " << path << std::endl;
+        return;
+    }
+    std::fprintf(decisionLog_,
+                 "round,elapsed_s,event,team,"
+                 "rule_intent,rule_target,rule_tempo,rule_reason,rule_slots,"
+                 "llm_intent,llm_target,llm_tempo,llm_reason,llm_slots,"
+                 "latency_s,status,applied_intent,applied_target,applied_source\n");
+    std::cout << "[DecisionLog] 决策对比日志已开启: " << path << std::endl;
+}
+
+void CS2DGame::CloseDecisionLog() {
+    if (!decisionLog_) return;
+    std::fclose(decisionLog_);
+    decisionLog_ = nullptr;
+}
+
+void CS2DGame::TraceCoachDecision(Team t, const char* status) {
+    if (!decisionLog_) return;
+    const CoachState& st = CoachFor(t);
+    const TeamPlan& rule = st.hasRuleSnapshot ? st.ruleSnapshot : st.plan;
+    const TeamPlan& llm  = st.llmSnapshot;
+    const TeamPlan& app  = st.plan;
+    const bool llmEmpty = llm.source != "llm" && llm.intent == PlanIntent::Default &&
+                          llm.target.empty() && llm.reason.empty();
+
+    std::fprintf(decisionLog_,
+                 "%d,%.1f,%s,%s,"
+                 "\"%s\",\"%s\",\"%s\",\"%s\",\"%s\","
+                 "\"%s\",\"%s\",\"%s\",\"%s\",\"%s\","
+                 "%.2f,%s,\"%s\",\"%s\",\"%s\"\n",
+                 round_.RoundNumber(), GetRoundElapsed(),
+                 CoachEventName(st.llmEventType), TeamName(t),
+                 IntentKey(rule.intent), rule.target.c_str(), TempoKey(rule.tempo),
+                 SanitizeField(rule.reason).c_str(), SlotsSignature(rule).c_str(),
+                 llmEmpty ? "" : IntentKey(llm.intent),
+                 llmEmpty ? "" : llm.target.c_str(),
+                 llmEmpty ? "" : TempoKey(llm.tempo),
+                 llmEmpty ? "" : SanitizeField(llm.reason).c_str(),
+                 llmEmpty ? "" : SlotsSignature(llm).c_str(),
+                 st.llmLatencyWall, status,
+                 IntentKey(app.intent), app.target.c_str(), app.source.c_str());
+}
+
 void CS2DGame::TraceCoachPlan(Team t) {
     if (!planTrace_) return;
     const CoachState& st = CoachFor(t);
