@@ -460,6 +460,7 @@ public:
     void TraceCoachPlan(Team t);
     void TraceCoachAdvisory(Team t, const TeamPlan& plan);   // 顾问计划（只记录）
     // 计划自洽：target 与槽位是否匹配（A/B 至少 2 个槽位在同侧；MID 至少 1 个）
+    char AreaSideOf(const std::string& area) const;   // 区域属于哪一侧 A/B/M/?
     bool PlanTargetConsistent(Team t, const TeamPlan& plan) const;
     // 用战术表的 [slots.*] 模板覆盖计划槽位（下包/回防用），返回是否覆盖成功
     bool ApplySlotTemplate(Team t, TeamPlan& plan);

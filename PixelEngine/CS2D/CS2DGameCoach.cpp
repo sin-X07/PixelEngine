@@ -772,32 +772,32 @@ void CS2DGame::ClosePlanTrace() {
     planTrace_ = nullptr;
 }
 
+char CS2DGame::AreaSideOf(const std::string& area) const {
+    if (!world_ || area.empty()) return '?';
+    std::string low = area;
+    for (char& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (low.find("mid") != std::string::npos) return 'M';
+    float x = 0.0f, y = 0.0f;
+    if (!AreaCenterByName(area, x, y)) return '?';
+    const CS2DWorld::BombSiteDef* best = nullptr;
+    float bestD2 = 1e18f;
+    for (const auto& site : world_->GetBombSites()) {
+        const float dx = site.cx - x, dy = site.cy - y;
+        const float d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) { bestD2 = d2; best = &site; }
+    }
+    return best ? best->name[0] : '?';
+}
+
 bool CS2DGame::PlanTargetConsistent(Team t, const TeamPlan& plan) const {
     (void)t;
     if (!world_ || plan.target.empty()) return true;
     const char want = plan.target[0];
     if (want != 'A' && want != 'B' && want != 'M') return true;
 
-    auto sideOf = [this](const std::string& area) -> char {
-        if (area.empty()) return '?';
-        std::string low = area;
-        for (char& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (low.find("mid") != std::string::npos) return 'M';
-        float x = 0.0f, y = 0.0f;
-        if (!AreaCenterByName(area, x, y)) return '?';
-        const CS2DWorld::BombSiteDef* best = nullptr;
-        float bestD2 = 1e18f;
-        for (const auto& site : world_->GetBombSites()) {
-            const float dx = site.cx - x, dy = site.cy - y;
-            const float d2 = dx * dx + dy * dy;
-            if (d2 < bestD2) { bestD2 = d2; best = &site; }
-        }
-        return best ? best->name[0] : '?';
-    };
-
     int matched = 0;
     for (const auto& so : plan.slots) {
-        if (sideOf(so.area) == want) ++matched;
+        if (AreaSideOf(so.area) == want) ++matched;
     }
     const int need = (want == 'M') ? 1 : 2;
     return matched >= need;

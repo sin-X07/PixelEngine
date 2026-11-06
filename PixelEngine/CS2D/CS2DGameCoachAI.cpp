@@ -1135,6 +1135,30 @@ void CS2DGame::CoachDrainLlm() {
 
         // ---- 下包/回防：槽位必须来自战术模板（LLM 只决定意图/节奏）----
         if (st.llmEventType == static_cast<int>(CoachEventType::BombPlanted)) {
+            // 语义修复：模型常在下包后返回 default→包点。这在引擎里等价于"没有守包计划"，
+            // 直接规范成 stack_<site>(T) / retake_<site>(CT)，再套模板，
+            // 避免"计划被拒 → 回退规则"这种既没执行也没信息量的结果。
+            // 目标缺失时用包点区域补出来（否则硬规则会判"下包后 target 必须等于包点侧"）
+            if (plan.target.empty() && !plantArea.empty()) {
+                const char side = AreaSideOf(plantArea);
+                if (side == 'A' || side == 'B') {
+                    plan.target = std::string(1, side);
+                    plan.reshaped = true;
+                }
+            }
+            if (plan.intent == PlanIntent::Default &&
+                (plan.target == "A" || plan.target == "B")) {
+                const bool aSide = (plan.target == "A");
+                if (r.team == Team::T) {
+                    plan.intent = aSide ? PlanIntent::StackA : PlanIntent::StackB;
+                } else {
+                    plan.intent = aSide ? PlanIntent::RetakeA : PlanIntent::RetakeB;
+                }
+                plan.reshaped = true;
+                std::cout << "[Coach] " << TeamName(r.team)
+                          << " 下包后 default→" << plan.target
+                          << " 规范化为守包/回防意图" << std::endl;
+            }
             if (ApplySlotTemplate(r.team, plan)) plan.reshaped = true;
         }
 
