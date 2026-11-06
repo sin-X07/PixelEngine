@@ -12,6 +12,7 @@
 
 #include "../../PixelEngine/CS2D/CS2DGame.hpp"
 #include "../../PixelEngine/Core/PathUtils.hpp"
+#include "../../PixelEngine/LLM/LLMBotController.hpp"
 
 #include "conflicts.hpp"
 #include "digest.hpp"
@@ -19,7 +20,13 @@
 #include "replay.hpp"
 #include "scripted_player.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cinttypes>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <thread>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -29,6 +36,9 @@
 #include <vector>
 
 namespace {
+
+// --coach=llm 时初始化一次，整个批量共用（避免每局重启模型连接）
+std::unique_ptr<LLMBotController> g_llm;
 
 struct Options {
     int   ticks = 60 * 30;
@@ -54,6 +64,17 @@ struct Options {
     std::string tracePath;                 // 非空 → 写 BOT 决策 trace（开发期解释"为什么这么走"）
     std::vector<std::string> conflictIgnore;   // 按 kind 忽略
     bool enableNoisyConflicts = false;         // 开启 duplicate_hold 等高噪声规则
+
+    // ---- LLM A/B 评估 ----
+    std::string coach = "rule";       // rule | llm
+    std::string coachUrl;             // 覆盖 llm.ini 的 server url
+    bool coachNoLaunch = false;       // 不自动拉起 llama-server（要求外部已运行）
+    std::string planPath;             // 单局：计划 trace 输出路径
+    int   jobs = 1;                   // 并行局数（LLM 评估用它吃满服务端并行槽）
+    bool  llmRoundStartOnly = false;  // 只在回合开始请求 LLM（请求数减半）
+    int   coachWaitMs = 30000;        // 单次等待 LLM 回包的上限
+    std::string llmModel;             // 覆盖 llm.ini 的模型（评估加速可用 3B）
+    int   llmParallel = 0;            // 覆盖并行槽数（0=用配置）
 };
 
 Options ParseArgs(int argc, char** argv) {
@@ -71,6 +92,15 @@ Options ParseArgs(int argc, char** argv) {
         else if (a.rfind("--journal=", 0) == 0) o.journalPath = a.substr(10);
         else if (a.rfind("--replay=", 0) == 0) o.replayPath = a.substr(9);
         else if (a.rfind("--dump=", 0) == 0) o.dumpPath = a.substr(7);
+        else if (a.rfind("--coach=", 0) == 0) o.coach = a.substr(8);
+        else if (a.rfind("--coach-url=", 0) == 0) o.coachUrl = a.substr(12);
+        else if (a == "--coach-no-launch") o.coachNoLaunch = true;
+        else if (a == "--llm-roundstart-only") o.llmRoundStartOnly = true;
+        else if (a.rfind("--jobs=", 0) == 0) o.jobs = std::max(1, std::atoi(a.c_str() + 7));
+        else if (a.rfind("--coach-wait-ms=", 0) == 0) o.coachWaitMs = std::atoi(a.c_str() + 16);
+        else if (a.rfind("--llm-model=", 0) == 0) o.llmModel = a.substr(12);
+        else if (a.rfind("--llm-parallel=", 0) == 0) o.llmParallel = std::atoi(a.c_str() + 15);
+        else if (a.rfind("--plans=", 0) == 0) o.planPath = a.substr(8);
         else if (a == "--noisy-conflicts") o.enableNoisyConflicts = true;
         else if (a.rfind("--conflict-ignore=", 0) == 0) {
             const std::string rest = a.substr(18);
@@ -201,7 +231,8 @@ void ApplyBuy(CS2DGame& game, int weapon, int armorTier) {
 
 // 跑一局：固定 1/60 步长、renderer=nullptr、audio=nullptr
 Summary RunOne(const Options& opt, const std::string& map, int seed,
-               const std::string& hashPath, const std::string& roundsCsv) {
+               const std::string& hashPath, const std::string& roundsCsv,
+               const std::string& planPath = std::string()) {
     Summary s;
     s.map = map;
     s.seed = seed;
@@ -226,6 +257,18 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
     dev_replay::ScriptedPlayer script(sp);
 
     if (!opt.tracePath.empty()) game.EnableDecisionTrace(opt.tracePath);
+
+    // ---- LLM 教练（评估用）：与真实游戏同一条链路，只是没有渲染 ----
+    if (g_llm) {
+        game.SetCoachLlm([](const std::string& sys, const std::string& usr,
+                            int maxTok, const std::string& schema,
+                            std::function<void(const std::string&)> cb) {
+            g_llm->AskRaw(sys, usr, maxTok, std::move(cb), "COACH", schema);
+        });
+        game.SetCoachLlmEnabled(true);
+        game.SetCoachLlmRoundStartOnly(opt.llmRoundStartOnly);
+    }
+    if (!planPath.empty()) game.EnablePlanTrace(planPath);
     dev_replay::RoundTracker tracker;
     tracker.Begin(game, 0);
 
@@ -281,16 +324,40 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
         tracker.Sample(game, static_cast<uint64_t>(t));
         conflicts.Check(game, static_cast<uint64_t>(t), conflictFile);
         DumpTick(dumpFile, game, static_cast<uint64_t>(t));
+
+        // LLM 评估：有未回包的计划请求时等它（真实游戏里这段是玩家看到的决策延迟）。
+        // 注意：等待时只收 LLM 回包、不推进仿真 —— 否则 pending 永远不会被清掉。
+        if (g_llm) {
+            int waitedMs = 0;
+            while (game.IsCoachLlmPending() && waitedMs < opt.coachWaitMs) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                game.PumpCoach();
+                waitedMs += 2;
+            }
+            if (waitedMs >= opt.coachWaitMs) {
+                std::fprintf(stderr, "[dev_replay] LLM 等待超时(>30s)，继续推进\n");
+            }
+        }
         finalHash = dev_replay::SnapshotTick(game, static_cast<uint64_t>(t));
         if (hashFile) std::fprintf(hashFile, "%d %016" PRIx64 "\n", t, finalHash);
         // 比赛已决出：停止仿真（否则赛后空闲会被算进最后一回合时长）
         if (game.GetMatchWinner() != Team::None) { lastTick_ = t; break; }
         lastTick_ = t;
     }
+    // 关键：销毁 CS2DGame 前必须等所有在途 LLM 请求结束。
+    // 否则 worker 线程的回调会去锁已释放的 coachLlmMutex_ → 访问违例（曾导致 runner 随机崩溃）。
+    if (g_llm) {
+        game.SetCoachLlmEnabled(false);
+        if (!g_llm->WaitIdle(20000)) {
+            std::fprintf(stderr, "[dev_replay] 警告：LLM 未在 20s 内清空，仍可能有回调\n");
+        }
+    }
+
     if (hashFile) std::fclose(hashFile);
     if (conflictFile) std::fclose(conflictFile);
     if (dumpFile) std::fclose(dumpFile);
     game.CloseDecisionTrace();
+    game.ClosePlanTrace();
     s.conflicts = conflicts.Total();
     tracker.Finish(game, static_cast<uint64_t>(lastTick_ + 1));
 
@@ -451,10 +518,41 @@ int main(int argc, char** argv) {
     if (!opt.replayPath.empty()) return RunReplay(opt);
     const bool batch = !opt.outDir.empty();
 
+    // ---- LLM 教练（--coach=llm）：整批复用一个控制器，避免每局重连 ----
+    if (opt.coach == "llm") {
+        LLMConfig cfg = LLMConfig::FromFile(
+            PathUtils::ResolveAppPath("assets/config/llm.ini"));
+        if (!cfg.serverExePath.empty())
+            cfg.serverExePath = PathUtils::ResolveAppPath(cfg.serverExePath);
+        if (!cfg.modelPath.empty())
+            cfg.modelPath = PathUtils::ResolveAppPath(cfg.modelPath);
+        if (!opt.coachUrl.empty()) cfg.serverUrl = opt.coachUrl;
+        if (opt.coachNoLaunch) cfg.autoLaunch = false;
+        if (!opt.llmModel.empty()) {
+            cfg.modelPath = PathUtils::ResolveAppPath(opt.llmModel);
+        }
+        if (opt.llmParallel > 0) {
+            cfg.parallelSlots = opt.llmParallel;
+            cfg.ctxTokens = opt.llmParallel * 8192;   // 每槽 8k
+        }
+
+        g_llm = std::make_unique<LLMBotController>();
+        if (!g_llm->Initialize(cfg)) {
+            std::fprintf(stderr,
+                         "[dev_replay] LLM 初始化失败（检查 llama-server / llm.ini）\n");
+            return 1;
+        }
+        std::printf("[dev_replay] coach=llm url=%s autoLaunch=%d\n",
+                    cfg.serverUrl.c_str(), cfg.autoLaunch ? 1 : 0);
+    } else {
+        std::printf("[dev_replay] coach=rule\n");
+    }
+
     if (!batch) {
         const std::string roundsCsv = opt.hashPath.empty() ? std::string()
                                                           : opt.hashPath + ".rounds.csv";
-        const Summary s = RunOne(opt, opt.map, opt.seed, opt.hashPath, roundsCsv);
+        const Summary s = RunOne(opt, opt.map, opt.seed, opt.hashPath, roundsCsv,
+                                 opt.planPath);
         if (!s.ok) return 1;
         std::printf("[dev_replay] map=%s seed=%d ticks=%d aimTurn=%.2f aimErr=%.1f reaction=%d\n",
                     s.map.c_str(), s.seed, s.ticks, opt.aimTurnRate, opt.aimErrorDeg,
@@ -501,10 +599,51 @@ int main(int argc, char** argv) {
     double sumAvgRoundTicks = 0.0;
     int sumRounds = 0, sumPlants = 0, sumDefuses = 0;
 
+    struct Job {
+        std::string map;
+        int seed = 0;
+        std::string base;
+        Summary s;
+    };
+    std::vector<Job> jobs;
     for (const auto& map : opt.maps) {
         for (int seed : opt.seeds) {
-            const std::string base = opt.outDir + "/" + map + "-s" + std::to_string(seed);
-            const Summary s = RunOne(opt, map, seed, base + ".hash.txt", base + ".rounds.csv");
+            Job j;
+            j.map  = map;
+            j.seed = seed;
+            j.base = opt.outDir + "/" + map + "-s" + std::to_string(seed);
+            jobs.push_back(std::move(j));
+        }
+    }
+
+    // 并行跑局：LLM 的瓶颈是"等回包"，多局并行才能吃满服务端槽位。
+    // 每局有自己的 CS2DGame / 文件；共享的只有 LLM 控制器（内部有队列+锁）。
+    std::atomic<size_t> nextJob{0};
+    std::mutex printMutex;
+    auto workerFn = [&]() {
+        for (;;) {
+            const size_t i = nextJob.fetch_add(1);
+            if (i >= jobs.size()) break;
+            Job& j = jobs[i];
+            j.s = RunOne(opt, j.map, j.seed, j.base + ".hash.txt",
+                         j.base + ".rounds.csv", j.base + ".plans.csv");
+            std::lock_guard<std::mutex> lk(printMutex);
+            std::printf("[dev_replay] done %s seed=%d ok=%d winner=%s rounds=%d\n",
+                        j.map.c_str(), j.seed, j.s.ok ? 1 : 0,
+                        dev_replay::TeamTag(j.s.winner), j.s.rounds);
+            std::fflush(stdout);
+        }
+    };
+    {
+        const int n = std::max(1, std::min<int>(opt.jobs, static_cast<int>(jobs.size())));
+        std::vector<std::thread> pool;
+        for (int k = 0; k < n; ++k) pool.emplace_back(workerFn);
+        for (auto& th : pool) th.join();
+    }
+
+    for (const auto& j : jobs) {
+        {
+            const Summary& s = j.s;
             if (!s.ok) { ++failed; continue; }
             ++games;
             if (s.winner == Team::CT) ++ctWins;

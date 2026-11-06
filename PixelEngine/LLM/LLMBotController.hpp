@@ -78,6 +78,8 @@ public:
 
     // 是否正在等待决策中
     bool IsBusy() const { return busy_.load(); }
+    // 等待队列清空且没有在途请求（销毁 CS2DGame 前必须调用，否则回调会访问已释放对象）
+    bool WaitIdle(int timeoutMs);
 
     // 通用请求：自定义 system prompt，回调返回模型原文（教练层用）
     using RawCallback = std::function<void(const std::string&)>;
@@ -135,10 +137,11 @@ private:
     std::deque<PendingRequest> queue_;
     mutable std::mutex mutex_;
 
-    // 两个工作线程：两队可以真正并发请求（服务端已开 --parallel 2）
-    static constexpr int kWorkers = 2;
-    std::thread workers_[kWorkers];
+    // 工作线程数 = 服务端并行槽数（评估时可设 4/8，让多局并行跑）
+    int kWorkers_ = 2;
+    std::vector<std::thread> workers_;
     std::atomic<int> activeWorkers_{0};
+    std::atomic<int> inFlight_{0};
     std::atomic<bool> schemaSupported_{true};   // 服务端是否支持 json_schema
     std::atomic<bool> schemaLogged_{false};
 };

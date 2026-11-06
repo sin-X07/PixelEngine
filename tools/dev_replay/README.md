@@ -200,3 +200,72 @@ tick,round,bot,team,kind,key,area,x,y
 
 读法：**长距离**才是"会不会走路"的指标（0.82–0.85 说明跨图寻路基本是直线）；
 短距离低是正常的（绕角、让位、微调）。
+'## LLM 教练 A/B 评估（--coach）
+
+> 30 局实测结论见 [LLM_EVAL_RESULTS.md](LLM_EVAL_RESULTS.md)。'
+
+用同一批 `map/seed/ticks` 跑两遍：一遍规则教练，一遍 LLM 教练，然后配对比较。
+
+```powershell
+# 1) 规则组（毫秒级/局）
+.\build-dev\dev_replay_runner.exe --coach=rule --ticks=150000 `
+    --maps=dust_2,mirage --seeds=1-4 --out=out/rule --tag=ab-rule
+
+# 2) LLM 组（需要 llama-server；--coach-no-launch = 复用已运行的实例）
+.\build-dev\dev_replay_runner.exe --coach=llm --coach-no-launch --ticks=150000 `
+    --maps=dust_2,mirage --seeds=1-4 --out=out/llm --tag=ab-llm
+
+# 3) 配对评估
+python tools/dev_replay/eval_llm.py --rule=out/rule --llm=out/llm
+```
+
+产物：
+| 文件 | 内容 |
+| --- | --- |
+| `summary.csv` | 每局汇总（与普通基准相同） |
+| `<map>-s<seed>.plans.csv` | **每条下发的教练计划**：`round,elapsed_s,team,intent,target,tempo,source,latency_s,reshaped,reason` |
+
+`source` = `rule` / `llm`；`latency_s` 是**墙钟**延迟（等待期间仿真不推进，不能用游戏时钟量）。
+
+### 它怎么处理"LLM 是异步的"
+
+runner 是"跑得比实时快几个数量级"的，如果不等，LLM 回包到达时回合早已结束、全部被丢弃。
+所以每个 tick 结束时若有在途请求，runner 只调 `PumpCoach()` 收包、**不推进仿真**，直到回包或 30s 超时。
+这意味着：
+
+* 计划是在"请求发出的那一 tick"落地的，与真实游戏里"延迟 2~5 秒后落地"略有差异；
+* 因此 LLM 组**不要拿 final_hash 做确定性比较**（模型本来就非确定）。
+
+### eval_llm.py 输出什么
+
+* 配对指标：T 胜率（带 Wilson 区间）、回合数、下包/拆包、伤害、首杀转化、发呆、路径效率、冲突、方向反转
+* LLM 计划统计：意图分布、整形改写率、延迟均值/p50/p90/max
+* **计划分歧率**：同一回合同一队，规则组与 LLM 组的首个计划是否不同（衡量 LLM 到底改变了多少）
+### 怎么加速（实测）
+
+LLM 评估的墙钟时间 ≈ **决策次数 × 单次回包延迟 / 并行度**，而 GPU 一旦被多槽占满，单次延迟会按比例变慢，所以"加并行"对吞吐帮助有限（对多局批量仍然有效）。
+
+| 配置 | 每局耗时 | 说明 |
+| --- | --- | --- |
+| 7B · 全部事件 · `--jobs=1` | ~100s | 基线（13 回合 × ~2 次决策 × 3-5s） |
+| 3B · `--llm-roundstart-only` · `--jobs=1` | ~28s | 决策数减半 + 每请求更快 |
+| 3B · `--llm-roundstart-only` · `--jobs=4` | ~25s/局（4 局并行 ≈101s） | 并行填满槽位，吞吐 ≈4x |
+
+推荐：
+
+```powershell
+# 快速回归（结构/链路是否正常）
+--llm-model=llm_bot\models\qwen2.5-3b-instruct-q4_k_m.gguf --llm-parallel=4 --jobs=4 --llm-roundstart-only
+
+# 质量复检（最终数字）
+--llm-model=llm_bot\models\qwen2.5-7b-instruct-q4_k_m.gguf --llm-parallel=2 --jobs=2
+```
+
+`--llm-parallel=N` 会自动把服务端 `-c` 设为 `N*8192`（每槽 8k）。
+3B 只适合"结构/链路"评估；**结论性数字请用 7B**。
+
+### 一个必须知道的坑（已修）
+
+`CS2DGame` 是 `RunOne` 的栈上对象，而 LLM 回调在 worker 线程里捕获了它。
+如果一局结束时还有在途请求，回调会去锁已释放的 `coachLlmMutex_` → **runner 随机崩溃（0xC0000005）**。
+现在 `RunOne` 返回前会 `SetCoachLlmEnabled(false)` + `g_llm->WaitIdle(20s)`，确保没有回调在飞。
