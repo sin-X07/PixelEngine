@@ -254,6 +254,19 @@ public:
     void DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
                        float alpha = 1.0f);
     void DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI);
+
+    // 对局结算页（比赛结束后展示战绩表，参照 CS 的结算面板）
+    struct MatchEndCtx {
+        std::string mapName;
+        int  scoreT = 0;
+        int  scoreCT = 0;
+        int  winner = 0;                 // 1=T, 2=CT, 0=平局
+        int  roundCount = 0;
+        std::vector<InGameCtx::ScoreRowView> rows;
+        bool playerTeamKnown = false;    // 玩家所属阵营（1=T, 2=CT），0=死斗
+        int  playerTeam = 0;
+    };
+    void DrawMatchEnd(const MatchEndCtx& ctx, const Actions& actions);
     // 进入对局前的黑屏加载提示（地图 / LLM server）
     void DrawLoadingOverlay(const char* title, const char* subtitle);
 
