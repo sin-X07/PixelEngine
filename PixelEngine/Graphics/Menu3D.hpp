@@ -114,14 +114,13 @@ private:
     std::vector<std::unique_ptr<Menu3DModel>> chickens_;
     std::vector<std::unique_ptr<Menu3DModel>> focusWeapons_;   // AK / 手枪 / 匕首
     // 自定义配件：0=鸭舌帽 1=墨镜 2=背包 3=小鸡帽
-    std::unique_ptr<Menu3DModel> accessories_[4];
     Customization custom_{};
 
     void ApplyAllCustomization();
     void ApplyCustomizationColor(int obj);
     void ApplyCustomizationPose(int obj);
     void ApplyCustomizationWeapon(int obj);
-    void DrawAccessory(int obj, float scale, float yOffset, float yaw) const;
+    void ApplyCustomizationAccessory(int obj);
     struct ChickenState {
         float x = 0.0f;
         float z = 0.0f;
@@ -134,11 +133,9 @@ private:
     };
     std::array<ChickenState, 3> chickenState_{};
     std::mt19937 chickenRng_{ std::random_device{}() };
-    // ---- 小鸡步态校准（数值来源：assets/models/chickensoft/manifest.md）----
-    // 模型 y 向上，1 单位 = 1 米，实测 AABB 高度 1.843；基础动画 walk 循环 0.8s。
+    // Menu_Walk keeps one original stride, baked into a four-second clip.
     static constexpr float kChickenModelHeight = 1.843f;
-    static constexpr float kWalkClipSeconds    = 0.8f;
-    static constexpr float kRunClipSeconds     = 0.5333f;
+    static constexpr float kWalkClipSeconds    = 4.0f;
     // 一次 walk 循环的期望位移（按身高折算），用于避免滑步
     static constexpr float kChickenStrideBodyHeights = 1.0f;
     // 基准世界速度：dist=6 处的移动速度（世界单位/秒），透视按 dist 缩放

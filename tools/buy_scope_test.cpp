@@ -21,6 +21,30 @@
 #include "Core/PathUtils.hpp"
 #include "Core/PresentationContract.hpp"
 #include "Input/FireInputGate.hpp"
+#include "Graphics/Menu3DModel.hpp"
+
+struct Menu3DModelTestAccess {
+    static bool IndependentMeshCaches(const Menu3DModel& model) {
+        std::vector<int> used;
+        for (const auto& node : model.nodes_) {
+            if (node.mesh < 0) continue;
+            for (int mesh : used) {
+                if (mesh == node.mesh) return false;
+            }
+            used.push_back(node.mesh);
+            if (!node.visible || node.skin >= 0) continue;
+            for (const auto& primitive : model.meshes_[node.mesh].primitives) {
+                if (primitive.vertices.empty()) continue;
+                const auto expected = Menu3DModel::TransformPoint(node.world, primitive.vertices[0].pos);
+                const auto actual = primitive.skinnedPos[0];
+                if (std::fabs(expected.x - actual.x) > .001f ||
+                    std::fabs(expected.y - actual.y) > .001f ||
+                    std::fabs(expected.z - actual.z) > .001f) return false;
+            }
+        }
+        return true;
+    }
+};
 
 static int g_fail = 0;
 static int g_pass = 0;
@@ -820,11 +844,74 @@ static void TestFixedVisionRadius() {
           "PIX-20 camera zoom does not change world radius");
 }
 
+static void TestMenuHeldPoses() {
+    const char* poses[] = { "Idle", "Crouch", "HandsOnHips", "FistPalm" };
+    const char* weapons[] = { "AK", "SMG", "Sniper", "Shotgun", "Pistol", "Knife_1" };
+    for (const char* actor : { "t", "ct" }) {
+        Menu3DModel model;
+        const std::string path = std::string("assets/models/menu/") + actor + ".glb";
+        check(model.Load(path, "Menu_Idle_AK"), "menu actor GLB loads");
+        for (const char* accessory : { "accessory_headwear", "accessory_eyewear", "accessory_back" }) {
+            float matrix[16];
+            check(model.GetNodeWorldMatrix(accessory, matrix), "bone-bound accessory exists");
+            model.SetNodeVisible(accessory, false);
+            model.SetNodeColorExcluded(accessory, true);
+        }
+        for (const char* pose : poses) {
+            for (const char* weapon : weapons) {
+                const std::string clip = std::string("Menu_") + pose + "_" + weapon;
+                const std::string selected = std::string("weapon_") + pose + "_" + weapon;
+                for (const char* p : poses) {
+                    for (const char* w : weapons) {
+                        const std::string node = std::string("weapon_") + p + "_" + w;
+                        model.SetNodeVisible(node, node == selected);
+                        model.SetNodeColorExcluded(node, true);
+                    }
+                }
+                bool valid = model.PlayAnimation(clip) && model.AnimationName() == clip;
+                float start[16], finish[16];
+                valid = model.GetNodeWorldMatrix(selected, start) && valid;
+                if (std::string(pose) == "Idle" || std::string(pose) == "Crouch") {
+                    float grip[16], wrist[16];
+                    valid = model.GetNodeWorldMatrix(selected + "/grip_main", grip) && valid;
+                    valid = model.GetNodeWorldMatrix("Index1.R", wrist) && valid;
+                    float distanceSquared = 0.0f;
+                    for (int i = 12; i < 15; ++i) {
+                        const float delta = grip[i] - wrist[i];
+                        distanceSquared += delta * delta;
+                    }
+                    valid = valid && distanceSquared < .14f * .14f;
+                }
+                const float ground = model.GroundOffset();
+                model.Update(4.0f);
+                valid = model.GetNodeWorldMatrix(selected, finish) && valid;
+                for (int i = 0; i < 16; ++i) {
+                    valid = valid && std::isfinite(finish[i]) && std::fabs(start[i] - finish[i]) < .002f;
+                }
+                valid = valid && std::fabs(model.GroundOffset() - ground) < .002f;
+                valid = valid && Menu3DModelTestAccess::IndependentMeshCaches(model);
+                check(valid, clip.c_str());
+            }
+        }
+        const std::string previous = model.AnimationName();
+        check(!model.PlayAnimation("Menu_Crouch") && model.AnimationName() == previous,
+              "incomplete menu animation IDs cannot select a different weapon");
+    }
+    Menu3DModel chicken;
+    check(chicken.Load("assets/models/menu/chicken.glb", "Menu_Walk"), "menu chicken GLB loads");
+    for (const char* pose : { "Menu_Walk", "Menu_Idle", "Menu_Look", "Menu_Rest" }) {
+        check(chicken.PlayAnimation(pose), pose);
+        chicken.Update(12.0f);
+        check(std::isfinite(chicken.GroundOffset()), "chicken pose remains valid after three loops");
+    }
+}
+
 int main() {
     std::printf("===== 合并契约 v1 玩法回归测试 =====\n");
     std::printf("地图: %s\n", MapPath());
 
     TestFixedVisionRadius();
+    TestMenuHeldPoses();
     TestFireInputGate();
     TestBuyCodes();
     TestBuyDeadAndWindow();

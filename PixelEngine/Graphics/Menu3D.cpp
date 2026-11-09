@@ -67,27 +67,19 @@ constexpr RgbColor kChickenColors[] = {
 constexpr int kChickenColorCount = static_cast<int>(sizeof(kChickenColors) / sizeof(kChickenColors[0]));
 const char* kChickenColorNames[] = { "原色", "白羽", "棕羽", "黑羽", "蓝羽", "绿羽", "红羽" };
 
-const char* kCharPoseNames[]  = { "待机", "警戒", "挥手", "下蹲", "跳跃", "中弹" };
-const char* kCharPoseAnims[]  = { "Idle", "Idle_Shoot", "Wave", "Duck", "Jump", "HitReact" };
-constexpr int kCharPoseCount = 6;
+const char* kCharPoseNames[]  = { "待机", "下蹲", "叉腰", "抱拳" };
+const char* kCharPoseAnims[]  = { "Idle", "Crouch", "HandsOnHips", "FistPalm" };
+constexpr int kCharPoseCount = 4;
 
-const char* kChickenPoseNames[] = { "散步", "待机", "奔跑", "跳跃", "眨眼" };
-const char* kChickenPoseAnims[] = { "walk", "idle", "run", "jump", "blink" };
-constexpr int kChickenPoseCount = 5;
-
-// 角色模型自带、挂在右手的所有武器节点
-const char* kAllWeaponNodes[] = {
-    "AK", "GrenadeLauncher", "Knife_1", "Knife_2", "Pistol", "Revolver",
-    "Revolver_Small", "RocketLauncher", "ShortCannon", "Shotgun", "Shovel",
-    "SMG", "Sniper", "Sniper_2",
-};
-constexpr int kAllWeaponNodeCount = static_cast<int>(sizeof(kAllWeaponNodes) / sizeof(kAllWeaponNodes[0]));
+const char* kChickenPoseNames[] = { "散步", "待机", "张望", "休息" };
+const char* kChickenPoseAnims[] = { "Menu_Walk", "Menu_Idle", "Menu_Look", "Menu_Rest" };
+constexpr int kChickenPoseCount = 4;
 
 const char* kWeaponOptionNames[] = { "AK-47", "冲锋枪", "狙击枪", "霰弹枪", "手枪", "匕首" };
 const char* kWeaponOptionNodes[] = { "AK", "SMG", "Sniper", "Shotgun", "Pistol", "Knife_1" };
 constexpr int kWeaponOptionCount = 6;
 
-const char* kCharAccNames[] = { "无", "鸭舌帽", "墨镜", "背包" };
+const char* kCharAccNames[] = { "无", "头饰", "墨镜", "背包" };
 constexpr int kCharAccCount = 4;
 const char* kChickenAccNames[] = { "无", "小帽子", "墨镜" };
 constexpr int kChickenAccCount = 3;
@@ -364,13 +356,13 @@ void Menu3D::Shutdown() {
 
 bool Menu3D::LoadModels() {
     tModel_ = std::make_unique<Menu3DModel>();
-    if (!tModel_->Load("assets/models/quaternius/Character_Enemy.gltf", "Idle")) {
+    if (!tModel_->Load("assets/models/menu/t.glb", "Menu_Idle_AK")) {
         std::cerr << "[Menu3D] T 模型加载失败: " << tModel_->LastError() << std::endl;
         tModel_.reset();
     }
 
     ctModel_ = std::make_unique<Menu3DModel>();
-    if (!ctModel_->Load("assets/models/quaternius/Character_Soldier.gltf", "Idle")) {
+    if (!ctModel_->Load("assets/models/menu/ct.glb", "Menu_Idle_AK")) {
         std::cerr << "[Menu3D] CT 模型加载失败: " << ctModel_->LastError() << std::endl;
         ctModel_.reset();
     }
@@ -378,22 +370,20 @@ bool Menu3D::LoadModels() {
     chickens_.clear();
     for (int i = 0; i < 3; ++i) {
         auto chicken = std::make_unique<Menu3DModel>();
-        if (!chicken->Load("assets/models/chickensoft/chicken.glb", "walk")) {
+        if (!chicken->Load("assets/models/menu/chicken.glb", "Menu_Walk")) {
             std::cerr << "[Menu3D] 小鸡模型加载失败: " << chicken->LastError() << std::endl;
             chickens_.clear();
             break;
         }
-        // PIX-12 验收：界面用到的每个姿势动画都必须真实存在，
-        // 缺失的逐个记日志（PlayAnimation 失败不会改变当前动画）
+        // Every selectable persistent clip must exist in the exported model.
         for (int p = 0; p < kChickenPoseCount; ++p) {
             if (!chicken->PlayAnimation(kChickenPoseAnims[p])) {
                 std::cerr << "[Menu3D] 小鸡动画缺失: '" << kChickenPoseAnims[p]
-                          << "'（菜单将回退 walk）" << std::endl;
+                          << "'" << std::endl;
             }
         }
-        // 基础动画固定为使能 walk（契约 v1 第 7 节：区分大小写、循环）
-        if (!chicken->PlayAnimation("walk")) {
-            std::cerr << "[Menu3D] 小鸡基础动画 'walk' 不可用，当前动画="
+        if (!chicken->PlayAnimation("Menu_Walk")) {
+            std::cerr << "[Menu3D] 小鸡基础动画不可用，当前动画="
                       << chicken->AnimationName() << std::endl;
         }
         // 错开三只鸡的动画相位
@@ -424,34 +414,6 @@ bool Menu3D::LoadModels() {
         focusWeapons_.push_back(std::move(weapon));
     }
 
-    // 自定义配件（低模纯色 glTF，tools/gen_menu_accessories.py 生成）
-    const char* accessoryPaths[4] = {
-        "assets/models/custom/cap.gltf",
-        "assets/models/custom/glasses.gltf",
-        "assets/models/custom/backpack.gltf",
-        "assets/models/custom/chicken_hat.gltf",
-    };
-    for (int i = 0; i < 4; ++i) {
-        accessories_[i] = std::make_unique<Menu3DModel>();
-        if (!accessories_[i]->Load(accessoryPaths[i])) {
-            std::cerr << "[Menu3D] 配件模型加载失败: " << accessoryPaths[i]
-                      << " " << accessories_[i]->LastError() << std::endl;
-            accessories_[i].reset();
-        }
-    }
-
-    // 角色模型自带全部武器节点：先全部隐藏，再由自定义设置显示手持的那把；
-    // 武器不参与服装调色板换色（保持木质/金属原色）
-    for (int i = 0; i < kAllWeaponNodeCount; ++i) {
-        if (tModel_) {
-            tModel_->SetNodeVisible(kAllWeaponNodes[i], false);
-            tModel_->SetNodeColorExcluded(kAllWeaponNodes[i], true);
-        }
-        if (ctModel_) {
-            ctModel_->SetNodeVisible(kAllWeaponNodes[i], false);
-            ctModel_->SetNodeColorExcluded(kAllWeaponNodes[i], true);
-        }
-    }
     ApplyAllCustomization();
 
     if (tModel_ && ctModel_) {
@@ -510,6 +472,7 @@ void Menu3D::PickChickenTarget(int index) {
 
 void Menu3D::UpdateChickens(float dt) {
     for (int i = 0; i < static_cast<int>(chickens_.size()) && i < 3; ++i) {
+        if (custom_.pose[i + 2] != 0) continue;
         ChickenState& s = chickenState_[i];
         s.repathTimer -= dt;
         if (s.repathTimer <= 0.0f) PickChickenTarget(i);
@@ -555,14 +518,12 @@ void Menu3D::DrawModels() {
     glTranslatef(-4.4f, 0.0f, 0.0f);
     if (hoveredObject_ == 0) tModel_->DrawHighlight(1.22f, 0.0f, 0.0f);
     tModel_->Draw(1.22f, 0.0f, 0.0f);
-    DrawAccessory(0, 1.22f, 0.0f, 0.0f);
     glPopMatrix();
 
     glPushMatrix();
     glTranslatef(4.4f, 0.0f, 0.0f);
     if (hoveredObject_ == 1) ctModel_->DrawHighlight(1.22f, 0.0f, 0.0f);
     ctModel_->Draw(1.22f, 0.0f, 0.0f);
-    DrawAccessory(1, 1.22f, 0.0f, 0.0f);
     glPopMatrix();
 
     // 三只鸡：左侧、按钮下方、右侧，各自在区域内随机跑动
@@ -574,7 +535,6 @@ void Menu3D::DrawModels() {
         glTranslatef(s.x, 0.0f, s.z);
         if (hoveredObject_ == i + 2) chickens_[i]->DrawHighlight(scale, 0.0f, s.yaw);
         chickens_[i]->Draw(scale, 0.0f, s.yaw);
-        DrawAccessory(i + 2, scale, 0.0f, s.yaw);
         glPopMatrix();
     }
 }
@@ -648,8 +608,9 @@ void Menu3D::SetCustomization(const Customization& c) {
 void Menu3D::ApplyAllCustomization() {
     for (int obj = 0; obj < kObjectCount; ++obj) {
         ApplyCustomizationColor(obj);
-        ApplyCustomizationPose(obj);
         ApplyCustomizationWeapon(obj);
+        ApplyCustomizationAccessory(obj);
+        if (obj >= 2) ApplyCustomizationPose(obj);
     }
 }
 
@@ -692,7 +653,18 @@ void Menu3D::ApplyCustomizationPose(int obj) {
         Menu3DModel* model = (obj == 0) ? tModel_.get() : ctModel_.get();
         if (!model) return;
         const int opt = std::clamp(custom_.pose[obj], 0, kCharPoseCount - 1);
-        model->PlayAnimation(kCharPoseAnims[opt]);
+        const int weapon = std::clamp(custom_.weapon[obj], 0, kWeaponOptionCount - 1);
+        const std::string clip = std::string("Menu_") + kCharPoseAnims[opt] + "_" + kWeaponOptionNodes[weapon];
+        if (!model->PlayAnimation(clip)) {
+            std::cerr << "[Menu3D] 缺少持久姿势 " << clip << std::endl;
+        }
+        for (int pose = 0; pose < kCharPoseCount; ++pose) {
+            for (int w = 0; w < kWeaponOptionCount; ++w) {
+                const std::string node = std::string("weapon_") + kCharPoseAnims[pose] + "_" + kWeaponOptionNodes[w];
+                model->SetNodeVisible(node, pose == opt && w == weapon);
+                model->SetNodeColorExcluded(node, true);
+            }
+        }
         return;
     }
 
@@ -700,10 +672,9 @@ void Menu3D::ApplyCustomizationPose(int obj) {
     if (ci < 0 || ci >= static_cast<int>(chickens_.size()) || !chickens_[ci]) return;
     const int opt = std::clamp(custom_.pose[obj], 0, kChickenPoseCount - 1);
     const char* wanted = kChickenPoseAnims[opt];
-    // 契约 v1 第 7 节：额外动画必须用 PlayAnimation 返回值验收，失败回退 walk
     if (!chickens_[ci]->PlayAnimation(wanted)) {
-        std::cerr << "[Menu3D] 小鸡动画 '" << wanted << "' 不可用，回退 walk" << std::endl;
-        if (std::string(wanted) != "walk") chickens_[ci]->PlayAnimation("walk");
+        std::cerr << "[Menu3D] 小鸡动画缺失 " << wanted << std::endl;
+        chickens_[ci]->PlayAnimation("Menu_Walk");
     }
 }
 
@@ -712,49 +683,24 @@ void Menu3D::ApplyCustomizationWeapon(int obj) {
     Menu3DModel* model = (obj == 0) ? tModel_.get() : ctModel_.get();
     if (!model) return;
 
-    for (int i = 0; i < kAllWeaponNodeCount; ++i) {
-        model->SetNodeVisible(kAllWeaponNodes[i], false);
-    }
-    const int opt = std::clamp(custom_.weapon[obj], 0, kWeaponOptionCount - 1);
-    model->SetNodeVisible(kWeaponOptionNodes[opt], true);
+    ApplyCustomizationPose(obj);
 }
 
-void Menu3D::DrawAccessory(int obj, float scale, float yOffset, float yaw) const {
+void Menu3D::ApplyCustomizationAccessory(int obj) {
     if (obj < 0 || obj >= kObjectCount) return;
-    const int opt = custom_.accessory[obj];
-    if (opt <= 0) return;
-
+    Menu3DModel* model = nullptr;
     if (obj < 2) {
-        Menu3DModel* base = (obj == 0) ? tModel_.get() : ctModel_.get();
-        if (!base) return;
-
-        int acc = 0;
-        float px = 0.0f, py = 2.30f, pz = 0.10f, accYaw = 0.0f, accScale = 1.0f;
-        if (opt == 1) {            // 鸭舌帽：头顶
-            acc = 0; py = 2.30f; pz = 0.10f;
-        } else if (opt == 2) {     // 墨镜：脸部（+Z 为正面）
-            acc = 1; py = 1.98f; pz = 0.50f;
-        } else if (opt == 3) {     // 背包：背部
-            acc = 2; py = 1.25f; pz = -0.25f;
-        }
-        if (accessories_[acc]) {
-            base->DrawAttached(*accessories_[acc], px, py, pz,
-                               scale, yOffset, yaw, accYaw, accScale);
-        }
-        return;
+        model = obj == 0 ? tModel_.get() : ctModel_.get();
+    } else {
+        const int ci = obj - 2;
+        if (ci >= static_cast<int>(chickens_.size())) return;
+        model = chickens_[ci].get();
     }
-
-    const int ci = obj - 2;
-    if (ci < 0 || ci >= static_cast<int>(chickens_.size()) || !chickens_[ci]) return;
-    Menu3DModel* base = chickens_[ci].get();
-    if (!base) return;
-
-    int acc = 3;
-    float py = 1.68f, pz = 0.08f, accScale = 1.9f;
-    if (opt == 2) { acc = 1; py = 1.03f; pz = 0.38f; accScale = 1.6f; }  // 墨镜
-    if (accessories_[acc]) {
-        base->DrawAttached(*accessories_[acc], 0.0f, py, pz,
-                           scale, yOffset, yaw, 0.0f, accScale);
+    if (!model) return;
+    const char* nodes[] = { "accessory_headwear", "accessory_eyewear", "accessory_back" };
+    for (int i = 0; i < 3; ++i) {
+        model->SetNodeVisible(nodes[i], custom_.accessory[obj] == i + 1);
+        model->SetNodeColorExcluded(nodes[i], true);
     }
 }
 
@@ -838,7 +784,7 @@ void Menu3D::FocusSelect(int objectIndex, int cat, int opt) {
             case 0: custom_.weapon[objectIndex] = opt; ApplyCustomizationWeapon(objectIndex); break;
             case 1: custom_.color[objectIndex] = opt;  ApplyCustomizationColor(objectIndex); break;
             case 2: custom_.pose[objectIndex] = opt;   ApplyCustomizationPose(objectIndex); break;
-            case 3: custom_.accessory[objectIndex] = opt; break;
+            case 3: custom_.accessory[objectIndex] = opt; ApplyCustomizationAccessory(objectIndex); break;
             default: break;
         }
         return;
@@ -847,7 +793,7 @@ void Menu3D::FocusSelect(int objectIndex, int cat, int opt) {
     switch (cat) {
         case 0: custom_.color[objectIndex] = opt;     ApplyCustomizationColor(objectIndex); break;
         case 1: custom_.pose[objectIndex] = opt;      ApplyCustomizationPose(objectIndex); break;
-        case 2: custom_.accessory[objectIndex] = opt; break;
+        case 2: custom_.accessory[objectIndex] = opt; ApplyCustomizationAccessory(objectIndex); break;
         default: break;
     }
 }
@@ -1161,14 +1107,12 @@ void Menu3D::DrawFocusScene() {
             glPushMatrix();
             glTranslatef(-4.4f, 0.0f, 0.0f);
             tModel_->Draw(1.22f, 0.0f, 0.0f, otherAlpha);
-            if (otherAlpha > 0.98f) DrawAccessory(0, 1.22f, 0.0f, 0.0f);
             glPopMatrix();
         }
         if (ctModel_ && focusedObject_ != 1) {
             glPushMatrix();
             glTranslatef(4.4f, 0.0f, 0.0f);
             ctModel_->Draw(1.22f, 0.0f, 0.0f, otherAlpha);
-            if (otherAlpha > 0.98f) DrawAccessory(1, 1.22f, 0.0f, 0.0f);
             glPopMatrix();
         }
         for (int i = 0; i < static_cast<int>(chickens_.size()) && i < 3; ++i) {
@@ -1178,7 +1122,6 @@ void Menu3D::DrawFocusScene() {
             glPushMatrix();
             glTranslatef(s.x, 0.0f, s.z);
             chickens_[i]->Draw(scaleChicken, 0.0f, s.yaw, otherAlpha);
-            if (otherAlpha > 0.98f) DrawAccessory(i + 2, scaleChicken, 0.0f, s.yaw);
             glPopMatrix();
         }
     }
@@ -1191,7 +1134,6 @@ void Menu3D::DrawFocusScene() {
             model->DrawHighlight(scale, 0.0f, 0.0f);
             model->Draw(scale, 0.0f, 0.0f);
             // 武器现在握在手里（靠节点显隐切换），不再另画浮空武器
-            DrawAccessory(focusedObject_, scale, 0.0f, 0.0f);
             glPopMatrix();
         }
     } else if (focusedObject_ >= 2 && focusedObject_ - 2 < static_cast<int>(chickens_.size())) {
@@ -1201,7 +1143,6 @@ void Menu3D::DrawFocusScene() {
             glTranslatef(x, 0.0f, z);
             model->DrawHighlight(scale, 0.0f, 0.0f);
             model->Draw(scale, 0.0f, 0.0f);
-            DrawAccessory(focusedObject_, scale, 0.0f, 0.0f);
             glPopMatrix();
         }
     }
@@ -1225,14 +1166,11 @@ void Menu3D::Render(float dt) {
     if (tModel_) tModel_->Update(animDt);
     if (ctModel_) ctModel_->Update(animDt);
     for (int i = 0; i < static_cast<int>(chickens_.size()) && i < 3; ++i) {
-        // 行走/奔跑：按当前速度缩放播放速率，让步幅与位移匹配（消除滑步）；
-        // 静止类姿势保持原速。
+        // Match the baked walking stride to world movement.
         const std::string& anim = chickens_[i]->AnimationName();
         float rate = 1.0f;
-        if (anim == "walk") {
+        if (anim == "Menu_Walk") {
             rate = ChickenAnimTimeScale(chickenState_[i]);
-        } else if (anim == "run") {
-            rate = ChickenAnimTimeScale(chickenState_[i]) * (kWalkClipSeconds / kRunClipSeconds);
         }
         chickens_[i]->Update(animDt * rate);
     }

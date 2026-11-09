@@ -68,6 +68,7 @@ public:
     float GroundOffset() const { return minY_; }
 
 private:
+    friend struct Menu3DModelTestAccess;
     struct Mat4 {
         float m[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 };
     };

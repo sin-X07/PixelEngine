@@ -3,6 +3,7 @@
 #include "../Core/PathUtils.hpp"
 #include "../Core/BuildInfo.hpp"
 #include <iostream>
+#include <algorithm>
 
 namespace {
 // 存档按渠道隔离：dev/beta 用 cs2d_save_dev.ini（beta 为 _beta），避免开发档覆盖玩家档
@@ -52,6 +53,7 @@ void SaveManager::Load() {
     settings_.radarMapZoom          = ini.GetFloat("radar", "map_zoom", 0.005f);
 
     // ---- 主菜单 3D 自定义 ----
+    const int menuPoseVersion = ini.GetInt("menu", "pose_version", 0);
     for (int i = 0; i < 5; ++i) {
         const std::string ck = "color" + std::to_string(i);
         const std::string pk = "pose" + std::to_string(i);
@@ -59,6 +61,12 @@ void SaveManager::Load() {
         settings_.menuColor[i]     = ini.GetInt("menu", ck.c_str(), 0);
         settings_.menuPose[i]      = ini.GetInt("menu", pk.c_str(), 0);
         settings_.menuAccessory[i] = ini.GetInt("menu", ak.c_str(), 0);
+        if (menuPoseVersion < 1) {
+            const int oldPose = settings_.menuPose[i];
+            settings_.menuPose[i] = i < 2 ? (oldPose == 3 ? 1 : 0)
+                                         : (oldPose == 0 || oldPose == 2 ? 0 : 1);
+        }
+        settings_.menuPose[i] = std::clamp(settings_.menuPose[i], 0, 3);
     }
     settings_.menuWeapon[0] = ini.GetInt("menu", "weapon0", 0);
     settings_.menuWeapon[1] = ini.GetInt("menu", "weapon1", 0);
@@ -99,6 +107,7 @@ void SaveManager::Save() {
     ini.SetFloat("radar", "map_zoom",           settings_.radarMapZoom);
 
     // ---- 主菜单 3D 自定义 ----
+    ini.SetInt("menu", "pose_version", 1);
     for (int i = 0; i < 5; ++i) {
         const std::string ck = "color" + std::to_string(i);
         const std::string pk = "pose" + std::to_string(i);
