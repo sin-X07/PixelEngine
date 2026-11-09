@@ -24,6 +24,22 @@
 #include "Graphics/Menu3DModel.hpp"
 
 struct Menu3DModelTestAccess {
+    static bool WeaponGeometryUpright(const Menu3DModel& model, const char* nodeName,
+                                      float expectedBottom, float expectedTop) {
+        const int index = model.FindNode(nodeName);
+        if (index < 0 || model.nodes_[index].mesh < 0) return false;
+        float bottom = 100.0f;
+        float top = -100.0f;
+        for (const auto& primitive : model.meshes_[model.nodes_[index].mesh].primitives) {
+            for (const auto& vertex : primitive.vertices) {
+                bottom = std::min(bottom, vertex.pos.y);
+                top = std::max(top, vertex.pos.y);
+            }
+        }
+        return std::fabs(bottom - expectedBottom) < .001f &&
+               std::fabs(top - expectedTop) < .001f;
+    }
+
     static bool IndependentMeshCaches(const Menu3DModel& model) {
         std::vector<int> used;
         for (const auto& node : model.nodes_) {
@@ -851,6 +867,10 @@ static void TestMenuHeldPoses() {
         Menu3DModel model;
         const std::string path = std::string("assets/models/menu/") + actor + ".glb";
         check(model.Load(path, "Menu_Idle_AK"), "menu actor GLB loads");
+        check(Menu3DModelTestAccess::WeaponGeometryUpright(model, "weapon_Idle_SMG", -.254831f, .363748f),
+              "SMG geometry retains its upright top and magazine orientation");
+        check(Menu3DModelTestAccess::WeaponGeometryUpright(model, "weapon_Idle_Shotgun", -.160413f, .170367f),
+              "shotgun geometry retains its upright top and stock orientation");
         for (const char* accessory : { "accessory_headwear", "accessory_eyewear", "accessory_back" }) {
             float matrix[16];
             check(model.GetNodeWorldMatrix(accessory, matrix), "bone-bound accessory exists");

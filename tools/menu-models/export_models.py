@@ -8,6 +8,7 @@ from pathlib import Path
 
 import bpy
 from mathutils import Matrix, Quaternion, Vector
+from mathutils.bvhtree import BVHTree
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -97,7 +98,8 @@ def weapon_geometry():
             if name == 'Sniper':
                 mesh.transform(Matrix.Rotation(math.pi, 4, 'Z') @ Matrix.Scale(.2, 4))
             else:
-                mesh.transform(Matrix.Rotation(math.pi / 2, 4, 'X'))
+                # These two meshes use -Y as their local top and Z as thickness.
+                mesh.transform(Matrix.Rotation(-math.pi / 2, 4, 'X'))
         meshes[name] = mesh
     return meshes
 
@@ -111,6 +113,33 @@ def attach_mesh(rig, name, mesh, matrix, bone):
     bpy.context.view_layer.update()
     obj.matrix_world = rig.matrix_world @ matrix
     return obj
+
+
+def fit_stowed_weapon(rig, body, mesh, matrix, sidearm):
+    """Fit the weapon's inner face against the evaluated torso or outer thigh."""
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    vertices = []
+    polygons = []
+    for obj in body:
+        evaluated = obj.evaluated_get(depsgraph)
+        geometry = evaluated.to_mesh()
+        transform = rig.matrix_world.inverted() @ evaluated.matrix_world
+        offset = len(vertices)
+        vertices.extend(transform @ vertex.co for vertex in geometry.vertices)
+        polygons.extend(tuple(offset + index for index in polygon.vertices) for polygon in geometry.polygons)
+        evaluated.to_mesh_clear()
+    surface = BVHTree.FromPolygons(vertices, polygons)
+    outward = Vector((-1, 0, 0) if sidearm else (0, 1, 0))
+    corrections = []
+    for vertex in mesh.vertices:
+        point = matrix @ vertex.co
+        hit, normal, _, _ = surface.ray_cast(point + outward * 2, -outward, 4)
+        if hit is not None and normal.dot(outward) > .25:
+            corrections.append((hit - point).dot(outward) + .012)
+    if not corrections:
+        raise RuntimeError(f'{rig.name}: stowed weapon has no body contact')
+    matrix.translation += outward * max(corrections)
+    return matrix
 
 
 def export_actor(key, meshes):
@@ -210,15 +239,16 @@ def export_actor(key, meshes):
                     matrix = Matrix.Translation(grip) @ rotation @ Matrix.Scale(scale, 4) @ Matrix.Translation(-origin)
                     bone = 'LowerArm.R'
                 else:
-                    # Side-back sling leaves the backpack and both arms clear.
-                    position = Vector((-.36, .20, 1.05))
-                    rotation = Matrix.Rotation(math.radians(-68), 4, 'Y')
+                    # Long guns lie along the back. Sidearms lie against the thigh.
+                    position = Vector((.08, .20, 1.35))
+                    rotation = Matrix.Rotation(math.radians(-72), 4, 'Y')
                     if pistol or knife:
-                        position = Vector((-.28, .02, .65))
-                        rotation = Matrix.Rotation(math.radians(-85), 4, 'Y')
+                        position = Vector((-.28, .02, .68))
+                        rotation = Matrix.Rotation(math.pi / 2, 4, 'Z') @ Matrix.Rotation(math.radians(-85), 4, 'Y')
                     if knife:
-                        rotation = Matrix.Rotation(math.pi, 4, 'X')
+                        rotation = Matrix.Rotation(math.pi / 2, 4, 'Z') @ Matrix.Rotation(math.pi, 4, 'X')
                     matrix = Matrix.Translation(position) @ rotation @ Matrix.Scale(scale, 4) @ Matrix.Translation(-origin)
+                    matrix = fit_stowed_weapon(rig, body, meshes[weapon], matrix, pistol or knife)
                     bone = 'Torso' if not (pistol or knife) else 'UpperLeg.R'
                 mount = attach_mesh(rig, 'weapon_' + pose_name + '_' + weapon, meshes[weapon], matrix, bone)
                 exported.append(mount)
