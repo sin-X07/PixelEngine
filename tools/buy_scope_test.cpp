@@ -24,6 +24,31 @@
 #include "Graphics/Menu3DModel.hpp"
 
 struct Menu3DModelTestAccess {
+    static bool HandSkinValid(const Menu3DModel& model) {
+        const int hands = model.FindNode("Hands");
+        if (hands < 0 || model.nodes_[hands].skin < 0) return false;
+        float left[16], right[16];
+        if (!model.GetNodeWorldMatrix("Hand.L", left) || !model.GetNodeWorldMatrix("Hand.R", right)) return false;
+        for (const auto& primitive : model.meshes_[model.nodes_[hands].mesh].primitives) {
+            for (size_t i = 0; i < primitive.vertices.size(); ++i) {
+                const auto& vertex = primitive.vertices[i];
+                float totalWeight = 0.0f;
+                for (float weight : vertex.weights) totalWeight += weight;
+                if (std::fabs(totalWeight - 1.0f) > .001f) return false;
+                const auto& point = primitive.skinnedPos[i];
+                if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) return false;
+                const float leftDistanceSquared = (point.x - left[12]) * (point.x - left[12]) +
+                                                  (point.y - left[13]) * (point.y - left[13]) +
+                                                  (point.z - left[14]) * (point.z - left[14]);
+                const float rightDistanceSquared = (point.x - right[12]) * (point.x - right[12]) +
+                                                   (point.y - right[13]) * (point.y - right[13]) +
+                                                   (point.z - right[14]) * (point.z - right[14]);
+                if (std::min(leftDistanceSquared, rightDistanceSquared) > .4f * .4f) return false;
+            }
+        }
+        return true;
+    }
+
     static bool WeaponGeometryUpright(const Menu3DModel& model, const char* nodeName,
                                       float expectedBottom, float expectedTop) {
         const int index = model.FindNode(nodeName);
@@ -910,6 +935,7 @@ static void TestMenuHeldPoses() {
                 }
                 valid = valid && std::fabs(model.GroundOffset() - ground) < .002f;
                 valid = valid && Menu3DModelTestAccess::IndependentMeshCaches(model);
+                valid = valid && Menu3DModelTestAccess::HandSkinValid(model);
                 check(valid, clip.c_str());
             }
         }

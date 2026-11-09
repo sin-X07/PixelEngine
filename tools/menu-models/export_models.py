@@ -4,13 +4,17 @@ CharacterLab.blend retains the approved editable rigs, accessories and held pose
 Weapons use Quaternius geometry. All coordinates below are Blender Z-up meters.
 """
 import math
+import sys
 from pathlib import Path
 
 import bpy
-from mathutils import Matrix, Quaternion, Vector
+from mathutils import Matrix, Vector
 from mathutils.bvhtree import BVHTree
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+sys.dont_write_bytecode = True
+from hand_rig import prepare_hands, pose_hand, finger_clearance_offset
 ROOT = HERE.parents[1]
 OUT = ROOT / 'assets/models/menu'
 WEAPONS = ('AK', 'SMG', 'Sniper', 'Shotgun', 'Pistol', 'Knife_1')
@@ -28,7 +32,10 @@ def capture(rig):
 
 def restore(rig, pose):
     for bone in rig.pose.bones:
-        bone.location, bone.rotation_quaternion, bone.scale = pose[bone.name]
+        if bone.name in pose:
+            bone.location, bone.rotation_quaternion, bone.scale = pose[bone.name]
+        else:
+            bone.matrix_basis = Matrix.Identity(4)
     bpy.context.view_layer.update()
 
 
@@ -179,6 +186,8 @@ def export_actor(key, meshes):
         accessories.append(obj)
     body = [obj for obj in rig.children if obj.type == 'MESH' and
             any(part in obj.name for part in ('Character', 'Chicken', 'ShoulderPad', 'Body', 'Head'))]
+    if not chicken:
+        body.extend(prepare_hands(rig, body))
     exported = [rig, placement, *body, *accessories]
     exported += [bpy.data.objects[key + '/socket_' + group] for group in ('headwear', 'eyewear', 'back')]
     if chicken:
@@ -217,22 +226,35 @@ def export_actor(key, meshes):
                         right = current_grip + Vector((-.025, .04, .075))
                         left = current_grip + rotation.to_3x3() @ support * scale + Vector((.055, .035, .04))
                         if pistol:
-                            left = current_grip + Vector((.075, -.035, .045))
+                            left = current_grip + Vector((.15, -.015, -.125))
                         solve_arm(rig, 'R', right, (-.52, -.05, .81 if crouch else 1.12))
                         if not knife:
                             solve_arm(rig, 'L', left, (.53, -.14, .8 if crouch else 1.1))
-                        for side in ('R', 'L'):
-                            if knife and side == 'L':
-                                continue
-                            target = current_grip if side == 'R' else left - Vector((.02, .02, .04))
-                            for finger in ('Index1', 'Middle1', 'Pinky1'):
-                                bone = rig.pose.bones[finger + '.' + side]
-                                if (target - bone.head).length > .001:
-                                    aim(bone, target - bone.head)
-                            for bone in rig.pose.bones:
-                                if bone.name.endswith('.' + side) and any(bone.name.startswith(prefix) for prefix in
-                                        ('Index2', 'Index3', 'Middle2', 'Middle3', 'Pinky2', 'Pinky3')):
-                                    bone.rotation_quaternion @= Quaternion((1, 0, 0), -.65)
+                        pose_hand(rig, 'R', current_grip - right, (-1, 0, 0), .95,
+                                  index_curl=.35 if not knife else .95)
+                        if knife:
+                            pose_hand(rig, 'L', (0, -.1, -1), (0, -1, .1), .25)
+                        elif pistol:
+                            pose_hand(rig, 'L', (-1, -.1, .25), (0, 0, -1), .65)
+                            offset = finger_clearance_offset(rig, body[-1], 2, False)
+                            solve_arm(rig, 'L', left + offset, (.53, -.14, .8 if crouch else 1.1))
+                            pose_hand(rig, 'L', (-1, -.1, .25), (0, 0, -1), .65)
+                        else:
+                            target = current_grip + rotation.to_3x3() @ support * scale
+                            pose_hand(rig, 'L', target - left, (0, 0, -1), .80)
+                    elif pose_name == 'HandsOnHips':
+                        for side, sign in (('L', 1), ('R', -1)):
+                            pose_hand(rig, side, (0, .12, -1), (sign, 0, 0), .20)
+                    else:
+                        breath = .002 * math.sin(2 * math.pi * (frame - 1) / 120)
+                        solve_arm(rig, 'R', Vector((-.07, -.58, 1.33 + breath)), (-.64, -.09, 1.13))
+                        solve_arm(rig, 'L', Vector((.18, -.65, 1.50 + breath)), (.64, -.09, 1.13))
+                        pose_hand(rig, 'R', (0, -1, .1), (0, 0, -1), 1.35)
+                        pose_hand(rig, 'L', (-1, -.15, 0), (0, 0, 1), .50)
+                        offset = finger_clearance_offset(rig, body[-1], 2, True)
+                        left = rig.pose.bones['LowerArm.L'].tail.copy() + offset
+                        solve_arm(rig, 'L', left, (.64, -.09, 1.13))
+                        pose_hand(rig, 'L', (-1, -.15, 0), (0, 0, 1), .50)
                     posed.append((frame, capture(rig)))
                 restore(rig, posed[0][1])
                 if held:
@@ -283,7 +305,7 @@ def export_actor(key, meshes):
         export_optimize_animation_size=True)
     # Blender names are global. Free the runtime node IDs for the next actor.
     for obj in exported:
-        if obj.name.startswith(('accessory_', 'weapon_')):
+        if obj.name.startswith(('accessory_', 'weapon_')) or obj.name == 'Hands':
             obj.name = key + '/' + obj.name
 
 
