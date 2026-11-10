@@ -394,6 +394,35 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         if (bigButton("历史记录")) doClick([&] { actions.goState(HISTORY); });
         if (bigButton("设置"))     doClick([&] { actions.openSettings(MAIN_MENU); });
         if (bigButton("退出游戏")) doClick([&] { actions.quitToDesktop(); });
+        if (ctx.backdrop3D && !ctx.focus3D && !ctx.cameraTransition && !ctx.mapOverlayOpen) {
+            ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - UI(240),
+                                            viewport->WorkPos.y + viewport->WorkSize.y - UI(62)));
+            const std::string sceneLabel = std::string("场景 · ") + kMapCatalog[ctx.menuScene].name;
+            if (ImGui::Button(sceneLabel.c_str(), ImVec2(UI(218), UI(42))))
+                ImGui::OpenPopup("Menu scene picker");
+            if (ImGui::BeginPopup("Menu scene picker")) {
+                ImGui::TextUnformatted("主页面场景");
+                ImGui::Separator();
+                for (int i = 0; i < kMapCatalogCount; ++i) {
+                    ImGui::PushID(i);
+                    const ImVec2 row = ImGui::GetCursorScreenPos();
+                    if (ImGui::Selectable("##scene", i == ctx.menuScene,
+                                          0, ImVec2(UI(285), UI(98)))) {
+                        if (actions.selectMenuScene) actions.selectMenuScene(i);
+                    }
+                    ImDrawList* sceneDraw = ImGui::GetWindowDrawList();
+                    if (ctx.menuScenePreviews[i]) {
+                        sceneDraw->AddImage(reinterpret_cast<ImTextureID>(ctx.menuScenePreviews[i]),
+                            ImVec2(row.x + UI(4), row.y + UI(4)),
+                            ImVec2(row.x + UI(164), row.y + UI(94)));
+                    }
+                    sceneDraw->AddText(ImVec2(row.x + UI(176), row.y + UI(12)),
+                                       ImGui::GetColorU32(ImGuiCol_Text), kMapCatalog[i].name);
+                    ImGui::PopID();
+                }
+                ImGui::EndPopup();
+            }
+        }
         if (ctx.focus3D) {
             ImGui::EndDisabled();
             ImGui::PopStyleVar();
@@ -1009,8 +1038,6 @@ void GameUI::DrawFocusWheel(const MenuCtx& ctx, const Actions& actions) {
                      IM_COL32(255, 255, 255,
                               static_cast<int>(std::clamp(open, 0.0f, 1.0f) * 255.0f)));
     }
-    dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y),
-                      IM_COL32(0, 0, 0, static_cast<int>(82.0f * open)));
     dl->AddRectFilled(ImVec2(wp.x + ws.x * 0.48f, wp.y),
                       ImVec2(wp.x + ws.x, wp.y + ws.y),
                       IM_COL32(4, 7, 10, static_cast<int>(150.0f * open)));

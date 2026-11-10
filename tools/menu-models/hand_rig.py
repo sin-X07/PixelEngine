@@ -12,7 +12,7 @@ def is_finger(name):
     return name.startswith(FINGERS)
 
 
-def prepare_hands(rig, body):
+def prepare_hands(rig, body, size=1.):
     """Replace the source hand region with clean, separately weighted geometry."""
     for bone in rig.pose.bones:
         bone.matrix_basis = Matrix.Identity(4)
@@ -20,7 +20,7 @@ def prepare_hands(rig, body):
     wrists = {side: rig.data.bones['LowerArm.' + side].tail_local.copy() for side in ('L', 'R')}
     rest_geometry = {bone.name: (bone.head_local.copy(), bone.tail_local.copy())
                      for bone in rig.data.bones if is_finger(bone.name)}
-    factor = Vector((.80, .86, .60))
+    factor = Vector((.80, .86, .60)) * size
     for obj in body:
         if obj.type != 'MESH' or not any(is_finger(group.name) for group in obj.vertex_groups):
             continue
@@ -46,7 +46,7 @@ def prepare_hands(rig, body):
         wrist = wrists[side]
         hand = rig.data.edit_bones.new('Hand.' + side)
         hand.head = wrist
-        hand.tail = wrist + Vector((.14 if side == 'L' else -.14, 0, 0))
+        hand.tail = wrist + Vector(((.14 if side == 'L' else -.14) * size, 0, 0))
         hand.parent = rig.data.edit_bones['LowerArm.' + side]
         hand.use_connect = True
         hand.align_roll(Vector((0, 0, 1)))
@@ -68,10 +68,10 @@ def prepare_hands(rig, body):
     for side in ('L', 'R'):
         rig.pose.bones['Hand.' + side].rotation_mode = 'QUATERNION'
     bpy.context.view_layer.update()
-    return [build_hand_mesh(rig, body)]
+    return [build_hand_mesh(rig, body, size)]
 
 
-def build_hand_mesh(rig, body):
+def build_hand_mesh(rig, body, size=1.):
     vertices, faces, bindings = [], [], []
 
     def loft(rings, weights):
@@ -92,13 +92,17 @@ def build_hand_mesh(rig, body):
         hand = rig.data.bones['Hand.' + side]
         forearm = rig.data.bones['LowerArm.' + side]
         bridge = []
-        for offset, radius in ((-.16, .075), (-.08, .075), (0, .067), (.025, .060)):
+        bridge_profile = ((-.16, .075), (-.08, .075), (0, .067), (.025, .060))
+        if size < 1.:
+            bridge_profile = ((-.16, .055), (-.08, .045), (-.02, .034), (0, .032))
+        for offset, radius in bridge_profile:
             bridge.append([forearm.matrix_local @ Vector((radius * math.cos(index * math.tau / 8),
                 forearm.length + offset, radius * math.sin(index * math.tau / 8))) for index in range(8)])
         loft(bridge, [{forearm.name: 1}] * len(bridge))
         rings = []
         for along, width, depth in [(-.065, .065, .040), (0, .072, .043), (.055, .093, .041), (.12, .090, .035), (.145, .082, .028)]:
-            radius = .018
+            along, width, depth = along * size, width * size, depth * size
+            radius = .018 * size
             profile = [(-width + radius, -depth), (width - radius, -depth),
                        (width, -depth + radius), (width, depth - radius),
                        (width - radius, depth), (-width + radius, depth),
@@ -112,6 +116,7 @@ def build_hand_mesh(rig, body):
                 radius = .024 if finger != 'Pinky' else .021
                 if finger == 'Thumb':
                     radius = .027
+                radius *= size
                 last_joint = joint == joints[-1]
                 start_at = .35 if finger == 'Thumb' and joint == 1 else 0
                 rows = [(start_at, radius * .93), (.25, radius), (.78, radius * .94), (1, radius * .85)]
@@ -158,7 +163,7 @@ def build_hand_mesh(rig, body):
     return obj
 
 
-def finger_clearance_offset(rig, hands, axis, left_positive):
+def finger_clearance_offset(rig, hands, axis, left_positive, include_palms=False):
     """Find the smallest offset that separates opposing finger surfaces."""
     evaluated = hands.evaluated_get(bpy.context.evaluated_depsgraph_get())
     geometry = evaluated.to_mesh()
@@ -169,8 +174,9 @@ def finger_clearance_offset(rig, hands, axis, left_positive):
         name = hands.vertex_groups[max(original.groups, key=lambda group: group.weight).group].name
         names.append(name.split('.')[0].rstrip('123') + '.' + name[-1])
     parts = {}
+    contact_parts = (*FINGERS, 'Hand') if include_palms else FINGERS
     for side in ('L', 'R'):
-        for finger in FINGERS:
+        for finger in contact_parts:
             name = finger + '.' + side
             polygons = [tuple(polygon.vertices) for polygon in geometry.polygons
                         if all(names[index] == name for index in polygon.vertices)]
@@ -179,19 +185,19 @@ def finger_clearance_offset(rig, hands, axis, left_positive):
             parts[name] = ([points[index] for index in used],
                            [tuple(remap[index] for index in polygon) for polygon in polygons])
     evaluated.to_mesh_clear()
-    right = [BVHTree.FromPolygons(*parts[finger + '.R']) for finger in FINGERS]
+    right = [BVHTree.FromPolygons(*parts[finger + '.R']) for finger in contact_parts]
     direction = Vector()
     direction[axis] = 1 if left_positive else -1
     for step in range(81):
         offset = direction * (step * .002)
         left = [BVHTree.FromPolygons([point + offset for point in parts[finger + '.L'][0]],
-                                    parts[finger + '.L'][1]) for finger in FINGERS]
+                                    parts[finger + '.L'][1]) for finger in contact_parts]
         if not any(first.overlap(second) for first in left for second in right):
             return offset + direction * .002
     raise RuntimeError(f'{rig.name}: two-hand contact cannot be separated')
 
 
-def pose_hand(rig, side, direction, outward, curl, index_curl=None):
+def pose_hand(rig, side, direction, outward, curl, index_curl=None, thumb_curl=None):
     """Rotate the whole palm, retaining the source finger fan and joint hinges."""
     for bone in rig.pose.bones:
         if is_finger(bone.name) and bone.name.endswith('.' + side):
@@ -217,7 +223,7 @@ def pose_hand(rig, side, direction, outward, curl, index_curl=None):
     # The thumb opposes across the palm. Its distal joint returns toward the
     # knuckles instead of extending in the same direction as its metacarpal.
     thumb_side = 1 if side == 'L' else -1
-    closed = min(1, curl)
+    closed = min(1, curl if thumb_curl is None else thumb_curl)
     base_open = Vector((thumb_side * .9, .3, -.15))
     base_closed = Vector((thumb_side * .25, .35, -.9))
     tip_open = Vector((thumb_side * .6, .8, -.1))

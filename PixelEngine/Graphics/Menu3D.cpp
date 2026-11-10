@@ -1,4 +1,5 @@
 #include "Menu3D.hpp"
+#include <SDL_image.h>
 #include "../Core/PathUtils.hpp"
 
 #ifdef _WIN32
@@ -13,6 +14,10 @@
 #include <cstring>
 #include <iostream>
 
+#ifndef GL_MULTISAMPLE
+#define GL_MULTISAMPLE 0x809D
+#endif
+
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
@@ -21,11 +26,13 @@ constexpr float kPi = 3.14159265358979323846f;
 // 避免物体自定义界面的 3D 排版发生变化。
 constexpr float kMainCamY = 1.05f;
 constexpr float kMainCamZ = 8.0f;
+constexpr float kTopCamY = 12.8f;
 constexpr float kMainLookY = 0.95f;
-constexpr float kFocusCamY = 1.10f;
+constexpr float kFocusCamY = 2.00f;
 constexpr float kFocusCamZ = 8.6f;
-constexpr float kFocusLookY = 1.00f;
-constexpr float kFloorFrontZ = 10.0f;
+constexpr float kFocusLookY = 1.90f;
+constexpr float kChickenMinZ = -2.0f;
+constexpr float kChickenMaxZ = 5.5f;
 
 // ============================================================================
 // 主菜单自定义：调色板 / 姿势 / 武器 / 配件选项
@@ -281,6 +288,7 @@ bool Menu3D::Initialize(SDL_Renderer* mainRenderer, int width, int height) {
     pixels_.assign(static_cast<size_t>(width_) * height_ * 4, 0);
     flipped_.assign(pixels_.size(), 0);
     animationTime_ = 0.0f;
+    pendingAnimationTime_ = 0.0f;
     lastRenderTicks_ = 0;
     ready_ = true;
 
@@ -300,11 +308,21 @@ bool Menu3D::InitGL() {
     SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
 
-    glWindow_ = SDL_CreateWindow("Menu3D",
+    const auto createWindow = [this] {
+        return SDL_CreateWindow("Menu3D",
                                  SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
                                  width_, height_,
                                  SDL_WINDOW_HIDDEN | SDL_WINDOW_OPENGL);
+    };
+    glWindow_ = createWindow();
+    if (!glWindow_) {
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
+        glWindow_ = createWindow();
+    }
     if (!glWindow_) {
         lastError_ = std::string("SDL_CreateWindow(OpenGL) failed: ") + SDL_GetError();
         return false;
@@ -330,6 +348,8 @@ bool Menu3D::InitGL() {
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
     glEnable(GL_LIGHTING);
     glEnable(GL_LIGHT0);
+    glEnable(GL_NORMALIZE);
+    glEnable(GL_MULTISAMPLE);
     glShadeModel(GL_SMOOTH);
 
     const GLfloat ambient[] = { 0.18f, 0.20f, 0.24f, 1.0f };
@@ -346,6 +366,11 @@ void Menu3D::Shutdown() {
     tModel_.reset();
     ctModel_.reset();
     chickens_.clear();
+    for (auto& environment : environments_) environment.reset();
+    for (auto& preview : scenePreviews_) {
+        if (preview) SDL_DestroyTexture(preview);
+        preview = nullptr;
+    }
     if (texture_) { SDL_DestroyTexture(texture_); texture_ = nullptr; }
     if (glContext_) { SDL_GL_DeleteContext(glContext_); glContext_ = nullptr; }
     if (glWindow_) { SDL_DestroyWindow(glWindow_); glWindow_ = nullptr; }
@@ -355,6 +380,19 @@ void Menu3D::Shutdown() {
 }
 
 bool Menu3D::LoadModels() {
+    const char* scenes[] = { "ancient_ruins", "dust_2", "mirage" };
+    for (int i = 0; i < 3; ++i) {
+        const std::string previewPath = PathUtils::ResolveAppPath(
+            std::string("assets/models/menu/scenes/") + scenes[i] + ".png");
+        scenePreviews_[i] = IMG_LoadTexture(mainRenderer_, previewPath.c_str());
+        if (scenePreviews_[i]) SDL_SetTextureScaleMode(scenePreviews_[i], SDL_ScaleModeLinear);
+        auto environment = std::make_unique<Menu3DModel>();
+        if (environment->Load(std::string("assets/models/menu/scenes/") + scenes[i] + ".glb")) {
+            environments_[i] = std::move(environment);
+        } else {
+            std::cerr << "[Menu3D] Environment unavailable: " << scenes[i] << std::endl;
+        }
+    }
     tModel_ = std::make_unique<Menu3DModel>();
     if (!tModel_->Load("assets/models/menu/t.glb", "Menu_Idle_AK")) {
         std::cerr << "[Menu3D] T 模型加载失败: " << tModel_->LastError() << std::endl;
@@ -388,8 +426,6 @@ bool Menu3D::LoadModels() {
         }
         // 错开三只鸡的动画相位
         chicken->Update(0.37f * static_cast<float>(i));
-        // 中间那只离镜头最近，压暗一点避免灯光下泛白
-        if (i == 1) chicken->SetClothingTint(0.55f, 0.55f, 0.45f);
         chickens_.push_back(std::move(chicken));
     }
     if (!chickens_.empty()) {
@@ -427,7 +463,7 @@ bool Menu3D::LoadModels() {
 
 void Menu3D::InitChickenState() {
     const float xs[3] = { -2.35f, 0.0f, 2.25f };
-    const float zs[3] = { 3.2f, 7.0f, 3.0f };
+    const float zs[3] = { 3.2f, 5.4f, 3.0f };
     for (int i = 0; i < 3; ++i) {
         ChickenState& s = chickenState_[i];
         s.x = xs[i];
@@ -439,8 +475,9 @@ void Menu3D::InitChickenState() {
         const float dist = 8.6f - s.z;
         const float variance = 0.85f + static_cast<float>(chickenRng_() % 100) / 100.0f * 0.30f;
         s.speed = kChickenBaseSpeed * (dist / 6.0f) * variance;
-        PickChickenTarget(i);
+        s.movementSpeed = s.speed;
     }
+    for (int i = 0; i < 3; ++i) PickChickenTarget(i);
 }
 
 float Menu3D::ChickenWorldScale(const ChickenState& s) const {
@@ -450,11 +487,72 @@ float Menu3D::ChickenWorldScale(const ChickenState& s) const {
 }
 
 float Menu3D::ChickenAnimTimeScale(const ChickenState& s) const {
+    if (focusedObject_ >= 0) return kWalkClipSeconds * 1.25f;
     // 期望循环时长 = 每循环步幅 / 移动速度；步幅 = 模型身高 × 世界缩放 × 步幅系数
     const float stride = kChickenModelHeight * ChickenWorldScale(s) * kChickenStrideBodyHeights;
-    if (stride <= 0.0001f || s.speed <= 0.0001f) return 1.0f;
-    const float cycle = stride / s.speed;
-    return std::clamp(kWalkClipSeconds / cycle, 0.25f, 4.0f);
+    if (stride <= 0.0001f) return 1.0f;
+    return std::clamp(kWalkClipSeconds * s.movementSpeed / stride, 0.0f, 16.0f);
+}
+
+float Menu3D::ChickenRadius(int index, float z) const {
+    const float scale = std::clamp(.30f * (8.6f - z) / 6.0f, .055f, .34f);
+    const float radius = index >= 0 && index < static_cast<int>(chickens_.size())
+        ? chickens_[index]->HorizontalRadius() : 1.05f;
+    return radius * scale + .06f;
+}
+
+std::vector<Menu3D::GroundObstacle> Menu3D::ChickenObstacles(int index) const {
+    std::vector<GroundObstacle> obstacles;
+    // Keep room for every menu loadout as well as the currently visible meshes.
+    if (tModel_) obstacles.push_back({-4.4f, 0, std::max(1.5f, tModel_->HorizontalRadius() * 1.22f + .10f)});
+    if (ctModel_) obstacles.push_back({4.4f, 0, std::max(1.5f, ctModel_->HorizontalRadius() * 1.22f + .10f)});
+    for (int other = 0; other < static_cast<int>(chickens_.size()) && other < 3; ++other) {
+        if (other == index) continue;
+        const auto& state = chickenState_[other];
+        obstacles.push_back({state.x, state.z, ChickenRadius(other, state.z), other});
+    }
+    return obstacles;
+}
+
+bool Menu3D::ChickenPathClear(int index, float fromX, float fromZ, float toX, float toZ) const {
+    const float radius = std::max(ChickenRadius(index, fromZ), ChickenRadius(index, toZ));
+    const float aspect = static_cast<float>(width_) / static_cast<float>(height_);
+    const float halfWidth = std::min(5.5f, std::tan(28.0f * kPi / 180.0f) * aspect * (kMainCamZ - toZ));
+    if (toZ < kChickenMinZ || toZ > kChickenMaxZ || std::abs(toX) > halfWidth - radius - .12f) return false;
+    const float dx = toX - fromX, dz = toZ - fromZ;
+    const float squared = dx * dx + dz * dz;
+    for (const auto& obstacle : ChickenObstacles(index)) {
+        const float fraction = squared > .000001f ? std::clamp(
+            ((obstacle.x - fromX) * dx + (obstacle.z - fromZ) * dz) / squared, 0.0f, 1.0f) : 0.0f;
+        const float x = fromX + fraction * dx - obstacle.x;
+        const float z = fromZ + fraction * dz - obstacle.z;
+        const float clearance = radius + obstacle.radius;
+        if (x * x + z * z < clearance * clearance) return false;
+    }
+    return true;
+}
+
+void Menu3D::SeparateChickens() {
+    for (int pass = 0; pass < 8; ++pass) {
+        for (int index = 0; index < static_cast<int>(chickens_.size()) && index < 3; ++index) {
+            auto& state = chickenState_[index];
+            for (const auto& obstacle : ChickenObstacles(index)) {
+                if (custom_.pose[index + 2] != 0 && obstacle.chickenIndex >= 0 &&
+                    custom_.pose[obstacle.chickenIndex + 2] == 0) continue;
+                float dx = state.x - obstacle.x, dz = state.z - obstacle.z;
+                float distance = std::sqrt(dx * dx + dz * dz);
+                const float clearance = ChickenRadius(index, state.z) + obstacle.radius + .002f;
+                if (distance >= clearance) continue;
+                if (distance < .0001f) {
+                    dx = obstacle.x > 0 ? -1.0f : 1.0f;
+                    dz = 0;
+                    distance = 1.0f;
+                }
+                state.x = obstacle.x + dx / distance * clearance;
+                state.z = obstacle.z + dz / distance * clearance;
+            }
+        }
+    }
 }
 
 void Menu3D::PickChickenTarget(int index) {
@@ -463,17 +561,29 @@ void Menu3D::PickChickenTarget(int index) {
 
     // 全场自由漫游：不再按左/中/右分区。
     // z 先随机，再按该 z 的可见宽度限制 x，避免小鸡跑出画面。
-    const float z = -2.0f + 8.8f * dist01(chickenRng_);
-    const float visibleHalfWidth = std::min(5.5f, 0.80f * (8.6f - z));
-    s.targetZ = z;
-    s.targetX = -visibleHalfWidth + 2.0f * visibleHalfWidth * dist01(chickenRng_);
+    s.targetX = s.x;
+    s.targetZ = s.z;
+    for (int attempt = 0; attempt < 32; ++attempt) {
+        const float z = kChickenMinZ + (kChickenMaxZ - kChickenMinZ) * dist01(chickenRng_);
+        const float aspect = static_cast<float>(width_) / static_cast<float>(height_);
+        const float width = std::max(0.0f, std::min(5.5f,
+            std::tan(28.0f * kPi / 180.0f) * aspect * (kMainCamZ - z)) - ChickenRadius(index, z) - .12f);
+        const float x = -width + 2.0f * width * dist01(chickenRng_);
+        if (!ChickenPathClear(index, x, z, x, z)) continue;
+        s.targetX = x;
+        s.targetZ = z;
+        break;
+    }
     s.repathTimer = 1.2f + 2.8f * dist01(chickenRng_);
 }
 
 void Menu3D::UpdateChickens(float dt) {
+    if (dt <= 0) return;
+    SeparateChickens();
     for (int i = 0; i < static_cast<int>(chickens_.size()) && i < 3; ++i) {
-        if (custom_.pose[i + 2] != 0) continue;
         ChickenState& s = chickenState_[i];
+        s.movementSpeed = 0;
+        if (custom_.pose[i + 2] != 0) continue;
         s.repathTimer -= dt;
         if (s.repathTimer <= 0.0f) PickChickenTarget(i);
 
@@ -490,15 +600,39 @@ void Menu3D::UpdateChickens(float dt) {
 
         if (dist > 0.001f) {
             // 模型正面为 +Z：yaw 跟随行走方向，并做平滑转身
-            s.targetYaw = std::atan2(dx, dz) * 180.0f / kPi;
+            const float desired = std::atan2(dx, dz);
+            const float current = s.yaw * kPi / 180.0f;
+            const float lookAhead = std::min(dist, std::max(.55f, s.speed * .8f));
+            float bestScore = -10.0f;
+            s.targetYaw = s.yaw;
+            for (int offset = -6; offset <= 6; ++offset) {
+                const float angle = desired + offset * kPi / 6.0f;
+                const float x = s.x + std::sin(angle) * lookAhead;
+                const float z = s.z + std::cos(angle) * lookAhead;
+                if (!ChickenPathClear(i, s.x, s.z, x, z)) continue;
+                const float score = std::cos(angle - desired) - .15f * (1.0f - std::cos(angle - current));
+                if (score > bestScore) {
+                    bestScore = score;
+                    s.targetYaw = angle * 180.0f / kPi;
+                }
+            }
             float delta = std::fmod(s.targetYaw - s.yaw + 540.0f, 360.0f) - 180.0f;
             const float maxTurn = 220.0f * dt;
             s.yaw += std::clamp(delta, -maxTurn, maxTurn);
             s.yaw = std::fmod(s.yaw + 360.0f, 360.0f);
 
-            const float step = std::min(dist, s.speed * dt);
-            s.x += dx / dist * step;
-            s.z += dz / dist * step;
+            const float angle = s.yaw * kPi / 180.0f;
+            const float alignment = std::max(0.0f, std::cos((s.targetYaw - s.yaw) * kPi / 180.0f));
+            const float step = std::min(dist, s.speed * alignment * dt);
+            const float x = s.x + std::sin(angle) * step;
+            const float z = s.z + std::cos(angle) * step;
+            if (ChickenPathClear(i, s.x, s.z, x, z)) {
+                s.x = x;
+                s.z = z;
+                s.movementSpeed = step / dt;
+            } else {
+                s.repathTimer = std::min(s.repathTimer, .25f);
+            }
         }
     }
 }
@@ -571,9 +705,11 @@ void Menu3D::FocusCurrentPosition(float& x, float& z) const {
 void Menu3D::SetOverlayMouse(float u, float v, bool active) {
     overlaySpotlightActive_ = active;
     if (!active) return;
-    // 俯视相机：地面 y=0，相机高度约 9.45；用视锥范围把纹理坐标换到地面坐标。
-    const float halfH = std::tan(28.0f * kPi / 180.0f) * 9.45f;
-    const float halfW = halfH * (static_cast<float>(width_) / static_cast<float>(height_));
+    // Match the overhead camera and the presentation crop used by the background.
+    const float aspect = static_cast<float>(width_) / height_;
+    const float cropScale = std::max(aspect / presentationAspect_, presentationAspect_ / aspect);
+    const float halfH = std::tan(28.0f * kPi / 180.0f) * kTopCamY * cropScale;
+    const float halfW = halfH * aspect;
     overlayTargetX_ = (std::clamp(u, 0.0f, 1.0f) - 0.5f) * 2.0f * halfW;
     overlayTargetZ_ = (std::clamp(v, 0.0f, 1.0f) - 0.5f) * 2.0f * halfH;
 }
@@ -658,13 +794,7 @@ void Menu3D::ApplyCustomizationPose(int obj) {
         if (!model->PlayAnimation(clip)) {
             std::cerr << "[Menu3D] 缺少持久姿势 " << clip << std::endl;
         }
-        for (int pose = 0; pose < kCharPoseCount; ++pose) {
-            for (int w = 0; w < kWeaponOptionCount; ++w) {
-                const std::string node = std::string("weapon_") + kCharPoseAnims[pose] + "_" + kWeaponOptionNodes[w];
-                model->SetNodeVisible(node, pose == opt && w == weapon);
-                model->SetNodeColorExcluded(node, true);
-            }
-        }
+        ApplyWeaponVisibility(obj);
         return;
     }
 
@@ -675,6 +805,26 @@ void Menu3D::ApplyCustomizationPose(int obj) {
     if (!chickens_[ci]->PlayAnimation(wanted)) {
         std::cerr << "[Menu3D] 小鸡动画缺失 " << wanted << std::endl;
         chickens_[ci]->PlayAnimation("Menu_Walk");
+    }
+}
+
+void Menu3D::ApplyWeaponVisibility(int obj) {
+    if (obj < 0 || obj > 1) return;
+    Menu3DModel* model = obj == 0 ? tModel_.get() : ctModel_.get();
+    if (!model) return;
+    const int selectedPose = std::clamp(custom_.pose[obj], 0, kCharPoseCount - 1);
+    const int selectedWeapon = std::clamp(custom_.weapon[obj], 0, kWeaponOptionCount - 1);
+    for (int pose = 0; pose < kCharPoseCount; ++pose) {
+        for (int weapon = 0; weapon < kWeaponOptionCount; ++weapon) {
+            const std::string node = std::string("weapon_") + kCharPoseAnims[pose] + "_" + kWeaponOptionNodes[weapon];
+            const std::string packNode = node + "_Backpack";
+            const bool selected = pose == selectedPose && weapon == selectedWeapon;
+            const bool packMount = custom_.accessory[obj] == 3 && model->HasNode(packNode);
+            model->SetNodeVisible(node, selected && !packMount);
+            model->SetNodeVisible(packNode, selected && packMount);
+            model->SetNodeColorExcluded(node, true);
+            model->SetNodeColorExcluded(packNode, true);
+        }
     }
 }
 
@@ -702,6 +852,7 @@ void Menu3D::ApplyCustomizationAccessory(int obj) {
         model->SetNodeVisible(nodes[i], custom_.accessory[obj] == i + 1);
         model->SetNodeColorExcluded(nodes[i], true);
     }
+    if (obj < 2) ApplyWeaponVisibility(obj);
 }
 
 int Menu3D::FocusCategoryCount(int objectIndex) const {
@@ -1039,13 +1190,111 @@ void Menu3D::DrawWeaponProp(float x, float y, float z) {
     glEnable(GL_LIGHTING);
 }
 
+void Menu3D::SetScene(int index, bool immediate) {
+    index = std::clamp(index, 0, 2);
+    if (immediate) {
+        sceneIndex_ = displayedScene_ = index;
+        sceneTransition_ = .5f;
+        return;
+    }
+    if (index == sceneIndex_) return;
+    sceneIndex_ = index;
+    if (sceneTransition_ >= .25f) sceneTransition_ = .5f - sceneTransition_;
+}
+
+void Menu3D::DrawEnvironment() {
+    const bool ruins = displayedScene_ == 0;
+    const bool desert = displayedScene_ == 1;
+    const float fade = std::clamp(std::fabs(sceneTransition_ - .25f) * 4.0f, 0.0f, 1.0f);
+    const auto atmosphere = [fade](float value, float neutral) {
+        return neutral + (value - neutral) * fade;
+    };
+    glDisable(GL_LIGHTING);
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+    glBegin(GL_QUADS);
+    glColor4f(atmosphere(ruins ? .23f : .46f,.24f), atmosphere(ruins ? .29f : .36f,.27f),
+              atmosphere(ruins ? .27f : .24f,.27f), 1);
+    glVertex2f(-1,-1); glVertex2f(1,-1);
+    glColor4f(atmosphere(ruins ? .075f : .17f,.12f), atmosphere(ruins ? .16f : .25f,.20f),
+              atmosphere(ruins ? .18f : .30f,.24f), 1);
+    glVertex2f(1,1); glVertex2f(-1,1);
+    glEnd();
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    // The permanent underfloor keeps a continuous stage throughout the transition.
+    DrawCube(0,-.05f,0,40,.05f,48,
+             atmosphere(ruins ? .30f : .52f,.34f), atmosphere(ruins ? .30f : .41f,.32f),
+             atmosphere(ruins ? .25f : .26f,.27f));
+    glEnable(GL_LIGHTING);
+    const GLfloat haze[] = { ruins ? .23f : .46f, ruins ? .29f : .36f,
+                             ruins ? .27f : .24f, 1.0f };
+    glEnable(GL_FOG);
+    glFogi(GL_FOG_MODE, GL_LINEAR);
+    glFogfv(GL_FOG_COLOR, haze);
+    glFogf(GL_FOG_START, 13.0f);
+    glFogf(GL_FOG_END, 34.0f);
+    if (environments_[displayedScene_]) {
+        environments_[displayedScene_]->DrawRaw(fade);
+    } else {
+        DrawCube(0,-.05f,0,40,.1f,48,.32f,.29f,.23f);
+    }
+    glDisable(GL_FOG);
+    // Weather stays behind the full movement envelope, including the birds at Z=-2.
+    glDisable(GL_LIGHTING);
+    glDepthMask(GL_FALSE);
+    glBegin(GL_QUADS);
+    const int count = desert ? 100 : 35;
+    for (int i = 0; i < count; ++i) {
+        const float phase = animationTime_ * (desert ? .65f : .12f) + i * .731f;
+        const float x = std::fmod(phase + i * 1.91f, 24.0f) - 12.0f;
+        const float y = .12f + std::fmod(i * .337f, desert ? 2.2f : 4.6f);
+        const float z = -3.3f - std::fmod(i * .711f, 3.2f);
+        const float size = desert ? .08f : .018f;
+        glColor4f(ruins ? .58f : .78f, ruins ? .65f : .62f, .36f,
+                   (desert ? .09f : .18f) * fade);
+        glVertex3f(x-size,y,z); glVertex3f(x+size,y,z);
+        glVertex3f(x+size,y+size*.45f,z); glVertex3f(x-size,y+size*.45f,z);
+    }
+    glEnd();
+    if (desert) {
+        // Soft, low-contrast dust banks have transparent edges and remain behind actors.
+        for (int bank = 0; bank < 12; ++bank) {
+            const float x = std::fmod(animationTime_ * .24f + bank * 2.73f, 30.0f) - 15.0f;
+            const float y = .3f + .18f * std::sin(animationTime_ * .3f + bank);
+            glBegin(GL_TRIANGLE_FAN);
+            glColor4f(.72f,.56f,.32f,.065f * fade);
+            glVertex3f(x,y,-3.15f);
+            glColor4f(.72f,.56f,.32f,0);
+            for (int edge = 0; edge <= 24; ++edge) {
+                const float angle = edge * (2*kPi/24);
+                glVertex3f(x + std::cos(angle)*3.8f, y + std::sin(angle)*.8f,-3.15f);
+            }
+            glEnd();
+        }
+    }
+    glDepthMask(GL_TRUE);
+    glEnable(GL_LIGHTING);
+}
+
 void Menu3D::DrawFocusScene() {
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     const float aspect = static_cast<float>(width_) / static_cast<float>(height_);
     const float nearZ = 0.1f;
-    const float top = nearZ * std::tan(28.0f * kPi / 180.0f);
+    const float cropScale = std::max(aspect / presentationAspect_, presentationAspect_ / aspect);
+    const float top = nearZ * std::tan(28.0f * kPi / 180.0f) * cropScale;
     const float right = top * aspect;
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
@@ -1058,31 +1307,12 @@ void Menu3D::DrawFocusScene() {
     glLoadIdentity();
     ApplyFocusCamera(focusT);
 
-    glDisable(GL_LIGHTING);
-    glColor4f(0.135f, 0.125f, 0.105f, 1.0f);
-    glBegin(GL_QUADS);
-    glVertex3f(-13.0f, 0.0f, -5.0f);
-    glVertex3f( 13.0f, 0.0f, -5.0f);
-    glVertex3f( 13.0f, 0.0f,  kFloorFrontZ);
-    glVertex3f(-13.0f, 0.0f,  kFloorFrontZ);
-    glEnd();
-    glColor4f(0.52f, 0.40f, 0.22f, 0.42f);
-    glBegin(GL_LINES);
-    for (int i = -12; i <= 12; ++i) {
-        glVertex3f(static_cast<float>(i), 0.006f, -5.0f);
-        glVertex3f(static_cast<float>(i), 0.006f, kFloorFrontZ);
-    }
-    for (int i = -5; i <= static_cast<int>(kFloorFrontZ); ++i) {
-        glVertex3f(-13.0f, 0.006f, static_cast<float>(i));
-        glVertex3f( 13.0f, 0.006f, static_cast<float>(i));
-    }
-    glEnd();
-    glEnable(GL_LIGHTING);
+    DrawEnvironment();
 
     const float t = focusT;
 
     float normalX = 0.0f, normalZ = 0.0f, normalScale = 1.22f;
-    float targetScale = 1.5f;
+    float targetScale = 2.3f;
     if (focusedObject_ == 0) {
         normalX = -4.4f;
     } else if (focusedObject_ == 1) {
@@ -1092,7 +1322,7 @@ void Menu3D::DrawFocusScene() {
         normalX = s.x;
         normalZ = s.z;
         normalScale = std::clamp(0.30f * (8.6f - s.z) / 6.0f, 0.055f, 0.34f);
-        targetScale = 1.5f;
+        targetScale = 2.3f;
     }
     const float x = normalX + (focusTargetX_ - normalX) * t;
     const float z = normalZ + (focusTargetZ_ - normalZ) * t;
@@ -1154,7 +1384,9 @@ void Menu3D::DrawFocusScene() {
 void Menu3D::Render(float dt) {
     if (!ready_ || !glContext_) return;
 
-    animationTime_ += std::clamp(dt, 0.0f, 0.05f);
+    const float frameDt = std::clamp(dt, 0.0f, 0.05f);
+    animationTime_ += frameDt;
+    pendingAnimationTime_ = std::min(pendingAnimationTime_ + frameDt, .10f);
     const uint64_t now = SDL_GetTicks64();
     if (lastRenderTicks_ != 0 && now - lastRenderTicks_ < 33) return;
     lastRenderTicks_ = now;
@@ -1162,7 +1394,11 @@ void Menu3D::Render(float dt) {
     if (SDL_GL_MakeCurrent(glWindow_, glContext_) != 0) return;
     glViewport(0, 0, width_, height_);
 
-    const float animDt = std::clamp(dt, 0.0f, 0.05f);
+    const float animDt = pendingAnimationTime_;
+    pendingAnimationTime_ = 0.0f;
+    sceneTransition_ = std::min(.5f, sceneTransition_ + animDt);
+    if (sceneTransition_ >= .25f) displayedScene_ = sceneIndex_;
+    if (environments_[displayedScene_]) environments_[displayedScene_]->Update(animDt);
     if (tModel_) tModel_->Update(animDt);
     if (ctModel_) ctModel_->Update(animDt);
     for (int i = 0; i < static_cast<int>(chickens_.size()) && i < 3; ++i) {
@@ -1194,7 +1430,8 @@ void Menu3D::DrawScene(float timeSec) {
     const float aspect = static_cast<float>(width_) / static_cast<float>(height_);
     const float nearZ = 0.1f;
     const float farZ = 40.0f;
-    const float top = nearZ * std::tan(28.0f * kPi / 180.0f);
+    const float cropScale = std::max(aspect / presentationAspect_, presentationAspect_ / aspect);
+    const float top = nearZ * std::tan(28.0f * kPi / 180.0f) * cropScale;
     const float right = top * aspect;
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
@@ -1209,8 +1446,8 @@ void Menu3D::DrawScene(float timeSec) {
         const float angle = t * (kPi * 0.5f);
         const float eye[3] = {
             0.0f,
-            kMainCamY + (9.45f - kMainCamY) * std::sin(angle),
-            kMainCamZ * std::cos(angle) + 0.001f
+            kMainCamY + (kTopCamY - kMainCamY) * std::sin(angle),
+            kMainCamZ * std::cos(angle) + 5.0f * std::sin(kPi * t) + 0.001f
         };
         const float targetY = kMainLookY + (0.85f - kMainLookY) * t;
         const float target[3] = { 0.0f, targetY, 0.0f };
@@ -1226,41 +1463,7 @@ void Menu3D::DrawScene(float timeSec) {
     } else {
         ApplyMainCamera();
     }
-    glDisable(GL_LIGHTING);
-    glColor4f(0.135f, 0.125f, 0.105f, 1.0f);
-    glBegin(GL_QUADS);
-    glVertex3f(-13.0f, 0.0f, -5.0f);
-    glVertex3f( 13.0f, 0.0f, -5.0f);
-    glVertex3f( 13.0f, 0.0f,  kFloorFrontZ);
-    glVertex3f(-13.0f, 0.0f,  kFloorFrontZ);
-    glEnd();
-
-    // 轻微棋盘格，让地面有材质感
-    glColor4f(0.19f, 0.165f, 0.12f, 0.55f);
-    glBegin(GL_QUADS);
-    for (int iz = -5; iz < static_cast<int>(kFloorFrontZ); ++iz) {
-        for (int ix = -13; ix < 13; ++ix) {
-            if (((ix + iz) & 1) == 0) continue;
-            glVertex3f(static_cast<float>(ix), 0.003f, static_cast<float>(iz));
-            glVertex3f(static_cast<float>(ix + 1), 0.003f, static_cast<float>(iz));
-            glVertex3f(static_cast<float>(ix + 1), 0.003f, static_cast<float>(iz + 1));
-            glVertex3f(static_cast<float>(ix), 0.003f, static_cast<float>(iz + 1));
-        }
-    }
-    glEnd();
-
-    glColor4f(0.52f, 0.40f, 0.22f, 0.42f);
-    glBegin(GL_LINES);
-    for (int i = -12; i <= 12; ++i) {
-        glVertex3f(static_cast<float>(i), 0.006f, -5.0f);
-        glVertex3f(static_cast<float>(i), 0.006f, kFloorFrontZ);
-    }
-    for (int i = -5; i <= static_cast<int>(kFloorFrontZ); ++i) {
-        glVertex3f(-13.0f, 0.006f, static_cast<float>(i));
-        glVertex3f( 13.0f, 0.006f, static_cast<float>(i));
-    }
-    glEnd();
-    glEnable(GL_LIGHTING);
+    DrawEnvironment();
 
     DrawSpotlight();
 
@@ -1293,11 +1496,28 @@ void Menu3D::ReadbackToTexture() {
     glReadBuffer(GL_BACK);
     glReadPixels(0, 0, width_, height_, GL_RGBA, GL_UNSIGNED_BYTE, pixels_.data());
 
+    // glTF material factors and fixed-function lighting are linear. Encode RGB
+    // for the SDL display texture, retaining its original coverage alpha.
+    static const std::array<uint8_t, 256> srgb = [] {
+        std::array<uint8_t, 256> values{};
+        for (size_t index = 0; index < values.size(); ++index) {
+            const float linear = static_cast<float>(index) / 255.0f;
+            const float encoded = linear <= .0031308f ? linear * 12.92f
+                : 1.055f * std::pow(linear, 1.0f / 2.4f) - .055f;
+            values[index] = static_cast<uint8_t>(std::lround(encoded * 255.0f));
+        }
+        return values;
+    }();
     const size_t stride = static_cast<size_t>(width_) * 4;
     for (int y = 0; y < height_; ++y) {
         const uint8_t* src = pixels_.data() + static_cast<size_t>(height_ - 1 - y) * stride;
         uint8_t* dst = flipped_.data() + static_cast<size_t>(y) * stride;
-        std::memcpy(dst, src, stride);
+        for (int x = 0; x < width_; ++x) {
+            dst[x * 4] = srgb[src[x * 4]];
+            dst[x * 4 + 1] = srgb[src[x * 4 + 1]];
+            dst[x * 4 + 2] = srgb[src[x * 4 + 2]];
+            dst[x * 4 + 3] = src[x * 4 + 3];
+        }
     }
     SDL_UpdateTexture(texture_, nullptr, flipped_.data(), static_cast<int>(stride));
 }

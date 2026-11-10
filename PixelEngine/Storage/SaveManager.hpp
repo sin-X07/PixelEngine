@@ -46,6 +46,7 @@ struct GameSettings {
     int   menuColor[5]     = { 0, 0, 0, 0, 0 };
     int   menuPose[5]      = { 0, 0, 0, 0, 0 };
     int   menuWeapon[2]    = { 0, 0 };
+    int   menuScene = 1;
     int   menuAccessory[5] = { 0, 0, 0, 0, 0 };
 };
 

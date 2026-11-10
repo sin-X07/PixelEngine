@@ -13,6 +13,7 @@
 // 运行（工作目录为仓库根）：
 //   build/tests/gameplay_tests.exe
 #include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -22,6 +23,104 @@
 #include "Core/PresentationContract.hpp"
 #include "Input/FireInputGate.hpp"
 #include "Graphics/Menu3DModel.hpp"
+#include "Graphics/Menu3D.hpp"
+
+struct Menu3DTestAccess {
+    static bool ChickenAvoidance(const std::string& directory) {
+        Menu3D menu;
+        if (!LoadCharacter(menu, 0, directory + "/t.glb") ||
+            !LoadCharacter(menu, 1, directory + "/ct.glb")) return false;
+        for (int index = 0; index < 3; ++index) {
+            auto chicken = std::make_unique<Menu3DModel>();
+            if (!chicken->Load(directory + "/chicken.glb", "Menu_Walk")) return false;
+            menu.chickens_.push_back(std::move(chicken));
+        }
+        constexpr float dt = 1.0f / 30.0f;
+        for (unsigned seed = 0; seed < 8; ++seed) {
+            menu.chickenRng_.seed(seed);
+            menu.SetCustomization(Menu3D::Customization{});
+            menu.InitChickenState();
+            if (seed == 0) {
+                menu.chickenState_[0].x = -.8f;
+                menu.chickenState_[1].x = .8f;
+                for (int index = 0; index < 2; ++index) {
+                    auto& state = menu.chickenState_[index];
+                    state.z = 4;
+                    state.targetX = -state.x;
+                    state.targetZ = 4;
+                    state.yaw = index == 0 ? 90.0f : 270.0f;
+                    state.repathTimer = 10;
+                }
+                menu.chickenState_[2].x = 0;
+                menu.chickenState_[2].z = 5;
+                menu.FocusSelect(4, 1, 1);
+            }
+            float travel[3] = {};
+            for (int frame = 0; frame < 1800; ++frame) {
+                if (frame % 300 == 0) {
+                    for (int actor = 0; actor < 2; ++actor) {
+                        menu.FocusSelect(actor, 0, (frame / 300 + actor) % 6);
+                        menu.FocusSelect(actor, 2, (frame / 300) % 4);
+                        menu.FocusSelect(actor, 3, (frame / 300) % 4);
+                    }
+                }
+                if (frame % 6 == 0) {
+                    menu.tModel_->Update(dt * 6);
+                    menu.ctModel_->Update(dt * 6);
+                    for (auto& chicken : menu.chickens_) chicken->Update(dt * 6);
+                }
+                const auto before = menu.chickenState_;
+                menu.UpdateChickens(dt);
+                for (int index = 0; index < 3; ++index) {
+                    const auto& state = menu.chickenState_[index];
+                    const float dx = state.x - before[index].x;
+                    const float dz = state.z - before[index].z;
+                    const float movement = std::sqrt(dx * dx + dz * dz);
+                    travel[index] += movement;
+                    const float stride = Menu3D::kChickenModelHeight * menu.ChickenWorldScale(state) *
+                                         Menu3D::kChickenStrideBodyHeights;
+                    const float strideSpeed = stride * menu.ChickenAnimTimeScale(state) / Menu3D::kWalkClipSeconds;
+                    if (std::fabs(strideSpeed - state.movementSpeed) > .001f) {
+                        std::printf("[CHICKEN SLIDE] seed %u frame %d chicken %d\n", seed, frame, index);
+                        return false;
+                    }
+                    if (!menu.ChickenPathClear(index, state.x, state.z, state.x, state.z)) {
+                        std::printf("[CHICKEN BOUNDS] seed %u frame %d chicken %d x %.4f z %.4f\n",
+                                    seed, frame, index, state.x, state.z);
+                        return false;
+                    }
+                    if (menu.custom_.pose[index + 2] != 0 && movement > .0001f) return false;
+                    if (!std::isfinite(state.x) || !std::isfinite(state.z) ||
+                        movement > state.speed * dt + .05f) return false;
+                    for (const auto& obstacle : menu.ChickenObstacles(index)) {
+                        const float x = state.x - obstacle.x, z = state.z - obstacle.z;
+                        const float required = menu.ChickenRadius(index, state.z) + obstacle.radius - .003f;
+                        if (x * x + z * z < required * required) {
+                            std::printf("[CHICKEN OVERLAP] seed %u frame %d chicken %d\n", seed, frame, index);
+                            return false;
+                        }
+                    }
+                }
+            }
+            for (int index = 0; index < 3; ++index) {
+                const float distance = travel[index];
+                if (menu.custom_.pose[index + 2] == 0 && distance < 3.0f) {
+                    std::printf("[CHICKEN STUCK] seed %u travel %.3f\n", seed, distance);
+                    return false;
+                }
+                std::printf("[CHICKEN TRAVEL] seed %u chicken %d %.3f m\n", seed, index, distance);
+            }
+        }
+        return true;
+    }
+    static Menu3DModel* LoadCharacter(Menu3D& menu, int actor, const std::string& path) {
+        auto model = std::make_unique<Menu3DModel>();
+        if (!model->Load(path, "Menu_Idle_AK")) return nullptr;
+        auto& target = actor == 0 ? menu.tModel_ : menu.ctModel_;
+        target = std::move(model);
+        return target.get();
+    }
+};
 
 struct Menu3DModelTestAccess {
     static bool HandSkinValid(const Menu3DModel& model) {
@@ -885,12 +984,17 @@ static void TestFixedVisionRadius() {
           "PIX-20 camera zoom does not change world radius");
 }
 
+static std::string MenuAssetPath(const char* actor) {
+    const char* directory = std::getenv("PIXEL_MENU_MODEL_DIR");
+    return std::string(directory ? directory : "assets/models/menu") + "/" + actor + ".glb";
+}
+
 static void TestMenuHeldPoses() {
     const char* poses[] = { "Idle", "Crouch", "HandsOnHips", "FistPalm" };
     const char* weapons[] = { "AK", "SMG", "Sniper", "Shotgun", "Pistol", "Knife_1" };
     for (const char* actor : { "t", "ct" }) {
         Menu3DModel model;
-        const std::string path = std::string("assets/models/menu/") + actor + ".glb";
+        const std::string path = MenuAssetPath(actor);
         check(model.Load(path, "Menu_Idle_AK"), "menu actor GLB loads");
         check(Menu3DModelTestAccess::WeaponGeometryUpright(model, "weapon_Idle_SMG", -.254831f, .363748f),
               "SMG geometry retains its upright top and magazine orientation");
@@ -926,6 +1030,9 @@ static void TestMenuHeldPoses() {
                         distanceSquared += delta * delta;
                     }
                     valid = valid && distanceSquared < .14f * .14f;
+                    if (distanceSquared >= .14f * .14f) {
+                        std::printf("[GRIP DISTANCE] %s %s %.4f m\n", actor, clip.c_str(), std::sqrt(distanceSquared));
+                    }
                 }
                 const float ground = model.GroundOffset();
                 model.Update(4.0f);
@@ -944,11 +1051,44 @@ static void TestMenuHeldPoses() {
               "incomplete menu animation IDs cannot select a different weapon");
     }
     Menu3DModel chicken;
-    check(chicken.Load("assets/models/menu/chicken.glb", "Menu_Walk"), "menu chicken GLB loads");
+    check(chicken.Load(MenuAssetPath("chicken"), "Menu_Walk"), "menu chicken GLB loads");
     for (const char* pose : { "Menu_Walk", "Menu_Idle", "Menu_Look", "Menu_Rest" }) {
         check(chicken.PlayAnimation(pose), pose);
         chicken.Update(12.0f);
         check(std::isfinite(chicken.GroundOffset()), "chicken pose remains valid after three loops");
+    }
+}
+
+static void TestMenuWeaponMountSelection() {
+    const char* poses[] = { "Idle", "Crouch", "HandsOnHips", "FistPalm" };
+    const char* weapons[] = { "AK", "SMG", "Sniper", "Shotgun", "Pistol", "Knife_1" };
+    for (int actor = 0; actor < 2; ++actor) {
+        Menu3D menu;
+        Menu3DModel* model = Menu3DTestAccess::LoadCharacter(menu, actor, MenuAssetPath(actor == 0 ? "t" : "ct"));
+        bool valid = model != nullptr;
+        if (!model) {
+            check(false, "menu mount-selection model loads");
+            continue;
+        }
+        for (int pose = 0; pose < 4; ++pose) {
+            menu.FocusSelect(actor, 2, pose);
+            for (int weapon = 0; weapon < 6; ++weapon) {
+                menu.FocusSelect(actor, 0, weapon);
+                for (int accessory : { 3, 0, 1, 2, 3, 0 }) {
+                    menu.FocusSelect(actor, 3, accessory);
+                    for (int p = 0; p < 4; ++p) {
+                        for (int w = 0; w < 6; ++w) {
+                            const std::string node = std::string("weapon_") + poses[p] + "_" + weapons[w];
+                            const bool selected = p == pose && w == weapon;
+                            const bool packMount = accessory == 3 && model->HasNode(node + "_Backpack");
+                            valid = valid && model->GetNodeVisible(node) == (selected && !packMount);
+                            valid = valid && model->GetNodeVisible(node + "_Backpack") == (selected && packMount);
+                        }
+                    }
+                }
+            }
+        }
+        check(valid, "normal menu selectors keep exactly one compatible weapon mount visible");
     }
 }
 
@@ -958,6 +1098,10 @@ int main() {
 
     TestFixedVisionRadius();
     TestMenuHeldPoses();
+    TestMenuWeaponMountSelection();
+    const char* menuDirectory = std::getenv("PIXEL_MENU_MODEL_DIR");
+    check(Menu3DTestAccess::ChickenAvoidance(menuDirectory ? menuDirectory : "assets/models/menu"),
+          "eight seeded minute-long menu simulations avoid scene overlap and preserve roaming");
     TestFireInputGate();
     TestBuyCodes();
     TestBuyDeadAndWindow();

@@ -68,6 +68,7 @@ void SaveManager::Load() {
         }
         settings_.menuPose[i] = std::clamp(settings_.menuPose[i], 0, 3);
     }
+    settings_.menuScene = std::clamp(ini.GetInt("menu", "scene", 1), 0, 2);
     settings_.menuWeapon[0] = ini.GetInt("menu", "weapon0", 0);
     settings_.menuWeapon[1] = ini.GetInt("menu", "weapon1", 0);
 
@@ -116,6 +117,7 @@ void SaveManager::Save() {
         ini.SetInt("menu", pk.c_str(), settings_.menuPose[i]);
         ini.SetInt("menu", ak.c_str(), settings_.menuAccessory[i]);
     }
+    ini.SetInt("menu", "scene", std::clamp(settings_.menuScene, 0, 2));
     ini.SetInt("menu", "weapon0", settings_.menuWeapon[0]);
     ini.SetInt("menu", "weapon1", settings_.menuWeapon[1]);
 

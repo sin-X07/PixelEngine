@@ -50,6 +50,7 @@ public:
 
     // ---- 节点显隐（角色自带多把武器节点，只显示选中的那一把）----
     void SetNodeVisible(const std::string& name, bool visible);
+    bool HasNode(const std::string& name) const { return FindNode(name) >= 0; }
     bool GetNodeVisible(const std::string& name) const;
     // 节点不参与材质槽换色（武器保持自己的木/金属色，不跟随服装调色板）
     void SetNodeColorExcluded(const std::string& name, bool excluded);
@@ -66,6 +67,7 @@ public:
 
     // 蒙皮后模型的最低点（Draw 用它贴地；挂配件时要复现同一变换）
     float GroundOffset() const { return minY_; }
+    float HorizontalRadius() const;
 
 private:
     friend struct Menu3DModelTestAccess;
@@ -138,6 +140,8 @@ private:
     std::string animationName_;
     float animationTime_ = 0.0f;
     float minY_ = 0.0f;
+    mutable float horizontalRadius_ = 0.0f;
+    mutable bool horizontalRadiusDirty_ = true;
     Vec4 tint_{ 1.0f, 1.0f, 1.0f, 1.0f };
     bool bluePalette_ = false;
     bool unlit_ = false;

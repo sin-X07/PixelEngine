@@ -156,6 +156,8 @@ Menu3DModel::Quat Menu3DModel::Slerp(const Quat& a, const Quat& b, float t) {
 }
 
 bool Menu3DModel::Load(const std::string& path, const std::string& preferredAnimation) {
+    horizontalRadiusDirty_ = true;
+    horizontalRadius_ = 0;
     ready_ = false;
     lastError_.clear();
     meshes_.clear();
@@ -539,6 +541,7 @@ void Menu3DModel::Update(float dt) {
 }
 
 void Menu3DModel::SkinPrimitives() {
+    horizontalRadiusDirty_ = true;
     float minY = 1e30f;
     for (const Node& node : nodes_) {
         if (!node.visible) continue;
@@ -717,7 +720,26 @@ int Menu3DModel::FindNode(const std::string& name) const {
 
 void Menu3DModel::SetNodeVisible(const std::string& name, bool visible) {
     const int i = FindNode(name);
-    if (i >= 0) nodes_[static_cast<size_t>(i)].visible = visible;
+    if (i >= 0) {
+        nodes_[static_cast<size_t>(i)].visible = visible;
+        horizontalRadiusDirty_ = true;
+    }
+}
+
+float Menu3DModel::HorizontalRadius() const {
+    if (!horizontalRadiusDirty_) return horizontalRadius_;
+    float squared = 0.0f;
+    for (const Node& node : nodes_) {
+        if (!node.visible || node.mesh < 0 || node.mesh >= static_cast<int>(meshes_.size())) continue;
+        for (const Primitive& primitive : meshes_[node.mesh].primitives) {
+            for (const Vec3& point : primitive.skinnedPos) {
+                squared = std::max(squared, point.x * point.x + point.z * point.z);
+            }
+        }
+    }
+    horizontalRadius_ = std::sqrt(squared);
+    horizontalRadiusDirty_ = false;
+    return horizontalRadius_;
 }
 
 bool Menu3DModel::GetNodeVisible(const std::string& name) const {
@@ -761,9 +783,10 @@ bool Menu3DModel::DrawAttached(const Menu3DModel& accessory,
 void Menu3DModel::DrawHighlight(float scale, float yOffset, float yawDegrees) const {
     if (!ready_) return;
     glPushMatrix();
-    glTranslatef(0.0f, yOffset - minY_ * scale * 1.045f, 0.0f);
+    constexpr float outlineScale = 1.012f;
+    glTranslatef(0.0f, yOffset - minY_ * scale * outlineScale, 0.0f);
     glRotatef(yawDegrees, 0.0f, 1.0f, 0.0f);
-    glScalef(scale * 1.045f, scale * 1.045f, scale * 1.045f);
+    glScalef(scale * outlineScale, scale * outlineScale, scale * outlineScale);
 
     glDisable(GL_LIGHTING);
     glDepthMask(GL_FALSE);

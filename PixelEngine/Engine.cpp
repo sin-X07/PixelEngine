@@ -152,6 +152,13 @@ GameUI::Actions Engine::BuildActions() {
         saveManager->Save();
     };
 
+    a.selectMenuScene = [this](int index) {
+        if (!menu3D || !saveManager || index < 0 || index >= kMapCatalogCount) return;
+        menu3D->SetScene(index);
+        saveManager->MutableSettings().menuScene = index;
+        saveManager->Save();
+    };
+
     a.selectMapChoice = [this](int index) {
         if (index < 0 || index >= mapOverlayCount_) return;
         mapOverlaySelected_ = index;
@@ -486,6 +493,7 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
             c.weapon[0] = s.menuWeapon[0];
             c.weapon[1] = s.menuWeapon[1];
             menu3D->SetCustomization(c);
+            menu3D->SetScene(s.menuScene, true);
         }
     }
 
@@ -1851,6 +1859,8 @@ void Engine::Render() {
         ctx.backdrop3D  = false;
 
         if (currentState == MAIN_MENU && menu3D && menu3D->IsReady()) {
+            const ImVec2 menuViewport = ImGui::GetMainViewport()->WorkSize;
+            menu3D->SetPresentationAspect(menuViewport.x / std::max(1.0f, menuViewport.y));
             if (mapOverlayOpen_ && mapOverlayLaunching_) {
                 const uint64_t launchElapsed = SDL_GetTicks64() - mapOverlayLaunchStartMs_;
                 mapOverlayLaunchProgress_ = std::clamp(
@@ -1982,6 +1992,8 @@ void Engine::Render() {
             }
 
             ctx.focus3D     = (focused3D_ >= 0);
+            ctx.menuScene = menu3D->SceneIndex();
+            for (int i = 0; i < 3; ++i) ctx.menuScenePreviews[i] = menu3D->ScenePreview(i);
             ctx.focusObject = focused3D_;
             ctx.focusChicken = (focused3D_ >= 2);
             ctx.focusName   = (focused3D_ == 0) ? "恐怖分子 T"
@@ -2070,7 +2082,8 @@ void Engine::Render() {
                     v = (v - (1.0f - frac) * 0.5f) / frac;
                 }
 
-                const bool uiHovered = ImGui::IsAnyItemHovered() || overMenuButtons;
+                const bool uiHovered = ImGui::IsAnyItemHovered() || overMenuButtons ||
+                    ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
                 int hit = -1;
                 if (!uiHovered && u >= 0.0f && u <= 1.0f && v >= 0.0f && v <= 1.0f) {
                     hit = menu3D->HitTestNormalized(u, v);

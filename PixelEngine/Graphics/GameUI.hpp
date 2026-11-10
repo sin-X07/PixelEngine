@@ -27,6 +27,7 @@ public:
         std::function<void(int)>           chooseSide;         // 0=T, 1=CT（爆破模式）
         std::function<void()>              close3DFocus;      // 退出主菜单 3D 聚焦
         std::function<void(int,int)>       focus3DSelect;     // (category, option)
+        std::function<void(int)>           selectMenuScene;
         std::function<void(int)>           selectMapChoice;    // 俯视地图浮层选择
         std::function<void(int)>           startMatchOnChoice; // 俯视地图浮层确认
         std::function<void()>              closeMapOverlay;    // 返回主菜单
@@ -123,6 +124,8 @@ public:
         void* backdropTex = nullptr;   // 主菜单背景图（SDL_Texture*）
         int   backdropW = 0, backdropH = 0;
         bool  backdrop3D = false;      // 实时 3D 背景：使用更轻的压暗
+        int   menuScene = 1;
+        void* menuScenePreviews[3] = {};
 
         // 3D 聚焦 + 右侧轮盘
         bool        focus3D = false;

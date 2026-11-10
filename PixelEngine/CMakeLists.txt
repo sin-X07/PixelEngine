@@ -210,6 +210,29 @@ add_custom_command(TARGET EngineApp POST_BUILD
 # 复用其余源码，保证测试跑的子树与游戏一致。
 option(BUILD_GAMEPLAY_TESTS "Build headless gameplay regression tests" OFF)
 if(BUILD_GAMEPLAY_TESTS)
+    add_executable(map_perimeter_review ../tools/map_perimeter_review.cpp
+        CS2D/CS2DRenderer.cpp CS2D/CS2DWorld.cpp CS2D/TMJParser.cpp
+        CS2D/Visibility/VisibilityQuery.cpp)
+    target_include_directories(map_perimeter_review PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(map_perimeter_review PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(map_perimeter_review PRIVATE SDL2::SDL2 SDL2_image::SDL2_image-static)
+    if(MINGW)
+        target_link_options(map_perimeter_review PRIVATE -mconsole -static -static-libgcc -static-libstdc++)
+    endif()
+    add_executable(menu_art_review ../tools/menu_art_review.cpp
+        Graphics/Menu3D.cpp Graphics/Menu3DModel.cpp)
+    target_include_directories(menu_art_review PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(menu_art_review PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(menu_art_review PRIVATE SDL2::SDL2 SDL2_image::SDL2_image-static)
+    if(WIN32)
+        target_link_libraries(menu_art_review PRIVATE opengl32)
+    elseif(APPLE)
+        find_library(MENU_REVIEW_OPENGL OpenGL REQUIRED)
+        target_link_libraries(menu_art_review PRIVATE ${MENU_REVIEW_OPENGL})
+    endif()
+    if(MINGW)
+        target_link_options(menu_art_review PRIVATE -mconsole -static -static-libgcc -static-libstdc++)
+    endif()
     set(TEST_SOURCES ${SOURCES})
     list(REMOVE_ITEM TEST_SOURCES main.cpp Engine.cpp Engine.hpp)
     add_executable(gameplay_tests

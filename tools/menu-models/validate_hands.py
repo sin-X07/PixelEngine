@@ -1,11 +1,20 @@
 """Run with Blender --background --python to inspect exported hand deformation."""
 import itertools
+import argparse
+import sys
 from pathlib import Path
 
 import bpy
 from mathutils.bvhtree import BVHTree
 
 ROOT = Path(__file__).resolve().parents[2]
+parser = argparse.ArgumentParser()
+parser.add_argument('--models', type=Path, default=ROOT / 'assets/models/menu')
+parser.add_argument('--frame-step', type=int, default=15)
+args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else [])
+if args.frame_step < 1:
+    parser.error('--frame-step must be positive')
+sample_frames = sorted(set(range(0, 120, args.frame_step)) | {119})
 FINGERS = ('Index', 'Middle', 'Pinky', 'Thumb')
 
 
@@ -21,7 +30,8 @@ def group_name(obj, vertex):
 errors = []
 for actor in ('t', 'ct'):
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.import_scene.gltf(filepath=str(ROOT / 'assets/models/menu' / (actor + '.glb')))
+    bpy.context.scene.render.fps = 30
+    bpy.ops.import_scene.gltf(filepath=str(args.models.resolve() / (actor + '.glb')))
     rig = next(obj for obj in bpy.data.objects if obj.type == 'ARMATURE')
     hands = bpy.data.objects['Hands']
     rig.animation_data_clear()
@@ -38,7 +48,7 @@ for actor in ('t', 'ct'):
     for action in actions:
         rig.animation_data.action = action
         rig.animation_data.action_slot = action.slots[0]
-        for frame in (0, 15, 30, 45, 60, 75, 90, 105, 119):
+        for frame in sample_frames:
             bpy.context.scene.frame_set(frame)
             evaluated = hands.evaluated_get(bpy.context.evaluated_depsgraph_get())
             geometry = evaluated.to_mesh()
@@ -53,7 +63,7 @@ for actor in ('t', 'ct'):
                 if intersections:
                     errors.append((actor, action.name, frame, first, second, len(intersections)))
             evaluated.to_mesh_clear()
-    print('HAND AUDIT', actor, '24 clips x 9 samples')
+    print('HAND AUDIT', actor, f'24 clips x {len(sample_frames)} samples')
 for error in errors[:40]:
     print('HAND INTERSECTION', error)
 print('HAND INTERSECTION COUNT', len(errors))
