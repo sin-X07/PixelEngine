@@ -77,6 +77,11 @@ struct CS2DMapData {
     int    tileHeight   = 32;
     bool   infinite     = false;
 
+    // 碰撞栅格化模式（地图属性 collisionMode）：
+    //   "cover"（默认）= 矩形碰到某格就整格实心（历史行为，会向外扩）
+    //   "center"      = 只有格中心落在矩形内才算实心（不外扩；薄墙自动补到 1 tile）
+    std::string collisionMode = "cover";
+
     std::vector<TilesetDef>     tilesets;
     std::vector<TileLayerDef>   tileLayers;
     std::vector<ImageLayerDef>  imageLayers;

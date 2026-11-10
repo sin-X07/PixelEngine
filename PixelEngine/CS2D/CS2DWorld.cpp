@@ -45,6 +45,7 @@ bool CS2DWorld::Build(const CS2DMapData& data) {
         for (char c : ol.name) lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
         if (lower == "collisions") {
+            const bool centerMode = (data.collisionMode == "center");
             for (const auto& obj : ol.objects) {
                 // 计算该矩形覆盖的 tile 范围
                 float rx = obj.x;
@@ -54,6 +55,45 @@ bool CS2DWorld::Build(const CS2DMapData& data) {
 
                 // 跳过零尺寸对象（可能有空 rect）
                 if (rw <= 0.0f || rh <= 0.0f) continue;
+
+                if (centerMode) {
+                    // 格中心采样：tile 中心落在矩形内才算实心。
+                    // 好处：不会像 cover 模式那样把墙向外扩一圈（空气墙的主因）。
+                    // 薄墙（<1 tile）先以中心为基准补厚到 1 tile，避免整面墙消失。
+                    float x0 = rx, y0 = ry, x1 = rx + rw, y1 = ry + rh;
+                    if (rw < tileWidth_) {
+                        const float mid = (x0 + x1) * 0.5f;
+                        x0 = mid - tileWidth_ * 0.5f;
+                        x1 = mid + tileWidth_ * 0.5f;
+                    }
+                    if (rh < tileHeight_) {
+                        const float mid = (y0 + y1) * 0.5f;
+                        y0 = mid - tileHeight_ * 0.5f;
+                        y1 = mid + tileHeight_ * 0.5f;
+                    }
+
+                    int colMin = static_cast<int>(std::floor(x0 / tileWidth_));
+                    int colMax = static_cast<int>(std::floor((x1 - 0.001f) / tileWidth_));
+                    int rowMin = static_cast<int>(std::floor(y0 / tileHeight_));
+                    int rowMax = static_cast<int>(std::floor((y1 - 0.001f) / tileHeight_));
+
+                    colMin = std::max(0, colMin);
+                    colMax = std::min(mapWidth_  - 1, colMax);
+                    rowMin = std::max(0, rowMin);
+                    rowMax = std::min(mapHeight_ - 1, rowMax);
+
+                    for (int row = rowMin; row <= rowMax; ++row) {
+                        const float cy = (static_cast<float>(row) + 0.5f) * tileHeight_;
+                        if (cy <= y0 || cy >= y1) continue;
+                        for (int col = colMin; col <= colMax; ++col) {
+                            const float cx = (static_cast<float>(col) + 0.5f) * tileWidth_;
+                            if (cx > x0 && cx < x1) {
+                                collisionGrid_[row * mapWidth_ + col] = CellType::Solid;
+                            }
+                        }
+                    }
+                    continue;
+                }
 
                 int colMin = static_cast<int>(std::floor(rx / tileWidth_));
                 int colMax = static_cast<int>(std::floor((rx + rw - 0.001f) / tileWidth_));
@@ -73,7 +113,8 @@ bool CS2DWorld::Build(const CS2DMapData& data) {
                 }
             }
             std::cout << "[CS2DWorld] 碰撞层: '" << ol.name << "' "
-                      << ol.objects.size() << " 个矩形" << std::endl;
+                      << ol.objects.size() << " 个矩形"
+                      << (data.collisionMode == "center" ? "（格中心采样）" : "") << std::endl;
         }
     }
 

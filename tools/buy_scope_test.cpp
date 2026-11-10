@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "CS2D/CS2DGame.hpp"
+#include "CS2D/CS2DWorld.hpp"
 #include "Core/PathUtils.hpp"
 #include "Core/PresentationContract.hpp"
 #include "Input/FireInputGate.hpp"
@@ -1092,10 +1093,56 @@ static void TestMenuWeaponMountSelection() {
     }
 }
 
+// cover / center 两种碰撞栅格化模式（地图属性 collisionMode）
+static void TestCollisionModes() {
+    CS2DMapData data;
+    data.mapWidth  = 4;
+    data.mapHeight = 1;
+    data.tileWidth = 8;
+    data.tileHeight = 8;
+
+    ObjectLayerDef layer;
+    layer.name = "Collisions";
+    ObjectDef obj;
+    obj.x = 4.0f; obj.y = 0.0f; obj.width = 6.0f; obj.height = 8.0f;
+    layer.objects.push_back(obj);
+    data.objectLayers.push_back(layer);
+
+    data.collisionMode = "cover";
+    CS2DWorld cover;
+    cover.Build(data);
+    check(cover.IsSolid(0, 0) && cover.IsSolid(0, 1),
+          "cover: 4..10 的矩形会外扩覆盖两格");
+
+    data.collisionMode = "center";
+    CS2DWorld center;
+    center.Build(data);
+    check(center.IsSolid(0, 0) && !center.IsSolid(0, 1),
+          "center: 只占格中心真正落在矩形内的那一格");
+
+    // 薄墙（<1 tile）不能被整面吞掉：补厚后至少命中一格
+    CS2DMapData thin;
+    thin.mapWidth = 4; thin.mapHeight = 1;
+    thin.tileWidth = 8; thin.tileHeight = 8;
+    thin.collisionMode = "center";
+    ObjectLayerDef thinLayer;
+    thinLayer.name = "Collisions";
+    ObjectDef thinObj;
+    thinObj.x = 9.0f; thinObj.y = 0.0f; thinObj.width = 1.0f; thinObj.height = 8.0f;
+    thinLayer.objects.push_back(thinObj);
+    thin.objectLayers.push_back(thinLayer);
+    CS2DWorld thinWorld;
+    thinWorld.Build(thin);
+    int solid = 0;
+    for (int c = 0; c < 4; ++c) solid += thinWorld.IsSolid(0, c) ? 1 : 0;
+    check(solid == 1, "center: 1px 薄墙补厚后仍保留一格碰撞");
+}
+
 int main() {
     std::printf("===== 合并契约 v1 玩法回归测试 =====\n");
     std::printf("地图: %s\n", MapPath());
 
+    TestCollisionModes();
     TestFixedVisionRadius();
     TestMenuHeldPoses();
     TestMenuWeaponMountSelection();

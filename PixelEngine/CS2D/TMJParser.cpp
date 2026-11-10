@@ -175,6 +175,21 @@ bool TMJParser::Parse(const std::string& resolvedPath, CS2DMapData& out) {
     out.tileHeight = root["tileheight"].safe_get<int>(32);
     out.infinite   = root["infinite"].safe_get<bool>(false);
 
+    // 地图级属性：collisionMode = cover | center
+    if (root.contains("properties")) {
+        std::unordered_map<std::string, std::string> mapProps;
+        ParseProperties(root["properties"], mapProps);
+        auto it = mapProps.find("collisionMode");
+        if (it != mapProps.end() && !it->second.empty()) {
+            out.collisionMode = it->second;
+        }
+    }
+    if (out.collisionMode != "cover") {
+        std::cout << "[TMJParser] 碰撞模式: " << out.collisionMode
+                  << (out.collisionMode == "center" ? "（格中心采样）" : "（未知，按 cover 处理）")
+                  << std::endl;
+    }
+
     std::cout << "[TMJParser] 解析地图: " << out.mapWidth << "x" << out.mapHeight
               << ", tile " << out.tileWidth << "x" << out.tileHeight
               << (out.infinite ? ", infinite" : "") << std::endl;

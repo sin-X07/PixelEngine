@@ -47,6 +47,11 @@ def main():
     ap.add_argument("--out", default="", help="预览 PNG 输出路径")
     ap.add_argument("--scale", type=float, default=0.5, help="预览缩放（默认 0.5）")
     ap.add_argument("--no-image", action="store_true", help="不叠背景图，只要网格")
+    ap.add_argument("--mode", choices=["auto", "cover", "center"], default="auto",
+                    help="栅格化模式：auto=读地图属性，cover/center=强制指定")
+    ap.add_argument("--set-mode", choices=["cover", "center"], default=None,
+                    help="把 collisionMode 写进地图属性（配合 --write）")
+    ap.add_argument("--write", default="", help="把修改后的地图写到这个路径（常与 --set-mode 搭配）")
     ap.add_argument("--regen-out", default="",
                     help="按背景图重新生成 Collisions 层，写到这个新 TMJ（不改原文件）")
     ap.add_argument("--regen-threshold", type=float, default=0.5,
@@ -68,7 +73,56 @@ def main():
         return 1
     objs = col.get("objects", [])
 
-    grid = bytearray(W * H)
+    # 地图属性 collisionMode
+    map_mode = "cover"
+    props = data.get("properties")
+    if isinstance(props, list):
+        for pr in props:
+            if pr.get("name") == "collisionMode" and pr.get("value"):
+                map_mode = str(pr["value"])
+    mode = args.mode if args.mode != "auto" else map_mode
+    if mode not in ("cover", "center"):
+        mode = "cover"
+    print(f"碰撞模式: {mode}" + ("（地图属性）" if args.mode == "auto" else "（命令行强制）"))
+
+    def rasterize(rects, tw, th, ww, hh, mm):
+        g = bytearray(ww * hh)
+        for o in rects:
+            x, y = float(o.get("x", 0)), float(o.get("y", 0))
+            w, h = float(o.get("width", 0) or 0), float(o.get("height", 0) or 0)
+            if w <= 0 or h <= 0:
+                continue
+            if mm == "center":
+                x0, y0, x1, y1 = x, y, x + w, y + h
+                if w < tw:
+                    mid = (x0 + x1) * 0.5
+                    x0, x1 = mid - tw * 0.5, mid + tw * 0.5
+                if h < th:
+                    mid = (y0 + y1) * 0.5
+                    y0, y1 = mid - th * 0.5, mid + th * 0.5
+            else:
+                x0, y0, x1, y1 = x, y, x + w, y + h
+
+            c0 = max(0, int(math.floor(x0 / tw)))
+            c1 = min(ww - 1, int(math.floor((x1 - 0.001) / tw)))
+            r0 = max(0, int(math.floor(y0 / th)))
+            r1 = min(hh - 1, int(math.floor((y1 - 0.001) / th)))
+            for r in range(r0, r1 + 1):
+                if mm == "center":
+                    cy = (r + 0.5) * th
+                    if not (y0 < cy < y1):
+                        continue
+                base = r * ww
+                for c in range(c0, c1 + 1):
+                    if mm == "center":
+                        cx = (c + 0.5) * tw
+                        if not (x0 < cx < x1):
+                            continue
+                    g[base + c] = 1
+        return g
+
+    grid = rasterize(objs, TW, TH, W, H, mode)
+
     frac = 0
     sliver = 0
     outside = 0
@@ -83,15 +137,6 @@ def main():
             sliver += 1
         if x + w > pxw + 0.01 or y + h > pxh + 0.01:
             outside += 1
-
-        c0 = max(0, int(math.floor(x / TW)))
-        c1 = min(W - 1, int(math.floor((x + w - 0.001) / TW)))
-        r0 = max(0, int(math.floor(y / TH)))
-        r1 = min(H - 1, int(math.floor((y + h - 0.001) / TH)))
-        for r in range(r0, r1 + 1):
-            base = r * W
-            for c in range(c0, c1 + 1):
-                grid[base + c] = 1
 
     solid = sum(grid)
     # 孤立的 solid 单元（8 邻域没有 solid，且不贴地图边缘）：最像"空气墙"
@@ -290,6 +335,26 @@ def main():
                                       fill=(0, 255, 0, 80))
             Image.alpha_composite(base, ov).convert("RGB").save(args.out)
             print(f"新碰撞预览: {args.out}")
+
+    if args.set_mode and args.write:
+        plist = data.get("properties")
+        if not isinstance(plist, list):
+            plist = []
+        found = False
+        for pr in plist:
+            if pr.get("name") == "collisionMode":
+                pr["value"] = args.set_mode
+                found = True
+        if not found:
+            plist.append({"name": "collisionMode", "type": "string", "value": args.set_mode})
+        data["properties"] = plist
+        with open(args.write, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"已写入 collisionMode={args.set_mode}: {args.write}")
+    elif args.write:
+        with open(args.write, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"已写出地图: {args.write}")
 
     if args.snap_out:
         def snap(v, mode, up):
