@@ -820,6 +820,44 @@ static void TestFixedVisionRadius() {
           "PIX-20 camera zoom does not change world radius");
 }
 
+static void TestAimCameraAndWall() {
+    std::printf("\n===== 人物相对瞄准 / 挡弹墙 =====\n");
+    CS2DMapData map;
+    map.mapWidth = 4;
+    map.mapHeight = 4;
+    ObjectLayerDef collisions;
+    collisions.name = "Collisions";
+    collisions.objects.push_back({"", "", 32.0f, 32.0f, 32.0f, 32.0f, {}});
+    map.objectLayers.push_back(collisions);
+    CS2DWorld world;
+    world.Build(map);
+    check(std::fabs(world.FirstBulletBlockFraction(16, 48, 112, 48) - 1.0f / 6.0f) < 0.0001f,
+          "瞄准线精确停在第一块墙的前边界");
+    check(world.FirstBulletBlockFraction(112, 48, 16, 48) == 0.5f,
+          "反方向瞄准停在墙的另一边");
+    check(world.FirstBulletBlockFraction(16, 16, 80, 80) == 0.25f,
+          "斜线跨入墙角时在角点切换虚实");
+    check(world.FirstBulletBlockFraction(16, 16, 112, 16) == 1.0f,
+          "无遮挡时实线延伸至准星");
+
+    CS2DGame game;
+    if (!LoadDeathMatch(game)) return;
+    auto& player = game.GetPlayer();
+    const float startX = player.x;
+    const float startY = player.y;
+    for (int dir = 0; dir < 4 && player.x == startX && player.y == startY; ++dir) {
+        game.Update(1.0f / 60.0f, false, 30.0f, 40.0f,
+                    dir == 0, dir == 1, dir == 2, dir == 3,
+                    false, false, false, nullptr, /*relativeAim=*/true);
+    }
+    const auto aim = game.GetAimWorldPosition();
+    check(player.x != startX || player.y != startY, "移动测试确实改变了人物位置");
+    check(std::fabs(aim.x - player.x - 30.0f) < 0.001f &&
+          std::fabs(aim.y - player.y - 40.0f) < 0.001f &&
+          std::fabs(player.aimAngle - std::atan2(40.0f, 30.0f)) < 0.001f,
+          "移动后准星世界坐标与射击朝向仍由同一相对偏移决定");
+}
+
 int main() {
     std::printf("===== 合并契约 v1 玩法回归测试 =====\n");
     std::printf("地图: %s\n", MapPath());
@@ -833,6 +871,7 @@ int main() {
     TestDamageAndScopeShot();
     TestScopeCrosshair();
     TestBulletVisuals();
+    TestAimCameraAndWall();
 
     std::printf("\n===== 结果: %d 通过, %d 失败 =====\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

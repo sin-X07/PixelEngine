@@ -629,9 +629,6 @@ void Engine::ResizeLogicalViewport(int winW, int winH) {
     if (cs2dRenderer) cs2dRenderer->SetViewportSize(logicalW_, logicalH_);
     if (imGuiUI) imGuiUI->SetUiScale(g_uiScale);
 
-    cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
-    cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
-
     {
         // 一次性诊断：窗口 / 逻辑画布 / 渲染输出尺寸（DPI 缩放下三者可能不同）
         static bool logged = false;
@@ -827,12 +824,10 @@ void Engine::HandleInput() {
         const float scopeSensMul =
             (cs2dGame->GetScopeView().active && saveManager)
                 ? saveManager->GetSettings().scopeSensitivity : 1.0f;
-        cs2dOverlay.UpdateCursor(relX, relY,
-                                 cs2dGame->GetMouseSensitivity() * scopeSensMul,
-                                 cs2dRenderer->GetZoom(),
-                                 cs2dRenderer->GetCameraX(), cs2dRenderer->GetCameraY(),
-                                 logicalW_, logicalH_,
-                                 cs2dWorldMouseX, cs2dWorldMouseY);
+        cs2dOverlay.UpdateAimOffset(relX, relY,
+                                    cs2dGame->GetMouseSensitivity() * scopeSensMul,
+                                    cs2dGame->GetScopeView().zoomMultiplier,
+                                    logicalW_, logicalH_);
         cs2dMouseDown = inputManager->IsMouseLeftDown();
 
     // G：丢弃当前武器（近战不可丢）。边沿触发，避免按住连丢。
@@ -1115,8 +1110,7 @@ void Engine::RestartCurrentMatch() {
     currentState = PLAYING;
     SDL_SetRelativeMouseMode(SDL_FALSE);
     SDL_ShowCursor(SDL_ENABLE);
-    cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
-    cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
+    cs2dOverlay.aimOffset = {};
 }
 
 void Engine::StartMatch(MatchMode mode) {
@@ -1192,8 +1186,7 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
     OpenRecordFileIfNeeded();
 #endif
     if (debugKillPlayer_) debugKillDelay_ = 2.0f;   // --killplayer：进对局 2s 后杀一次
-    cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
-    cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
+    cs2dOverlay.aimOffset = {};
 
     // 教练层接入 LLM（与 BOT 共用同一个客户端，串行请求）
     // 教练层接入 LLM（全场唯一的 LLM 消费方：只产出战术计划，不驱动 BOT 行动）
@@ -1365,11 +1358,18 @@ void Engine::Update(float dt) {
     const bool fireDown = fireInputGate_.Update(
         inputManager->IsMouseLeftDown(), gameplayInputAllowed);
 
+    const auto aimOffset = cs2dOverlay.aimOffset;
+    cs2dGame->Update(dt, fireDown, aimOffset.x, aimOffset.y,
+                     cs2dKeyW, cs2dKeyA, cs2dKeyS, cs2dKeyD,
+                     cs2dKeyShift, cs2dKeyR, interactHeld,
+                     audioManager.get(), /*relativeAim=*/true);
+
 #ifdef PIXEL_DEV_REPLAY
     if (recordFile_) {
+        const auto aim = cs2dGame->GetAimWorldPosition();
         std::fprintf(recordFile_,
                      "%u %d %.9g %.9g %d %d %d %d %d %d %d %d %d %d %d\n",
-                     recordTick_++, fireDown ? 1 : 0, cs2dWorldMouseX, cs2dWorldMouseY,
+                     recordTick_++, fireDown ? 1 : 0, aim.x, aim.y,
                      cs2dKeyW ? 1 : 0, cs2dKeyA ? 1 : 0, cs2dKeyS ? 1 : 0, cs2dKeyD ? 1 : 0,
                      cs2dKeyShift ? 1 : 0, cs2dKeyR ? 1 : 0, interactHeld ? 1 : 0,
                      recScopeToggle_ ? 1 : 0, recSwitchSlot_,
@@ -1380,11 +1380,6 @@ void Engine::Update(float dt) {
         recBuyArmorTier_ = 0;
     }
 #endif
-    cs2dGame->Update(dt, fireDown, cs2dWorldMouseX, cs2dWorldMouseY,
-                     cs2dKeyW, cs2dKeyA, cs2dKeyS, cs2dKeyD,
-                     cs2dKeyShift, cs2dKeyR, interactHeld,
-                     audioManager.get());
-
 #ifdef PIXEL_DEV_REPLAY
     // 开发期预览：PE_DEBUG_MATCH_END=1 时，进入对局 3 秒后强制结束比赛
     if (cs2dGame && getenv("PE_DEBUG_MATCH_END") && currentState == PLAYING &&

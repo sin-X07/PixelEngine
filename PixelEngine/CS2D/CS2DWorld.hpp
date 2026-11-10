@@ -37,6 +37,8 @@ public:
     bool IsSolid(int tileRow, int tileCol) const;
     bool IsBlockingPlayer(int tileRow, int tileCol) const;
     bool IsBlockingBullet(int tileRow, int tileCol) const;
+    // 沿线段遇到第一块挡弹瓦片的位置，无遮挡返回 1。
+    float FirstBulletBlockFraction(float fromX, float fromY, float toX, float toY) const;
     int  GetDamageAt(int tileRow, int tileCol) const;
 
     // 将世界坐标映射到瓦片坐标

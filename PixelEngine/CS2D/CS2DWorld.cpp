@@ -2,6 +2,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 bool CS2DWorld::Build(const CS2DMapData& data) {
     mapData_    = &data;
@@ -293,6 +294,40 @@ bool CS2DWorld::IsBlockingBullet(int tileRow, int tileCol) const {
     if (tileRow < 0 || tileRow >= mapHeight_ || tileCol < 0 || tileCol >= mapWidth_) return true;
     const CellType t = collisionGrid_[tileRow * mapWidth_ + tileCol];
     return t == CellType::Solid || t == CellType::Damage;
+}
+
+float CS2DWorld::FirstBulletBlockFraction(float fromX, float fromY, float toX, float toY) const {
+    int row, col;
+    WorldToTile(fromX, fromY, row, col);
+
+    const double dx = static_cast<double>(toX) - fromX;
+    const double dy = static_cast<double>(toY) - fromY;
+    const int stepCol = dx < 0.0 ? -1 : 1;
+    const int stepRow = dy < 0.0 ? -1 : 1;
+    const double infinity = std::numeric_limits<double>::infinity();
+    const double colInterval = dx == 0.0 ? infinity : tileWidth_ / std::abs(dx);
+    const double rowInterval = dy == 0.0 ? infinity : tileHeight_ / std::abs(dy);
+    const double edgeX = (col + (stepCol > 0 ? 1 : 0)) * static_cast<double>(tileWidth_);
+    const double edgeY = (row + (stepRow > 0 ? 1 : 0)) * static_cast<double>(tileHeight_);
+    double nextCol = dx == 0.0 ? infinity : (edgeX - fromX) / dx;
+    double nextRow = dy == 0.0 ? infinity : (edgeY - fromY) / dy;
+
+    // 逐瓦片跨边界，虚实交界落在墙边，即使线段只擦过一小角也能检测到。
+    double enteredAt = 0.0;
+    while (enteredAt < 1.0) {
+        if (IsBlockingBullet(row, col)) return static_cast<float>(enteredAt);
+
+        enteredAt = std::min(nextCol, nextRow);
+        if (nextCol == enteredAt) {
+            col += stepCol;
+            nextCol += colInterval;
+        }
+        if (nextRow == enteredAt) {
+            row += stepRow;
+            nextRow += rowInterval;
+        }
+    }
+    return 1.0f;
 }
 
 int CS2DWorld::GetDamageAt(int tileRow, int tileCol) const {

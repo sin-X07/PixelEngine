@@ -537,6 +537,9 @@ void CS2DGame::SpawnPlayer() {
         PickSpawnForTeam(player_.team, player_.x, player_.y);
         if (!IsEnemyNearby(player_.x, player_.y, 120.0f, Team::CT)) break;
     }
+    aimWorldX_ = player_.x;
+    aimWorldY_ = player_.y;
+    aimCameraOffset_ = {};
 }
 
 void CS2DGame::SpawnBOT(Player& bot, Team team) {
@@ -843,7 +846,7 @@ float CS2DGame::ScopeCameraShift() const {
 void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mouseWorldY,
                       bool wPressed, bool aPressed, bool sPressed, bool dPressed,
                       bool shiftPressed, bool rPressed, bool interactHeld,
-                      AudioManager* audio) {
+                      AudioManager* audio, bool relativeAim) {
     ++traceTick_;
     // ---- 观察者输入：空格切换视角，左右键切换队友，自由视角用 WASD ----
     if (IsSpectating()) {
@@ -872,10 +875,6 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     if (!world_) return;
 
     clockSec_ += dt;
-
-    // 准星世界坐标：开镜的圆形可见区与相机偏移都以它为中心
-    aimWorldX_ = mouseWorldX;
-    aimWorldY_ = mouseWorldY;
 
     // 开镜过渡：每帧按 dt 逼近目标档位（0.12s 线性），与输入边沿解耦
     TickScope(dt);
@@ -914,15 +913,22 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 
     if (player_.alive && canMove) {
         UpdatePlayerMovement(dt, wPressed, aPressed, sPressed, dPressed, player_.stealth);
+    }
+
+    // 先移动，再把人物相对偏移转成世界目标。回放仍传入已解析的世界坐标。
+    aimWorldX_ = mouseWorldX + (relativeAim ? player_.x : 0.0f);
+    aimWorldY_ = mouseWorldY + (relativeAim ? player_.y : 0.0f);
+
+    if (player_.alive && canMove) {
         // 结算展示期与回合中完全一致：可移动、可开枪、可投掷
-        UpdatePlayerShooting(dt, mouseLeftDown, mouseWorldX, mouseWorldY, audio);
+        UpdatePlayerShooting(dt, mouseLeftDown, aimWorldX_, aimWorldY_, audio);
     } else {
         player_.vx = player_.vy = 0.0f;
 
         // 准备阶段（冻结）：允许转向瞄准，但不允许移动与开火
         if (player_.alive && frozen) {
-            player_.aimAngle = std::atan2(mouseWorldY - player_.y,
-                                          mouseWorldX - player_.x);
+            player_.aimAngle = std::atan2(aimWorldY_ - player_.y,
+                                          aimWorldX_ - player_.x);
             player_.stealth = false;
         }
 
@@ -931,6 +937,14 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
             botRespawnTimer_ -= dt;
             if (botRespawnTimer_ <= 0.0f) SpawnPlayer();
         }
+    }
+
+    if (player_.alive) {
+        const float blend = -std::expm1(-Tuning::AimCameraResponse * dt);
+        const float targetX = (aimWorldX_ - player_.x) * Tuning::AimCameraFollow;
+        const float targetY = (aimWorldY_ - player_.y) * Tuning::AimCameraFollow;
+        aimCameraOffset_.x += (targetX - aimCameraOffset_.x) * blend;
+        aimCameraOffset_.y += (targetY - aimCameraOffset_.y) * blend;
     }
     UpdateReload(player_, dt);
     UpdateBombItem(dt);
@@ -1095,13 +1109,16 @@ void CS2DGame::Render(int viewW, int viewH) {
             camX = bots_[static_cast<size_t>(specTarget_)].x;
             camY = bots_[static_cast<size_t>(specTarget_)].y;
         }
-    } else if (scope.active) {
-        // 契约 v1.1：开镜时相机向准星偏移，准星下的世界点不随倍率漂移
-        const float shift = ScopeCameraShift();
-        camX += (aimWorldX_ - player_.x) * shift;
-        camY += (aimWorldY_ - player_.y) * shift;
+    } else if (player_.alive) {
+        // 平滑的是前视偏移，人物移动直接带动镜头。开镜补偿剩余的偏移。
+        const float shift = ScopeCameraShift() * (1.0f - Tuning::AimCameraFollow);
+        camX += aimCameraOffset_.x + (aimWorldX_ - player_.x) * shift;
+        camY += aimCameraOffset_.y + (aimWorldY_ - player_.y) * shift;
     }
-    renderer_->UpdateCamera(camX, camY, viewW, viewH, scope.zoomMultiplier);
+    const auto aim = GetAimWorldPosition();
+    const bool localAimVisible = player_.alive && !IsSpectating();
+    renderer_->UpdateCamera(camX, camY, viewW, viewH, scope.zoomMultiplier,
+                            localAimVisible ? &aim : nullptr);
     visibility_.SetVisionRadius(renderer_->GetVisionRadius());
 
     // 契约 v1.1：开镜时可见区改为以准星为圆心的圆，镜外由视野雾遮盖。
@@ -1179,10 +1196,10 @@ void CS2DGame::Render(int viewW, int viewH) {
         renderer_->DrawCharacter(sp);
     }
 
+    SpriteDrawParams playerSprite;
     if (!IsSpectating() && (player_.alive || player_.deathTimer <= 2.0f)) {
-        SpriteDrawParams sp;
-        fillParams(player_, sp);
-        renderer_->DrawCharacter(sp);
+        fillParams(player_, playerSprite);
+        renderer_->DrawCharacter(playerSprite);
     }
 
     // 枪弹视觉段：玩法层已生成的唯一数据源，UI 只绘制（契约 v1 第 6 节）
@@ -1254,14 +1271,21 @@ void CS2DGame::Render(int viewW, int viewH) {
         renderer_->DrawVisionFog(player_.x, player_.y, player_.aimAngle);
     }
 
+    const auto& weapon = player_.CurrentWeapon();
+    if (localAimVisible && !scope.active && weapon.id != WeaponId::None &&
+        (player_.weaponSlot == 0 || player_.weaponSlot == 1)) {
+        renderer_->DrawAimLine(playerSprite, aim);
+    }
+
     // 开镜覆盖层：世界雾之后、闪光覆盖之前（契约 v1.3）
     // 圆心用「准星世界点投影到屏幕」而不是虚拟光标，避免相机被地图边界钳制时镜筒错位。
     // 大十字线宽来自设置；中心缺口在「移动扩散」开启时随移动量张开。
     if (scope.active) {
         Presentation::ScopeOverlayParams op;
         op.scope          = scope;
-        op.centerX        = (aimWorldX_ - renderer_->GetCameraX()) * renderer_->GetZoom();
-        op.centerY        = (aimWorldY_ - renderer_->GetCameraY()) * renderer_->GetZoom();
+        const auto screenAim = renderer_->WorldToScreen(aim);
+        op.centerX        = screenAim.x;
+        op.centerY        = screenAim.y;
         op.radiusPx       = scopeRadiusPx;
         op.crossThickness = scopeCrossThickness_;
         op.crossGap       = Presentation::ComputeScopeCrossGap(GetCrosshairBloom(),

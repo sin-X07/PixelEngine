@@ -483,9 +483,10 @@ public:
                 bool wPressed, bool aPressed, bool sPressed, bool dPressed,
                 bool shiftPressed, bool rPressed,
                 bool interactHeld,
-                class AudioManager* audio = nullptr);
+                class AudioManager* audio = nullptr, bool relativeAim = false);
 
     void Render(int viewW = 800, int viewH = 600);
+    SDL_FPoint GetAimWorldPosition() const { return {aimWorldX_, aimWorldY_}; }
 
     // ---- 访问器 ----
     CS2DWorld&       GetWorld()       { return *world_; }
@@ -1138,7 +1139,8 @@ private:
     float scopeEngFrom_ = 0.0f, scopeEngTo_ = 0.0f, scopeEngT_ = 1.0f;
     float scopeZoom_ = 1.0f;                        // 当前实际倍率
     float scopeZoomFrom_ = 1.0f, scopeZoomTo_ = 1.0f, scopeZoomT_ = 1.0f;
-    float aimWorldX_ = 0.0f, aimWorldY_ = 0.0f;     // 最近一次 Update 传入的准星世界坐标
+    float aimWorldX_ = 0.0f, aimWorldY_ = 0.0f;
+    SDL_FPoint aimCameraOffset_{};
     void TickScope(float dt);                       // 每帧按 dt 推进过渡
     // 相机向准星偏移的比例（1.5x≈0.35，2x≈0.5，按当前倍率线性）
     float ScopeCameraShift() const;

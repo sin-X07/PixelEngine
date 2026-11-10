@@ -35,18 +35,16 @@ public:
     RadarCfg     radar;
     bool         centerRadarOn = false;
 
-    // 虚拟准星（屏幕坐标，相对鼠标模式）
-    float virtCursorX = 400.0f;
-    float virtCursorY = 300.0f;
+    // 相对玩家的准星偏移（世界坐标单位）。
+    SDL_FPoint aimOffset{};
 
     // Tab 边沿检测（由外部设置原始状态）
     bool keyTab  = false;
     bool prevTab = false;
 
     // ---- 输入处理 ----
-    void UpdateCursor(int relX, int relY, float sensitivity, float zoom,
-                      float camX, float camY, int viewW, int viewH,
-                      float& outWorldX, float& outWorldY);
+    void UpdateAimOffset(int relX, int relY, float sensitivity, float scopeZoom,
+                         int viewW, int viewH);
     void UpdateTabToggle();
 
     // ---- 渲染 ----

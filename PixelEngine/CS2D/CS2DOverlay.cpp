@@ -10,19 +10,16 @@
 // ============================================================================
 // 虚拟准星更新
 // ============================================================================
-void CS2DOverlay::UpdateCursor(int relX, int relY, float sensitivity, float zoom,
-                                float camX, float camY,
-                                int viewW, int viewH,
-                                float& outWorldX, float& outWorldY) {
-    virtCursorX += static_cast<float>(relX) * sensitivity;
-    virtCursorY += static_cast<float>(relY) * sensitivity;
-    virtCursorX = std::clamp(virtCursorX, 0.0f, static_cast<float>(viewW));
-    virtCursorY = std::clamp(virtCursorY, 0.0f, static_cast<float>(viewH));
-
-    const float centerWX = camX + viewW * 0.5f / zoom;
-    const float centerWY = camY + viewH * 0.5f / zoom;
-    outWorldX = centerWX + (virtCursorX - viewW * 0.5f) / zoom;
-    outWorldY = centerWY + (virtCursorY - viewH * 0.5f) / zoom;
+void CS2DOverlay::UpdateAimOffset(int relX, int relY, float sensitivity, float scopeZoom,
+                                  int viewW, int viewH) {
+    const float baseZoom = VisibilityQuery::BaseZoomForViewport(viewW, viewH);
+    // 用镜头追上后的屏幕位移维持瞄准灵敏度。
+    const float aimOnScreen = 1.0f - Tuning::AimCameraFollow;
+    const float worldPerDelta = sensitivity / (baseZoom * scopeZoom * aimOnScreen);
+    const float limitX = 0.475f * viewW / (baseZoom * aimOnScreen);
+    const float limitY = 0.475f * viewH / (baseZoom * aimOnScreen);
+    aimOffset.x = std::clamp(aimOffset.x + relX * worldPerDelta, -limitX, limitX);
+    aimOffset.y = std::clamp(aimOffset.y + relY * worldPerDelta, -limitY, limitY);
 }
 
 void CS2DOverlay::UpdateTabToggle() {
@@ -39,6 +36,8 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
     // 契约 v1.3：开镜期间不画普通准星，改用镜筒里的大十字（四象限）
     const Presentation::ScopeView scope = game->GetScopeView();
     const bool scoped = scope.active && scope.supported;
+    const bool localAimVisible = game->GetPlayer().alive && !game->IsSpectating();
+    const SDL_FPoint aim = renderer->WorldToScreen(game->GetAimWorldPosition());
     // 准星尺寸随 UI 缩放（设置里的数值是 1920x1080 基准）
     float crosshairGap = crosshair.gap * g_uiScale;
     if (crosshair.dynamic) {
@@ -46,8 +45,8 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
         crosshairGap += game->GetCrosshairBloom() *
                         Tuning::CrosshairBloomMaxPx * g_uiScale;
     }
-    if (!scoped) {
-        renderer->DrawCrosshair(virtCursorX, virtCursorY,
+    if (localAimVisible && !scoped) {
+        renderer->DrawCrosshair(aim.x, aim.y,
                                 crosshair.r, crosshair.g, crosshair.b, crosshair.a,
                                 crosshair.thickness * g_uiScale, crosshair.centerDot,
                                 crosshair.length * g_uiScale, crosshairGap);
@@ -58,9 +57,9 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
     // ---- 命中反馈：准星处短暂 X ----
     {
         const float hm = game->GetHitMarkerTimer();
-        if (hm > 0.0f) {
+        if (localAimVisible && hm > 0.0f) {
             const float k = std::min(1.0f, hm / 0.18f);
-            renderer->DrawHitMarker(virtCursorX, virtCursorY, g_uiScale,
+            renderer->DrawHitMarker(aim.x, aim.y, g_uiScale,
                                     static_cast<Uint8>(220.0f * k));
         }
     }

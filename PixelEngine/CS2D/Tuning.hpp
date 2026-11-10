@@ -11,6 +11,9 @@
 
 namespace Tuning {
 
+constexpr float AimCameraFollow = 0.5f;       // 镜头前视占准星偏移的比例
+constexpr float AimCameraResponse = 20.0f;    // 前视偏移的平滑响应速率（每秒）
+
 // ---------------- 视野（玩家与 BOT 共用同一套几何）----------------
 // 半径 100：镜头按「视野圆刚好装进较窄一边」自动拉近；
 // 迷雾、敌人剔除、BOT 视野/探点都从这里取数，改一处即同步生效。

@@ -9,6 +9,15 @@
 #include <filesystem>
 
 namespace {
+float WeaponSpriteSize(int weaponSlot) {
+    switch (weaponSlot) {
+        case 1: return 3.0f;
+        case 2: return 4.5f;
+        case 3: return 2.2f;
+        default: return 4.0f;
+    }
+}
+
 // ---- 程序化烟雾噪声（value noise + fBm），用于生成柔和的烟雾贴图 ----
 float SmokeHash(int x, int y) {
     uint32_t h = static_cast<uint32_t>(x) * 374761393u +
@@ -285,7 +294,8 @@ bool CS2DRenderer::FindTileSrc(int gid, SDL_Texture*& outTex, SDL_Rect& outSrc) 
 // ============================================================================
 
 void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
-                                int viewportW, int viewportH, float zoomMultiplier) {
+                                int viewportW, int viewportH, float zoomMultiplier,
+                                const SDL_FPoint* keepInView) {
     if (!world_) return;
 
     // 视野是半径 VISION_RADIUS 的圆：先按「整圆刚好装进较窄的那一屏边」算 fit，
@@ -293,7 +303,7 @@ void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
     // 公式已抽到 VisibilityQuery，无头仿真用同一个函数算半径，保证判定一致。
     const float baseZoom = VisibilityQuery::BaseZoomForViewport(viewportW, viewportH);
 
-    // 开镜只乘一次倍率：zoom_ 就是实际倍率，GetZoom()/UpdateCursor 不得再乘
+    // zoom_ 是包含开镜倍率的实际投影比例。
     zoomMultiplier = std::clamp(zoomMultiplier, 0.25f, 4.0f);
     zoom_ = baseZoom * zoomMultiplier;
 
@@ -320,6 +330,14 @@ void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
 
     cameraX_ = std::clamp(playerCenterX - viewW * 0.5f, loX, hiX);
     cameraY_ = std::clamp(playerCenterY - viewH * 0.5f, loY, hiY);
+
+    if (keepInView) {
+        // 快甩时先保证准星在画面内，剩余的镜头偏移继续平滑跟随。
+        cameraX_ = std::clamp(cameraX_, keepInView->x - viewW * 0.98f,
+                              keepInView->x - viewW * 0.02f);
+        cameraY_ = std::clamp(cameraY_, keepInView->y - viewH * 0.98f,
+                              keepInView->y - viewH * 0.02f);
+    }
 }
 
 // ============================================================================
@@ -442,7 +460,16 @@ void CS2DRenderer::DrawOverlay() {
 //   主武器 → 第1行第1列；副武器 → 第2行第2列；近战 → 第2行第1列
 // ============================================================================
 
-static constexpr float WALK_BOB_AMPLITUDE   = 0.6f;   // 世界单位（×zoom 后约 2.4px）
+static SDL_FPoint CharacterDrawOffset(const SpriteDrawParams& p) {
+    SDL_FPoint offset{};
+    if (p.animState == 1) {
+        offset.y = std::sin(p.animTimer * 12.0f) * 0.6f;
+    }
+    if (p.animState == 2) {
+        offset.x = -std::max(0.0f, 1.0f - p.animTimer * 6.0f) * 0.8f;
+    }
+    return offset;
+}
 
 void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
     // 选序列帧 sheet
@@ -485,17 +512,9 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
         if (alpha < 5) return;
     }
 
-    // 行走 bobbing（世界单位，随缩放）
-    float yOff = 0.0f;
-    if (p.animState == 1) {
-        yOff = std::sin(p.animTimer * 12.0f) * WALK_BOB_AMPLITUDE * zoom_;
-    }
-
-    // 射击后坐力（世界单位）
-    float xOff = 0.0f;
-    if (p.animState == 2) {
-        xOff = -std::max(0.0f, 1.0f - p.animTimer * 6.0f) * 0.8f * zoom_;
-    }
+    const auto offset = CharacterDrawOffset(p);
+    const float xOff = offset.x * zoom_;
+    const float yOff = offset.y * zoom_;
 
     SDL_FRect dst;
     dst.x = cx - sz * 0.5f + xOff;
@@ -552,11 +571,8 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
 // 枪口火焰：cx/cy 为武器中心的屏幕坐标
 void CS2DRenderer::DrawMuzzleFlash(float cx, float cy, float size, float aimAngle,
                                    int weaponSlot) {
-    const float weaponSz = (weaponSlot == 1) ? 3.0f
-                         : (weaponSlot == 2) ? 4.5f
-                         : 4.0f;
-    // 枪口位置 = 角色中心 + 瞄准方向 * (武器偏移 + 武器长度*/
-    const float tip = size * 0.35f + weaponSz * 0.55f;
+    // 从手持武器的中心沿枪管向前。
+    const float tip = size * 0.35f + WeaponSpriteSize(weaponSlot) * 0.55f;
     const float mx = cx + std::cos(aimAngle) * tip * zoom_;
     const float my = cy + std::sin(aimAngle) * tip * zoom_;
 
@@ -591,16 +607,12 @@ void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float 
 
     const WeaponDef& def = WeaponDB::Get(static_cast<WeaponId>(weaponId));
     const float degOffset = def.degOffset;
-    const float weaponSz  = (weaponSlot == 1) ? 3.0f
-                          : (weaponSlot == 2) ? 4.5f
-                          : (weaponSlot == 3) ? 2.2f   // 投掷物手持：缩小
-                          : 4.0f;
 
     // 武器绘制在精灵前方偏移
     const float offset = size * 0.35f * zoom_;
     const float wx = cx + std::cos(aimAngle) * offset;
     const float wy = cy + std::sin(aimAngle) * offset;
-    const float drawSz = weaponSz * zoom_;
+    const float drawSz = WeaponSpriteSize(weaponSlot) * zoom_;
 
     SDL_FRect wdst;
     wdst.x = wx - drawSz * 0.5f;
@@ -616,6 +628,47 @@ void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float 
     // 开枪瞬间的枪口火焰（近战/投掷物不画）
     if (muzzleFlash && def.cls != WeaponClass::Melee && def.cls != WeaponClass::Grenade) {
         DrawMuzzleFlash(wx, wy, size, aimAngle, weaponSlot);   // wx/wy 已是屏幕坐标
+    }
+}
+
+void CS2DRenderer::DrawAimLine(const SpriteDrawParams& player, SDL_FPoint aim) {
+    if (!world_) return;
+
+    const float forwardX = std::cos(player.aimAngle);
+    const float forwardY = std::sin(player.aimAngle);
+    const float muzzleDistance = player.size * 0.70f + WeaponSpriteSize(player.weaponSlot) * 0.55f;
+    const auto offset = CharacterDrawOffset(player);
+    const SDL_FPoint muzzle{player.x + offset.x + forwardX * muzzleDistance,
+                            player.y + offset.y + forwardY * muzzleDistance};
+    const float dx = aim.x - muzzle.x;
+    const float dy = aim.y - muzzle.y;
+    if (dx * forwardX + dy * forwardY <= 0.0f) return;
+
+    const float distance = std::hypot(dx, dy);
+    const float dirX = dx / distance;
+    const float dirY = dy / distance;
+    const auto start = WorldToScreen(muzzle);
+    const float lengthPx = distance * zoom_;
+    const float solidPx = lengthPx * world_->FirstBulletBlockFraction(muzzle.x, muzzle.y, aim.x, aim.y);
+    const auto drawSegment = [&](float from, float to, SDL_Color color) {
+        const float x0 = start.x + dirX * from;
+        const float y0 = start.y + dirY * from;
+        const float x1 = start.x + dirX * to;
+        const float y1 = start.y + dirY * to;
+
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, color.a);
+        SDL_RenderDrawLineF(renderer_, x0 - dirY, y0 + dirX, x1 - dirY, y1 + dirX);
+        SDL_RenderDrawLineF(renderer_, x0 + dirY, y0 - dirX, x1 + dirY, y1 - dirX);
+        SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, color.a);
+        SDL_RenderDrawLineF(renderer_, x0, y0, x1, y1);
+    };
+
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    if (solidPx > 0.0f) {
+        drawSegment(0.0f, solidPx, {110, 235, 245, 205});
+    }
+    for (float from = solidPx + 4.0f; from < lengthPx; from += 13.0f) {
+        drawSegment(from, std::min(from + 8.0f, lengthPx), {225, 235, 240, 155});
     }
 }
 

@@ -56,7 +56,11 @@ public:
     // zoomMultiplier：开镜倍率（契约 v1 第 4 节）。GetZoom() 返回 base*multiplier，
     // 逻辑视野半径始终按 baseZoom 计算，不因开镜改变敌人知情规则。
     void UpdateCamera(float playerCenterX, float playerCenterY,
-                      int viewportW, int viewportH, float zoomMultiplier = 1.0f);
+                      int viewportW, int viewportH, float zoomMultiplier = 1.0f,
+                      const SDL_FPoint* keepInView = nullptr);
+    SDL_FPoint WorldToScreen(SDL_FPoint point) const {
+        return {(point.x - cameraX_) * zoom_, (point.y - cameraY_) * zoom_};
+    }
 
     // 背景 + tile 层
     void DrawWorld();
@@ -91,6 +95,7 @@ public:
                           Uint8 r, Uint8 g, Uint8 b, Uint8 a, int segments = 40);
     // 目标物标记：包点区域、已安装的 C4（timeSec 用于呼吸动画）
     void DrawObjectiveMarkers(float timeSec);
+    void DrawAimLine(const SpriteDrawParams& player, SDL_FPoint aim);
     void DrawCrosshair(float cx, float cy,
                        Uint8 r = 255, Uint8 g = 255, Uint8 b = 255, Uint8 a = 200,
                        float thickness = 1.5f, bool centerDot = true,
