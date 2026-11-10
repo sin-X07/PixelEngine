@@ -21,6 +21,8 @@ bool CS2DWorld::Build(const CS2DMapData& data) {
     imageWidth_ = imageHeight_ = 0;
 
     // ---- 碰撞网格 ----
+    exactRects_.clear();
+    exactMovement_ = (data.collisionMode == "center");
     const size_t gridSize = static_cast<size_t>(mapWidth_) * mapHeight_;
     collisionGrid_.assign(gridSize, CellType::Empty);
     damageGrid_.assign(gridSize, 0);
@@ -60,13 +62,17 @@ bool CS2DWorld::Build(const CS2DMapData& data) {
                     // 格中心采样：tile 中心落在矩形内才算实心。
                     // 好处：不会像 cover 模式那样把墙向外扩一圈（空气墙的主因）。
                     // 薄墙（<1 tile）先以中心为基准补厚到 1 tile，避免整面墙消失。
-                    float x0 = rx, y0 = ry, x1 = rx + rw, y1 = ry + rh;
-                    if (rw < tileWidth_) {
+                    // 移动碰撞用原始矩形（像素级）；margin 只影响网格（伤害/渲染）
+                    exactRects_.push_back({rx, ry, rw, rh});
+                    // margin：把矩形向外放宽，压低"人物嵌进墙里"的最大深度
+                    const float m = std::max(0.0f, std::min(8.0f, data.collisionMargin));
+                    float x0 = rx - m, y0 = ry - m, x1 = rx + rw + m, y1 = ry + rh + m;
+                    if (x1 - x0 < tileWidth_) {
                         const float mid = (x0 + x1) * 0.5f;
                         x0 = mid - tileWidth_ * 0.5f;
                         x1 = mid + tileWidth_ * 0.5f;
                     }
-                    if (rh < tileHeight_) {
+                    if (y1 - y0 < tileHeight_) {
                         const float mid = (y0 + y1) * 0.5f;
                         y0 = mid - tileHeight_ * 0.5f;
                         y1 = mid + tileHeight_ * 0.5f;
@@ -342,6 +348,16 @@ int CS2DWorld::GetDamageAt(int tileRow, int tileCol) const {
 }
 
 bool CS2DWorld::CheckRectCollision(float x, float y, float w, float h) const {
+    // center 模式：像素级 AABB，直接用画好的矩形，不受 8px 栅格影响
+    if (exactMovement_ && !exactRects_.empty()) {
+        for (const auto& r : exactRects_) {
+            if (x < r.x + r.w && x + w > r.x && y < r.y + r.h && y + h > r.y) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     int colMin = static_cast<int>(std::floor(x / tileWidth_));
     int colMax = static_cast<int>(std::floor((x + w - 0.001f) / tileWidth_));
     int rowMin = static_cast<int>(std::floor(y / tileHeight_));

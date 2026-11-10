@@ -7,9 +7,11 @@
 | 模式 | 规则 | 适用 |
 | --- | --- | --- |
 | `cover`（默认） | 矩形只要碰到某格，整格都算实心：`floor(x/tile) … floor((x+w-ε)/tile)` | 手工在 8px 网格上画的图；历史地图 |
-| `center` | 只有**格中心**落在矩形内才算实心；薄墙（<1 tile）先以中心补厚到 1 tile | AI 生成/高清重绘、边缘不落在 8px 网格上的图 |
+| `center` | **移动碰撞直接用画好的矩形（像素级 AABB）**；伤害/调试用的碰撞格按"格中心"采样，薄墙（<1 tile）先补厚到 1 tile | AI 生成/高清重绘、边缘不落在 8px 网格上的图 |
 
-`cover` 的边界向外扩（0～+8px/边），是"空气墙"的常见来源；`center` 的边界误差 ≤4px/边，且不会系统性外扩。
+`cover` 的边界向外扩（0～+8px/边），是"空气墙"的常见来源。
+`center` 模式里**人物/BOT 的移动碰撞不走网格**，而是直接和 `Collisions` 矩形做像素级 AABB：
+既不会外扩出空气墙，也不会内缩让人物嵌进墙里。8px 网格只用于伤害判定和调试渲染。
 
 ## 怎么设置
 
@@ -40,3 +42,17 @@ python tools/map_collision_debug.py assets/cs2d/maps/xxx.tmj --mode cover  --out
 - 宽度 <8px 的**墙**会被补厚到 8px，不会整面消失。
 - 只有设置了属性的地图走 `center`，其他地图行为完全不变（有单测覆盖）。
 - 美术本身**不需要** 8px 对齐：引擎本来就是 8px 网格，对齐的只是碰撞矩形。
+
+## 参数：collisionMargin
+
+只影响 `center` 模式的**碰撞网格**（伤害/调试渲染），不影响移动。
+
+| 值 | 含义 |
+| --- | --- |
+| `0` | 网格不外扩（伤害判定最保守） |
+| `2`（默认） | 折中 |
+| `4` | 网格等价 cover |
+
+```powershell
+python tools/map_collision_debug.py assets/cs2d/maps/xxx.tmj --set-margin 2 --write assets/cs2d/maps/xxx.tmj
+```

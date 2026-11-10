@@ -183,8 +183,18 @@ bool TMJParser::Parse(const std::string& resolvedPath, CS2DMapData& out) {
         if (it != mapProps.end() && !it->second.empty()) {
             out.collisionMode = it->second;
         }
+        auto itMargin = mapProps.find("collisionMargin");
+        if (itMargin != mapProps.end() && !itMargin->second.empty()) {
+            try {
+                out.collisionMargin = std::stof(itMargin->second);
+            } catch (...) {
+                out.collisionMargin = 2.0f;
+            }
+            out.collisionMargin = std::max(0.0f, std::min(8.0f, out.collisionMargin));
+        }
     }
     if (out.collisionMode != "cover") {
+        std::cout << "[TMJParser] 碰撞边距: " << out.collisionMargin << "px" << std::endl;
         std::cout << "[TMJParser] 碰撞模式: " << out.collisionMode
                   << (out.collisionMode == "center" ? "（格中心采样）" : "（未知，按 cover 处理）")
                   << std::endl;

@@ -1136,6 +1136,19 @@ static void TestCollisionModes() {
     int solid = 0;
     for (int c = 0; c < 4; ++c) solid += thinWorld.IsSolid(0, c) ? 1 : 0;
     check(solid == 1, "center: 1px 薄墙补厚后仍保留一格碰撞");
+
+    // center 模式下移动碰撞用像素级矩形：贴到墙边停住，不会嵌进去
+    CS2DMapData wallData;
+    wallData.mapWidth = 4; wallData.mapHeight = 1;
+    wallData.tileWidth = 8; wallData.tileHeight = 8;
+    wallData.collisionMode = "center";
+    ObjectLayerDef wl; wl.name = "Collisions";
+    ObjectDef wo; wo.x = 9.0f; wo.y = 0.0f; wo.width = 1.0f; wo.height = 8.0f;
+    wl.objects.push_back(wo); wallData.objectLayers.push_back(wl);
+    CS2DWorld wallWorld; wallWorld.Build(wallData);
+    // 7px 高的盒子放在 y=0：右侧贴到 x=9 才碰撞
+    check(!wallWorld.CheckRectCollision(1.9f, 0.0f, 7.0f, 7.0f), "center: 盒子未碰到墙时不碰撞");
+    check(wallWorld.CheckRectCollision(2.1f, 0.0f, 7.0f, 7.0f), "center: 盒子碰到墙的像素边就碰撞");
 }
 
 int main() {

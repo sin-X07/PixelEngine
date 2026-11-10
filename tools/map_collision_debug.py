@@ -47,6 +47,10 @@ def main():
     ap.add_argument("--out", default="", help="预览 PNG 输出路径")
     ap.add_argument("--scale", type=float, default=0.5, help="预览缩放（默认 0.5）")
     ap.add_argument("--no-image", action="store_true", help="不叠背景图，只要网格")
+    ap.add_argument("--margin", type=float, default=None,
+                    help="center 模式的外扩边距(px)，默认读地图属性或 2")
+    ap.add_argument("--set-margin", type=float, default=None,
+                    help="把 collisionMargin 写进地图属性（配合 --write）")
     ap.add_argument("--mode", choices=["auto", "cover", "center"], default="auto",
                     help="栅格化模式：auto=读地图属性，cover/center=强制指定")
     ap.add_argument("--set-mode", choices=["cover", "center"], default=None,
@@ -80,12 +84,23 @@ def main():
         for pr in props:
             if pr.get("name") == "collisionMode" and pr.get("value"):
                 map_mode = str(pr["value"])
+    map_margin = 2.0
+    if isinstance(props, list):
+        for pr in props:
+            if pr.get("name") == "collisionMargin" and pr.get("value") is not None:
+                try:
+                    map_margin = float(pr["value"])
+                except (TypeError, ValueError):
+                    map_margin = 2.0
+    margin = args.margin if args.margin is not None else map_margin
     mode = args.mode if args.mode != "auto" else map_mode
+    if mode == "center":
+        print(f"碰撞边距: {margin:g}px")
     if mode not in ("cover", "center"):
         mode = "cover"
     print(f"碰撞模式: {mode}" + ("（地图属性）" if args.mode == "auto" else "（命令行强制）"))
 
-    def rasterize(rects, tw, th, ww, hh, mm):
+    def rasterize(rects, tw, th, ww, hh, mm, mg=0.0):
         g = bytearray(ww * hh)
         for o in rects:
             x, y = float(o.get("x", 0)), float(o.get("y", 0))
@@ -93,11 +108,11 @@ def main():
             if w <= 0 or h <= 0:
                 continue
             if mm == "center":
-                x0, y0, x1, y1 = x, y, x + w, y + h
-                if w < tw:
+                x0, y0, x1, y1 = x - mg, y - mg, x + w + mg, y + h + mg
+                if x1 - x0 < tw:
                     mid = (x0 + x1) * 0.5
                     x0, x1 = mid - tw * 0.5, mid + tw * 0.5
-                if h < th:
+                if y1 - y0 < th:
                     mid = (y0 + y1) * 0.5
                     y0, y1 = mid - th * 0.5, mid + th * 0.5
             else:
@@ -121,7 +136,7 @@ def main():
                     g[base + c] = 1
         return g
 
-    grid = rasterize(objs, TW, TH, W, H, mode)
+    grid = rasterize(objs, TW, TH, W, H, mode, margin if mode == "center" else 0.0)
 
     frac = 0
     sliver = 0
@@ -335,6 +350,23 @@ def main():
                                       fill=(0, 255, 0, 80))
             Image.alpha_composite(base, ov).convert("RGB").save(args.out)
             print(f"新碰撞预览: {args.out}")
+
+    if args.set_margin is not None and args.write:
+        plist = data.get("properties")
+        if not isinstance(plist, list):
+            plist = []
+        found = False
+        for pr in plist:
+            if pr.get("name") == "collisionMargin":
+                pr["value"] = args.set_margin
+                found = True
+        if not found:
+            plist.append({"name": "collisionMargin", "type": "float", "value": args.set_margin})
+        data["properties"] = plist
+        with open(args.write, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"已写入 collisionMargin={args.set_margin:g}: {args.write}")
+        return 0
 
     if args.set_mode and args.write:
         plist = data.get("properties")

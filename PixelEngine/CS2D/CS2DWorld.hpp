@@ -120,6 +120,12 @@ private:
 
     // 碰撞网格 (row * mapWidth_ + col)
     std::vector<CellType> collisionGrid_;
+
+    // center 模式：移动碰撞直接用原始矩形（像素级），不再经过 8px 网格。
+    // 这样既不会"空气墙"（网格外扩），也不会"人物嵌进墙"（网格内缩）。
+    struct CollisionRect { float x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f; };
+    std::vector<CollisionRect> exactRects_;
+    bool exactMovement_ = false;
     std::vector<int>      damageGrid_;
 
     // 可见渲染层数据（tile layers）
