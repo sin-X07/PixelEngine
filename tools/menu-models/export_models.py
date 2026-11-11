@@ -17,7 +17,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.dont_write_bytecode = True
 from hand_rig import prepare_hands, pose_hand, finger_clearance_offset
-from contact_fit import hand_offset
+from contact_fit import hand_offset, fit_grip_digits
 from body_refinement import (weld_deformation_seams, repair_torso_weights,
                              tailor_jacket_sides, tailor_forearms, rebuild_shoulder_armor,
                              broaden_arm_mounts, tailor_armored_trousers, tailor_vest_hem,
@@ -98,16 +98,17 @@ def solve_limb(rig, upper_name, lower_name, target, pole):
 def balance_crouch(rig):
     """Keep planted ankles while opening the angle between chest and thighs."""
     ankles = {side: rig.pose.bones['LowerLeg.' + side].tail.copy() for side in ('L', 'R')}
-    rig.pose.bones['Body'].rotation_quaternion = Matrix.Rotation(math.radians(2), 4, 'X').to_quaternion()
-    rig.pose.bones['Abdomen'].rotation_quaternion = Matrix.Rotation(math.radians(4), 4, 'X').to_quaternion()
+    rig.pose.bones['Body'].rotation_quaternion = Matrix.Rotation(math.radians(8), 4, 'X').to_quaternion()
+    rig.pose.bones['Abdomen'].rotation_quaternion = Matrix.Rotation(math.radians(7), 4, 'X').to_quaternion()
     bpy.context.view_layer.update()
     pelvis = rig.pose.bones['Body'].matrix.copy()
-    pelvis.translation.z += .10
+    pelvis.translation.z += .025
+    pelvis.translation.y += .025
     rig.pose.bones['Body'].matrix = pelvis
     bpy.context.view_layer.update()
     for side, sign in (('L', 1), ('R', -1)):
         solve_limb(rig, 'UpperLeg.' + side, 'LowerLeg.' + side,
-                   ankles[side], (sign * .20, -.70, .50))
+                   ankles[side], (sign * .32, -.70, .48))
 
 
 def bake(rig, name, samples):
@@ -254,6 +255,7 @@ def export_actor(key, meshes):
             broaden_arm_mounts(rig, body, .12 if key == 'CT' else .10)
     if not chicken:
         hands = prepare_hands(rig, body, .7 if args.reconstruct else 1.)[0]
+        gesture_mesh = bpy.data.meshes.new(key + '_GestureContact')
         body.append(hands)
     if args.reconstruct:
         restore(rig, samples[0][0][1])
@@ -293,21 +295,23 @@ def export_actor(key, meshes):
                     origin = Vector({'AK': (.025, 0, .03), 'SMG': (.045, 0, .015),
                                      'Sniper': (.04, 0, -.005), 'Shotgun': (-.05, 0, .005),
                                      'Pistol': (.015, 0, .02), 'Knife_1': (0, 0, -.02)}[weapon])
-                    scale = {'Shotgun': .60, 'Sniper': .70}.get(weapon, scale)
+                    scale = {'SMG': .65, 'Shotgun': .60, 'Sniper': .70}.get(weapon, scale)
                 angle = 20 if pistol else 24
                 rotation = Matrix.Rotation(math.radians(angle), 4, 'X') @ Matrix.Rotation(math.pi / 2, 4, 'Z')
                 grip = Vector((-.12, -.52, .84) if pistol else (-.16, -.36, .73))
                 if not crouch:
                     grip += Vector((0, .08, .39))
                 if args.reconstruct and not knife:
-                    angle = {'AK': 25, 'SMG': 18, 'Sniper': 25, 'Shotgun': 35, 'Pistol': 8}[weapon]
+                    angle = {'AK': 25, 'SMG': 18, 'Sniper': 25, 'Shotgun': 15, 'Pistol': 8}[weapon]
                     yaw = 110 if pistol else 130
+                    if weapon == 'Shotgun':
+                        yaw = 120
                     rotation = Matrix.Rotation(math.radians(angle), 4, 'X') @ Matrix.Rotation(math.radians(yaw), 4, 'Z')
                     # Keep the grip below the chest in each source torso pose.
                     grip = Vector((-.12, -.48, .74 if crouch else 1.08) if pistol else (-.22, -.44, .80 if crouch else .94))
                     if weapon in ('AK', 'Sniper', 'Shotgun'):
-                        grip.y = {'AK': -.36, 'Sniper': -.40, 'Shotgun': -.34}[weapon]
-                        grip.z = (.88 if crouch else 1.10) if weapon == 'Shotgun' else (.76 if crouch else .99)
+                        grip.y = {'AK': -.36, 'Sniper': -.40, 'Shotgun': (-.20 if crouch else -.32)}[weapon]
+                        grip.z = (.78 if crouch else 1.13) if weapon == 'Shotgun' else (.76 if crouch else .99)
                 if knife:
                     grip = Vector((-.27, -.35, .75 if crouch else 1.12))
                     if args.reconstruct:
@@ -318,15 +322,28 @@ def export_actor(key, meshes):
                 if args.reconstruct and crouch:
                     grip.y += .09
                     grip.z += .05
+                if args.reconstruct and weapon == 'SMG':
+                    grip.y += .07
+                if args.reconstruct and crouch and weapon == 'Shotgun':
+                    grip.y -= .10
+                    grip.z -= .04
                 support_distance = {'AK': -.36, 'SMG': -.26, 'Sniper': -.38, 'Shotgun': -.38}.get(weapon, 0)
                 if args.reconstruct:
                     support_distance = {'AK': -.24, 'SMG': -.22, 'Sniper': -.28, 'Shotgun': -.28}.get(weapon, 0)
                 support = Vector((support_distance, 0, .11)) - origin
                 if args.reconstruct and not (pistol or knife):
-                    support = Vector({'AK': (-.58, 0, .15), 'SMG': (-.56, 0, .18),
-                                      'Sniper': (-.52, 0, .10), 'Shotgun': (-.94, 0, -.04)}[weapon]) - origin
+                    support_x = {'AK': -.58, 'SMG': -.78, 'Sniper': -.52, 'Shotgun': -.94}[weapon]
+                    mesh = meshes[weapon]
+                    surface = BVHTree.FromPolygons([vertex.co for vertex in mesh.vertices],
+                        [tuple(face.vertices) for face in mesh.polygons])
+                    bottom = min(vertex.co.z for vertex in mesh.vertices) - .1
+                    contact, _, _, _ = surface.ray_cast(Vector((support_x, 0, bottom)), Vector((0, 0, 1)), 2)
+                    if contact is None:
+                        raise RuntimeError(f'{weapon}: support socket has no underside surface')
+                    support = contact - origin
                 posed = []
                 elbow_rolls = {}
+                digit_poses = {}
                 right_pole = (-.52, -.05, .81 if crouch else 1.12)
                 left_pole = (.53, -.14, .8 if crouch else 1.1)
                 if args.reconstruct:
@@ -334,6 +351,8 @@ def export_actor(key, meshes):
                     left_pole = (.50, -.05, .40 if crouch else .70)
                     if crouch and pistol:
                         left_pole = (.50, -.35, .70)
+                    if crouch and weapon == 'Shotgun':
+                        right_pole = (-.60, -.15, .90)
                 for frame, source in samples[pose_index]:
                     restore(rig, source)
                     if args.reconstruct and crouch:
@@ -366,31 +385,43 @@ def export_actor(key, meshes):
                             pose_hand(rig, 'L', target - left, (0, 0, -1), .80)
                         if args.reconstruct:
                             weapon_matrix = Matrix.Translation(current_grip) @ rotation @ Matrix.Scale(scale, 4) @ Matrix.Translation(-origin)
-                            right = current_grip + rotation.to_3x3() @ Vector((.085, .045, 0))
-                            right_forward = rotation.to_3x3() @ Vector((-1, 0, 0))
+                            right = current_grip + rotation.to_3x3() @ Vector((.075, .055, -.035))
+                            right_forward = rotation.to_3x3() @ Vector((-.75, 0, -1))
                             right_outward = rotation.to_3x3() @ Vector((0, 1, 0))
+                            if weapon == 'Shotgun':
+                                # Approach the straight stock wrist from below the wider butt.
+                                right = current_grip + rotation.to_3x3() @ Vector((.035, .055, -.035))
+                                right_forward = rotation.to_3x3() @ Vector((-1, 0, .25))
+                            elif key == 'CT' and crouch:
+                                right_forward = rotation.to_3x3() @ Vector((-.35, 0, -1))
                             if knife:
                                 right = current_grip + rotation.to_3x3() @ Vector((0, .09, 0))
                                 right_forward = rotation.to_3x3() @ Vector((0, -1, 0))
                                 right_outward = rotation.to_3x3() @ Vector((-1, 0, 0))
                             solve_arm(rig, 'R', right, right_pole)
-                            pose_hand(rig, 'R', right_forward, right_outward, 1.1, index_curl=1.1 if knife else .25, thumb_curl=.25)
-                            offset = hand_offset(rig, hands, 'R', meshes[weapon], weapon_matrix, right_outward)
+                            pose_hand(rig, 'R', right_forward, right_outward, 1.1, index_curl=1.1 if knife else .55, thumb_curl=.65)
+                            offset = hand_offset(rig, hands, 'R', meshes[weapon], weapon_matrix, right_outward, palm_only=True)
                             solve_arm(rig, 'R', right + offset, right_pole)
-                            pose_hand(rig, 'R', right_forward, right_outward, 1.1, index_curl=1.1 if knife else .25, thumb_curl=.25)
+                            pose_hand(rig, 'R', right_forward, right_outward, 1.1, index_curl=1.1 if knife else .55, thumb_curl=.65)
+                            digit_poses['R'] = fit_grip_digits(rig, hands, 'R', meshes[weapon], weapon_matrix, digit_poses.get('R'))
                             if knife:
                                 free_hand = Vector((.26, -.40, .63) if crouch else (.38, -.05, .77))
                                 solve_arm(rig, 'L', free_hand, (.50, 0, .55 if crouch else .85))
                                 pose_hand(rig, 'L', (0, 0, -1), (1, 0, 0), .25)
                             if not knife:
-                                left = current_grip + rotation.to_3x3() @ (Vector((.04, -.105, -.065)) if pistol else support * scale + Vector((0, -.105, -.035)))
+                                left = current_grip + rotation.to_3x3() @ (Vector((.04, -.065, -.065)) if pistol else support * scale + Vector((0, -.065, -.035)))
                                 left_forward = rotation.to_3x3() @ Vector((0, 1, 0))
                                 left_outward = rotation.to_3x3() @ Vector((0, 0, -1))
+                                if pistol:
+                                    left = current_grip + rotation.to_3x3() @ Vector((-.01, -.09, -.03))
+                                    left_forward = rotation.to_3x3() @ Vector((0, 0, -1))
+                                    left_outward = rotation.to_3x3() @ Vector((0, -1, 0))
                                 solve_arm(rig, 'L', left, left_pole)
                                 pose_hand(rig, 'L', left_forward, left_outward, .7 if pistol else 1.)
-                                offset = hand_offset(rig, hands, 'L', meshes[weapon], weapon_matrix, rotation.to_3x3() @ Vector((0, -1, -.5)))
+                                offset = hand_offset(rig, hands, 'L', meshes[weapon], weapon_matrix, left_outward, palm_only=True, brace=pistol)
                                 solve_arm(rig, 'L', left + offset, left_pole)
                                 pose_hand(rig, 'L', left_forward, left_outward, .7 if pistol else 1.)
+                                digit_poses['L'] = fit_grip_digits(rig, hands, 'L', meshes[weapon], weapon_matrix, digit_poses.get('L'), brace=pistol)
                             for side, pole in (('R', right_pole), ('L', left_pole)):
                                 elbow_rolls[side] = fit_elbow(rig, body, side, pole, meshes[weapon],
                                     weapon_matrix, solve_arm, elbow_rolls.get(side))
@@ -403,22 +434,28 @@ def export_actor(key, meshes):
                             pose_hand(rig, side, (0, .12, -1), (sign, 0, 0), .20)
                     else:
                         breath = .002 * math.sin(2 * math.pi * (frame - 1) / 120)
-                        right_height = 1.20 if args.reconstruct else 1.33
-                        left_target = Vector((-.04, -.73, 1.10) if args.reconstruct else (.18, -.65, 1.50))
+                        right_height = 1.14 if args.reconstruct else 1.33
+                        left_target = Vector((-.055, -.72, 1.14) if args.reconstruct else (.18, -.65, 1.50))
                         left_target.z += breath
-                        left_direction = (0, 0, 1) if args.reconstruct else (-1, -.15, 0)
+                        left_direction = (-.18, 0, 1) if args.reconstruct else (-1, -.15, 0)
                         left_normal = (0, -1, 0) if args.reconstruct else (0, 0, 1)
                         solve_arm(rig, 'R', Vector((-.07, -.58, right_height + breath)), (-.64, -.09, 1.13))
                         solve_arm(rig, 'L', left_target, (.64, -.09, 1.13))
                         pose_hand(rig, 'R', (0, -1, .1), (0, 0, -1), 1.45 if args.reconstruct else 1.35)
-                        pose_hand(rig, 'L', left_direction, left_normal, .50,
-                                  thumb_curl=0. if args.reconstruct else None)
-                        offset = finger_clearance_offset(rig, hands, 1 if args.reconstruct else 2,
-                                                         not args.reconstruct, include_palms=args.reconstruct)
+                        pose_hand(rig, 'L', left_direction, left_normal, .35 if args.reconstruct else .50,
+                                  thumb_curl=.8 if args.reconstruct else None, finger_fan=.82 if args.reconstruct else 1.)
+                        if args.reconstruct:
+                            offset = hand_offset(rig, hands, 'L', gesture_mesh, Matrix.Identity(4),
+                                                 left_normal, palm_only=True, brace=True)
+                        else:
+                            offset = finger_clearance_offset(rig, hands, 2, True)
                         left = rig.pose.bones['LowerArm.L'].tail.copy() + offset
                         solve_arm(rig, 'L', left, (.64, -.09, 1.13))
-                        pose_hand(rig, 'L', left_direction, left_normal, .50,
-                                  thumb_curl=0. if args.reconstruct else None)
+                        pose_hand(rig, 'L', left_direction, left_normal, .35 if args.reconstruct else .50,
+                                  thumb_curl=.8 if args.reconstruct else None, finger_fan=.82 if args.reconstruct else 1.)
+                        if args.reconstruct:
+                            digit_poses['L'] = fit_grip_digits(rig, hands, 'L', gesture_mesh, Matrix.Identity(4),
+                                                              digit_poses.get('L'), brace=True)
                     posed.append((frame, capture(rig)))
                 restore(rig, posed[0][1])
                 mount_mesh = meshes[weapon]

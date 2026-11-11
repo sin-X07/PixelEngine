@@ -112,7 +112,7 @@ GameUI::Actions Engine::BuildActions() {
             return;
         }
         if (mode == MatchMode::DeathMatch) {
-            BeginMatchLoad(mode, "assets/cs2d/maps/cs_office.tmj", pendingPlayerTeam_);
+            BeginMatchLoad(mode, "assets/cs2d/maps/office.tmj", pendingPlayerTeam_);
         } else if (mode == MatchMode::TeamElimination) {
             BeginMatchLoad(mode, "assets/cs2d/maps/ancient_ruins.tmj", pendingPlayerTeam_);
         } else {
@@ -1073,14 +1073,14 @@ void Engine::OpenMapOverlay(MatchMode mode) {
         }
     } else {
         if (!officePreviewTex_) {
-            const std::string preview = PathUtils::ResolveAppPath("assets/cs2d/tilesets/cs_office_bg.png");
+            const std::string preview = PathUtils::ResolveAppPath("assets/cs2d/tilesets/office.png");
             officePreviewTex_ = IMG_LoadTexture(renderer, preview.c_str());
             if (officePreviewTex_) {
                 SDL_SetTextureBlendMode(officePreviewTex_, SDL_BLENDMODE_BLEND);
             }
         }
         add("办公室", "近距交火 · 室内攻防 · 快速接敌",
-            "assets/cs2d/maps/cs_office.tmj", officePreviewTex_, -1);
+            "assets/cs2d/maps/office.tmj", officePreviewTex_, -1);
     }
 
     mapOverlayOpen_ = true;
@@ -1129,7 +1129,7 @@ void Engine::RestartCurrentMatch() {
 
 void Engine::StartMatch(MatchMode mode) {
     // 模式 → 默认地图（爆破模式可由地图选择界面指定）
-    //   死斗         → cs_office（老图，节奏快）
+    //   死斗         → office（老图，节奏快）
     //   团队歼灭/爆破 → ancient_ruins（5v5 主战图）
     // 已经在某张地图里 → 重新开始沿用该地图，而不是回到默认地图
     if (!currentMapRel_.empty()) {
@@ -1139,7 +1139,7 @@ void Engine::StartMatch(MatchMode mode) {
 
     const char* mapRel = "assets/cs2d/maps/ancient_ruins.tmj";
     switch (mode) {
-        case MatchMode::DeathMatch:      mapRel = "assets/cs2d/maps/cs_office.tmj"; break;
+        case MatchMode::DeathMatch:      mapRel = "assets/cs2d/maps/office.tmj"; break;
         case MatchMode::TeamElimination:
         case MatchMode::BombDefusal:     mapRel = "assets/cs2d/maps/ancient_ruins.tmj"; break;
         default:                         mapRel = "assets/cs2d/maps/ancient_ruins.tmj"; break;
@@ -1183,10 +1183,10 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
             break;
         }
     }
-    // 死斗用的 cs_office 不在可选目录里，单独兜底
+    // 死斗用的 office 不在可选目录里，单独兜底
     if (currentMapId_ == "ancient_ruins" &&
-        mapRel.find("cs_office") != std::string::npos) {
-        currentMapId_ = "cs_office";
+        mapRel.find("office") != std::string::npos) {
+        currentMapId_ = "office";
     }
     matchStartMs_ = static_cast<long long>(SDL_GetTicks64());
 

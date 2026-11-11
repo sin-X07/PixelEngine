@@ -85,7 +85,7 @@ const char* MapLabel(const std::string& mapId) {
     if (mapId == "ancient_ruins") return "古代遗迹";
     if (mapId == "dust_2")        return "沙漠2";
     if (mapId == "mirage")        return "荒漠迷城";
-    if (mapId == "cs_office")     return "办公室";
+    if (mapId == "office")     return "办公室";
     return mapId.empty() ? "未知" : mapId.c_str();
 }
 

@@ -1,6 +1,7 @@
 """Keep authored grips fixed while fitting the elbow around weapon stocks."""
 import math
 import bmesh
+from collections import Counter
 
 import bpy
 from mathutils import Quaternion, Vector
@@ -107,19 +108,20 @@ def enters_arm_volume(points, hulls):
 
 
 def fit_elbow(rig, objects, side, pole, mesh, matrix, solve_arm, roll=None):
+    rejected = Counter()
     hand = rig.pose.bones['Hand.' + side]
     hand_matrix = hand.matrix.copy()
     target = rig.pose.bones['LowerArm.' + side].tail.copy()
     shoulder = rig.pose.bones['UpperArm.' + side].head.copy()
     axis = (target - shoulder).normalized()
     weapon_points = [matrix @ vertex.co for vertex in mesh.vertices]
-    weapon = BVHTree.FromPolygons(weapon_points, [tuple(face.vertices) for face in mesh.polygons])
+    weapon = BVHTree.FromPolygons(weapon_points, [tuple(face.vertices) for face in mesh.polygons], epsilon=.002)
     clearance = .004
     bounds = ([min(point[index] for point in weapon_points) - clearance for index in range(3)],
               [max(point[index] for point in weapon_points) + clearance for index in range(3)])
     body = body_surface(rig, objects)
     hand_surface = exposed_hand_surface(rig, objects, side)
-    angles = [0, -10, 10, -20, 20, -30, 30, -40, 40, -50, 50, -60, 60, -70, 70, -80, 80]
+    angles = sorted(range(-100, 101, 2), key=abs)
     if roll is not None:
         angles = [roll] + sorted((angle for angle in range(-80, 81, 2) if angle != roll),
                                 key=lambda angle: abs(angle - roll))
@@ -130,18 +132,24 @@ def fit_elbow(rig, objects, side, pole, mesh, matrix, solve_arm, roll=None):
         bpy.context.view_layer.update()
         elbow = rig.pose.bones['LowerArm.' + side].head
         if abs(elbow.x) < .22 or elbow.z > shoulder.z - .05:
+            rejected['elbow_position'] += 1
             continue
         arm, points, hulls, distal, distal_points, cloth = arm_surface(rig, objects, side)
         if distal.overlap(body):
+            rejected['arm_body_crossing'] += 1
             continue
         if cloth.overlap(hand_surface):
+            rejected['sleeve_hand_crossing'] += 1
             continue
         margin = .008 if roll is None else .001
         if any(body.find_nearest(point, margin)[0] is not None for point in distal_points):
+            rejected['arm_body_clearance'] += 1
             continue
         if arm.overlap(weapon):
+            rejected['arm_weapon_crossing'] += 1
             continue
         if enters_arm_volume(weapon_points, hulls):
+            rejected['weapon_inside_arm'] += 1
             continue
         near = False
         for point in points:
@@ -152,4 +160,5 @@ def fit_elbow(rig, objects, side, pole, mesh, matrix, solve_arm, roll=None):
                     break
         if not near:
             return angle
-    raise RuntimeError(f'{rig.name} {side}: no natural elbow clearance for {mesh.name}, cached roll {roll}')
+        rejected['arm_weapon_clearance'] += 1
+    raise RuntimeError(f'{rig.name} {side}: no natural elbow clearance for {mesh.name}, cached roll {roll}, rejected {dict(rejected)}')

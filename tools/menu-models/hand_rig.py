@@ -94,7 +94,7 @@ def build_hand_mesh(rig, body, size=1.):
         bridge = []
         bridge_profile = ((-.16, .075), (-.08, .075), (0, .067), (.025, .060))
         if size < 1.:
-            bridge_profile = ((-.16, .055), (-.08, .045), (-.02, .034), (0, .032))
+            bridge_profile = ((-.05, .030), (-.03, .028), (-.01, .026), (0, .024))
         for offset, radius in bridge_profile:
             bridge.append([forearm.matrix_local @ Vector((radius * math.cos(index * math.tau / 8),
                 forearm.length + offset, radius * math.sin(index * math.tau / 8))) for index in range(8)])
@@ -197,7 +197,7 @@ def finger_clearance_offset(rig, hands, axis, left_positive, include_palms=False
     raise RuntimeError(f'{rig.name}: two-hand contact cannot be separated')
 
 
-def pose_hand(rig, side, direction, outward, curl, index_curl=None, thumb_curl=None):
+def pose_hand(rig, side, direction, outward, curl, index_curl=None, thumb_curl=None, finger_fan=1.):
     """Rotate the whole palm, retaining the source finger fan and joint hinges."""
     for bone in rig.pose.bones:
         if is_finger(bone.name) and bone.name.endswith('.' + side):
@@ -211,30 +211,52 @@ def pose_hand(rig, side, direction, outward, curl, index_curl=None, thumb_curl=N
     matrix = Matrix((across, forward, normal)).transposed().to_4x4()
     matrix.translation = hand.head.copy()
     hand.matrix = matrix
+    bpy.context.view_layer.update()
     for finger in ('Index', 'Middle', 'Pinky'):
+        if finger_fan != 1.:
+            base = rig.pose.bones[finger + '1.' + side]
+            local = hand.matrix.inverted() @ base.head
+            local.x *= finger_fan
+            placement = base.matrix.copy()
+            placement.translation = hand.matrix @ local
+            base.matrix = placement
+            bpy.context.view_layer.update()
         angle = index_curl if finger == 'Index' and index_curl is not None else curl
-        for joint, proportion in ((2, 1.0), (3, .80)):
-            bone = rig.pose.bones[finger + str(joint) + '.' + side]
-            rest = bone.bone
-            direction = (rest.tail_local - rest.head_local).normalized()
-            hinge = direction.cross(Vector((0, 0, -1))).normalized()
-            local_hinge = rest.matrix_local.to_3x3().inverted() @ hinge
-            bone.rotation_quaternion = Quaternion(local_hinge, angle * proportion)
+        curl_finger(rig, side, finger, angle)
     # The thumb opposes across the palm. Its distal joint returns toward the
     # knuckles instead of extending in the same direction as its metacarpal.
-    thumb_side = 1 if side == 'L' else -1
     closed = min(1, curl if thumb_curl is None else thumb_curl)
+    oppose_thumb(rig, side, closed)
+
+
+def curl_finger(rig, side, finger, angle, knuckle=0):
+    for joint, rotation in ((1, knuckle), (2, angle), (3, angle * .80)):
+        bone = rig.pose.bones[finger + str(joint) + '.' + side]
+        rest = bone.bone
+        direction = (rest.tail_local - rest.head_local).normalized()
+        hinge = direction.cross(Vector((0, 0, -1))).normalized()
+        local_hinge = rest.matrix_local.to_3x3().inverted() @ hinge
+        bone.rotation_quaternion = Quaternion(local_hinge, rotation)
+
+
+def oppose_thumb(rig, side, closed, spread=0):
+    bpy.context.view_layer.update()
+    hand = rig.pose.bones['Hand.' + side]
+    thumb_side = 1 if side == 'L' else -1
     base_open = Vector((thumb_side * .9, .3, -.15))
     base_closed = Vector((thumb_side * .25, .35, -.9))
     tip_open = Vector((thumb_side * .6, .8, -.1))
     tip_closed = Vector((-thumb_side * .6, .45, -.65))
     for name, direction in (('Thumb1.' + side, base_open.lerp(base_closed, closed)),
                             ('Thumb2.' + side, tip_open.lerp(tip_closed, closed))):
+        direction.z += spread
         bone = rig.pose.bones[name]
-        matrix = bone.matrix.copy()
         head = bone.head.copy()
         target = hand.matrix.to_3x3() @ direction.normalized()
-        rotation = (bone.tail - head).rotation_difference(target)
-        matrix.translation = Vector()
-        bone.matrix = Matrix.Translation(head) @ rotation.to_matrix().to_4x4() @ matrix
+        up = hand.matrix.to_3x3() @ Vector((0, 0, 1))
+        across = target.cross(up).normalized()
+        normal = across.cross(target).normalized()
+        matrix = Matrix((across, target, normal)).transposed().to_4x4()
+        matrix.translation = head
+        bone.matrix = matrix
         bpy.context.view_layer.update()

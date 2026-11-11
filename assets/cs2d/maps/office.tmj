@@ -5,7 +5,7 @@
   "layers": [
     {
       "id": 2,
-      "image": "../tilesets/cs_office_bg.png",
+      "image": "../tilesets/office.png",
       "imageheight": 600,
       "imagewidth": 640,
       "name": "Map",
@@ -2644,11 +2644,11 @@
     {
       "columns": 3,
       "firstgid": 1,
-      "image": "../tilesets/cs_office_tiles.png",
+      "image": "../tilesets/office_tiles.png",
       "imageheight": 704,
       "imagewidth": 96,
       "margin": 0,
-      "name": "cs_office_original",
+      "name": "office",
       "spacing": 0,
       "tilecount": 66,
       "tileheight": 32,

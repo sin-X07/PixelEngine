@@ -159,6 +159,15 @@ def tailor_armored_trousers(rig, objects):
 def tailor_vest_hem(objects):
     """Shorten the tactical vest below the waist so raised thighs stay free."""
     for obj in objects:
+        if obj.name == 'Character_Enemy':
+            cloth = {index for face in obj.data.polygons
+                     if obj.data.materials[face.material_index].name == 'Enemy_Red'
+                     for index in face.vertices}
+            for index in cloth:
+                point = obj.data.vertices[index].co
+                if point.z < 1.10:
+                    point.z += .075 * min(1., (1.10-point.z)/.16)
+            obj.data.update()
         if obj.name != 'Body':
             continue
         vest = {index for face in obj.data.polygons

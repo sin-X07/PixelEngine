@@ -365,7 +365,7 @@ python tools/scale_map.py <map.tmj> --div 2   # 地图整体缩小（每条轴 �
 
 | 模式 | 地图 |
 |---|---|
-| 死斗 | `cs_office.tmj` |
+| 死斗 | `office.tmj` |
 | 团队歼灭 / 爆破 | `ancient_ruins.tmj`（5v5 主战图） |
 | 爆破（地图选择可选） | `ancient_ruins.tmj` / `dust_2.tmj` / `mirage.tmj` |
 
