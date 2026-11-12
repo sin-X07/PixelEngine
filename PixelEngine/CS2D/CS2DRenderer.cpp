@@ -99,6 +99,12 @@ void CS2DRenderer::SetViewportSize(int w, int h) {
 
 void CS2DRenderer::Clean() {
     if (backgroundTex_) { SDL_DestroyTexture(backgroundTex_); backgroundTex_ = nullptr; }
+    if (perimeterTex_) { SDL_DestroyTexture(perimeterTex_); perimeterTex_ = nullptr; }
+    if (perimeterGroundTex_) { SDL_DestroyTexture(perimeterGroundTex_); perimeterGroundTex_ = nullptr; }
+    perimeterWorldRect_ = {};
+    perimeterTileW_ = perimeterTileH_ = 0.0f;
+    perimeterColor_ = {72, 68, 58, 255};
+    perimeterDust_ = false;
     for (auto& tt : tilesetTextures_) {
         if (tt.texture) { SDL_DestroyTexture(tt.texture); tt.texture = nullptr; }
     }
@@ -159,6 +165,7 @@ void CS2DRenderer::SetWorld(const CS2DWorld* world) {
         backgroundTex_ = LoadTexture(imgPath);
         if (backgroundTex_) {
             std::cout << "[CS2DRenderer] 背景图加载成功: " << imgRel << std::endl;
+            LoadPerimeter(imgPath);
         }
     }
 
@@ -350,8 +357,96 @@ void CS2DRenderer::SetPreviewCamera(float centerX, float centerY, float zoom,
     }
 }
 
+void CS2DRenderer::LoadPerimeter(const std::string& imagePath) {
+    const auto resolved = std::filesystem::path(PathUtils::ResolveAppPath(imagePath));
+    const auto directory = resolved.parent_path().parent_path() / "perimeters";
+    const std::string stem = resolved.stem().string();
+    const auto scenePath = directory / (stem + "_scene.png");
+    const auto groundPath = directory / (stem + "_ground.png");
+
+    // A material-matched fallback also covers legacy maps without authored scenery.
+    SDL_Surface* surface = IMG_Load(resolved.string().c_str());
+    if (surface) {
+        SDL_Surface* rgb = SDL_ConvertSurfaceFormat(surface, SDL_PIXELFORMAT_RGBA32, 0);
+        SDL_FreeSurface(surface);
+        if (rgb) {
+            uint64_t red = 0, green = 0, blue = 0, count = 0;
+            for (int y = 0; y < rgb->h; y += std::max(1, rgb->h / 32)) {
+                const auto* row = static_cast<const Uint8*>(rgb->pixels) + y * rgb->pitch;
+                for (int x = 0; x < rgb->w; x += std::max(1, rgb->w / 32)) {
+                    const auto* pixel = row + x * 4;
+                    if (std::max({pixel[0], pixel[1], pixel[2]}) < 24) continue;
+                    red += pixel[0]; green += pixel[1]; blue += pixel[2]; ++count;
+                }
+            }
+            if (count) perimeterColor_ = {static_cast<Uint8>(red / count),
+                static_cast<Uint8>(green / count), static_cast<Uint8>(blue / count), 255};
+            SDL_FreeSurface(rgb);
+        }
+    }
+
+    if (!std::filesystem::exists(scenePath) || !std::filesystem::exists(groundPath)) return;
+    SDL_Texture* scene = IMG_LoadTexture(renderer_, scenePath.string().c_str());
+    SDL_Texture* ground = IMG_LoadTexture(renderer_, groundPath.string().c_str());
+    int mapW = 0, mapH = 0, sceneW = 0, sceneH = 0, tileW = 0, tileH = 0;
+    SDL_QueryTexture(backgroundTex_, nullptr, nullptr, &mapW, &mapH);
+    const bool valid = scene && ground && mapW > 0 && mapH > 0 &&
+        SDL_QueryTexture(scene, nullptr, nullptr, &sceneW, &sceneH) == 0 &&
+        SDL_QueryTexture(ground, nullptr, nullptr, &tileW, &tileH) == 0 &&
+        tileW > 0 && tileH > 0 && sceneW > mapW && sceneH > mapH &&
+        (sceneW-mapW) % 2 == 0 && (sceneH-mapH) % 2 == 0;
+    if (!valid) {
+        if (scene) SDL_DestroyTexture(scene);
+        if (ground) SDL_DestroyTexture(ground);
+        std::cerr << "[CS2DRenderer] Invalid perimeter bundle: " << stem << std::endl;
+        return;
+    }
+    const float scaleX = world_->GetImageW() / mapW;
+    const float scaleY = world_->GetImageH() / mapH;
+    perimeterWorldRect_ = {-(sceneW-mapW)*.5f*scaleX, -(sceneH-mapH)*.5f*scaleY,
+                            sceneW*scaleX, sceneH*scaleY};
+    perimeterTileW_ = tileW*scaleX;
+    perimeterTileH_ = tileH*scaleY;
+    perimeterTex_ = scene;
+    perimeterGroundTex_ = ground;
+    perimeterDust_ = stem == "dust_2";
+    SDL_SetTextureScaleMode(scene, SDL_ScaleModeLinear);
+    SDL_SetTextureScaleMode(ground, SDL_ScaleModeLinear);
+    std::cout << "[CS2DRenderer] Perimeter ready: " << stem << std::endl;
+}
+
+void CS2DRenderer::DrawPerimeterGround() {
+    SDL_BlendMode previousBlend;
+    SDL_GetRenderDrawBlendMode(renderer_, &previousBlend);
+    SDL_SetRenderDrawColor(renderer_, perimeterColor_.r, perimeterColor_.g, perimeterColor_.b, 255);
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    SDL_RenderFillRect(renderer_, nullptr);
+    SDL_SetRenderDrawBlendMode(renderer_, previousBlend);
+    if (!perimeterGroundTex_) return;
+    const int firstX = static_cast<int>(std::floor(cameraX_ / perimeterTileW_));
+    const int firstY = static_cast<int>(std::floor(cameraY_ / perimeterTileH_));
+    const int lastX = static_cast<int>(std::ceil((cameraX_ + viewW_/zoom_) / perimeterTileW_));
+    const int lastY = static_cast<int>(std::ceil((cameraY_ + viewH_/zoom_) / perimeterTileH_));
+    for (int y = firstY; y < lastY; ++y) {
+        for (int x = firstX; x < lastX; ++x) {
+            // Quantize shared endpoints together to avoid cracks at fractional zoom.
+            const int left = static_cast<int>(std::lround((x*perimeterTileW_-cameraX_)*zoom_));
+            const int top = static_cast<int>(std::lround((y*perimeterTileH_-cameraY_)*zoom_));
+            const int right = static_cast<int>(std::lround(((x+1)*perimeterTileW_-cameraX_)*zoom_));
+            const int bottom = static_cast<int>(std::lround(((y+1)*perimeterTileH_-cameraY_)*zoom_));
+            const SDL_Rect dst{left, top, right-left, bottom-top};
+            SDL_RenderCopy(renderer_, perimeterGroundTex_, nullptr, &dst);
+        }
+    }
+}
+
 void CS2DRenderer::DrawImageBackground() {
     if (!backgroundTex_ || !world_) return;
+    if (perimeterTex_) {
+        const SDL_FRect dst{(perimeterWorldRect_.x-cameraX_)*zoom_,
+            (perimeterWorldRect_.y-cameraY_)*zoom_, perimeterWorldRect_.w*zoom_, perimeterWorldRect_.h*zoom_};
+        SDL_RenderCopyF(renderer_, perimeterTex_, nullptr, &dst);
+    }
     const float viewW = world_->GetImageW();
     const float viewH = world_->GetImageH();
     SDL_Rect dst;
@@ -360,6 +455,32 @@ void CS2DRenderer::DrawImageBackground() {
     dst.w = static_cast<int>(std::lround(viewW * zoom_));
     dst.h = static_cast<int>(std::lround(viewH * zoom_));
     SDL_RenderCopy(renderer_, backgroundTex_, nullptr, &dst);
+}
+
+void CS2DRenderer::DrawPerimeterDust() {
+    if (!perimeterDust_ || !smokeTex_) return;
+    Uint8 red, green, blue, alpha;
+    SDL_GetTextureColorMod(smokeTex_, &red, &green, &blue);
+    SDL_GetTextureAlphaMod(smokeTex_, &alpha);
+    SDL_SetTextureColorMod(smokeTex_, 225, 204, 151);
+    const double seconds = SDL_GetTicks64()/1000.0;
+    const float width = world_->GetImageW();
+    const float height = world_->GetImageH();
+    for (int side = 0; side < 4; ++side) {
+        for (int puff = 0; puff < 3; ++puff) {
+            const float phase = static_cast<float>(std::fmod(seconds*.012+puff/3.0+side*.19, 1.0));
+            const float drift = std::sin(phase*6.2831853f)*6;
+            // Whole sprites stay beyond the source rectangle, clear of gameplay.
+            const bool vertical = side < 2;
+            const float x = vertical ? (side == 0 ? -80 : width+80)+drift : -80+(width+160)*phase;
+            const float y = vertical ? -40+(height+80)*phase : (side == 2 ? -64 : height+64)+drift;
+            const SDL_FRect dst{(x-48-cameraX_)*zoom_, (y-18-cameraY_)*zoom_, 96*zoom_, 36*zoom_};
+            SDL_SetTextureAlphaMod(smokeTex_, static_cast<Uint8>(12*std::sin(phase*3.14159265f)));
+            SDL_RenderCopyF(renderer_, smokeTex_, nullptr, &dst);
+        }
+    }
+    SDL_SetTextureColorMod(smokeTex_, red, green, blue);
+    SDL_SetTextureAlphaMod(smokeTex_, alpha);
 }
 
 void CS2DRenderer::DrawTileLayer(const std::vector<int>& data,
@@ -411,7 +532,9 @@ void CS2DRenderer::DrawTileLayer(const std::vector<int>& data,
 
 void CS2DRenderer::DrawWorld() {
     if (!world_) return;
+    DrawPerimeterGround();
     DrawImageBackground();
+    DrawPerimeterDust();
     const auto& names = world_->GetVisibleLayerNames();
     const auto& datas = world_->GetVisibleLayerData();
     for (size_t i = 0; i < names.size(); ++i) {

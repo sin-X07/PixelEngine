@@ -69,7 +69,7 @@ SOUNDS = [
 ]
 
 # Tileset: 3 列 x 22 行, 每块 32x32
-TILESET_PATH = "assets/cs2d/tilesets/cs_office_tiles.png"
+TILESET_PATH = "assets/cs2d/tilesets/office_tiles.png"
 TILESET_COLS, TILESET_ROWS, TILE_SIZE = 3, 22, 32
 
 

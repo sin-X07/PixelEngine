@@ -18,7 +18,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TILE = 8                 # 地图像素/tile
 GROUND_GID = 1
 WALL_GID = 2
-TILESET_IMAGE = "../tilesets/cs_office_tiles.png"
+TILESET_IMAGE = "../tilesets/office_tiles.png"
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ def build_map(width, height, walls, entities, map_name):
         "nextobjectid": 999,
         "tilesets": [{
             "firstgid": 1,
-            "name": "cs_office_original",
+            "name": "office",
             "image": TILESET_IMAGE,
             "imagewidth": 96,
             "imageheight": 704,

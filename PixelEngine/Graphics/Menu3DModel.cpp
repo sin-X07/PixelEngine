@@ -156,6 +156,8 @@ Menu3DModel::Quat Menu3DModel::Slerp(const Quat& a, const Quat& b, float t) {
 }
 
 bool Menu3DModel::Load(const std::string& path, const std::string& preferredAnimation) {
+    horizontalRadiusDirty_ = true;
+    horizontalRadius_ = 0;
     ready_ = false;
     lastError_.clear();
     meshes_.clear();
@@ -319,6 +321,20 @@ bool Menu3DModel::Load(const std::string& path, const std::string& preferredAnim
         }
     }
 
+    // CPU-skinned positions are cached in Mesh. Each node needs its own cache,
+    // even when glTF instances share the source mesh (held/stowed weapons).
+    std::vector<bool> meshUsed(meshes_.size(), false);
+    for (Node& node : nodes_) {
+        if (node.mesh < 0 || node.mesh >= static_cast<int>(meshUsed.size())) continue;
+        if (meshUsed[node.mesh]) {
+            Mesh instance = meshes_[node.mesh];
+            node.mesh = static_cast<int>(meshes_.size());
+            meshes_.push_back(std::move(instance));
+        } else {
+            meshUsed[node.mesh] = true;
+        }
+    }
+
     // skins
     skins_.resize(data->skins_count);
     for (size_t si = 0; si < data->skins_count; ++si) {
@@ -392,6 +408,10 @@ bool Menu3DModel::Load(const std::string& path, const std::string& preferredAnim
         int chosen = -1;
         if (!preferredAnimation.empty()) {
             for (size_t i = 0; i < animations_.size(); ++i) {
+                if (animations_[i].name == preferredAnimation) { chosen = static_cast<int>(i); break; }
+            }
+            for (size_t i = 0; i < animations_.size(); ++i) {
+                if (chosen >= 0) break;
                 if (ContainsNoCase(animations_[i].name, preferredAnimation)) { chosen = static_cast<int>(i); break; }
             }
         }
@@ -423,18 +443,30 @@ void Menu3DModel::ComputeWorld(int nodeIndex, const Mat4& parent) {
 
 bool Menu3DModel::PlayAnimation(const std::string& name) {
     if (name.empty()) return false;
+    int chosen = -1;
     for (size_t i = 0; i < animations_.size(); ++i) {
-        if (ContainsNoCase(animations_[i].name, name)) {
-            animationIndex_ = static_cast<int>(i);
-            animationName_ = animations_[i].name;
-            animationTime_ = 0.0f;
-            SampleAnimation(0.0f);
-            for (int r : roots_) ComputeWorld(r, Identity());
-            SkinPrimitives();
-            return true;
+        if (animations_[i].name == name) {
+            chosen = static_cast<int>(i);
+            break;
         }
     }
-    return false;
+    // Legacy callers accept partial names. Authored menu IDs must match exactly.
+    if (chosen < 0 && name.rfind("Menu_", 0) != 0) {
+        for (size_t i = 0; i < animations_.size(); ++i) {
+            if (ContainsNoCase(animations_[i].name, name)) {
+                chosen = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+    if (chosen < 0) return false;
+    animationIndex_ = chosen;
+    animationName_ = animations_[chosen].name;
+    animationTime_ = 0.0f;
+    SampleAnimation(0.0f);
+    for (int r : roots_) ComputeWorld(r, Identity());
+    SkinPrimitives();
+    return true;
 }
 
 void Menu3DModel::SampleAnimation(float time) {
@@ -509,8 +541,10 @@ void Menu3DModel::Update(float dt) {
 }
 
 void Menu3DModel::SkinPrimitives() {
+    horizontalRadiusDirty_ = true;
     float minY = 1e30f;
     for (const Node& node : nodes_) {
+        if (!node.visible) continue;
         if (node.mesh < 0 || node.mesh >= static_cast<int>(meshes_.size())) continue;
         const Mesh& mesh = meshes_[node.mesh];
         const Skin* skin = (node.skin >= 0 && node.skin < static_cast<int>(skins_.size()))
@@ -559,7 +593,10 @@ void Menu3DModel::SkinPrimitives() {
                     dst.skinnedPos[vi] = TransformPoint(node.world, v.pos);
                     dst.skinnedNormal[vi] = Normalize(TransformDir(node.world, v.normal));
                 }
-                minY = std::min(minY, dst.skinnedPos[vi].y);
+                // Hidden and attached geometry must not lift the feet off the floor.
+                if (node.visible && !node.colorExcluded) {
+                    minY = std::min(minY, dst.skinnedPos[vi].y);
+                }
             }
         }
     }
@@ -620,8 +657,9 @@ void Menu3DModel::ApplyPrimitiveColor(const Primitive& prim, float alpha,
     float g = prim.color.y;
     float b = prim.color.z;
 
-    if (solidColorSet_) {
-        // 小鸡没有材质：整体覆盖颜色
+    if (solidColorSet_ && allowSlot &&
+        (prim.materialName.empty() || ContainsNoCase(prim.materialName, "warm ivory"))) {
+        // Tint feathers while preserving comb, beak, feet and accessories.
         r = solidColor_.x;
         g = solidColor_.y;
         b = solidColor_.z;
@@ -682,7 +720,26 @@ int Menu3DModel::FindNode(const std::string& name) const {
 
 void Menu3DModel::SetNodeVisible(const std::string& name, bool visible) {
     const int i = FindNode(name);
-    if (i >= 0) nodes_[static_cast<size_t>(i)].visible = visible;
+    if (i >= 0) {
+        nodes_[static_cast<size_t>(i)].visible = visible;
+        horizontalRadiusDirty_ = true;
+    }
+}
+
+float Menu3DModel::HorizontalRadius() const {
+    if (!horizontalRadiusDirty_) return horizontalRadius_;
+    float squared = 0.0f;
+    for (const Node& node : nodes_) {
+        if (!node.visible || node.mesh < 0 || node.mesh >= static_cast<int>(meshes_.size())) continue;
+        for (const Primitive& primitive : meshes_[node.mesh].primitives) {
+            for (const Vec3& point : primitive.skinnedPos) {
+                squared = std::max(squared, point.x * point.x + point.z * point.z);
+            }
+        }
+    }
+    horizontalRadius_ = std::sqrt(squared);
+    horizontalRadiusDirty_ = false;
+    return horizontalRadius_;
 }
 
 bool Menu3DModel::GetNodeVisible(const std::string& name) const {
@@ -726,9 +783,10 @@ bool Menu3DModel::DrawAttached(const Menu3DModel& accessory,
 void Menu3DModel::DrawHighlight(float scale, float yOffset, float yawDegrees) const {
     if (!ready_) return;
     glPushMatrix();
-    glTranslatef(0.0f, yOffset - minY_ * scale * 1.045f, 0.0f);
+    constexpr float outlineScale = 1.012f;
+    glTranslatef(0.0f, yOffset - minY_ * scale * outlineScale, 0.0f);
     glRotatef(yawDegrees, 0.0f, 1.0f, 0.0f);
-    glScalef(scale * 1.045f, scale * 1.045f, scale * 1.045f);
+    glScalef(scale * outlineScale, scale * outlineScale, scale * outlineScale);
 
     glDisable(GL_LIGHTING);
     glDepthMask(GL_FALSE);

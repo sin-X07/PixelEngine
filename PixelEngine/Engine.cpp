@@ -112,7 +112,7 @@ GameUI::Actions Engine::BuildActions() {
             return;
         }
         if (mode == MatchMode::DeathMatch) {
-            BeginMatchLoad(mode, "assets/cs2d/maps/cs_office.tmj", pendingPlayerTeam_);
+            BeginMatchLoad(mode, "assets/cs2d/maps/office.tmj", pendingPlayerTeam_);
         } else if (mode == MatchMode::TeamElimination) {
             BeginMatchLoad(mode, "assets/cs2d/maps/ancient_ruins.tmj", pendingPlayerTeam_);
         } else {
@@ -149,6 +149,13 @@ GameUI::Actions Engine::BuildActions() {
         }
         s.menuWeapon[0] = c.weapon[0];
         s.menuWeapon[1] = c.weapon[1];
+        saveManager->Save();
+    };
+
+    a.selectMenuScene = [this](int index) {
+        if (!menu3D || !saveManager || index < 0 || index >= kMapCatalogCount) return;
+        menu3D->SetScene(index);
+        saveManager->MutableSettings().menuScene = index;
         saveManager->Save();
     };
 
@@ -486,6 +493,7 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
             c.weapon[0] = s.menuWeapon[0];
             c.weapon[1] = s.menuWeapon[1];
             menu3D->SetCustomization(c);
+            menu3D->SetScene(s.menuScene, true);
         }
     }
 
@@ -1065,14 +1073,14 @@ void Engine::OpenMapOverlay(MatchMode mode) {
         }
     } else {
         if (!officePreviewTex_) {
-            const std::string preview = PathUtils::ResolveAppPath("assets/cs2d/tilesets/cs_office_bg.png");
+            const std::string preview = PathUtils::ResolveAppPath("assets/cs2d/tilesets/office.png");
             officePreviewTex_ = IMG_LoadTexture(renderer, preview.c_str());
             if (officePreviewTex_) {
                 SDL_SetTextureBlendMode(officePreviewTex_, SDL_BLENDMODE_BLEND);
             }
         }
         add("办公室", "近距交火 · 室内攻防 · 快速接敌",
-            "assets/cs2d/maps/cs_office.tmj", officePreviewTex_, -1);
+            "assets/cs2d/maps/office.tmj", officePreviewTex_, -1);
     }
 
     mapOverlayOpen_ = true;
@@ -1121,7 +1129,7 @@ void Engine::RestartCurrentMatch() {
 
 void Engine::StartMatch(MatchMode mode) {
     // 模式 → 默认地图（爆破模式可由地图选择界面指定）
-    //   死斗         → cs_office（老图，节奏快）
+    //   死斗         → office（老图，节奏快）
     //   团队歼灭/爆破 → ancient_ruins（5v5 主战图）
     // 已经在某张地图里 → 重新开始沿用该地图，而不是回到默认地图
     if (!currentMapRel_.empty()) {
@@ -1131,7 +1139,7 @@ void Engine::StartMatch(MatchMode mode) {
 
     const char* mapRel = "assets/cs2d/maps/ancient_ruins.tmj";
     switch (mode) {
-        case MatchMode::DeathMatch:      mapRel = "assets/cs2d/maps/cs_office.tmj"; break;
+        case MatchMode::DeathMatch:      mapRel = "assets/cs2d/maps/office.tmj"; break;
         case MatchMode::TeamElimination:
         case MatchMode::BombDefusal:     mapRel = "assets/cs2d/maps/ancient_ruins.tmj"; break;
         default:                         mapRel = "assets/cs2d/maps/ancient_ruins.tmj"; break;
@@ -1175,10 +1183,10 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
             break;
         }
     }
-    // 死斗用的 cs_office 不在可选目录里，单独兜底
+    // 死斗用的 office 不在可选目录里，单独兜底
     if (currentMapId_ == "ancient_ruins" &&
-        mapRel.find("cs_office") != std::string::npos) {
-        currentMapId_ = "cs_office";
+        mapRel.find("office") != std::string::npos) {
+        currentMapId_ = "office";
     }
     matchStartMs_ = static_cast<long long>(SDL_GetTicks64());
 
@@ -1851,6 +1859,8 @@ void Engine::Render() {
         ctx.backdrop3D  = false;
 
         if (currentState == MAIN_MENU && menu3D && menu3D->IsReady()) {
+            const ImVec2 menuViewport = ImGui::GetMainViewport()->WorkSize;
+            menu3D->SetPresentationAspect(menuViewport.x / std::max(1.0f, menuViewport.y));
             if (mapOverlayOpen_ && mapOverlayLaunching_) {
                 const uint64_t launchElapsed = SDL_GetTicks64() - mapOverlayLaunchStartMs_;
                 mapOverlayLaunchProgress_ = std::clamp(
@@ -1982,6 +1992,8 @@ void Engine::Render() {
             }
 
             ctx.focus3D     = (focused3D_ >= 0);
+            ctx.menuScene = menu3D->SceneIndex();
+            for (int i = 0; i < 3; ++i) ctx.menuScenePreviews[i] = menu3D->ScenePreview(i);
             ctx.focusObject = focused3D_;
             ctx.focusChicken = (focused3D_ >= 2);
             ctx.focusName   = (focused3D_ == 0) ? "恐怖分子 T"
@@ -2070,7 +2082,8 @@ void Engine::Render() {
                     v = (v - (1.0f - frac) * 0.5f) / frac;
                 }
 
-                const bool uiHovered = ImGui::IsAnyItemHovered() || overMenuButtons;
+                const bool uiHovered = ImGui::IsAnyItemHovered() || overMenuButtons ||
+                    ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
                 int hit = -1;
                 if (!uiHovered && u >= 0.0f && u <= 1.0f && v >= 0.0f && v <= 1.0f) {
                     hit = menu3D->HitTestNormalized(u, v);
@@ -2490,8 +2503,9 @@ void Engine::InitLLM() {
     llmController_ = std::make_unique<LLMBotController>();
     const bool ok = llmController_->Initialize(cfg);
     if (ok) {
-        std::cout << "[LLM] 就绪 (server: " << cfg.serverUrl
-                  << (cfg.autoLaunch ? ", 自动拉起" : "") << ")" << std::endl;
+        std::cout << "[LLM] 客户端就绪 (server: " << cfg.serverUrl
+                  << (cfg.autoLaunch ? ", 自动拉起" : "")
+                  << (llmController_->IsReady() ? "" : ", 服务加载中") << ")" << std::endl;
 
         // 预热：冷启动后的第一个请求要初始化 CUDA 图/预填充，经常超过教练等待时间。
         // 先发一个极小请求把首帧成本付掉，避免第一回合战术请求超时。

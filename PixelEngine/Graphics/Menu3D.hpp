@@ -1,5 +1,6 @@
 #pragma once
 #include <SDL2/SDL.h>
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -12,12 +13,8 @@
 // ============================================================================
 // Menu3D — 主菜单实时 3D 背景
 //
-// 当前阶段（P0）：
-//   - 独立的隐藏 SDL/OpenGL 兼容上下文，不干扰主窗口的 SDL_Renderer；
-//   - 固定管线绘制一个低模占位场景（左右战术人形 + 三只小鸡）；
-//   - glReadPixels 回读 RGBA，更新成 SDL_Texture，交给 GameUI 当作主菜单背景。
-//
-// 后续阶段会把占位人形/小鸡替换为 glTF + CPU 蒙皮动画。
+// 独立 OpenGL 上下文绘制主题环境、蒙皮角色与小鸡，回读 SDL 纹理供主菜单显示。
+// 场景选择独立于角色定制，环境道具位于角色与小鸡的完整活动范围之外。
 // ============================================================================
 class Menu3D {
 public:
@@ -35,6 +32,10 @@ public:
     int Width() const { return width_; }
     int Height() const { return height_; }
     const std::string& LastError() const { return lastError_; }
+    void SetScene(int index, bool immediate = false);
+    int SceneIndex() const { return sceneIndex_; }
+    SDL_Texture* ScenePreview(int index) const { return scenePreviews_[std::clamp(index, 0, 2)]; }
+    void SetPresentationAspect(float aspect) { presentationAspect_ = std::clamp(aspect, 1.0f, 4.0f); }
 
     // ---- 主菜单 3D 交互 ----
     // 索引：0=T, 1=CT, 2/3/4=三只小鸡
@@ -82,7 +83,9 @@ public:
     void SetOverlayMouse(float u, float v, bool active);
 
 private:
+    friend struct Menu3DTestAccess;
     bool InitGL();
+    void DrawEnvironment();
     void DrawScene(float timeSec);
     void DrawFocusScene();
     void DrawWeaponProp(float x, float y, float z);
@@ -107,21 +110,28 @@ private:
     std::vector<uint8_t> flipped_;  // 上下翻转后的 SDL 上传数据
     uint64_t lastRenderTicks_ = 0;
     float animationTime_ = 0.0f;
+    float pendingAnimationTime_ = 0.0f;
     std::string lastError_;
 
     std::unique_ptr<Menu3DModel> tModel_;
+    std::array<std::unique_ptr<Menu3DModel>, 3> environments_;
+    std::array<SDL_Texture*, 3> scenePreviews_{};
+    int sceneIndex_ = 1;
+    int displayedScene_ = 1;
+    float sceneTransition_ = .5f;
+    float presentationAspect_ = 16.0f / 9.0f;
     std::unique_ptr<Menu3DModel> ctModel_;
     std::vector<std::unique_ptr<Menu3DModel>> chickens_;
     std::vector<std::unique_ptr<Menu3DModel>> focusWeapons_;   // AK / 手枪 / 匕首
     // 自定义配件：0=鸭舌帽 1=墨镜 2=背包 3=小鸡帽
-    std::unique_ptr<Menu3DModel> accessories_[4];
     Customization custom_{};
 
     void ApplyAllCustomization();
     void ApplyCustomizationColor(int obj);
     void ApplyCustomizationPose(int obj);
+    void ApplyWeaponVisibility(int obj);
     void ApplyCustomizationWeapon(int obj);
-    void DrawAccessory(int obj, float scale, float yOffset, float yaw) const;
+    void ApplyCustomizationAccessory(int obj);
     struct ChickenState {
         float x = 0.0f;
         float z = 0.0f;
@@ -131,22 +141,27 @@ private:
         float targetZ = 0.0f;
         float repathTimer = 0.0f;
         float speed = 0.8f;
+        float movementSpeed = 0.0f;
     };
     std::array<ChickenState, 3> chickenState_{};
     std::mt19937 chickenRng_{ std::random_device{}() };
-    // ---- 小鸡步态校准（数值来源：assets/models/chickensoft/manifest.md）----
-    // 模型 y 向上，1 单位 = 1 米，实测 AABB 高度 1.843；基础动画 walk 循环 0.8s。
+    // Menu_Walk keeps one original stride, baked into a four-second clip.
     static constexpr float kChickenModelHeight = 1.843f;
-    static constexpr float kWalkClipSeconds    = 0.8f;
-    static constexpr float kRunClipSeconds     = 0.5333f;
+    static constexpr float kWalkClipSeconds    = 4.0f;
     // 一次 walk 循环的期望位移（按身高折算），用于避免滑步
-    static constexpr float kChickenStrideBodyHeights = 1.0f;
+    // The exported ankle sweep is 0.285 m each way per cycle at a height of 1.843 m.
+    static constexpr float kChickenStrideBodyHeights = 0.31f;
     // 基准世界速度：dist=6 处的移动速度（世界单位/秒），透视按 dist 缩放
-    static constexpr float kChickenBaseSpeed   = 1.05f;
+    static constexpr float kChickenBaseSpeed   = 0.30f;
     // Draw 用的世界缩放（距离补偿，保证屏幕上三只鸡大小接近）
     float ChickenWorldScale(const ChickenState& s) const;
     // 动画时间倍率：让「每秒位移 / 每循环步幅」与 walk 循环时长对齐，消除滑步
     float ChickenAnimTimeScale(const ChickenState& s) const;
+    struct GroundObstacle { float x, z, radius; int chickenIndex = -1; };
+    float ChickenRadius(int index, float z) const;
+    std::vector<GroundObstacle> ChickenObstacles(int index) const;
+    bool ChickenPathClear(int index, float fromX, float fromZ, float toX, float toZ) const;
+    void SeparateChickens();
     void InitChickenState();
     void UpdateChickens(float dt);
     void PickChickenTarget(int index);

@@ -8,6 +8,9 @@
 #include "Core/BuildInfo.hpp"
 #include <iostream>
 #include "Core/PathUtils.hpp"
+#ifdef _WIN32
+#include "LLM/LLMBotController.hpp"
+#endif
 
 int main(int argc, char* argv[]) {
     // 设置 Windows 控制台的 UTF-8 编码以支持中文输出
@@ -34,9 +37,29 @@ int main(int argc, char* argv[]) {
     bool autostart = false;
     bool fastRound = false;
     int  startMode = 1;
-    // 实测结论：LLM 教练相比规则教练没有可测量的提升（见 docs/llm-coach-plan.md 第 5 步），
-    // 因此默认关闭实时 LLM 教练；需要时用 --coach=llm 显式开启（分析 / 实验）。
+    // LLM 教练默认值：自动检测。
+    //   - 检测到 llm_bot 的 llama-server 与模型 → 默认开启（本机/内测包开箱即用）
+    //   - 没有模型/显卡的机器 → 默认关闭，避免每次进图都卡在"加载战术服务器"
+    // 显式参数优先：--coach=llm 强制开，--coach=rule 强制关。
     bool coachLlm = false;
+    bool llmAutoAvailable = false;
+#ifdef _WIN32
+    {
+        const std::string cfgPath = PathUtils::ResolveAppPath("assets/config/llm.ini");
+        const LLMConfig cfg = LLMConfig::FromFile(cfgPath);
+        const std::string exePath = cfg.serverExePath.empty()
+                                        ? std::string()
+                                        : PathUtils::ResolveAppPath(cfg.serverExePath);
+        const std::string modelPath = cfg.modelPath.empty()
+                                          ? std::string()
+                                          : PathUtils::ResolveAppPath(cfg.modelPath);
+        std::error_code ec1, ec2;
+        const bool haveExe = !exePath.empty() && std::filesystem::exists(exePath, ec1);
+        const bool haveModel = !modelPath.empty() && std::filesystem::exists(modelPath, ec2);
+        coachLlm = cfg.autoLaunch && haveExe && haveModel;
+        llmAutoAvailable = coachLlm;
+    }
+#endif
     std::string startMap;   // --map=<id> 指定地图（kMapCatalog 的 id）
     bool openMapSelect = false;  // --mapselect 直接打开地图选择界面（调试）
     bool openHistory = false;    // --history 直接打开历史记录（调试）
@@ -46,6 +69,7 @@ int main(int argc, char* argv[]) {
     bool openSettings = false;  // --settings 直接打开设置页（验收截图用）
     std::string recordPath;     // --record=<path> 录制输入日志（dev 构建）
     bool killPlayer = false;    // --killplayer 进对局 2s 后杀死玩家（验收死亡镜头用）
+    bool coachExplicit = false;
     for (int i = 1; i < argc; ++i) {
         if (!argv[i]) continue;
         const std::string a(argv[i]);
@@ -56,6 +80,7 @@ int main(int argc, char* argv[]) {
         }
         if (a.rfind("--coach=", 0) == 0) {
             coachLlm = (a.substr(8) != "rule");
+            coachExplicit = true;
         }
         if (a.rfind("--map=", 0) == 0) startMap = a.substr(6);
         if (a == "--mapselect") openMapSelect = true;
@@ -73,6 +98,16 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "[Build] " << BuildInfo::Display() << std::endl;
+    if (coachLlm) {
+        std::cout << "[Build] LLM 教练: 开启"
+                  << (coachExplicit ? "（--coach=llm）" : "（自动检测到 llama-server 与模型）")
+                  << std::endl;
+    } else {
+        std::cout << "[Build] LLM 教练: 关闭"
+                  << (coachExplicit ? "（--coach=rule）"
+                                    : "（未检测到 llama-server/模型；可用 --coach=llm 强制开启）")
+                  << std::endl;
+    }
     engine.SetDebugLoadout(loadoutArg);
     engine.SetDebugBuyMenu(openBuyMenu);
     engine.SetDebugKillPlayer(killPlayer);

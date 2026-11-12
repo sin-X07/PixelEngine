@@ -30,7 +30,7 @@ struct LLMConfig {
     std::string serverExePath;       // llama-server.exe 路径 (可相对)
     std::string modelPath;           // 模型 .gguf 路径 (可相对)
     int    ngl             = 99;     // GPU 全卸载层数
-    int    startupWaitSec  = 20;     // 自动拉起后等待模型加载最长时间
+    int    startupWaitSec  = 120;    // 自动拉起后等待模型加载最长时间（冷启动 7B 可能 >20s）
     bool   killOnExit      = true;   // 退出时终止本程序拉起的 llama-server (释放显存)
     bool   jsonSchema      = true;   // 是否尝试 response_format:json_schema
     int    ctxTokens       = 16384;  // llama-server 总上下文（2 槽各一半）

@@ -8,7 +8,7 @@
   通用 SpawnPoint 会退化为全图共用（双方可能从同一侧出生）。
 
 用法:
-  python tools/split_spawns.py assets/cs2d/maps/cs_office.tmj
+  python tools/split_spawns.py assets/cs2d/maps/office.tmj
   python tools/split_spawns.py <map.tmj> --axis x   # 强制按 x 轴切分
   python tools/split_spawns.py <map.tmj> --dry-run  # 只报告不写回
 

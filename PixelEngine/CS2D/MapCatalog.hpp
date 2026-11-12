@@ -31,7 +31,7 @@ inline const MapEntry kMapCatalog[] = {
         "古代遗迹",
         "双包点 · 中路争夺 · 攻防均衡",
         "assets/cs2d/maps/ancient_ruins.tmj",
-        "assets/cs2d/tilesets/ancient_ruins.jpg",
+        "assets/cs2d/tilesets/ancient_ruins.png",
         2, 29
     },
     {
@@ -47,7 +47,7 @@ inline const MapEntry kMapCatalog[] = {
         "荒漠迷城",
         "中路控制 · 双包点 · 转点节奏快",
         "assets/cs2d/maps/mirage.tmj",
-        "assets/cs2d/tilesets/mirage.jpg",
+        "assets/cs2d/tilesets/mirage.png",
         2, 32
     },
 };

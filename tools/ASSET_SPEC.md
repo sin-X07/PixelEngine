@@ -122,10 +122,10 @@
 
 | 路径 | 尺寸 | 说明 |
 |---|---|---|
-| `assets/cs2d/tilesets/cs_office_tiles.png` | 96×704 | cs_office 地图图块集 |
+| `assets/cs2d/tilesets/office_tiles.png` | 96×704 | office 地图图块集 |
 
 - 图块 32×32，**3 列 × 22 行 = 66 块**，`columns` 必须与 TMJ 中的 `columns` 一致。
-- 图块集在 TMJ 中以相对路径 `../tilesets/cs_office_tiles.png` 引用。
+- 图块集在 TMJ 中以相对路径 `../tilesets/office_tiles.png` 引用。
 - 缺失时渲染器自动回退为纯色块（`DrawTileFallback`），不崩溃。
 
 ---
@@ -342,8 +342,8 @@ python tools/check_map_connectivity.py <缩放图.tmj>               # 出生点
 若地图只有通用 `SpawnPoint`，双方会从同一批点出生。用脚本按空间位置自动拆分：
 
 ```powershell
-python tools/split_spawns.py assets/cs2d/maps/cs_office.tmj --dry-run  # 预览
-python tools/split_spawns.py assets/cs2d/maps/cs_office.tmj            # 写回
+python tools/split_spawns.py assets/cs2d/maps/office.tmj --dry-run  # 预览
+python tools/split_spawns.py assets/cs2d/maps/office.tmj            # 写回
 python tools/split_spawns.py <map.tmj> --axis y                        # 指定切分轴
 ```
 

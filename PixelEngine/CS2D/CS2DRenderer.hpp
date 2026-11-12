@@ -167,6 +167,7 @@ public:
     void  SetViewportSize(int w, int h);   // 全屏 FOV 自适应后重建视野纹理
 
 private:
+    friend struct MapPerimeterReview;
     SDL_Renderer* renderer_ = nullptr;
     const CS2DWorld* world_ = nullptr;
     std::string mapDir_;
@@ -185,6 +186,13 @@ private:
 
     // ========= 背景 & tileset =========
     SDL_Texture* backgroundTex_ = nullptr;
+    SDL_Texture* perimeterTex_ = nullptr;
+    SDL_Texture* perimeterGroundTex_ = nullptr;
+    SDL_FRect perimeterWorldRect_{};
+    float perimeterTileW_ = 0.0f;
+    float perimeterTileH_ = 0.0f;
+    SDL_Color perimeterColor_{72, 68, 58, 255};
+    bool perimeterDust_ = false;
 
     struct TilesetTexture {
         SDL_Texture* texture  = nullptr;
@@ -200,6 +208,9 @@ private:
     int  failedLoads_ = 0;   // 本次 SetWorld 期间加载失败的贴图数（启动期素材审计用）
     void DrawTileLayer(const std::vector<int>& data, int layerWidth, int layerHeight);
     void DrawImageBackground();
+    void LoadPerimeter(const std::string& imagePath);
+    void DrawPerimeterGround();
+    void DrawPerimeterDust();
     void DrawTileFallback(int gid, const SDL_Rect& dst) const;
 
     // ========= 精灵系统 =========

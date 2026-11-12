@@ -5,7 +5,7 @@
   "layers": [
     {
       "id": 2,
-      "image": "../tilesets/cs_office_bg.png",
+      "image": "../tilesets/office.png",
       "imageheight": 600,
       "imagewidth": 640,
       "name": "Map",
