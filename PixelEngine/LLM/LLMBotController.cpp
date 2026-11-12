@@ -160,8 +160,16 @@ bool LLMBotController::Initialize(const LLMConfig& config) {
 
             // 4. 等待加载完成
             std::cout << "[LLM] 等待模型加载 (最多 " << config.startupWaitSec << " 秒)..." << std::endl;
-            int waitMs = config.startupWaitSec * 1000;
-            if (HealthCheck(waitMs)) {
+            // 轮询，而不是"一次长超时"：服务没开始监听时连接会立刻失败，
+            // 单次长超时等于没等。
+            const auto deadline = std::chrono::steady_clock::now() +
+                                  std::chrono::seconds(std::max(1, config.startupWaitSec));
+            bool healthy = false;
+            while (std::chrono::steady_clock::now() < deadline) {
+                if (HealthCheck(2000)) { healthy = true; break; }
+                std::this_thread::sleep_for(std::chrono::milliseconds(400));
+            }
+            if (healthy) {
                 std::cout << "[LLM] llama-server 就绪!" << std::endl;
                 ready_ = true;
                 return true;
