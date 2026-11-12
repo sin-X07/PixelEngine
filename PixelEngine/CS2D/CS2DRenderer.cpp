@@ -446,7 +446,6 @@ void CS2DRenderer::DrawImageBackground() {
         const SDL_FRect dst{(perimeterWorldRect_.x-cameraX_)*zoom_,
             (perimeterWorldRect_.y-cameraY_)*zoom_, perimeterWorldRect_.w*zoom_, perimeterWorldRect_.h*zoom_};
         SDL_RenderCopyF(renderer_, perimeterTex_, nullptr, &dst);
-        return;
     }
     const float viewW = world_->GetImageW();
     const float viewH = world_->GetImageH();

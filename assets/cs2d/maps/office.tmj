@@ -2644,11 +2644,11 @@
     {
       "columns": 3,
       "firstgid": 1,
-      "image": "../tilesets/office_tiles.png",
+      "image": "../tilesets/cs_office_tiles.png",
       "imageheight": 704,
       "imagewidth": 96,
       "margin": 0,
-      "name": "office",
+      "name": "cs_office_original",
       "spacing": 0,
       "tilecount": 66,
       "tileheight": 32,

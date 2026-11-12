@@ -46,6 +46,27 @@ struct MapPerimeterReview {
         Require(IMG_SavePNG(surface.get(), path.string().c_str()) == 0, IMG_GetError());
     }
 
+    static void CheckBackgroundPrecedence(CS2DRenderer& map, SDL_Renderer* renderer) {
+        std::unique_ptr<SDL_Surface, decltype(&SDL_FreeSurface)> surface(
+            SDL_CreateRGBSurfaceWithFormat(0, 1, 1, 32, SDL_PIXELFORMAT_RGBA32), SDL_FreeSurface);
+        Require(surface != nullptr, SDL_GetError());
+        SDL_FillRect(surface.get(), nullptr, SDL_MapRGBA(surface->format, 17, 231, 49, 255));
+        std::unique_ptr<SDL_Texture, decltype(&SDL_DestroyTexture)> replacement(
+            SDL_CreateTextureFromSurface(renderer, surface.get()), SDL_DestroyTexture);
+        Require(replacement != nullptr, SDL_GetError());
+        SDL_Texture* original = map.backgroundTex_;
+        map.backgroundTex_ = replacement.get();
+        map.SetPreviewCamera(map.world_->GetImageW() / 2, map.world_->GetImageH() / 2, 1, false);
+        map.DrawImageBackground();
+        map.backgroundTex_ = original;
+        const SDL_Rect center{640, 360, 1, 1};
+        std::array<Uint8, 4> pixel{};
+        Require(SDL_RenderReadPixels(renderer, &center, SDL_PIXELFORMAT_RGBA32,
+                                     pixel.data(), 4) == 0, SDL_GetError());
+        Require(pixel[0] == 17 && pixel[1] == 231 && pixel[2] == 49,
+                "Perimeter scene obscures the current map background");
+    }
+
     static void CheckFallbacks(CS2DRenderer& map, SDL_Renderer* renderer,
                                const std::filesystem::path& output) {
         SDL_Texture* scene = map.perimeterTex_;
@@ -147,6 +168,7 @@ int main(int argc, char** argv) {
             for (double value : samples) total += value;
             performance << name << ',' << total/samples.size() << ',' << samples[75] << '\n';
             MapPerimeterReview::Require(collisions == world.GetCollisionGrid(), "Rendering changed collisions");
+            MapPerimeterReview::CheckBackgroundPrecedence(map, renderer.get());
             MapPerimeterReview::CheckFallbacks(map, renderer.get(), output/(name+"-fallback.png"));
             std::cout << "MAP PERIMETER PASS " << name << std::endl;
         }
