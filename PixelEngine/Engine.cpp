@@ -2503,8 +2503,9 @@ void Engine::InitLLM() {
     llmController_ = std::make_unique<LLMBotController>();
     const bool ok = llmController_->Initialize(cfg);
     if (ok) {
-        std::cout << "[LLM] 就绪 (server: " << cfg.serverUrl
-                  << (cfg.autoLaunch ? ", 自动拉起" : "") << ")" << std::endl;
+        std::cout << "[LLM] 客户端就绪 (server: " << cfg.serverUrl
+                  << (cfg.autoLaunch ? ", 自动拉起" : "")
+                  << (llmController_->IsReady() ? "" : ", 服务加载中") << ")" << std::endl;
 
         // 预热：冷启动后的第一个请求要初始化 CUDA 图/预填充，经常超过教练等待时间。
         // 先发一个极小请求把首帧成本付掉，避免第一回合战术请求超时。

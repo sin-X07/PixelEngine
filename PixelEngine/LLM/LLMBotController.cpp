@@ -167,9 +167,10 @@ bool LLMBotController::Initialize(const LLMConfig& config) {
                 return true;
             }
 
-            std::cerr << "[LLM] 启动超时, 进程可能仍在加载中; 后续请求将重试连接" << std::endl;
-            ready_ = true;  // 不阻塞游戏; 请求失败会退回到传统行为树
-            return true;    // 进程已拉起, 只是连接未就绪
+            std::cerr << "[LLM] 启动超时, 进程仍在加载; 游戏先走规则教练, "
+                         "加载完成后自动接管" << std::endl;
+            ready_ = false;  // 不伪装就绪：由 WorkerLoop 懒检查，就绪后自动切过来
+            return true;     // 进程已拉起
         }
 
         std::cerr << "[LLM] 自动拉起失败" << std::endl;
@@ -426,11 +427,9 @@ void LLMBotController::KillServer() {
 void LLMBotController::AskRaw(const std::string& systemPrompt, const std::string& userMessage,
                               int maxTokens, RawCallback callback, const std::string& tag,
                               const std::string& jsonSchema) {
-    if (!ready_) {
-        if (callback) callback(std::string());
-        return;
-    }
-
+    // 注意：不要在这里因为 !ready_ 就丢弃请求。
+    // 冷启动时服务可能还没起来，但 WorkerLoop 里有"懒健康检查"：
+    // 请求必须进队列，WorkerLoop 才有机会发现服务已就绪并接管。
     {
         std::lock_guard<std::mutex> lock(mutex_);
         PendingRequest req;
@@ -495,6 +494,26 @@ void LLMBotController::WorkerLoop() {
         busy_ = true;
         ++inFlight_;
         std::string raw;
+
+        // 服务还没就绪（冷启动 7B 常见）：先快速探一次健康检查，
+        // 没起来就立刻返回空回包，让教练马上回退规则，而不是干等 7 秒超时。
+        if (!ready_.load()) {
+            static std::atomic<long long> lastCheckMs{0};
+            const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::steady_clock::now().time_since_epoch()).count();
+            long long last = lastCheckMs.load();
+            if (nowMs - last > 2000 &&
+                lastCheckMs.compare_exchange_strong(last, nowMs)) {
+                if (HealthCheck(1500)) {
+                    ready_ = true;
+                    std::cout << "[LLM] llama-server 已就绪，开始接管" << std::endl;
+                }
+            }
+        }
+
+        if (!ready_.load()) {
+            std::cout << "[LLM] 服务尚未就绪，本轮跳过（规则教练接管）" << std::endl;
+        } else {
         const bool useSchema = !schema.empty() && schemaSupported_.load();
         std::string req = PromptBuilder::BuildRequestBodyEx(
             system, body, maxTokens, 0.55f, useSchema ? schema : std::string(), true, 0);
@@ -528,6 +547,7 @@ void LLMBotController::WorkerLoop() {
                 std::cout << "[LLM] 重试仍失败(HTTP " << status << ")" << std::endl;
             }
         }
+        }  // if (ready_)
         busy_ = false;
 
         if (rawCb) rawCb(raw);
