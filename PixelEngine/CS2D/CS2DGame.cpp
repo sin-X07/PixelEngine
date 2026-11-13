@@ -52,7 +52,6 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
 
     // 解析 mapId / playbookId：优先按文件名匹配 MapCatalog，否则用文件名去扩展名。
     // 只比较 filename，避免 Windows 反斜杠路径与 catalog 里的正斜杠不匹配。
-    mapSourcePath_ = resolvedTMJPath;
     mapId_.clear();
     playbookId_.clear();
     const std::string mapFile = std::filesystem::path(resolvedTMJPath).filename().string();
@@ -715,7 +714,7 @@ std::string CS2DGame::GetWeaponNameFor(const Player& p) const {
 // ============================================================================
 // 开镜（契约 v1.1 第 4 节）：玩法层唯一状态，表现层只读快照
 //   - 三档循环：关 → 1.5x → 2x → 关
-//   - 开镜时可见区是以准星为圆心的圆（渲染层用 SetScopeMask 消费），镜外用视野雾遮盖
+//   - 普通与开镜共用前方扇形视野，镜筒只负责瞄准装饰
 //   - 相机向准星偏移，保证准星下的世界点在换档时不动
 // ============================================================================
 
@@ -1239,8 +1238,6 @@ void CS2DGame::Render(int viewW, int viewH) {
     // 镜筒保留屏幕空间装饰，开镜和普通模式共用无距离上限的扇形视野。
     const float scopeRadiusPx =
         Presentation::kScopeCircleRadiusFrac * static_cast<float>(std::min(viewW, viewH));
-    renderer_->SetScopeMask(false, 0.0f, 0.0f, 0.0f);
-    visibility_.ClearScopeMask();
 
     renderer_->DrawWorld();
 

@@ -690,8 +690,7 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
 
 }
 // 枪口火焰：cx/cy 为武器中心的屏幕坐标
-void CS2DRenderer::DrawAimLine(float playerX, float playerY, float size, float angle,
-                                 int slot, float targetX, float targetY,
+void CS2DRenderer::DrawAimLine(float playerX, float playerY, float angle,
                                  const AimLineStyle& inputStyle, float uiScale) {
     if (!renderer_ || !world_) return;
     // A ray begins at the actor and extends beyond every visible viewport corner.
@@ -701,8 +700,8 @@ void CS2DRenderer::DrawAimLine(float playerX, float playerY, float size, float a
     const float farX = std::max(std::abs(cameraX_ - playerX), std::abs(cameraX_ + viewWorldW - playerX));
     const float farY = std::max(std::abs(cameraY_ - playerY), std::abs(cameraY_ + viewWorldH - playerY));
     const float rayLength = std::hypot(farX, farY) + viewWorldW + viewWorldH;
-    targetX = playerX + std::cos(angle) * rayLength;
-    targetY = playerY + std::sin(angle) * rayLength;
+    const float targetX = playerX + std::cos(angle) * rayLength;
+    const float targetY = playerY + std::sin(angle) * rayLength;
     const float fraction = vis_.FirstBulletWallFraction(muzzleX, muzzleY, targetX, targetY);
     const float startX = (muzzleX - cameraX_) * zoom_, startY = (muzzleY - cameraY_) * zoom_;
     const float endX = (targetX - cameraX_) * zoom_, endY = (targetY - cameraY_) * zoom_;
@@ -815,8 +814,6 @@ void CS2DRenderer::BuildRadarTexture() {
 
     // 底图取 512x512，按地图宽高比内接（letterbox）
     const int tex = 512;
-    radarMapW_ = tex;
-    radarMapH_ = tex;
 
     SDL_Texture* target = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA8888,
                                             SDL_TEXTUREACCESS_TARGET, tex, tex);
@@ -1025,34 +1022,6 @@ void CS2DRenderer::DrawObjectiveMarkers(float timeSec) {
 
 
 
-void CS2DRenderer::DrawBullet(float x, float y, float vx, float vy) {
-    if (!bulletTex_) return;
-
-    const float cx = (x - cameraX_) * zoom_;
-    const float cy = (y - cameraY_) * zoom_;
-    const float s = 1.0f * zoom_;   
-
-    SDL_Rect dst = {
-        static_cast<int>(std::lround(cx - s * 0.5f)),
-        static_cast<int>(std::lround(cy - s * 0.5f)),
-        static_cast<int>(std::lround(s)),
-        static_cast<int>(std::lround(s))
-    };
-    // bullet.png 竖直朝上，+90° 使其沿速度方向对齐
-    const double angle = std::atan2(vy, vx) * 180.0 / 3.14159265358979323846 + 90.0;
-    SDL_RenderCopyEx(renderer_, bulletTex_, nullptr, &dst, angle, nullptr, SDL_FLIP_NONE);
-}
-
-// ---------------------------------------------------------------------------
-// 枪弹视觉段（契约第 6 节 / PIX-17）
-// 数据只来自 CS2DGame::GetBulletVisuals()：真实模拟段、0.08s 寿命、512 段上限、
-// impact 仅在真实碰撞时为真。这里只做表现：
-//   - 拖尾：沿弹道方向延伸，长度上限 24 逻辑像素（不随缩放线性变粗）
-//   - 淡出：按 remaining/duration 线性淡出，帧率无关
-//   - 宽度：1.5~3 逻辑像素，随寿命变细
-//   - 裁剪：按地图阻挡瓦片截断，绝不把曳光画穿墙
-//   - 命中火花：只对 impact 段、在其寿命前 40% 内画一小簇，不伪造精确命中点
-// ---------------------------------------------------------------------------
 void CS2DRenderer::DrawBulletVisuals(
     const std::vector<Presentation::BulletVisualSegment>& segments) {
     if (!renderer_ || segments.empty()) return;
@@ -1196,23 +1165,6 @@ int CS2DRenderer::EffectiveFogAlpha() const {
                       0, 255);
 }
 
-void CS2DRenderer::SetScopeMask(bool active, float centerX, float centerY,
-                                float radiusWorld) {
-    scopeMaskActive_ = active;
-    scopeMaskX_ = centerX;
-    scopeMaskY_ = centerY;
-    scopeMaskR_ = radiusWorld;
-    // 开镜圆形可见区同步给几何查询：ComputeVisibility 用它取代扇形 + 半径
-    if (active) vis_.SetScopeMask(true, centerX, centerY, radiusWorld);
-    else        vis_.ClearScopeMask();
-}
-
-// ---------------------------------------------------------------------------
-// 开镜覆盖层（契约 v1.3 / PIX-10）
-// 镜筒 = 外圈暗环 + 内缘亮线 + 一圈刻度 + 向内收的暗角；视野用一个贯穿圆心的大十字
-// 分成四象限（中心留 gap，开启"移动扩散"时张开）。
-// 镜外遮挡由「圆形可见区 + 视野雾」完成，这里不重复画遮罩；普通准星在开镜期间不绘制。
-// ---------------------------------------------------------------------------
 void CS2DRenderer::DrawScopeOverlay(const Presentation::ScopeOverlayParams& p) {
     if (!renderer_) return;
     const float t = std::clamp(p.scope.transition, 0.0f, 1.0f);

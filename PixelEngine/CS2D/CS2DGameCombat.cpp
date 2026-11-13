@@ -354,7 +354,7 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                     // 击杀奖励按武器类型发放（照抄 CS2）
                     player_.money += economy_.GrantKill(WeaponDB::KillReward(bullet.weapon));
                     economy_.Clamp(player_.money);
-                    PushKillFeed("你  ▸  击杀 " + victimName);
+                    PushKillFeed("你 击杀 " + victimName);
                 } else {
                     const std::string killerName =
                         (bullet.ownerIdx >= 0 &&
@@ -363,7 +363,7 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                                    ? ("BOT#" + std::to_string(bullet.ownerIdx))
                                    : bots_[static_cast<size_t>(bullet.ownerIdx)].name)
                             : std::string("BOT");
-                    PushKillFeed(killerName + "  ▸  击杀 " + victimName);
+                    PushKillFeed(killerName + " 击杀 " + victimName);
                     // BOT 击杀奖励（同样按武器类型）
                     if (bullet.ownerIdx >= 0 &&
                         bullet.ownerIdx < static_cast<int>(bots_.size())) {
@@ -424,7 +424,7 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                          !bots_[static_cast<size_t>(bullet.ownerIdx)].name.empty())
                             ? bots_[static_cast<size_t>(bullet.ownerIdx)].name
                             : std::string("BOT#") + std::to_string(bullet.ownerIdx);
-                    PushKillFeed(killerName + "  ▸  击杀 你");
+                    PushKillFeed(killerName + " 击杀 你");
                     OnCombatantKilled(player_, audio);
                     // BOT 击杀玩家奖励（按武器类型）
                     if (bullet.ownerIdx >= 0 &&

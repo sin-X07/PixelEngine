@@ -93,24 +93,6 @@ inline constexpr float kScopeCircleRadiusFrac = 0.42f;
 // 相机向准星偏移的比例上限（1.5x ≈ 0.35，2x ≈ 0.5，其余按倍率线性插值）
 inline constexpr float kScopeCameraShiftMax = 0.5f;
 
-// 契约 v1.1：开镜圆形可见区的唯一几何定义（纯数学，渲染与回归测试共用）。
-// 圆外返回 0；圆内返回 1；softWidth 比例内用 smoothstep 淡出，
-// HasLineOfSight 等遮挡判定由调用方在此之上叠加。
-inline float ComputeScopeVisibility(float centerX, float centerY, float radius,
-                                    float targetX, float targetY,
-                                    float softWidth = 0.06f) {
-    if (radius <= 0.0f) return 0.0f;
-    const float dx = targetX - centerX;
-    const float dy = targetY - centerY;
-    const float d = std::sqrt(dx * dx + dy * dy);
-    const float soft = std::max(0.5f, radius * softWidth);
-    if (d <= radius - soft) return 1.0f;
-    if (d >= radius) return 0.0f;
-    float blend = (d - (radius - soft)) / soft;
-    blend = blend * blend * (3.0f - 2.0f * blend);
-    return 1.0f - blend;
-}
-
 // 契约 v1.3：开镜覆盖层的绘制参数（大十字把镜筒分成四象限；不再画中心小十字）
 struct ScopeOverlayParams {
     ScopeView scope{};

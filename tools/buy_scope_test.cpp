@@ -538,44 +538,7 @@ static void TestScope() {
 // ---------------------------------------------------------------------------
 // 契约 v1.1：圆形可见区（取代扇形）与相机倍率
 // ---------------------------------------------------------------------------
-static void TestScopeMaskAndCamera() {
-    std::printf("\n===== 开镜圆形可见区（契约 v1.1）=====\n");
-
-    // 几何规则是纯数学（Presentation::ComputeScopeVisibility），
-    // 渲染器与回归测试共用同一份定义，这里无需创建 SDL 窗口。
-    const float cx = 100.0f, cy = 200.0f, r = 120.0f;
-    check(Presentation::ComputeScopeVisibility(cx, cy, r, cx, cy) > 0.99f,
-          "圆心处可见 = 1");
-    check(Presentation::ComputeScopeVisibility(cx, cy, r, cx + r * 0.5f, cy) > 0.99f,
-          "圆内（半径一半）可见 = 1");
-    check(Presentation::ComputeScopeVisibility(cx, cy, r, cx + r * 1.5f, cy) == 0.0f,
-          "圆外 1.5 倍半径 → 不可见");
-    check(Presentation::ComputeScopeVisibility(cx, cy, r, cx, cy - r * 3.0f) == 0.0f,
-          "圆外 3 倍半径 → 不可见");
-    // 软边：半径处应为 0，半径内侧一点点应介于 0 和 1 之间
-    check(Presentation::ComputeScopeVisibility(cx, cy, r, cx + r, cy) == 0.0f,
-          "半径边界 = 0（硬边界，内部淡出）");
-    const float edge = Presentation::ComputeScopeVisibility(cx, cy, r, cx + r * 0.97f, cy);
-    check(edge > 0.0f && edge < 1.0f, "软边区间内为 0..1 渐变");
-    // 与朝向无关：圆形规则不含 aimAngle，玩家背后（相对朝向）同样算"圆内可见"
-    check(Presentation::ComputeScopeVisibility(cx, cy, r, cx - 30.0f, cy) > 0.99f,
-          "圆内任意方向都可见（圆形规则不含扇形朝向）");
-    // 半径 0 视为未开镜：一律不可见，避免除零/漏判
-    check(Presentation::ComputeScopeVisibility(cx, cy, 0.0f, cx, cy) == 0.0f,
-          "半径 0 → 一律不可见");
-
-    // 相机倍率：开镜倍率直接乘在 baseZoom 上（不二次乘），逻辑视野半径与倍率无关。
-    // 这里用公式复算，避免测试依赖 SDL 渲染器。
-    const float viewMin = 1080.0f;
-    const float baseZoom = std::clamp(viewMin / (2.0f * Tuning::VisionRadius), 1.2f, 6.0f);
-    const float baseView = viewMin / baseZoom;
-    const float halfDiag = std::sqrt(baseView * baseView + baseView * baseView) * 0.5f;
-    const float visionAt1x = halfDiag + 8.0f;   // VISION_SOFT_EDGE 近似值，仅做量级校验
-    check(std::fabs(baseZoom * 1.5f - baseZoom * 1.5f) < 0.001f,
-          "倍率 1.5 与 2.0 都以 baseZoom 为基准（公式恒等，防回归）");
-    check(baseZoom * 2.0f > baseZoom * 1.5f && visionAt1x > 0.0f,
-          "2x 的实际倍率严格大于 1.5x，且视野半径按 baseZoom 单独计算");
-
+static void TestScopeCameraLevels() {
     // 玩法层：档位切换后 ScopeView 的目标倍率与档位一致
     CS2DGame game;
     if (!LoadDeathMatch(game)) return;
@@ -1519,7 +1482,7 @@ static void TestAimLineRendering() {
         line.solidThickness = 6;
         line.hiddenThickness = 2;
         clear();
-        renderer.DrawAimLine(20, 40, 7, 0, 0, 140, 40, line);
+        renderer.DrawAimLine(20, 40, 0, line);
         SDL_RenderPresent(software);
         check(pixel(120,80).r >= 99 && pixel(120,80).r <= 101 && pixel(120,80).b == 0,
               "solid segment applies its customized color and alpha");
@@ -1528,13 +1491,13 @@ static void TestAimLineRendering() {
         check(pixel(120,82).r > 0 && pixel(120,84).r == 0 && pixel(163,82).b == 0,
               "solid and hidden segments use independently customized pixel widths");
         clear();
-        renderer.DrawAimLine(20, 40, 7, 0, 0, 60, 40, line);
+        renderer.DrawAimLine(20, 40, 0, line);
         SDL_RenderPresent(software);
         check(pixel(45,80).r > 0 && pixel(150,80).r > 0 && pixel(163,80).b > 0,
               "ray starts at actor and continues past the reticle to the next wall");
         line.solid.a = line.hidden.a = 0;
         clear();
-        renderer.DrawAimLine(20, 40, 7, 0, 0, 140, 40, line);
+        renderer.DrawAimLine(20, 40, 0, line);
         SDL_RenderPresent(software);
         check(pixel(120,80).r == 0 && pixel(163,80).b == 0, "zero opacity hides both line segments");
     }
@@ -1842,10 +1805,8 @@ static void TestUnlimitedPlayerCone() {
     CS2DRenderer renderer;
     for (int pct : {0,25,50,100}) {
         renderer.SetFogOpacityPct(pct);
-        renderer.SetScopeMask(false,0,0,0);
-        const int normal = renderer.EffectiveFogAlpha();
-        renderer.SetScopeMask(true,50,50,20);
-        check(normal == renderer.EffectiveFogAlpha(), "scope and unscoped fog use identical configured opacity");
+        check(renderer.EffectiveFogAlpha() == static_cast<int>(std::lround(160.0f * pct / 100.0f)),
+              "fog opacity follows the shared user setting");
     }
 }
 
@@ -1932,7 +1893,7 @@ int main() {
     TestBuyCodes();
     TestBuyDeadAndWindow();
     TestScope();
-    TestScopeMaskAndCamera();
+    TestScopeCameraLevels();
     TestDamageAndScopeShot();
     TestScopeCrosshair();
     TestBulletVisuals();

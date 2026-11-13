@@ -183,8 +183,7 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
         const WeaponClass cls = player.CurrentWeapon().cls;
         if (crosshair.aimLine && player.alive && !game->IsSpectating() &&
             cls != WeaponClass::Melee && cls != WeaponClass::Grenade && cls != WeaponClass::Bomb) {
-            renderer->DrawAimLine(playerView.x, playerView.y, player.size, game->GetRenderAimAngle(),
-                player.weaponSlot, game->GetRenderAimX(), game->GetRenderAimY(), aimLineStyle, g_uiScale);
+            renderer->DrawAimLine(playerView.x, playerView.y, game->GetRenderAimAngle(), aimLineStyle, g_uiScale);
         }
         renderer->DrawCrosshair(reticleX, reticleY,
                                 crosshair.r, crosshair.g, crosshair.b, crosshair.a,

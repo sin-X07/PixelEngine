@@ -35,16 +35,6 @@ public:
     void SetDistanceLimited(bool limited) { distanceLimited_ = limited; }
     void SetConeAngleDeg(float angle) { coneDeg_ = std::clamp(angle, 1.0f, 360.0f); }
 
-    // 开镜：用「以准星为圆心的圆」取代扇形 + 半径（契约 v1.1 的几何定义）
-    void SetScopeMask(bool active, float centerX, float centerY, float radiusWorld) {
-        scopeActive_ = active;
-        scopeX_ = centerX;
-        scopeY_ = centerY;
-        scopeR_ = std::max(0.0f, radiusWorld);
-    }
-    void ClearScopeMask() { scopeActive_ = false; }
-    bool ScopeMaskActive() const { return scopeActive_; }
-
     // 墙体遮挡（阻挡子弹的瓦片即阻挡视线）
     // First blocking tile entry in [0, 1], or 1 when the full segment is clear.
     float FirstBulletWallFraction(float fromX, float fromY, float toX, float toY) const;
@@ -75,8 +65,4 @@ private:
     bool distanceLimited_ = true;
     float coneDeg_ = kConeDeg;
 
-    bool  scopeActive_ = false;
-    float scopeX_ = 0.0f;
-    float scopeY_ = 0.0f;
-    float scopeR_ = 0.0f;
 };

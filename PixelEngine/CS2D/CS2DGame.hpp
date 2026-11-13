@@ -637,8 +637,6 @@ public:
     bool EdgeZoomRequested() const { return edgeZoomRequested_; }
     float EdgeZoomAmount() const { return edgeZoom_; }
     void SetEdgeZoomRequested(bool requested) { edgeZoomRequested_ = requested; }
-    float GetAimWorldX() const { return aimWorldX_; }
-    float GetAimWorldY() const { return aimWorldY_; }
     bool AimFollowsPlayer() const { return aimFollowsPlayer_; }
     float GetAimAngle()   const { return player_.EffectiveAim(); }
     // 0=静止，~0.42=静步，1=全速跑动。准星与弹道共用这一份移动扩散。
@@ -979,7 +977,6 @@ private:
     std::map<std::string, float> areaSearchedAt_[2];
     void RefreshSearchAreas();           // 回合开始重置白名单
     std::string playbookId_;       // 战术库文件名（不含 .txt）；空则回退 mapId_
-    std::string mapSourcePath_;    // LoadMap 时的 resolved TMJ 路径
 
     Player player_;
     ActorView previousPlayerView_;

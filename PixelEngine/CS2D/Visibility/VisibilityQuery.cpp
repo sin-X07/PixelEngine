@@ -53,15 +53,6 @@ float VisibilityQuery::ComputeVisibility(float playerX, float playerY, float aim
                                         float targetX, float targetY) const {
     if (!world_) return 0.0f;
 
-    // 开镜：以准星为圆心的圆（几何定义与回归测试共用 Presentation::ComputeScopeVisibility）
-    if (scopeActive_) {
-        const float circleFactor = Presentation::ComputeScopeVisibility(
-            scopeX_, scopeY_, scopeR_, targetX, targetY);
-        if (circleFactor <= 0.0f) return 0.0f;
-        if (!HasLineOfSight(playerX, playerY, targetX, targetY)) return 0.0f;
-        return circleFactor;
-    }
-
     const float deltaX = targetX - playerX;
     const float deltaY = targetY - playerY;
     const float dist = std::sqrt(deltaX * deltaX + deltaY * deltaY);

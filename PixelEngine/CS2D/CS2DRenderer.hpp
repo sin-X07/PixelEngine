@@ -67,7 +67,6 @@ public:
     void DrawCharacter(const SpriteDrawParams& p);
 
     // 子弹 / 准星
-    void DrawBullet(float x, float y, float vx, float vy);
     // 枪弹视觉段（契约 v1 第 6 节）：数据由 CS2DGame 产出，这里只绘制。
     // 注意：表现实现归 UI 方（PIX-17）；当前为可运行的最小占位实现。
     void DrawBulletVisuals(const std::vector<Presentation::BulletVisualSegment>& segments);
@@ -76,10 +75,6 @@ public:
     // 参数里 centerX/Y、radiusPx、crossThickness、crossGap 都是逻辑画布坐标，
     // 由 CS2DGame 按准星世界点投影 + 设置项算好，UI 不做命中/相机计算。
     void DrawScopeOverlay(const Presentation::ScopeOverlayParams& p);
-    // 契约 v1.1：开镜时可见区改为以 (centerX, centerY) 为圆心、radiusWorld 为半径的圆，
-    // 取代原有「扇形 + 半径」规则；ComputeVisibility 与敌人剔除、视野雾共用这份状态。
-    void SetScopeMask(bool active, float centerX, float centerY, float radiusWorld);
-    bool IsScopeMaskActive() const { return scopeMaskActive_; }
     // 飞行中的投掷物：按类型画对应的旋转图标（替代原来的 bullet 占位）
     void DrawThrownGrenade(int weaponId, float worldX, float worldY, float spinDeg);
     // 掉在地上的武器：用 _d 图标（与 HUD 同一套素材），带轻微上下浮动
@@ -106,8 +101,7 @@ public:
 
     void SetConeAngleDeg(float angle) { vis_.SetConeAngleDeg(angle); }
     void ApplyCameraShake(float x, float y) { cameraX_ += x; cameraY_ += y; }
-    void DrawAimLine(float playerX, float playerY, float size, float angle,
-                     int slot, float targetX, float targetY,
+    void DrawAimLine(float playerX, float playerY, float angle,
                      const AimLineStyle& style = AimLineStyle{}, float uiScale = 1.0f);
     void DrawRadarHUD(float playerX, float playerY, float playerAngle,
                       const std::vector<RadarDot>& dots,
@@ -263,7 +257,6 @@ private:
 
     // 雷达底图：把地图背景（或碰撞网格）一次性烘焙成纹理，避免每帧逐像素采样
     SDL_Texture* radarMapTex_ = nullptr;
-    int   radarMapW_ = 0, radarMapH_ = 0;       // 底图分辨率
     float radarImgX_ = 0.0f, radarImgY_ = 0.0f; // 图像在底图内的偏移（letterbox）
     float radarImgW_ = 0.0f, radarImgH_ = 0.0f;
     void BuildRadarTexture();
@@ -280,7 +273,6 @@ private:
     static constexpr float VISION_CONE_DEG   = Tuning::VisionConeDeg;
     static constexpr float VISION_ANGLE_SOFT = Tuning::VisionAngleSoftDeg;
     static constexpr Uint8 VISION_FOG_ALPHA  = 160;     // 不可见区半透明上限
-    static constexpr Uint8 SCOPE_FOG_ALPHA   = 242;     // 开镜时镜外的雾（"看不见"而非"看不清"）
     static constexpr Uint8 VISION_FOG_R      = 200;     // 浅灰遮罩颜色
     static constexpr Uint8 VISION_FOG_G      = 200;
     static constexpr Uint8 VISION_FOG_B      = 200;
@@ -291,10 +283,6 @@ private:
     int maskH_ = 0;
 
     // 开镜圆形可见区（契约 v1.1）：active 时 ComputeVisibility 改用圆形规则
-    bool  scopeMaskActive_ = false;
-    float scopeMaskX_ = 0.0f;
-    float scopeMaskY_ = 0.0f;
-    float scopeMaskR_ = 0.0f;
 
     // 迷雾透明度设置（契约 v1.2）：只缩放雾的 alpha，不改可见性
     int   fogOpacityPct_ = 100;
