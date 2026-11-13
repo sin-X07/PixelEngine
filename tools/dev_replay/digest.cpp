@@ -11,6 +11,9 @@ void MixPlayer(TickHasher& h, const CS2DGame::Player& p) {
     h.MixFloat(p.vx);
     h.MixFloat(p.vy);
     h.MixFloat(p.aimAngle);
+    h.MixFloat(p.aimKick);
+    h.MixFloat(p.aimDistance);
+    h.MixFloat(p.recoilRecoveryTimer);
     h.Mix(p.health);
     h.Mix(static_cast<uint8_t>(p.alive ? 1 : 0));
     for (int i = 0; i < 5; ++i) h.Mix(static_cast<int>(p.weapons[i]));
@@ -33,6 +36,18 @@ void MixPlayer(TickHasher& h, const CS2DGame::Player& p) {
 
 // BOT 决策运行时：驱动朝向与移动，属于 gameplay
 void MixBotRuntime(TickHasher& h, const CS2DGame::BotRuntime& ai) {
+    h.Mix(ai.difficulty);
+    h.MixFloat(ai.settleTimer);
+    h.Mix(ai.perceivedTarget);
+    h.Mix(static_cast<uint8_t>(ai.wasMoving));
+    h.MixFloat(ai.dodgeX);
+    h.MixFloat(ai.dodgeY);
+    for (const auto& alert : ai.alerts) {
+        h.Mix(alert.enemyId);
+        h.MixFloat(alert.perceivedAt);
+        h.MixFloat(alert.expireAt);
+        h.MixFloat(alert.lastPerceivedAt);
+    }
     h.Mix(static_cast<int>(ai.stance));
     h.Mix(static_cast<int>(ai.maneuver));
     h.MixFloat(ai.goalX);
@@ -65,6 +80,9 @@ void MixBotRuntime(TickHasher& h, const CS2DGame::BotRuntime& ai) {
 
 uint64_t SnapshotTick(const CS2DGame& game, uint64_t tick) {
     TickHasher h;
+    h.Mix(static_cast<uint8_t>(game.EdgeZoomRequested()));
+    h.MixFloat(game.EdgeZoomAmount());
+    h.Mix(static_cast<uint8_t>(game.AimFollowsPlayer()));
 
     // ---- 时间 / 回合 ----
     h.Mix(tick);

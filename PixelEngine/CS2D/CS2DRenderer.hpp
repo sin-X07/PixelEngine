@@ -1,4 +1,5 @@
 #pragma once
+#include "AimLineStyle.hpp"
 #include "Tuning.hpp"
 #include "CS2DWorld.hpp"
 #include "Visibility/VisibilityQuery.hpp"
@@ -100,9 +101,14 @@ public:
     // 雷达上的一个标记（世界坐标 + 颜色）
     struct RadarDot {
         float x = 0.0f, y = 0.0f;
-        Uint8 r = 255, g = 255, b = 255;
+        Uint8 r = 255, g = 255, b = 255, alpha = 255;
     };
 
+    void SetConeAngleDeg(float angle) { vis_.SetConeAngleDeg(angle); }
+    void ApplyCameraShake(float x, float y) { cameraX_ += x; cameraY_ += y; }
+    void DrawAimLine(float playerX, float playerY, float size, float angle,
+                     int slot, float targetX, float targetY,
+                     const AimLineStyle& style = AimLineStyle{}, float uiScale = 1.0f);
     void DrawRadarHUD(float playerX, float playerY, float playerAngle,
                       const std::vector<RadarDot>& dots,
                       float mapW, float mapH,
@@ -156,6 +162,22 @@ public:
         return ComputeVisibility(playerX, playerY, aimAngle, targetX, targetY) > 0.0f;
     }
 
+    int GetViewW() const { return viewW_; }
+    int GetViewH() const { return viewH_; }
+    void SetCameraAnchor(float x, float y) {
+        if (!cameraAnchored_) cameraInitialized_ = false;
+        cameraAnchored_ = true;
+        cameraAnchorX_ = x;
+        cameraAnchorY_ = y;
+    }
+    void ClearCameraAnchor() {
+        if (cameraAnchored_) cameraInitialized_ = false;
+        cameraAnchored_ = false;
+    }
+    bool CameraSettled() const { return cameraSettled_; }
+    void FreezeCamera(bool frozen) { cameraFrozen_ = frozen; }
+    float LastFogMilliseconds() const { return lastFogMs_; }
+    void SetFrameDelta(float dt) { frameDelta_ = std::clamp(dt, 0.0f, 0.1f); }
     float GetCameraX() const { return cameraX_; }
     float GetCameraY() const { return cameraY_; }
     float GetZoom()   const { return zoom_; }
@@ -167,6 +189,13 @@ public:
     void  SetViewportSize(int w, int h);   // 全屏 FOV 自适应后重建视野纹理
 
 private:
+    float cameraAnchorX_ = 0.0f, cameraAnchorY_ = 0.0f;
+    float cameraOffsetX_ = 0.0f, cameraOffsetY_ = 0.0f;
+    bool cameraAnchored_ = false, cameraSettled_ = true;
+    float frameDelta_ = 0.0f;
+    float lastFogMs_ = 0.0f;
+    bool cameraFrozen_ = false;
+    bool cameraInitialized_ = false;
     friend struct MapPerimeterReview;
     SDL_Renderer* renderer_ = nullptr;
     const CS2DWorld* world_ = nullptr;

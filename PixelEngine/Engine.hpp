@@ -73,6 +73,8 @@ private:
     GameState settingsReturnState = MAIN_MENU;
     bool exitToDesktop = false;
     int  targetFPS_ = 60;
+    bool cursorCaptured_ = false;
+    unsigned cursorSpawnVersion_ = 0;
 
     // 分辨率
     int currentResW_ = 800, currentResH_ = 600, currentResIdx_ = 0;
@@ -213,6 +215,8 @@ private:
     void EnsureLlmInitialized();
     bool llmInitialized_ = false;
     void ApplySavedSettings();   // 把保存的设置应用到运行时对象
+    void PrepareGameplayCamera(float dt, float interpolation);
+    void SyncAimCursor(float dt = 0.0f, bool commitAllowed = false);
     void Update(float dt);
     void Render();
     void ResizeLogicalViewport(int w, int h);

@@ -38,7 +38,11 @@ size_t CS2DGame::AiIndexOf(const Player& p) const {
 
 void CS2DGame::ResetBotAi(size_t i) {
     EnsureBotAi();
-    if (i < botAi_.size()) botAi_[i] = BotRuntime{};
+    if (i < botAi_.size()) {
+        const int difficulty = botAi_[i].difficulty;
+        botAi_[i] = BotRuntime{};
+        botAi_[i].difficulty = difficulty;
+    }
 }
 
 // ============================================================================
@@ -194,14 +198,16 @@ void CS2DGame::UpdateTeamContacts(float dt) {
         if (!b.alive) continue;
         if (AiAt(i).blindTimer > 0.0f) continue;   // 致盲：看不见任何东西，也无法上报情报
 
+        const auto& perception = tactics_.perception[std::clamp(AiAt(i).difficulty, 0, 3)];
+        const float spotRadius = BOT_SPOT_RADIUS * perception.radius;
         auto scan = [&](const Player& e, int id) {
             if (!e.alive || e.team == b.team) return;
 
             const float dx = e.x - b.x;
             const float dy = e.y - b.y;
-            if (dx * dx + dy * dy > BOT_SPOT_RADIUS * BOT_SPOT_RADIUS) return;
+            if (dx * dx + dy * dy > spotRadius * spotRadius) return;
             // 上报同样受朝向限制：背后看不到的东西不能报告
-            if (!InViewCone(b.x, b.y, b.aimAngle, e.x, e.y, BOT_SPOT_RADIUS)) return;
+            if (!InViewCone(b.x, b.y, b.EffectiveAim(), e.x, e.y, spotRadius, perception.angle)) return;
             if (SegmentBlockedBySmoke(b.x, b.y, e.x, e.y)) return;
             if (!visibility_.HasLineOfSight(b.x, b.y, e.x, e.y)) return;
 
@@ -230,7 +236,7 @@ void CS2DGame::UpdateTeamContacts(float dt) {
 
 // 目标是否在以 from 为顶点、aim 为中轴的视野扇形内（含角度软边的有效边界）
 bool CS2DGame::InViewCone(float fromX, float fromY, float aim,
-                          float toX, float toY, float maxDist) const {
+                          float toX, float toY, float maxDist, float angleMul) const {
     const float dx = toX - fromX;
     const float dy = toY - fromY;
     const float d2 = dx * dx + dy * dy;
@@ -241,13 +247,15 @@ bool CS2DGame::InViewCone(float fromX, float fromY, float aim,
     while (diff >  3.14159265f) diff -= 6.28318531f;
     while (diff < -3.14159265f) diff += 6.28318531f;
 
-    return std::abs(diff) <= Tuning::VisionHalfAngleRad;
+    return std::abs(diff) <= Tuning::VisionHalfAngleRad * angleMul;
 }
 
 const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& outDist) const {
     outDist = 0.0f;
     if (AiAt(AiIndexOf(self)).blindTimer > 0.0f) return nullptr;   // 被闪光致盲，看不到任何人
 
+    const auto& perception = tactics_.perception[std::clamp(AiAt(AiIndexOf(self)).difficulty, 0, 3)];
+    const float viewRadius = BOT_VIEW_RADIUS * perception.radius;
     const Player* best = nullptr;
     float bestD2 = 1e18f;
 
@@ -257,9 +265,9 @@ const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& ou
         const float dx = e.x - self.x;
         const float dy = e.y - self.y;
         const float d2 = dx * dx + dy * dy;
-        if (d2 > BOT_VIEW_RADIUS * BOT_VIEW_RADIUS) return;
+        if (d2 > viewRadius * viewRadius) return;
         // 视野扇形：和玩家同一套几何，背后看不见
-        if (!InViewCone(self.x, self.y, self.aimAngle, e.x, e.y, BOT_VIEW_RADIUS)) return;
+        if (!InViewCone(self.x, self.y, self.EffectiveAim(), e.x, e.y, viewRadius, perception.angle)) return;
         if (SegmentBlockedBySmoke(self.x, self.y, e.x, e.y)) return;
         if (!visibility_.HasLineOfSight(self.x, self.y, e.x, e.y)) return;
 

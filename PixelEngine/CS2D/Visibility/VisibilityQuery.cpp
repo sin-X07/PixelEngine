@@ -3,31 +3,47 @@
 #include "../CS2DWorld.hpp"
 
 #include <cmath>
+#include <limits>
 
 // ============================================================================
-// 视线：沿线段按半个瓦片步长采样，遇到阻挡子弹的瓦片即判定不可见
-// （与 CS2DRenderer::HasLineOfSight 原实现逐行等价）
+// 视线与瞄准线共用挡弹网格 DDA，直接访问穿过的格子并返回精确入格交点。
 // ============================================================================
+float VisibilityQuery::FirstBulletWallFraction(float fromX, float fromY, float toX, float toY) const {
+    if (!world_) return 1.0f;
+    int row = 0, col = 0;
+    world_->WorldToTile(fromX, fromY, row, col);
+    if (world_->IsBlockingBullet(row, col)) return 0.0f;
+    const float dx = toX - fromX, dy = toY - fromY;
+    const float infinity = std::numeric_limits<float>::infinity();
+    const int stepX = dx > 0.0f ? 1 : -1, stepY = dy > 0.0f ? 1 : -1;
+    const float tileW = static_cast<float>(world_->GetTileWidth());
+    const float tileH = static_cast<float>(world_->GetTileHeight());
+    const float deltaX = dx != 0.0f ? tileW / std::abs(dx) : infinity;
+    const float deltaY = dy != 0.0f ? tileH / std::abs(dy) : infinity;
+    float nextX = dx != 0.0f ? ((col + (stepX > 0 ? 1 : 0)) * tileW - fromX) / dx : infinity;
+    float nextY = dy != 0.0f ? ((row + (stepY > 0 ? 1 : 0)) * tileH - fromY) / dy : infinity;
+    while (std::min(nextX, nextY) <= 1.0f) {
+        const float entry = std::min(nextX, nextY);
+        const bool crossX = nextX <= nextY;
+        const bool crossY = nextY <= nextX;
+        if (crossX && world_->IsBlockingBullet(row, col + stepX)) return std::max(0.0f, entry);
+        if (crossY && world_->IsBlockingBullet(row + stepY, col)) return std::max(0.0f, entry);
+        if (crossX) { col += stepX; nextX += deltaX; }
+        if (crossY) { row += stepY; nextY += deltaY; }
+        if (crossX && crossY && world_->IsBlockingBullet(row, col)) return std::max(0.0f, entry);
+    }
+    return 1.0f;
+}
+
 bool VisibilityQuery::HasLineOfSight(float fromX, float fromY, float toX, float toY) const {
     if (!world_) return false;
 
-    const int tileW = world_->GetTileWidth();
-    const int tileH = world_->GetTileHeight();
-    const float dx = toX - fromX;
-    const float dy = toY - fromY;
-    const float dist = std::sqrt(dx * dx + dy * dy);
-    if (dist < 1.0f) return true;
-
-    const int steps = std::max(2, static_cast<int>(dist / (std::min(tileW, tileH) * 0.5f)));
-    for (int i = 0; i <= steps; ++i) {
-        const float t = static_cast<float>(i) / steps;
-        const float sx = fromX + dx * t;
-        const float sy = fromY + dy * t;
-        int row = 0, col = 0;
-        world_->WorldToTile(sx, sy, row, col);
-        if (world_->IsBlockingBullet(row, col)) return false;
-    }
-    return true;
+    const float dx = toX - fromX, dy = toY - fromY;
+    if (dx * dx + dy * dy < 1.0f) return true;
+    int row = 0, col = 0;
+    world_->WorldToTile(toX, toY, row, col);
+    return !world_->IsBlockingBullet(row, col) &&
+        FirstBulletWallFraction(fromX, fromY, toX, toY) >= 1.0f;
 }
 
 // ============================================================================
@@ -60,10 +76,11 @@ float VisibilityQuery::ComputeVisibility(float playerX, float playerY, float aim
         blend = blend * blend * (3.0f - 2.0f * blend);
         distFactor = 1.0f - blend;
     }
+    if (!distanceLimited_) distFactor = 1.0f;
     if (distFactor <= 0.0f) return 0.0f;
 
     // 2) 角度因子：以朝向为中心的扇形，扇形外完全不可见
-    const float halfConeRad  = (kConeDeg * 0.5f - kAngleSoftDeg * 0.5f) * 3.14159265f / 180.0f;
+    const float halfConeRad  = (coneDeg_ * 0.5f - kAngleSoftDeg * 0.5f) * 3.14159265f / 180.0f;
     const float angleSoftRad = kAngleSoftDeg * 3.14159265f / 180.0f;
 
     const float targetAngle = std::atan2(deltaY, deltaX);

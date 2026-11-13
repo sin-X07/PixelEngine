@@ -10,6 +10,45 @@
 // ============================================================================
 
 namespace Tuning {
+constexpr float Pi = 3.14159265f;
+constexpr float CameraSmoothRate = 18.0f;
+constexpr float CameraSettlePixels = 0.25f;
+constexpr float AimHandoffMaxSeconds = 1.25f;
+constexpr float ScopeCameraShiftLow = 0.35f;
+constexpr float InitialAimDistance = 45.0f;
+constexpr float RecoilReferenceDistance = 100.0f;
+constexpr float RecoilRecoveryDelay = 0.18f;
+constexpr float RecoilShakePerDegree = 0.25f, RecoilShakeMax = 1.0f;
+constexpr float RecoilShakeDecay = 14.0f;
+constexpr float AimScreenMargin = 12.0f;
+constexpr int AimLineSolidR = 50, AimLineSolidG = 225, AimLineSolidB = 235, AimLineSolidAlpha = 225;
+constexpr int AimLineHiddenR = 185, AimLineHiddenG = 230, AimLineHiddenB = 235, AimLineHiddenAlpha = 125;
+constexpr float AimLineDashPixels = 8.0f, AimLineGapPixels = 6.0f;
+constexpr float WeaponOffsetMul = 0.35f, MuzzleLengthMul = 0.55f;
+constexpr float PistolDrawSize = 3.0f, PrimaryDrawSize = 4.0f;
+constexpr float CameraLookShift = 0.5f;
+constexpr float CameraAngledLength = 100.0f;
+constexpr float EdgeZoomOutZone = 0.005f;
+constexpr float EdgeZoomHysteresis = 5.0f;
+constexpr float EdgeZoomOutMin = 0.7f;
+constexpr float EdgeZoomFovAngleMul = 0.25f;
+constexpr float EdgeZoomSeconds = 0.4f;
+constexpr float BotFovRadiusMul[] = {0.8f, 0.85f, 0.9f, 0.95f};
+constexpr float BotFovAngleMul[] = {0.8f, 0.85f, 0.9f, 0.95f};
+constexpr float BotReactionSecs[] = {2.5f, 1.0f, 0.5f, 0.35f};
+constexpr float AimSettleSecs[] = {1.2f, 0.8f, 0.5f, 0.35f};
+constexpr float AimSettleMul = 1.0f;
+constexpr float AlertMemory = 6.0f, BulletNearRadius = 14.0f;
+constexpr float BulletDodgeDistance = 30.0f;
+constexpr float BulletReactionMul = 1.7f;
+constexpr float RecoilRifle = 0.6f, RecoilSniper = 2.5f, RecoilSmg = 0.35f;
+constexpr float RecoverRifle = 6.0f, RecoverSniper = 4.0f, RecoverSmg = 8.0f;
+constexpr float BloomSniper = 10.0f, BloomSmg = 24.0f;
+constexpr float DegreesToRadians = 3.14159265f / 180.0f;
+constexpr float RadarFadeStart = 4.0f, RadarFadeEnd = 6.0f;
+constexpr float NadeThrowSpeedMin = 180.0f, NadeThrowSpeedMax = 460.0f;
+constexpr float NadeFriction = 2.0f;
+
 
 // ---------------- 视野（玩家与 BOT 共用同一套几何）----------------
 // 半径 100：镜头按「视野圆刚好装进较窄一边」自动拉近；

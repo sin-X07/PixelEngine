@@ -205,6 +205,7 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
             for (size_t bi = 0; bi < bots_.size(); ++bi) {
                 if (bots_[bi].team != Team::CT) continue;
                 AiAt(bi).defusing = (!playerDefusing && static_cast<int>(bi) == bestBot);
+                if (AiAt(bi).defusing) bots_[bi].vx = bots_[bi].vy = 0.0f;
             }
 
             if (defusing) {

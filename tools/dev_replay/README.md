@@ -101,6 +101,9 @@ dev_replay_runner --ticks=150000 --seed=1 --map=dust_2 --conflicts=conflicts.csv
 
 ## 输入日志与回放（P3）
 
+当前写入 PXINPUT3，在既有15列输入后追加边缘缩放意图和角色相对瞄准模式（各0/1）。旧15列、16列日志继续读取，缺省新增模式为关闭。
+
+
 ```bash
 # 录制（脚本玩家；真人录制见下）
 dev_replay_runner --ticks=150000 --seed=1 --journal=session.journal --hash=rec.hash.txt
@@ -110,8 +113,11 @@ dev_replay_runner --replay=session.journal --hash=rep.hash.txt
 python tools/dev_replay/diff_hash_logs.py rec.hash.txt rep.hash.txt
 ```
 
-格式：`PXINPUT1` 头（map/seed/viewport/脚本策略/final_hash）+ 每 tick 一行
-`tick mouseDown aimX aimY W A S D Shift Reload Interact buyWeapon buyArmorTier`。
+当前格式为 `PXINPUT3` 头（map/seed/viewport/脚本策略/final_hash），每 tick 一行包含以下字段。
+
+`tick mouseDown aimX aimY W A S D Shift Reload Interact scopeToggle switchSlot buyWeapon buyArmorTier edgeZoom relativeAim`
+
+`aimX/aimY` 保存本 tick 输入边界的基础世界坐标，`relativeAim` 表示移动人物时保留该点相对人物的偏移。关镜屏幕锚点交接期间为绝对世界点模式。16 列旧日志缺省 `relativeAim=false`，15 列 `PXINPUT2` 日志同时缺省 `edgeZoom=false`。
 
 **两条坑（都踩过）**：
 1. 购买是"动作"，不是移动输入——不写进日志，回放会在第一个购买期分叉（tick ~481）。

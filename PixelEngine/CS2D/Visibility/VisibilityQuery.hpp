@@ -32,6 +32,8 @@ public:
 
     void  SetVisionRadius(float r) { radius_ = std::clamp(r, 1.0f, kMaxRadius); }
     float VisionRadius() const { return radius_; }
+    void SetDistanceLimited(bool limited) { distanceLimited_ = limited; }
+    void SetConeAngleDeg(float angle) { coneDeg_ = std::clamp(angle, 1.0f, 360.0f); }
 
     // 开镜：用「以准星为圆心的圆」取代扇形 + 半径（契约 v1.1 的几何定义）
     void SetScopeMask(bool active, float centerX, float centerY, float radiusWorld) {
@@ -44,6 +46,8 @@ public:
     bool ScopeMaskActive() const { return scopeActive_; }
 
     // 墙体遮挡（阻挡子弹的瓦片即阻挡视线）
+    // First blocking tile entry in [0, 1], or 1 when the full segment is clear.
+    float FirstBulletWallFraction(float fromX, float fromY, float toX, float toY) const;
     bool HasLineOfSight(float fromX, float fromY, float toX, float toY) const;
 
     // [0,1]：距离因子 × 扇形因子 × 遮挡，三者取最小；0 = 完全不可见
@@ -68,6 +72,8 @@ public:
 private:
     const CS2DWorld* world_ = nullptr;
     float radius_ = Tuning::VisionRadius;
+    bool distanceLimited_ = true;
+    float coneDeg_ = kConeDeg;
 
     bool  scopeActive_ = false;
     float scopeX_ = 0.0f;

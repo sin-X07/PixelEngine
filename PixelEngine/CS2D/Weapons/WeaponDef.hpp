@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "../Tuning.hpp"
 
 // ============================================================================
 // WeaponDef — 数据驱动武器表（照抄 CS2 原版）
@@ -114,6 +115,8 @@ struct WeaponDef {
 
     // 经济：用本武器击杀时发放的金额（照抄 CS2）
     int   killReward;
+    float recoilKickDeg = cls == WeaponClass::Sniper ? Tuning::RecoilSniper : cls == WeaponClass::SMG ? Tuning::RecoilSmg : Tuning::RecoilRifle;
+    float recoilRecoverPerSec = cls == WeaponClass::Sniper ? Tuning::RecoverSniper : cls == WeaponClass::SMG ? Tuning::RecoverSmg : Tuning::RecoverRifle;
 };
 
 namespace WeaponDB {

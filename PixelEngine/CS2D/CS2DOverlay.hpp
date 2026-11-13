@@ -1,5 +1,7 @@
 #pragma once
 #include <SDL2/SDL.h>
+#include "Tuning.hpp"
+#include "AimLineStyle.hpp"
 #include <vector>
 #include <functional>
 
@@ -17,6 +19,7 @@ struct CrosshairCfg {
     bool  centerDot = true;
     float length    = 12.0f;
     float gap       = 3.0f;
+    bool  aimLine   = true;
     bool  dynamic   = true;   // true=随移动扩散；false=固定准星
 };
 
@@ -32,6 +35,7 @@ struct RadarCfg {
 class CS2DOverlay {
 public:
     CrosshairCfg crosshair;
+    AimLineStyle aimLineStyle;
     RadarCfg     radar;
     bool         centerRadarOn = false;
 
@@ -44,9 +48,20 @@ public:
     bool prevTab = false;
 
     // ---- 输入处理 ----
+    void InitializeCursor(float angle);
+    void SetReferenceMode(float zoom, float cameraShift, bool angled = false, bool normalAngled = false);
+    void SetReferenceWorldBounds(float width, float height) {
+        referenceWorldW_ = width;
+        referenceWorldH_ = height;
+    }
+    void SyncScopeCursor(bool scoped, bool closing, bool cameraReady, float dt = 0.0f, bool commitAllowed = true);
+    void SetVisibleAimPoint(float x, float y) { visibleWorld_ = {x, y}; visibleWorldValid_ = true; }
+    bool ScreenAnchorActive() const { return screenAnchor_; }
+    bool EdgeZoomRequested() const { return edgeZoomRequested_; }
     void UpdateCursor(int relX, int relY, float sensitivity, float zoom,
-                      float camX, float camY, int viewW, int viewH,
-                      float& outWorldX, float& outWorldY);
+                      float camX, float camY, int viewW, int viewH, float playerX, float playerY,
+                      float& outWorldX, float& outWorldY, float recoilAngle = 0.0f,
+                      SDL_FPoint renderOffset = {0.0f, 0.0f});
     void UpdateTabToggle();
 
     // ---- 渲染 ----
@@ -64,4 +79,17 @@ public:
     std::function<void(int)>    MakeSetRadarBgAlpha();
     std::function<void(int)>    MakeSetRadarHudSize();
     std::function<void(float)>  MakeSetRadarMapZoom();
+private:
+    float aimOffsetX_ = Tuning::InitialAimDistance, aimOffsetY_ = 0.0f;
+    float anchorX_ = 0.0f, anchorY_ = 0.0f;
+    SDL_FPoint visibleWorld_{}, anchorWorld_{};
+    bool visibleWorldValid_ = false, anchorWorldValid_ = false;
+    float referenceModeZoom_ = 1.0f, referenceCameraShift_ = Tuning::CameraLookShift;
+    float referenceWorldW_ = 0.0f, referenceWorldH_ = 0.0f;
+    float handoffElapsed_ = 0.0f;
+    bool referenceAngled_ = false, finishHandoff_ = false;
+    bool limitAngled_ = false;
+    bool screenAnchor_ = false, scopeClosing_ = false;
+    bool edgeZoomRequested_ = false;
+    bool cursorScoped_ = false;
 };

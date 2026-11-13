@@ -102,7 +102,7 @@ void CS2DGame::TraceBotDecision(size_t i, const Player* target) {
 // ---------------------------------------------------------------------------
 bool CS2DGame::PlanGrenadeThrow(const Player& bot, float tx, float ty, float& outAngle) const {
     if (!world_) return false;
-    constexpr float kNominalDist = 210.0f;   // 速度 420 / 摩擦 2 ≈ 210px
+    const float kNominalDist = std::clamp(std::hypot(tx - bot.x, ty - bot.y), Tuning::NadeThrowSpeedMin / Tuning::NadeFriction, Tuning::NadeThrowSpeedMax / Tuning::NadeFriction);
     const float baseAng = std::atan2(ty - bot.y, tx - bot.x);
     const float half = bot.size * 0.5f;
     const float mapW = world_->GetMapPixelW();
@@ -180,7 +180,8 @@ bool CS2DGame::BotCanSeePlayer(const Player& bot) const {
     if (!player_.alive || !IsHostile(player_, bot)) return false;   // 死斗 FFA：所有人都敌对
     const float dx = player_.x - bot.x;
     const float dy = player_.y - bot.y;
-    if (std::sqrt(dx * dx + dy * dy) > BOT_VIEW_RADIUS) return false;
+    const auto& p = tactics_.perception[std::clamp(AiAt(AiIndexOf(bot)).difficulty, 0, 3)];
+    if (!InViewCone(bot.x, bot.y, bot.EffectiveAim(), player_.x, player_.y, BOT_VIEW_RADIUS * p.radius, p.angle)) return false;
     if (!visibility_.World()) return true;   // 无世界数据时保持宽松语义（测试/初始化阶段）
     return visibility_.HasLineOfSight(bot.x, bot.y, player_.x, player_.y);
 }
@@ -190,7 +191,7 @@ bool CS2DGame::PlayerCanSeeBot(const Player& bot) const {
     // 烟雾遮挡
     if (SegmentBlockedBySmoke(player_.x, player_.y, bot.x, bot.y)) return false;
     if (!visibility_.World()) return true;   // 无世界数据时保持宽松语义（测试/初始化阶段）
-    return visibility_.IsVisibleToPlayer(player_.x, player_.y, player_.aimAngle,
+    return visibility_.IsVisibleToPlayer(player_.x, player_.y, player_.EffectiveAim(),
                                         bot.x, bot.y);
 }
 
@@ -317,6 +318,7 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     }
     if (ai.pathIdx >= static_cast<int>(ai.path.size())) {
         ai.path.clear();
+        ai.pathIdx = 0;
         return false;
     }
 
@@ -488,6 +490,21 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // BOT 阵亡掉落 / 切换武器读取的都是 ammoSlot，必须保持最新。
         bot.SaveAmmoToSlot();
         auto& ai = AiAt(i);
+        const auto& perception = tactics_.perception[std::clamp(ai.difficulty, 0, 3)];
+        bot.recoilRecoveryTimer = std::max(0.0f, bot.recoilRecoveryTimer - dt);
+        if (bot.recoilRecoveryTimer <= 0.0f)
+            bot.aimKick *= std::exp(-bot.CurrentWeapon().recoilRecoverPerSec * Tuning::BotFovRadiusMul[std::clamp(ai.difficulty, 0, 3)] * dt);
+        ai.settleTimer += dt;
+        for (auto& alert : ai.alerts)
+            if (alert.enemyId != -2 && clockSec_ > alert.lastPerceivedAt + Tuning::AlertMemory) alert = {};
+        if (ai.Ready(-4, clockSec_)) {
+            FollowPathTo(bot, ai, ai.dodgeX, ai.dodgeY, dt);
+            for (auto& alert : ai.alerts) if (alert.enemyId == -4) alert = {};
+            continue;
+        }
+        const bool moving = std::hypot(bot.vx, bot.vy) > 1.0f;
+        if (ai.wasMoving && !moving) ai.settleTimer = 0.0f;
+        ai.wasMoving = moving;
         AgeHeardSounds(ai, dt);
         if (ai.blindTimer > 0.0f) ai.blindTimer = std::max(0.0f, ai.blindTimer - dt);
         if (ai.lastHitTimer > 0.0f) ai.lastHitTimer = std::max(0.0f, ai.lastHitTimer - dt);
@@ -507,7 +524,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 if (d2 < 230.0f * 230.0f && d2 > 80.0f * 80.0f) {
                     float ang = 0.0f;
                     if (PlanGrenadeThrow(bot, ai.utilX, ai.utilY, ang)) {
-                        ThrowGrenade(bot, ang, audio);
+                        ThrowGrenade(bot, ang, audio, std::sqrt(d2));
                         ai.utilDone = true;
                         ++counters_.nadeThrows;
                     }
@@ -533,6 +550,14 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         }
 
         // 最近挨打：先把朝向转回威胁来源，否则拆包时被背后打到只会继续贴包。
+        if (ai.lastHitTimer > 0.0f || ai.alertTimer > 0.0f) {
+            bool reacted = false;
+            for (const auto& alert : ai.alerts)
+                reacted = reacted || (alert.enemyId != -2 && alert.enemyId != -4 && clockSec_ >= alert.expireAt);
+            if (!reacted) continue;
+        } else {
+            for (auto& alert : ai.alerts) if (alert.enemyId == -3) alert = {};
+        }
         if (!ai.defusing && ai.lastHitTimer > 0.0f) {
             const float tdx = ai.threatX - bot.x;
             const float tdy = ai.threatY - bot.y;
@@ -593,7 +618,18 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // ---- 目标选择：只用「看得见」的敌人 + 团队情报 ----
         float targetDist = 0.0f;
         const Player* visibleTarget = FindVisibleEnemy(bot, targetDist);
+        bot.aimDistance = std::max(targetDist, 0.001f);
         const Player* target = visibleTarget;
+        if (visibleTarget) {
+            const int id = visibleTarget == &player_ ? -1 : static_cast<int>(visibleTarget - bots_.data());
+            if (ai.perceivedTarget != id) ai.settleTimer = 0.0f;
+            ai.perceivedTarget = id;
+            ai.Perceive(id, clockSec_, perception.reaction);
+            if (!ai.Ready(id, clockSec_)) continue;
+            if (!ai.hadTarget) ai.settleTimer = 0.0f;
+        }
+
+        if (!visibleTarget) ai.perceivedTarget = -2;
 
         // ---- 听声扑人：下包 / 拆包的声音优先级最高 ----
         // T 下包时，能听到的 CT 优先扑向安装者；
@@ -613,6 +649,9 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 const float hearR = sm.isPlant ? Tuning::PlantHearRadius
                                                : Tuning::DefuseHearRadius;
                 if (sdist <= hearR) {
+                    const int id = sm.who == &player_ ? -1 : static_cast<int>(sm.who - bots_.data());
+                    ai.Perceive(id, clockSec_, perception.reaction);
+                    if (!ai.Ready(id, clockSec_)) continue;
                     heardSound = true;
                     target      = sm.who;
                     targetDist  = sdist;
@@ -893,7 +932,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             if (engageDist > Tuning::NadeThrowMin && engageDist < Tuning::NadeThrowMax) {
                 float throwAng = 0.0f;
                 if (PlanGrenadeThrow(bot, aimX, aimY, throwAng)) {
-                    ThrowGrenade(bot, throwAng, audio);
+                    ThrowGrenade(bot, throwAng, audio, std::hypot(aimX - bot.x, aimY - bot.y));
                     ai.grenadeCooldown = Tuning::NadeCooldown;
                     ++counters_.nadeThrows;
                 } else {
@@ -918,7 +957,9 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             bool softHold = false;   // 只是「去驻守点」：听觉情报可以临时把它顶掉
             float destX = 0.0f, destY = 0.0f;
 
-            // ---- 听声扑人：优先级最高，直接压过常规驻守/进攻目标 ----
+            if (!visibleTarget) ai.perceivedTarget = -2;
+
+        // ---- 听声扑人：优先级最高，直接压过常规驻守/进攻目标 ----
             // 听到下包（CT 方）或拆包（T 方）的声音时，立刻转向发声者，
             // 不再按教练计划守点/推进，避免"听见了却站着不动"。
             if (heardSound && sm.who) {
@@ -1439,10 +1480,12 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                         spreadMul *= sm.isPlant ? Tuning::PlantHearSpreadMul
                                                 : Tuning::DefuseHearSpreadMul;
                     }
+                    spreadMul *= 1.0f + Tuning::AimSettleMul * std::exp(-ai.settleTimer / perception.settle);
                     std::uniform_real_distribution<float> spreadDist(
                         -base * spreadMul, base * spreadMul);
 
-                    const float aimBase = std::atan2(target->y - bot.y, target->x - bot.x);
+                    bot.ApplyRecoil(def.recoilKickDeg);
+                    const float aimBase = std::atan2(target->y - bot.y, target->x - bot.x) + bot.aimKick;
                     const int pellets = std::max(1, def.pellets);
                     for (int p = 0; p < pellets; ++p) {
                         FireBullet(bot.x, bot.y, aimBase + spreadDist(rng_), def,

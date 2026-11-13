@@ -236,3 +236,11 @@ Linear 同步仍由原计划指定的 Muse 负责，本次未发送外部消息�
 - [x] release 与 dev 的 EngineApp 已重新构建，预览目录 executable 已同步 release 并校验哈希。
 
 截图位于项目 build-evidence/background-render-review，日志位于 D:/PixelEngine-AI/acceptance/2026-11-12/background-render-review.log。此前资源路径和静态图片检查没有覆盖这条实际背景绘制分支，本次新增测试覆盖该回归。
+
+## 2026-11-12 Linear 状态同步完成
+
+- [x] PIX-30 已从 Backlog 更新为 In Progress。
+- [x] Issue 描述顶部新增四图定稿导入、自动验收、碰撞待调整及对局背景渲染修复的当前摘要，原计划作为历史记录保留。
+- [x] 已追加实施进度评论，明确逐墙走测和最终验收待完成。
+
+Linear 地址为 https://linear.app/pixel-engine/issue/PIX-30 。

@@ -82,6 +82,18 @@ public:
         float vy      = 0.0f;
         float size    = 7.0f;
         float aimAngle = 0.0f;
+        float aimKick = 0.0f;
+        float aimDistance = Tuning::RecoilReferenceDistance;
+        float recoilRecoveryTimer = 0.0f;
+        float EffectiveAim() const { return aimAngle + aimKick; }
+        float RecoilOffsetX() const { return (std::cos(EffectiveAim()) - std::cos(aimAngle)) * aimDistance; }
+        float RecoilOffsetY() const { return (std::sin(EffectiveAim()) - std::sin(aimAngle)) * aimDistance; }
+        void ApplyRecoil(float degrees) {
+            const float remaining = std::remainder(-Tuning::Pi * 0.5f - EffectiveAim(), Tuning::Pi * 2.0f);
+            const float step = std::min(std::max(degrees, 0.0f) * Tuning::DegreesToRadians, std::abs(remaining));
+            aimKick = std::remainder(aimKick + std::copysign(step, remaining), Tuning::Pi * 2.0f);
+            recoilRecoveryTimer = Tuning::RecoilRecoveryDelay;
+        }
         int   health  = 100;
         int   maxHealth = 100;
         Team  team    = Team::CT;
@@ -273,6 +285,31 @@ public:
     // 与 bots_ 按下标一一对应，统一由 EnsureBotAi() 保证长度
     // ========================================================================
     struct BotRuntime {
+        int difficulty = 2;
+        float settleTimer = 0.0f;
+        int perceivedTarget = -2;
+        float dodgeX = 0.0f, dodgeY = 0.0f;
+        bool wasMoving = false;
+        struct Alert { int enemyId = -2; float perceivedAt = 0.0f, expireAt = 0.0f, lastPerceivedAt = 0.0f; };
+        std::array<Alert, 3> alerts{};
+        void Perceive(int id, float now, float delay) {
+            for (auto& alert : alerts) {
+                if (alert.enemyId == id) {
+                    alert.lastPerceivedAt = now;
+                    return;
+                }
+            }
+            auto slot = std::find_if(alerts.begin(), alerts.end(), [](const Alert& a) { return a.enemyId == -2; });
+            if (slot == alerts.end()) {
+                slot = std::max_element(alerts.begin(), alerts.end(), [](const Alert& a, const Alert& b) { return a.expireAt < b.expireAt; });
+                if (slot->expireAt < now + delay) return;
+            }
+            *slot = {id, now, now + delay, now};
+        }
+        bool Ready(int id, float now) const {
+            for (const auto& alert : alerts) if (alert.enemyId == id && now >= alert.expireAt) return true;
+            return false;
+        }
         BotStance   stance   = BotStance::None;    // 本帧姿态（决策树推导）
         BotManeuver maneuver = BotManeuver::None;  // 本帧机动偏好
         float     rotateTimer = 0.0f;               // lurk 换点计时
@@ -578,7 +615,32 @@ public:
     int GetPlayerKills()  const { return playerKills_; }
     int GetPlayerDeaths() const { return playerDeaths_; }
     int GetBotCount()     const { return static_cast<int>(bots_.size()); }
-    float GetAimAngle()   const { return player_.aimAngle; }
+    void SetBotProfile(size_t bot, int profile) { AiAt(bot).difficulty = std::clamp(profile, 0, 7) / 2; }
+    unsigned PlayerSpawnVersion() const { return playerSpawnVersion_; }
+    void SetAimTarget(float x, float y, bool followsPlayer = false);
+    void PrepareCamera(int viewW, int viewH, float interpolation = 1.0f);
+    struct ActorView {
+        float x = 0.0f, y = 0.0f;
+        bool alive = false;
+        float aimAngle = 0.0f, animTimer = 0.0f;
+        AnimState animState = AnimState::Idle;
+    };
+    ActorView GetActorView(const Player& actor) const;
+    float GetRenderAimX() const;
+    float GetRenderAimY() const;
+    float GetRenderAimAngle() const;
+    bool CameraPrepared() const { return cameraPrepared_; }
+    bool CameraScopeTransitionComplete() const { return cameraScopeSettled_; }
+    void ToggleCameraMode() { angledCamera_ = !angledCamera_; }
+    bool AngledCameraEnabled() const { return angledCamera_; }
+    static float ScopeCameraShiftForZoom(float zoom);
+    bool EdgeZoomRequested() const { return edgeZoomRequested_; }
+    float EdgeZoomAmount() const { return edgeZoom_; }
+    void SetEdgeZoomRequested(bool requested) { edgeZoomRequested_ = requested; }
+    float GetAimWorldX() const { return aimWorldX_; }
+    float GetAimWorldY() const { return aimWorldY_; }
+    bool AimFollowsPlayer() const { return aimFollowsPlayer_; }
+    float GetAimAngle()   const { return player_.EffectiveAim(); }
     // 0=静止，~0.42=静步，1=全速跑动。准星与弹道共用这一份移动扩散。
     float GetCrosshairBloom() const;
 
@@ -920,6 +982,18 @@ private:
     std::string mapSourcePath_;    // LoadMap 时的 resolved TMJ 路径
 
     Player player_;
+    ActorView previousPlayerView_;
+    std::vector<ActorView> previousBotViews_;
+    float renderInterpolation_ = 1.0f;
+    bool viewHistoryValid_ = false;
+    bool aimFollowsPlayer_ = false;
+    float aimOffsetX_ = Tuning::InitialAimDistance, aimOffsetY_ = 0.0f;
+    float recoilShake_ = 0.0f, recoilShakeAge_ = 0.0f;
+    unsigned playerSpawnVersion_ = 0;
+    bool cameraPrepared_ = false, cameraScopeSettled_ = false;
+    bool edgeZoomRequested_ = false;
+    float edgeZoom_ = 0.0f;
+    bool angledCamera_ = false, cameraKeyHeld_ = false;
     float crosshairBloom_ = 0.0f;  // 平滑后的移动扩散（0=静止，1=全速跑动）
     std::vector<Player> bots_;
     int nextBotNameIndex_ = 0;      // 新 BOT 分配昵称的游标（每场重置）
@@ -1209,7 +1283,7 @@ private:
     int  PickDefuseBot() const;
     // 目标是否落在以 self 朝向为中心的视野扇形内（玩家/BOT 共用几何）
     bool InViewCone(float fromX, float fromY, float aim,
-                    float toX, float toY, float maxDist) const;
+                    float toX, float toY, float maxDist, float angleMul = 1.0f) const;
     // 沿 A* 路径移动；返回 true 表示本帧移动已由寻路接管
     bool FollowPathTo(Player& bot, BotRuntime& ai,
                       float destX, float destY, float dt, float speedMul = 1.0f);
@@ -1219,7 +1293,7 @@ private:
     void ApplyAvoidance(float& vx, float& vy, float sepX, float sepY) const;
     void UpdateBullets(float dt, class AudioManager* audio);
     void UpdateGrenades(float dt, class AudioManager* audio);
-    void ThrowGrenade(Player& thrower, float aimAngle, class AudioManager* audio = nullptr);
+    void ThrowGrenade(Player& thrower, float aimAngle, class AudioManager* audio = nullptr, float targetDistance = -1.0f);
     // 投掷前校验：落点可行走 + 有视线 + 距离合理；失败则尝试偏移角度，全失败就不扔。
     bool PlanGrenadeThrow(const Player& bot, float tx, float ty, float& outAngle) const;
     void ExplodeGrenade(const Grenade& g, class AudioManager* audio);

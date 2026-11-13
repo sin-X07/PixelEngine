@@ -19,9 +19,14 @@
 #include <vector>
 
 #include "CS2D/CS2DGame.hpp"
+#include "CS2D/CS2DRenderer.hpp"
+#include "CS2D/CS2DOverlay.hpp"
+#include "Storage/SaveManager.hpp"
 #include "CS2D/CS2DWorld.hpp"
 #include "Core/PathUtils.hpp"
 #include "Core/PresentationContract.hpp"
+#include "Core/BuildInfo.hpp"
+#include "dev_replay/replay.hpp"
 #include "Input/FireInputGate.hpp"
 #include "Graphics/Menu3DModel.hpp"
 #include "Graphics/Menu3D.hpp"
@@ -1151,10 +1156,771 @@ static void TestCollisionModes() {
     check(wallWorld.CheckRectCollision(2.1f, 0.0f, 7.0f, 7.0f), "center: 盒子碰到墙的像素边就碰撞");
 }
 
+static void TestStableCursorAndWallRay() {
+    CS2DOverlay overlay;
+    overlay.InitializeCursor(0.0f);
+    float x = 0.0f, y = 0.0f;
+    overlay.UpdateCursor(0, 0, 1, 6, 0, 0, 1920, 1080, 200, 200, x, y);
+    check(x == 200 + Tuning::InitialAimDistance && y == 200, "spawn cursor starts in front of player");
+    overlay.UpdateCursor(0, 0, 1, 4, -80, -90, 1920, 1080, 200, 200, x, y);
+    check(x == 200 + Tuning::InitialAimDistance && y == 200, "camera and zoom do not feed back into aim");
+    overlay.SyncScopeCursor(true, false, false);
+    overlay.UpdateCursor(60, -30, 1, 6, 0, 100, 1920, 1080, 200, 200, x, y);
+    check(x == 255 && y == 195, "scoped cursor accepts relative motion");
+    overlay.SetVisibleAimPoint(x, y);
+    overlay.SyncScopeCursor(true, true, false);
+    overlay.UpdateCursor(0, 0, 1, 4, -30, 80, 1920, 1080, 200, 200, x, y);
+    check(std::abs(x - 255) < 0.001f && std::abs(y - 195) < 0.001f,
+          "scope closing preserves the last map pixel");
+    overlay.SyncScopeCursor(false, true, false);
+    overlay.UpdateCursor(0, 0, 1, 6, 0, 0, 1920, 1080, 200, 200, x, y);
+    check(std::abs(x - 255) < 0.001f && std::abs(y - 195) < 0.001f, "zoom changes preserve anchored world point");
+    overlay.UpdateCursor(0, 0, 1, 4, -80, -90, 1920, 1080, 200, 200, x, y);
+    check(std::abs(x - 255) < 0.001f && std::abs(y - 195) < 0.001f, "camera changes preserve anchored world point");
+    overlay.SyncScopeCursor(false, true, true);
+    overlay.UpdateCursor(0, 0, 1, 4, -80, -90, 1920, 1080, 200, 200, x, y);
+    check(!overlay.ScreenAnchorActive(), "settled closing camera commits the anchor to the base offset");
+    const float committedX = x, committedY = y;
+    overlay.UpdateCursor(0, 0, 1, 6, 0, 0, 1920, 1080, 200, 200, x, y);
+    check(x == committedX && y == committedY, "completed handoff no longer rewrites the offset from the camera");
+    overlay.SyncScopeCursor(true, false, false);
+    overlay.SyncScopeCursor(false, true, false);
+    overlay.UpdateCursor(0, 0, 1, 4, -80, -90, 1920, 1080, 200, 200, x, y);
+    const float interruptedX = x, interruptedY = y;
+    overlay.SyncScopeCursor(true, false, false);
+    overlay.UpdateCursor(0, 0, 1, 4, -80, -90, 1920, 1080, 200, 200, x, y);
+    check(!overlay.ScreenAnchorActive() && x == interruptedX && y == interruptedY,
+          "reopening during handoff commits the current point without jumping back");
+    overlay.InitializeCursor(0.0f);
+    overlay.UpdateCursor(0, 0, 1, 6, 0, 0, 1920, 1080, 210, 205, x, y);
+    check(x == 255 && y == 205, "player motion preserves relative cursor offset");
+
+    CS2DMapData data;
+    data.mapWidth = 8; data.mapHeight = 8;
+    data.tileWidth = 8; data.tileHeight = 8;
+    ObjectLayerDef layer; layer.name = "Collisions";
+    ObjectDef wall; wall.x = 24; wall.y = 0; wall.width = 8; wall.height = 64;
+    layer.objects.push_back(wall); data.objectLayers.push_back(layer);
+    CS2DWorld world; world.Build(data);
+    VisibilityQuery ray; ray.SetWorld(&world);
+    check(std::fabs(ray.FirstBulletWallFraction(8, 12, 48, 12) - 0.4f) < 0.001f, "aim ray stops exactly at first wall boundary");
+    check(ray.FirstBulletWallFraction(8, 12, 20, 12) == 1.0f, "unobstructed aim ray reaches crosshair");
+    check(std::fabs(ray.FirstBulletWallFraction(48, 12, 8, 12) - 0.4f) < 0.001f, "reverse ray finds opposite wall face");
+    check(ray.FirstBulletWallFraction(28, 12, 48, 12) == 0.0f, "muzzle inside wall has no solid visible segment");
+    check(ray.FirstBulletWallFraction(8, 12, 8, 12) == 1.0f, "zero length ray terminates");
+
+    CS2DMapData cameraData;
+    cameraData.mapWidth = 200; cameraData.mapHeight = 200;
+    cameraData.tileWidth = 8; cameraData.tileHeight = 8;
+    CS2DWorld cameraWorld; cameraWorld.Build(cameraData);
+    CS2DRenderer at60, at120;
+    at60.SetWorld(&cameraWorld); at120.SetWorld(&cameraWorld);
+    at60.UpdateCamera(250, 250, 1920, 1080);
+    at120.UpdateCamera(250, 250, 1920, 1080);
+    at60.SetFrameDelta(1.0f / 60.0f); at120.SetFrameDelta(1.0f / 120.0f);
+    for (int frame = 0; frame < 6; ++frame) at60.UpdateCamera(600, 600, 1920, 1080);
+    for (int frame = 0; frame < 12; ++frame) at120.UpdateCamera(600, 600, 1920, 1080);
+    check(std::fabs(at60.GetCameraX() - at120.GetCameraX()) < 0.001f, "camera smoothing is frame-rate independent");
+}
+
+static void TestAimLinePersistenceAndRecoilRecovery() {
+    const std::string previousBase = PathUtils::BaseDir();
+    const auto isolated = std::filesystem::absolute("build-evidence/pix31-settings-test");
+    std::filesystem::create_directories(isolated);
+    PathUtils::SetBaseDir(isolated.string());
+    const auto savePath = isolated / (std::string("cs2d_save") + std::string(BuildInfo::SaveSuffix()) + ".ini");
+    IniFile legacy;
+    legacy.SetBool("crosshair", "dynamic", true);
+    legacy.Save(savePath.string());
+    SaveManager settings;
+    settings.Load();
+    check(settings.GetSettings().aimLine, "legacy settings default aim line on");
+    settings.MutableSettings().aimLine = false;
+    settings.Save();
+    SaveManager reloaded;
+    reloaded.Load();
+    check(!reloaded.GetSettings().aimLine, "aim-line disabled setting survives reload");
+    reloaded.MutableSettings().aimLine = true;
+    reloaded.Save();
+    settings.Load();
+    check(settings.GetSettings().aimLine, "aim-line enabled setting survives reload");
+    const auto defaults = settings.GetSettings().aimLineStyle;
+    check(defaults.solid.r == 50 && defaults.hidden.a == 125 && defaults.dashLength == 8.0f,
+          "legacy save receives original aim-line appearance");
+    auto& line = settings.MutableSettings().aimLineStyle;
+    line.solid = {210, 40, 30, 90};
+    line.hidden = {60, 80, 220, 160};
+    line.solidThickness = 4.5f;
+    line.hiddenThickness = 2.5f;
+    line.dashLength = 15.0f;
+    line.gapLength = 11.0f;
+    settings.Save();
+    reloaded.Load();
+    const auto loadedLine = reloaded.GetSettings().aimLineStyle;
+    check(loadedLine.solid.r == 210 && loadedLine.solid.a == 90 && loadedLine.hidden.b == 220 && loadedLine.hidden.a == 160,
+          "solid and hidden line colors and opacity survive reload independently");
+    check(loadedLine.solidThickness == 4.5f && loadedLine.hiddenThickness == 2.5f &&
+          loadedLine.dashLength == 15.0f && loadedLine.gapLength == 11.0f,
+          "line widths and dash pattern survive reload");
+    IniFile malformed = IniFile::Load(savePath.string());
+    malformed.SetInt("aim_line", "solid_r", 999);
+    malformed.SetFloat("aim_line", "solid_thickness", -20.0f);
+    malformed.Set("aim_line", "hidden_thickness", "nan");
+    malformed.SetFloat("aim_line", "dash_length", 0.0f);
+    malformed.Set("aim_line", "gap_length", "inf");
+    malformed.Save(savePath.string());
+    reloaded.Load();
+    const auto repairedLine = reloaded.GetSettings().aimLineStyle;
+    check(repairedLine.solid.r == 255 && repairedLine.solidThickness == 0.5f && repairedLine.hiddenThickness == 1.0f &&
+          repairedLine.dashLength >= 1.0f && std::isfinite(repairedLine.gapLength),
+          "invalid line settings normalize finite widths, positive dash steps and color channels");
+    PathUtils::SetBaseDir(previousBase);
+
+    CS2DGame game;
+    if (!LoadDeathMatch(game)) return;
+    auto& player = game.GetPlayer();
+    player.SetSlotWeapon(0, WeaponId::AK47);
+    game.SwitchWeaponSlot(0);
+    player.shootCooldown = 0.0f;
+    float previousKick = 0.0f;
+    for (int tick = 0; tick < 24; ++tick) {
+        const int ammo = player.ammo;
+        game.Update(1.0f / 60.0f, true, player.x + 100, player.y,
+                    false, false, false, false, false, false, false, nullptr);
+        if (player.ammo < ammo) {
+            check(player.aimKick < previousKick, "continuous shots rotate rightward aim toward twelve oclock");
+            previousKick = player.aimKick;
+        }
+    }
+    const float heldKick = player.aimKick;
+    for (int tick = 0; tick < 60; ++tick)
+        game.Update(1.0f / 60.0f, false, player.x + 100, player.y,
+                    false, false, false, false, false, false, false, nullptr);
+    check(heldKick < 0 && std::abs(player.aimKick) < std::abs(heldKick) * 0.02f, "recoil returns after firing stops");
+}
+
+static void TestReactionBenchmark() {
+    for (int difficulty = 0; difficulty < 4; ++difficulty) {
+        float total = 0.0f;
+        int samples = 0;
+        for (int seed = 1; seed <= 60; ++seed) {
+            CS2DGame game;
+            game.SetRngSeed(seed);
+            if (!LoadDeathMatch(game)) return;
+            game.GetBOTs().resize(1);
+            auto& bot = game.GetBOTs()[0];
+            auto& player = game.GetPlayer();
+            bot.x = player.x + 0.1f;
+            bot.y = player.y;
+            bot.aimAngle = 3.14159265f;
+            bot.shootAnimTimer = 0.0f;
+            bot.shootCooldown = 0.0f;
+            player.health = bot.health = 100000;
+            game.SetBotProfile(0, difficulty * 2);
+            game.ResetBotAi(0);
+            for (int tick = 0; tick < 300; ++tick) {
+                game.Update(1.0f / 60.0f, false, player.x, player.y,
+                            false, false, false, false, false, false, false, nullptr);
+                if (bot.shootAnimTimer > 0.0f) {
+                    const float delay = tick / 60.0f;
+                    check(delay + 0.02f >= Tuning::BotReactionSecs[difficulty], "first shot respects perception reaction deadline");
+                    total += delay;
+                    ++samples;
+                    break;
+                }
+            }
+        }
+        check(samples == 60, "reaction benchmark completes 60 controlled encounters per difficulty");
+        std::printf("[PIX31 reaction] difficulty=%d samples=%d mean_seconds=%.4f expected=%.2f\n",
+                    difficulty, samples, samples ? total / samples : 0.0f, Tuning::BotReactionSecs[difficulty]);
+    }
+}
+
+static void TestGrenadeCursorDistance() {
+    for (float distance : {50.0f, 150.0f, 400.0f}) {
+        CS2DGame game;
+        if (!LoadDeathMatch(game)) return;
+        auto& player = game.GetPlayer();
+        player.grenades[0] = WeaponId::GrenadeHE;
+        player.grenadeCount = 1;
+        player.grenadeSlot = 0;
+        player.SyncActiveGrenade();
+        game.SwitchWeaponSlot(3);
+        player.shootCooldown = 0.0f;
+        game.Update(0.0f, true, player.x + distance, player.y,
+                    false, false, false, false, false, false, false, nullptr);
+        const auto& grenades = game.GetGrenades();
+        check(!grenades.empty(), "cursor-distance grenade launches through normal input");
+        if (!grenades.empty()) {
+            const float expected = std::clamp(distance * Tuning::NadeFriction,
+                Tuning::NadeThrowSpeedMin, Tuning::NadeThrowSpeedMax);
+            check(std::fabs(std::hypot(grenades.back().vx, grenades.back().vy) - expected) < 0.01f,
+                  "grenade launch speed follows cursor distance and clamps range");
+        }
+    }
+}
+
+static void TestFixedReferenceCursor() {
+    for (int mode = 0; mode < 4; ++mode) {
+        for (int fps : {60, 120, 144}) {
+            for (const auto direction : std::vector<std::pair<int, int>>{{1,0}, {-1,0}, {0,1}, {0,-1}, {1,1}}) {
+                CS2DOverlay reference, animated;
+                reference.InitializeCursor(0.0f);
+                animated.InitializeCursor(0.0f);
+                const float modeZoom = mode == 1 ? 1.5f : mode == 2 ? 2.0f : 1.0f;
+                const float shift = CS2DGame::ScopeCameraShiftForZoom(modeZoom);
+                reference.SetReferenceMode(modeZoom, shift, mode == 3);
+                animated.SetReferenceMode(modeZoom, shift, mode == 3);
+                bool same = true;
+                int entries = 0, exits = 0;
+                bool previous = false;
+                for (int frame = 0; frame < fps * 4; ++frame) {
+                    int motion = 0;
+                    if (frame < fps) motion = 2880 / fps;
+                    if (frame >= fps * 2 && frame < fps * 3) motion = -static_cast<int>(1440 * modeZoom) / fps;
+                    const float time = static_cast<float>(frame) / fps;
+                    const float zoom = 6.0f * (0.85f + 0.15f * std::cos(time * 5.0f));
+                    float rx = 0, ry = 0, ax = 0, ay = 0;
+                    reference.UpdateCursor(motion * direction.first, motion * direction.second, 1, 6,
+                        0, 0, 1920, 1080, 500, 500, rx, ry);
+                    animated.UpdateCursor(motion * direction.first, motion * direction.second, 1, zoom,
+                        150 * std::sin(time), -80 * std::cos(time), 1920, 1080, 500, 500, ax, ay);
+                    same = same && std::abs(rx - ax) < 0.001f && std::abs(ry - ay) < 0.001f &&
+                        reference.EdgeZoomRequested() == animated.EdgeZoomRequested();
+                    const bool requested = animated.EdgeZoomRequested();
+                    if (requested && !previous) ++entries;
+                    if (!requested && previous) ++exits;
+                    previous = requested;
+                }
+                check(same, "fixed reference keeps input and edge decisions independent of animated zoom/camera");
+                if (entries != 1 || exits != 1)
+                    std::printf("[Reference case] mode=%d fps=%d dir=(%d,%d) entries=%d exits=%d\n", mode, fps, direction.first, direction.second, entries, exits);
+                check(entries == 1 && exits == 1, "continuous outward/hold/inward motion has exactly one zoom entry and exit");
+            }
+        }
+    }
+    for (const auto side : std::vector<std::pair<int, int>>{{-1,0}, {1,0}, {0,-1}, {0,1}}) {
+        CS2DOverlay border;
+        border.InitializeCursor(0);
+        border.SetReferenceWorldBounds(880, 880);
+        const float playerX = side.first > 0 ? 860.0f : 20.0f;
+        const float playerY = side.second > 0 ? 860.0f : 20.0f;
+        float x = 0, y = 0;
+        border.UpdateCursor(side.first * 10000, side.second * 10000, 1, 6, 0, 0,
+            1920, 1080, playerX, playerY, x, y);
+        check(border.EdgeZoomRequested(), "map-clamped reference camera detects its viewport edge");
+        const float heldX = x, heldY = y;
+        bool stable = true;
+        for (int frame = 0; frame < 120; ++frame) {
+            border.UpdateCursor(0, 0, 1, 4.2f + frame * 0.01f, -100 + frame, -100 + frame,
+                1920, 1080, playerX, playerY, x, y);
+            stable = stable && border.EdgeZoomRequested() && x == heldX && y == heldY;
+        }
+        check(stable, "map-border clamp stays independent of animated camera/zoom");
+        border.UpdateCursor(-side.first * 20, -side.second * 20, 1, 4.2f, 0, 0,
+            1920, 1080, playerX, playerY, x, y);
+        check(border.EdgeZoomRequested(), "small inward motion stays inside the reference hysteresis band");
+        border.UpdateCursor(-side.first * 80, -side.second * 80, 1, 4.2f, 0, 0,
+            1920, 1080, playerX, playerY, x, y);
+        check(!border.EdgeZoomRequested(), "inward motion exits reference hysteresis at map borders");
+    }
+    CS2DOverlay cursor;
+    cursor.InitializeCursor(0);
+    float x = 0, y = 0;
+    cursor.UpdateCursor(10000, 0, 1, 6, 0, 0, 1920, 1080, 500, 500, x, y);
+    check(cursor.EdgeZoomRequested(), "reference edge is reached before handoff");
+    cursor.virtCursorX = 1300;
+    cursor.virtCursorY = 500;
+    cursor.SyncScopeCursor(true, false, false);
+    cursor.SyncScopeCursor(false, true, false);
+    for (int frame = 0; frame < 30; ++frame) {
+        cursor.SyncScopeCursor(false, true, false, 1.0f / 60.0f);
+        cursor.UpdateCursor(-10, 0, 1, 4, 100, 50, 1920, 1080, 500, 500, x, y);
+        check(cursor.EdgeZoomRequested(), "scope handoff freezes the edge target while accepting mouse motion");
+    }
+    check(std::abs(cursor.virtCursorX - 1100) < 0.01f, "handoff anchor accepts relative mouse movement");
+    cursor.SyncScopeCursor(false, true, false, Tuning::AimHandoffMaxSeconds);
+    cursor.UpdateCursor(0, 0, 1, 4, 100, 50, 1920, 1080, 500, 500, x, y);
+    check(!cursor.ScreenAnchorActive(), "handoff has a finite completion deadline");
+
+    dev_replay::JournalHeader header;
+    dev_replay::InputFrame input;
+    input.edgeZoom = true;
+    input.relativeAim = true;
+    const std::string path = "build-evidence/pix31-reference-input.txt";
+    check(dev_replay::WriteJournal(path, header, {input}), "write edge-zoom replay input");
+    std::vector<dev_replay::InputFrame> frames;
+    check(dev_replay::ReadJournal(path, header, frames) && frames.front().edgeZoom && frames.front().relativeAim,
+          "replay input preserves edge target and relative aiming mode");
+    std::FILE* legacy = std::fopen(path.c_str(), "w");
+    if (legacy) {
+        std::fputs("# PXINPUT2 map=dust_2\n0 0 10 20 0 0 0 0 0 0 0 0 0 0 0\n", legacy);
+        std::fclose(legacy);
+    }
+    frames.clear();
+    check(dev_replay::ReadJournal(path, header, frames) && !frames.front().edgeZoom && !frames.front().relativeAim,
+          "legacy replay input defaults edge target and relative aiming mode to false");
+}
+
+static void TestSharedAimDistance() {
+    for (bool angled : {false, true}) {
+        for (const auto player : std::vector<std::pair<float, float>>{{440,440}, {20,20}, {860,860}}) {
+            for (const auto direction : std::vector<std::pair<int, int>>{{1,0}, {-1,0}, {0,1}, {0,-1}, {1,1}}) {
+                float baselineX = 0, baselineY = 0;
+                bool same = true;
+                for (float zoom : {1.0f, 1.5f, 2.0f}) {
+                    CS2DOverlay cursor;
+                    cursor.InitializeCursor(std::atan2(static_cast<float>(direction.second), static_cast<float>(direction.first)));
+                    cursor.SetReferenceWorldBounds(880, 880);
+                    cursor.SetReferenceMode(zoom, CS2DGame::ScopeCameraShiftForZoom(zoom), zoom == 1.0f && angled, angled);
+                    float x = 0, y = 0;
+                    cursor.UpdateCursor(direction.first * 100000, direction.second * 100000, 1, 6 * zoom,
+                        0, 0, 1920, 1080, player.first, player.second, x, y);
+                    if (zoom == 1.0f) { baselineX = x; baselineY = y; }
+                    same &= std::hypot(x - baselineX, y - baselineY) < 0.001f;
+                }
+                check(same, "all scope levels share the normal-camera maximum world offset including map edges");
+            }
+        }
+    }
+}
+
+static void TestAimLineRendering() {
+    SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 320, 180, 32, SDL_PIXELFORMAT_RGBA32);
+    SDL_Renderer* software = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+    check(software != nullptr, "software renderer for customizable aim line");
+    if (!software) { SDL_FreeSurface(surface); return; }
+    {
+        CS2DRenderer renderer;
+        renderer.Initialize(software, "assets/cs2d/maps", 320, 180);
+        CS2DMapData data;
+        data.mapWidth = 20; data.mapHeight = 12;
+        data.tileWidth = data.tileHeight = 8;
+        ObjectLayerDef layer; layer.name = "Collisions";
+        ObjectDef wall; wall.x = 80; wall.y = 0; wall.width = 8; wall.height = 96;
+        layer.objects.push_back(wall); data.objectLayers.push_back(layer);
+        CS2DWorld world;
+        world.Build(data);
+        renderer.SetWorld(&world);
+        renderer.SetPreviewCamera(80, 45, 2, false);
+        auto clear = [&] {
+            SDL_SetRenderDrawColor(software, 0, 0, 0, 255);
+            SDL_RenderClear(software);
+        };
+        auto pixel = [&](int x, int y) {
+            const auto* row = reinterpret_cast<const Uint32*>(static_cast<const Uint8*>(surface->pixels) + y * surface->pitch);
+            SDL_Color color;
+            SDL_GetRGBA(row[x], surface->format, &color.r, &color.g, &color.b, &color.a);
+            return color;
+        };
+        AimLineStyle line;
+        line.solid = {200, 0, 0, 128};
+        line.hidden = {0, 0, 240, 255};
+        line.solidThickness = 6;
+        line.hiddenThickness = 2;
+        clear();
+        renderer.DrawAimLine(20, 40, 7, 0, 0, 140, 40, line);
+        SDL_RenderPresent(software);
+        check(pixel(120,80).r >= 99 && pixel(120,80).r <= 101 && pixel(120,80).b == 0,
+              "solid segment applies its customized color and alpha");
+        check(pixel(163,80).b == 240 && pixel(170,80).b == 0,
+              "wall-to-reticle section applies hidden color with a dashed gap");
+        check(pixel(120,82).r > 0 && pixel(120,84).r == 0 && pixel(163,82).b == 0,
+              "solid and hidden segments use independently customized pixel widths");
+        clear();
+        renderer.DrawAimLine(20, 40, 7, 0, 0, 60, 40, line);
+        SDL_RenderPresent(software);
+        check(pixel(45,80).r > 0 && pixel(150,80).r > 0 && pixel(163,80).b > 0,
+              "ray starts at actor and continues past the reticle to the next wall");
+        line.solid.a = line.hidden.a = 0;
+        clear();
+        renderer.DrawAimLine(20, 40, 7, 0, 0, 140, 40, line);
+        SDL_RenderPresent(software);
+        check(pixel(120,80).r == 0 && pixel(163,80).b == 0, "zero opacity hides both line segments");
+    }
+    SDL_DestroyRenderer(software);
+    SDL_FreeSurface(surface);
+}
+
+static void TestMovementFrameInterpolation() {
+    SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 320, 180, 32, SDL_PIXELFORMAT_RGBA32);
+    SDL_Renderer* software = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+    check(software != nullptr, "software renderer for moving frame synchronization");
+    if (!software) { SDL_FreeSurface(surface); return; }
+    SDL_RenderSetLogicalSize(software, 1280, 720);
+    {
+        CS2DRenderer renderer;
+        renderer.Initialize(software, "assets/cs2d/maps", 1280, 720);
+        for (int fps : {30, 60, 120, 144}) {
+            CS2DGame game;
+            game.SetRngSeed(31);
+            game.SetMatchMode(MatchMode::DeathMatch);
+            if (!game.LoadMap(MapPath(), &renderer, true)) continue;
+            game.GetBOTs().clear();
+            auto& player = game.GetPlayer();
+            const auto& world = game.GetWorld();
+            bool found = false;
+            for (int row = 3; row < world.GetMapHeight() - 3 && !found; ++row) {
+                for (int col = 3; col < world.GetMapWidth() - 3 && !found; ++col) {
+                    const float x = (col + 0.5f) * world.GetTileWidth();
+                    const float y = (row + 0.5f) * world.GetTileHeight();
+                    if (!world.CheckRectCollision(x - 8, y - 8, 64, 16)) {
+                        player.x = x;
+                        player.y = y;
+                        found = true;
+                    }
+                }
+            }
+            check(found, "movement regression finds an unobstructed lane");
+            if (!found) continue;
+            player.health = player.maxHealth = 100000;
+            player.vx = player.vy = 0;
+            game.SetAimTarget(player.x + 45, player.y, true);
+            game.Update(0, false, player.x + 45, player.y, false, false, false, false, false, false, false, nullptr);
+            renderer.SetFrameDelta(0);
+            game.PrepareCamera(1280, 720);
+            game.Render(1280, 720);
+            const float startX = player.x;
+            double lag = 0;
+            float previousX = startX;
+            float maximumStep = 0, projectionError = 0, interpolationError = 0, radiusError = 0;
+            for (int frame = 0; frame < fps / 2; ++frame) {
+                lag += 1.0 / fps;
+                float lastTickX = player.x;
+                while (lag + 1e-9 >= 1.0 / 60.0) {
+                    lastTickX = player.x;
+                    game.SetAimTarget(player.x + 45, player.y, true);
+                    game.Update(1.0f / 60.0f, false, player.x + 45, player.y,
+                        false, false, false, true, false, false, false, nullptr);
+                    lag -= 1.0 / 60.0;
+                }
+                renderer.SetFrameDelta(1.0f / fps);
+                const float alpha = std::clamp(static_cast<float>(lag * 60.0), 0.0f, 1.0f);
+                game.PrepareCamera(1280, 720, alpha);
+                const auto view = game.GetActorView(player);
+                // Compare the active tick interval, even on render frames without a tick.
+                if (player.x != lastTickX)
+                    interpolationError = std::max(interpolationError, std::abs(view.x - (lastTickX + (player.x - lastTickX) * alpha)));
+                maximumStep = std::max(maximumStep, view.x - previousX);
+                check(view.x + 0.0001f >= previousX, "rendered movement advances monotonically");
+                previousX = view.x;
+                const float px = (view.x - renderer.GetCameraX()) * renderer.GetZoom();
+                const float cx = (game.GetRenderAimX() - renderer.GetCameraX()) * renderer.GetZoom();
+                projectionError = std::max(projectionError, std::abs((cx - px) - 45 * renderer.GetZoom()));
+                radiusError = std::max(radiusError, std::abs(std::hypot(game.GetRenderAimX() - view.x, game.GetRenderAimY() - view.y) - 45));
+                game.Render(1280, 720);
+            }
+            check(player.x > startX + 5, "normal movement entry point advances the player");
+            check(maximumStep <= Tuning::PlayerBaseSpeed / fps + 0.002f, "rendered displacement stays within the per-frame movement bound");
+            check(interpolationError < 0.001f && projectionError < 0.001f && radiusError < 0.001f,
+                  "camera, actor and relative reticle share the interpolated frame at 30/60/120/144 FPS");
+            game.SetAimTarget(player.x + 45, player.y, true);
+            player.aimKick = -0.2f;
+            renderer.SetFrameDelta(0);
+            game.PrepareCamera(1280, 720, 1);
+            const float kickedCamY = renderer.GetCameraY();
+            const float kickedY = game.GetRenderAimY();
+            game.Render(1280, 720);
+            player.aimKick = 0;
+            game.PrepareCamera(1280, 720, 1);
+            check(kickedCamY < renderer.GetCameraY() && kickedY < game.GetRenderAimY(),
+                  "camera follows the effective angular recoil target");
+            game.Render(1280, 720);
+            player.SetSlotWeapon(0, WeaponId::AWP);
+            game.SwitchWeaponSlot(0);
+            player.aimKick = 0;
+            player.shootCooldown = 0;
+            game.SetAimTarget(player.x + 45, player.y, true);
+            game.Update(0, true, player.x + 45, player.y,
+                false, false, false, false, false, false, false, nullptr);
+            check(!game.GetBullets().empty(), "normal firing emits a bullet for recoil synchronization");
+            if (!game.GetBullets().empty()) {
+                const auto& bullet = game.GetBullets().back();
+                const float shotAngle = std::atan2(bullet.vy, bullet.vx);
+                const float shotSpread = player.CurrentWeapon().spreadBase *
+                    (1.0f + game.GetCrosshairBloom() * (Tuning::MoveSpreadMaxMul - 1.0f));
+                check(std::abs(std::remainder(shotAngle - player.EffectiveAim(), Tuning::Pi * 2)) <= shotSpread + 0.00001f,
+                      "current shot uses the same recoil-adjusted direction as the reticle");
+            }
+            auto unshakenCameraX = [&] {
+                const float zoom = renderer.GetZoom();
+                const float viewW = 1280 / zoom;
+                const float totalW = std::max(world.GetMapPixelW(), world.GetImageW());
+                const float desired = player.x + (game.GetRenderAimX() - player.x) * Tuning::CameraLookShift - viewW * 0.5f;
+                return std::clamp(desired, -Tuning::VisionRadius, std::max(-Tuning::VisionRadius, totalW - viewW + Tuning::VisionRadius));
+            };
+            game.PrepareCamera(1280, 720, 1);
+            const float initialShake = renderer.GetCameraX() - unshakenCameraX();
+            game.Render(1280, 720);
+            game.Update(1.0f / 60.0f, false, player.x + 45, player.y,
+                false, false, false, false, false, false, false, nullptr);
+            game.PrepareCamera(1280, 720, 1);
+            const float nextShake = renderer.GetCameraX() - unshakenCameraX();
+            check(initialShake > 0.1f && nextShake < 0 && std::abs(nextShake) < initialShake,
+                  "firing adds deterministic alternating camera shake after smoothing with decaying amplitude");
+            game.Render(1280, 720);
+            player.x = world.GetMapPixelW() * 0.5f;
+            player.y = world.GetMapPixelH() * 0.5f;
+            game.SetAimTarget(player.x + 200, player.y, true);
+            player.aimKick = -Tuning::Pi * 0.5f;
+            game.PrepareCamera(1280, 720, 1);
+            const float reticleY = (game.GetRenderAimY() - renderer.GetCameraY()) * renderer.GetZoom();
+            check(reticleY >= 0 && reticleY <= 720,
+                  "camera accommodates recoil rotation at a long radius without losing the reticle");
+        }
+    }
+    SDL_DestroyRenderer(software);
+    SDL_FreeSurface(surface);
+}
+
+static void TestScopeFrameSnapshot() {
+    SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 320, 180, 32, SDL_PIXELFORMAT_RGBA32);
+    SDL_Renderer* software = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+    check(software != nullptr, "software renderer for scope frame snapshot");
+    if (!software) { SDL_FreeSurface(surface); return; }
+    SDL_RenderSetLogicalSize(software, 1280, 720);
+    {
+        CS2DRenderer renderer;
+        renderer.Initialize(software, "assets/cs2d/maps", 1280, 720);
+        CS2DGame game;
+        game.SetRngSeed(31);
+        game.SetMatchMode(MatchMode::DeathMatch);
+        if (game.LoadMap(MapPath(), &renderer, true)) {
+            auto& player = game.GetPlayer();
+            player.health = player.maxHealth = 100000;
+            player.SetSlotWeapon(0, WeaponId::AWP);
+            game.SwitchWeaponSlot(0);
+            for (int cameraMode = 0; cameraMode < 2; ++cameraMode) {
+                if (cameraMode > 0) game.ToggleCameraMode();
+                for (int fps : {60, 120, 144}) {
+                    game.ResetScope(Presentation::ScopeResetReason::InputBlocked);
+                    game.SetEdgeZoomRequested(false);
+                    player.aimKick = -0.15f;
+                    player.recoilRecoveryTimer = 10.0f;
+                    CS2DOverlay cursor;
+                    cursor.InitializeCursor(0);
+                    game.SetAimTarget(player.x + Tuning::InitialAimDistance, player.y);
+                    renderer.SetFrameDelta(1.0f / fps);
+                    double lag = 0;
+                    bool sawAnchor = false, committed = false, edgeFrozen = true;
+                    float lockedX = 0, lockedY = 0, error = 0;
+                    bool commitChecked = false;
+                    auto sync = [&](float dt, bool commitAllowed = false) {
+                        const auto scope = game.GetScopeView();
+                        const float shift = scope.level > 0 ? CS2DGame::ScopeCameraShiftForZoom(scope.targetZoomMultiplier) : Tuning::CameraLookShift;
+                        cursor.SetReferenceMode(scope.targetZoomMultiplier, shift, scope.level == 0 && game.AngledCameraEnabled(), game.AngledCameraEnabled());
+                        if (!cursor.ScreenAnchorActive()) {
+                            cursor.SetVisibleAimPoint(game.GetRenderAimX(), game.GetRenderAimY());
+                            cursor.virtCursorX = (game.GetRenderAimX() - renderer.GetCameraX()) * renderer.GetZoom();
+                            cursor.virtCursorY = (game.GetRenderAimY() - renderer.GetCameraY()) * renderer.GetZoom();
+                        }
+                        cursor.SyncScopeCursor(scope.active, scope.level == 0, game.CameraScopeTransitionComplete(), dt, commitAllowed);
+                        float x = 0, y = 0;
+                        const auto view = game.GetActorView(player);
+                        cursor.UpdateCursor(0, 0, 0, renderer.GetZoom(), renderer.GetCameraX(), renderer.GetCameraY(),
+                            1280, 720, player.x, player.y, x, y, player.aimKick, {view.x - player.x, view.y - player.y});
+                        game.SetAimTarget(x, y, !cursor.ScreenAnchorActive());
+                        game.SetEdgeZoomRequested(cursor.EdgeZoomRequested());
+                        if (cursor.ScreenAnchorActive() && !sawAnchor) {
+                            sawAnchor = true;
+                            lockedX = game.GetRenderAimX();
+                            lockedY = game.GetRenderAimY();
+                        }
+                        if (sawAnchor && !cursor.ScreenAnchorActive()) committed = true;
+                    };
+                    for (int frame = 0; frame < fps * 2; ++frame) {
+                        if (frame == 0 || frame == fps / 4 || frame == fps / 2) game.UpdateScopeInput(true, true);
+                        sync(0);
+                        lag += 1.0 / fps;
+                        while (lag + 1e-9 >= 1.0 / 60.0) {
+                            sync(1.0f / 60.0f);
+                            float aimX = 0, aimY = 0;
+                            const auto view = game.GetActorView(player);
+                            cursor.UpdateCursor(0, 0, 0, renderer.GetZoom(), renderer.GetCameraX(), renderer.GetCameraY(),
+                                1280, 720, player.x, player.y, aimX, aimY, player.aimKick, {view.x - player.x, view.y - player.y});
+                            game.SetAimTarget(aimX, aimY, !cursor.ScreenAnchorActive());
+                            game.Update(1.0f / 60.0f, false, aimX, aimY,
+                                false, false, false, true, false, false, false, nullptr);
+                            sync(0);
+                            lag -= 1.0 / 60.0;
+                        }
+                        game.PrepareCamera(1280, 720, static_cast<float>(lag * 60.0));
+                        sync(0, true);
+                        game.Render(1280, 720);
+                        if (cursor.ScreenAnchorActive() || (committed && !commitChecked)) {
+                            const float px = game.GetRenderAimX();
+                            const float py = game.GetRenderAimY();
+                            error = std::max(error, std::hypot(px - lockedX, py - lockedY));
+                            if (cursor.ScreenAnchorActive()) edgeFrozen = edgeFrozen && !cursor.EdgeZoomRequested();
+                            if (committed) commitChecked = true;
+                        }
+                        cursor.Render(&renderer, &game, 1280, 720);
+                    }
+                    check(sawAnchor && committed, "scope handoff starts and commits at 60/120/144 FPS");
+                    if (error >= 0.01f) std::printf("[Scope anchor error] mode=%d fps=%d pixels=%.6f\n", cameraMode, fps, error);
+                    check(error < 0.01f, "moving recoil-adjusted reticle preserves the anchored map point through scope close and commit");
+                    check(edgeFrozen, "scope close does not change the frozen edge target");
+                }
+            }
+        }
+    }
+    SDL_DestroyRenderer(software);
+    SDL_FreeSurface(surface);
+}
+
+static void TestCameraEdgeZoom() {
+    SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 1920, 1080, 32, SDL_PIXELFORMAT_RGBA32);
+    SDL_Renderer* software = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+    check(software != nullptr, "software renderer available for camera regression");
+    if (!software) { SDL_FreeSurface(surface); return; }
+    {
+        CS2DRenderer renderer;
+        renderer.Initialize(software, "assets/cs2d/maps", 1920, 1080);
+        CS2DGame game;
+        game.SetRngSeed(31);
+        if (game.LoadMap(MapPath(), &renderer, true)) {
+            auto& player = game.GetPlayer();
+            const float x = player.x, y = player.y;
+            game.Update(0.0f, false, x, y, false, false, false, false, false, false, false, nullptr);
+            game.Render(1920, 1080);
+            const float baseZoom = renderer.GetZoom();
+            const float baseRadius = renderer.GetVisionRadius();
+            CS2DOverlay cursor;
+            cursor.InitializeCursor(0.0f);
+            float targetX = x, targetY = y;
+            cursor.UpdateCursor(10000, 0, 1, renderer.GetZoom(), renderer.GetCameraX(), renderer.GetCameraY(),
+                1920, 1080, x, y, targetX, targetY);
+            bool stable = true;
+            for (int frame = 0; frame < 180; ++frame) {
+                cursor.UpdateCursor(0, 0, 1, renderer.GetZoom(), renderer.GetCameraX(), renderer.GetCameraY(),
+                    1920, 1080, x, y, targetX, targetY);
+                game.SetEdgeZoomRequested(cursor.EdgeZoomRequested());
+                game.Update(1.0f / 60.0f, false, targetX, targetY, false, false, false, false, false, false, false, nullptr);
+                game.Render(1920, 1080);
+                if (frame >= 30) stable = stable && std::fabs(renderer.GetZoom() / baseZoom - Tuning::EdgeZoomOutMin) < 0.001f;
+            }
+            check(stable, "stationary edge cursor stays zoomed out for three seconds without oscillation");
+            check(std::fabs(renderer.GetZoom() / baseZoom - Tuning::EdgeZoomOutMin) < 0.001f, "edge zoom reaches 0.7 within half a second");
+            check(std::fabs(renderer.GetVisionRadius() * Tuning::EdgeZoomOutMin - baseRadius) < 0.01f, "edge zoom and fog share final multiplier");
+            const float zoom = renderer.GetZoom();
+            game.Render(1920, 1080);
+            check(renderer.GetZoom() == zoom, "repeated Render preserves edge transition state");
+            SDL_RenderPresent(software);
+            SDL_SaveBMP(surface, "build-evidence/pix31-render.bmp");
+            cursor.UpdateCursor(-1000, 0, 1, renderer.GetZoom(), renderer.GetCameraX(), renderer.GetCameraY(),
+                1920, 1080, x, y, targetX, targetY);
+            game.SetEdgeZoomRequested(cursor.EdgeZoomRequested());
+            for (int frame = 0; frame < 25; ++frame) {
+                game.Update(1.0f / 60.0f, false,
+                    renderer.GetCameraX() + 960.0f / renderer.GetZoom(),
+                    renderer.GetCameraY() + 540.0f / renderer.GetZoom(),
+                    false, false, false, false, false, false, false, nullptr);
+                game.Render(1920, 1080);
+            }
+            check(std::fabs(renderer.GetZoom() - baseZoom) < 0.001f, "leaving edge restores zoom");
+        }
+    }
+    SDL_DestroyRenderer(software);
+    SDL_FreeSurface(surface);
+}
+
+static void TestUnlimitedPlayerCone() {
+    CS2DMapData data;
+    data.mapWidth = 200; data.mapHeight = 40;
+    data.tileWidth = data.tileHeight = 8;
+    CS2DWorld world; world.Build(data);
+    VisibilityQuery query; query.SetWorld(&world);
+    query.SetDistanceLimited(false);
+    query.SetVisionRadius(10);
+    check(query.IsVisibleToPlayer(20, 100, 0, 1200, 100), "forward cone sees beyond former circular radius");
+    check(!query.IsVisibleToPlayer(200,100,0,20,100), "rear of actor remains outside forward cone");
+    ObjectLayerDef layer; layer.name = "Collisions";
+    ObjectDef wall; wall.x = 600; wall.y = 0; wall.width = 8; wall.height = 320;
+    layer.objects.push_back(wall); data.objectLayers.push_back(layer);
+    world.Build(data);
+    check(!query.IsVisibleToPlayer(20,100,0,1200,100), "unlimited forward cone retains wall occlusion");
+    CS2DRenderer renderer;
+    for (int pct : {0,25,50,100}) {
+        renderer.SetFogOpacityPct(pct);
+        renderer.SetScopeMask(false,0,0,0);
+        const int normal = renderer.EffectiveFogAlpha();
+        renderer.SetScopeMask(true,50,50,20);
+        check(normal == renderer.EffectiveFogAlpha(), "scope and unscoped fog use identical configured opacity");
+    }
+}
+
+static void TestPerceptionAndRecoil() {
+    for (int difficulty = 0; difficulty < 4; ++difficulty) {
+        CS2DGame::BotRuntime ai;
+        const float reaction = Tuning::BotReactionSecs[difficulty];
+        ai.Perceive(1, 10.0f, reaction);
+        ai.Perceive(1, 10.1f, reaction);
+        check(!ai.Ready(1, 10.0f + reaction - 0.001f), "alert waits for reaction deadline");
+        check(ai.Ready(1, 10.0f + reaction), "alert reacts at original deadline");
+        ai.Perceive(2, 10.0f, reaction * 2.0f);
+        ai.Perceive(3, 10.0f, reaction * 3.0f);
+        ai.Perceive(4, 10.0f, reaction);
+        check(ai.Ready(4, 10.0f + reaction) && !ai.Ready(3, 100.0f), "full alert queue retains earliest deadlines");
+    }
+    const auto& rifle = WeaponDB::Get(WeaponId::AK47);
+    check(std::fabs(rifle.recoilKickDeg - Tuning::RecoilRifle) < 0.001f, "rifle recoil uses tuning");
+    for (float angle : {0.0f, 1.0f, 2.0f, -2.0f, Tuning::Pi * 0.5f, -Tuning::Pi * 0.5f}) {
+        CS2DGame::Player player;
+        player.aimAngle = angle;
+        player.aimDistance = 180.0f;
+        float previousDistance = std::abs(std::remainder(-Tuning::Pi * 0.5f - angle, 2.0f * Tuning::Pi));
+        bool radiusStable = true, shortArc = true;
+        for (int shot = 0; shot < 400; ++shot) {
+            player.ApplyRecoil(0.6f);
+            const float distance = std::abs(std::remainder(-Tuning::Pi * 0.5f - player.EffectiveAim(), 2.0f * Tuning::Pi));
+            const float x = std::cos(angle) * player.aimDistance + player.RecoilOffsetX();
+            const float y = std::sin(angle) * player.aimDistance + player.RecoilOffsetY();
+            radiusStable &= std::abs(std::hypot(x, y) - player.aimDistance) < 0.001f;
+            shortArc &= distance <= previousDistance + 0.00001f;
+            previousDistance = distance;
+        }
+        check(radiusStable, "angular recoil preserves player-to-reticle radius");
+        check(shortArc && previousDistance < 0.001f, "short arc approaches twelve oclock and stops without overshoot");
+    }
+    CS2DGame::Player crossing;
+    crossing.aimAngle = Tuning::Pi * 0.5f - 0.001f;
+    crossing.ApplyRecoil(2.5f);
+    const float kick = crossing.aimKick;
+    crossing.aimAngle += 0.002f;
+    check(crossing.aimKick == kick, "mouse movement across six oclock preserves signed recoil continuity");
+    CS2DMapData openData;
+    openData.mapWidth = 20; openData.mapHeight = 20;
+    openData.tileWidth = 8; openData.tileHeight = 8;
+    CS2DWorld openWorld;
+    openWorld.Build(openData);
+    VisibilityQuery cone;
+    cone.SetWorld(&openWorld);
+    cone.SetVisionRadius(200.0f);
+    check(cone.ComputeVisibility(0, 0, 0, 50, 50) > 0.0f, "normal cone includes 45 degrees");
+    cone.SetConeAngleDeg(Tuning::VisionConeDeg * Tuning::EdgeZoomFovAngleMul);
+    check(cone.ComputeVisibility(0, 0, 0, 50, 50) == 0.0f, "edge cone excludes 45 degrees");
+    check(cone.ComputeVisibility(0, 0, 0, 50, 0) > 0.0f, "edge cone preserves aim axis");
+    TacticsTable tactics;
+    tactics.Load("missing-pix31.ini", "dust_2");
+    check(tactics.perception[0].reaction > tactics.perception[3].reaction, "missing tactics preserves ordered difficulty defaults");
+}
+
 int main() {
     std::printf("===== 合并契约 v1 玩法回归测试 =====\n");
     std::printf("地图: %s\n", MapPath());
 
+    TestAimLinePersistenceAndRecoilRecovery();
+    TestStableCursorAndWallRay();
+    TestReactionBenchmark();
+    TestGrenadeCursorDistance();
+    TestFixedReferenceCursor();
+    TestSharedAimDistance();
+    TestAimLineRendering();
+    TestMovementFrameInterpolation();
+    TestScopeFrameSnapshot();
+    TestCameraEdgeZoom();
+    TestUnlimitedPlayerCone();
+    TestPerceptionAndRecoil();
     TestCollisionModes();
     TestFixedVisionRadius();
     TestMenuHeldPoses();

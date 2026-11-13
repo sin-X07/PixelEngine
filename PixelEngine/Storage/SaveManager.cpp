@@ -42,7 +42,25 @@ void SaveManager::Load() {
     settings_.crossLength    = ini.GetFloat("crosshair", "length", 12.0f);
     settings_.crossGap       = ini.GetFloat("crosshair", "gap", 3.0f);
     settings_.crossCenterDot = ini.GetBool ("crosshair", "center_dot", true);
+    settings_.aimLine = ini.GetBool("crosshair", "aim_line", true);
     settings_.crossDynamic   = ini.GetBool ("crosshair", "dynamic", true);
+
+    auto loadColor = [&](const std::string& prefix, SDL_Color fallback) {
+        return SDL_Color{
+            static_cast<Uint8>(std::clamp(ini.GetInt("aim_line", prefix + "_r", fallback.r), 0, 255)),
+            static_cast<Uint8>(std::clamp(ini.GetInt("aim_line", prefix + "_g", fallback.g), 0, 255)),
+            static_cast<Uint8>(std::clamp(ini.GetInt("aim_line", prefix + "_b", fallback.b), 0, 255)),
+            static_cast<Uint8>(std::clamp(ini.GetInt("aim_line", prefix + "_a", fallback.a), 0, 255))};
+    };
+    settings_.aimLineStyle = AimLineStyle{};
+    auto& line = settings_.aimLineStyle;
+    line.solid = loadColor("solid", line.solid);
+    line.hidden = loadColor("hidden", line.hidden);
+    line.solidThickness = ini.GetFloat("aim_line", "solid_thickness", line.solidThickness);
+    line.hiddenThickness = ini.GetFloat("aim_line", "hidden_thickness", line.hiddenThickness);
+    line.dashLength = ini.GetFloat("aim_line", "dash_length", line.dashLength);
+    line.gapLength = ini.GetFloat("aim_line", "gap_length", line.gapLength);
+    line.Normalize();
 
     // ---- 雷达 ----
     settings_.radarPlayerCentered   = ini.GetBool ("radar", "player_centered", true);
@@ -98,7 +116,23 @@ void SaveManager::Save() {
     ini.SetFloat("crosshair", "length",     settings_.crossLength);
     ini.SetFloat("crosshair", "gap",        settings_.crossGap);
     ini.SetBool ("crosshair", "center_dot", settings_.crossCenterDot);
+    ini.SetBool ("crosshair", "aim_line", settings_.aimLine);
     ini.SetBool ("crosshair", "dynamic",    settings_.crossDynamic);
+
+    auto saveColor = [&](const std::string& prefix, SDL_Color color) {
+        ini.SetInt("aim_line", prefix + "_r", color.r);
+        ini.SetInt("aim_line", prefix + "_g", color.g);
+        ini.SetInt("aim_line", prefix + "_b", color.b);
+        ini.SetInt("aim_line", prefix + "_a", color.a);
+    };
+    auto& line = settings_.aimLineStyle;
+    line.Normalize();
+    saveColor("solid", line.solid);
+    saveColor("hidden", line.hidden);
+    ini.SetFloat("aim_line", "solid_thickness", line.solidThickness);
+    ini.SetFloat("aim_line", "hidden_thickness", line.hiddenThickness);
+    ini.SetFloat("aim_line", "dash_length", line.dashLength);
+    ini.SetFloat("aim_line", "gap_length", line.gapLength);
 
     ini.SetBool ("radar", "player_centered",    settings_.radarPlayerCentered);
     ini.SetBool ("radar", "rotate_with_player", settings_.radarRotateWithPlayer);

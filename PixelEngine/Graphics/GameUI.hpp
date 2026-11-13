@@ -1,4 +1,5 @@
 #pragma once
+#include "../CS2D/AimLineStyle.hpp"
 #include "../Core/Types.hpp"
 #include "../Core/PresentationContract.hpp"
 #include "../Storage/MatchHistory.hpp"
@@ -51,6 +52,8 @@ public:
         std::function<void(bool)>   setCrosshairCenterDot;
         std::function<void(float)>  setCrosshairLength;
         std::function<void(float)>  setCrosshairGap;
+        std::function<void(bool)>   setAimLine;
+        std::function<void(const AimLineStyle&)> setAimLineStyle;
         std::function<void(bool)>   setCrosshairDynamic;
         // 雷达
         std::function<void(bool)>   setRadarPlayerCentered;
@@ -97,6 +100,8 @@ public:
         bool  crosshairCenterDot = true;
         float crosshairLength    = 12.0f;
         float crosshairGap       = 3.0f;
+        bool  aimLine = true;
+        AimLineStyle aimLineStyle;
         bool  crosshairDynamic   = true;
 
         // 雷达

@@ -477,7 +477,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         DrawPageBackdrop(dl, wp, ws);
         DrawPageHeader(imGuiUI_, dl, wp, ws,
                        "SYSTEM / CONFIGURATION", "设置",
-                       "音频 · 操作 · 准星 · 雷达", "ESC  返回");
+                       "操作 · 显示 · 瞄准 · 音频", "ESC  返回");
 
         // 统一控件配色（暗底 + 金色抓取块）
         ImGui::PushStyleColor(ImGuiCol_FrameBg,          ImVec4(0.075f, 0.105f, 0.140f, 0.95f));
@@ -498,17 +498,35 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         int music   = ctx.musicVolume;
         int effects = ctx.effectsVolume;
 
-        const float topLocal = UI(126.0f);
-        const float footerH  = UI(86.0f);
-        ImGui::SetCursorPosY(topLocal);
-        ImGui::BeginChild("##settingsBody",
+        static int settingsSection = 0;
+        const char* sections[] = { "操作与显示", "准星与瞄准线", "雷达", "音频" };
+        const float navigationW = std::min(UI(1200.0f), ws.x - UI(120.0f));
+        ImGui::SetCursorPos(ImVec2((ws.x - navigationW) * 0.5f, UI(126.0f)));
+        ImGui::BeginChild("##settingsNavigation", ImVec2(navigationW, UI(36.0f)), false,
+                          ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        if (ImGui::BeginTabBar("##settingsSections")) {
+            for (int i = 0; i < 4; ++i) {
+                if (ImGui::BeginTabItem(sections[i])) {
+                    settingsSection = i;
+                    ImGui::EndTabItem();
+                }
+            }
+            ImGui::EndTabBar();
+        }
+        ImGui::EndChild();
+        const float topLocal = ImGui::GetCursorPosY() + UI(12.0f);
+        const float footerH = UI(86.0f);
+        ImGui::SetCursorPos(ImVec2(0.0f, topLocal));
+        const char* bodies[] = { "##settingsInput", "##settingsAim", "##settingsRadar", "##settingsAudio" };
+        ImGui::BeginChild(bodies[settingsSection],
                           ImVec2(ws.x, std::max(UI(200.0f), vpH - topLocal - footerH)),
                           false, ImGuiWindowFlags_NoBackground);
 
-        const float panelW = std::min(UI(1200.0f), ws.x - UI(120.0f));
-        const float panelX = (ws.x - panelW) * 0.5f;
+        const bool twoColumns = settingsSection < 2;
+        const float panelW = std::min(UI(twoColumns ? 1200.0f : 700.0f), ws.x - UI(120.0f));
+        const float panelX = ImGui::GetWindowPos().x + (ws.x - panelW) * 0.5f;
         const float colGap = UI(20.0f);
-        const float colW   = (panelW - colGap) * 0.5f;
+        const float colW = twoColumns ? (panelW - colGap) * 0.5f : panelW;
         const float labelX = UI(28.0f);
         const float fieldX = UI(170.0f);
         const float fieldW = colW - fieldX - UI(26.0f);
@@ -548,233 +566,278 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         float leftY = topY;
         float rightY = topY;
 
-        // ---------------- 左列：音频 / 操作 ----------------
-        leftY += drawCard(leftX, leftY, "音频", "VOLUME & SOUNDTRACK", 6, 0.0f,
-                          Palette::U32(Palette::Accent()), [&](float x, float y) {
-            rowLabel(x, y, 0, "主音量");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 0));
-            ImGui::SetNextItemWidth(fieldW);
-            if (ImGui::SliderInt("##master", &master, 0, 100)) actions.setMasterVolume(master);
+        if (settingsSection == 0) {
+            leftY += drawCard(leftX, leftY, "操作", "INPUT & DISPLAY", 5, 0.0f,
+                              IM_COL32(86, 150, 210, 255), [&](float x, float y) {
+                rowLabel(x, y, 0, "鼠标灵敏度");
+                ImGui::SetCursorScreenPos(rowPos(x, y, 0));
+                ImGui::SetNextItemWidth(fieldW);
+                float sens = ctx.mouseSensitivity;
+                if (ImGui::SliderFloat("##sens", &sens, 0.1f, 3.0f, "%.1f")) {
+                    actions.setMouseSensitivity(sens);
+                }
 
-            rowLabel(x, y, 1, "音乐");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 1));
-            ImGui::SetNextItemWidth(fieldW);
-            if (ImGui::SliderInt("##music", &music, 0, 100)) actions.setMusicVolume(music);
+                rowLabel(x, y, 1, "帧率上限");
+                ImGui::SetCursorScreenPos(rowPos(x, y, 1));
+                ImGui::SetNextItemWidth(fieldW);
+                const char* fpsLabels[] = { "30", "60", "120" };
+                int fpsIdx = (ctx.targetFPS >= 120) ? 2 : (ctx.targetFPS >= 60) ? 1 : 0;
+                if (ImGui::Combo("##fps", &fpsIdx, fpsLabels, 3)) {
+                    actions.setTargetFPS(fpsIdx == 2 ? 120 : fpsIdx == 1 ? 60 : 30);
+                }
 
-            rowLabel(x, y, 2, "音效");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 2));
-            ImGui::SetNextItemWidth(fieldW);
-            if (ImGui::SliderInt("##effects", &effects, 0, 100)) actions.setEffectsVolume(effects);
+                rowLabel(x, y, 2, "分辨率");
+                ImGui::SetCursorScreenPos(rowPos(x, y, 2));
+                ImGui::SetNextItemWidth(fieldW);
+                const char* resLabels[kResolutionCount];
+                for (int i = 0; i < kResolutionCount; ++i) resLabels[i] = kResolutions[i].label;
+                int resIdx = std::clamp(ctx.resIdx, 0, kResolutionCount - 1);
+                if (ImGui::Combo("##res", &resIdx, resLabels, kResolutionCount)) {
+                    actions.setResolution(kResolutions[resIdx].w, kResolutions[resIdx].h, resIdx);
+                }
 
-            const int musN = std::clamp(ctx.musicTrackCount, 0, 8);
-            rowLabel(x, y, 3, "背景音乐");
-            if (musN > 0) {
+                rowLabel(x, y, 3, "渲染缩放");
                 ImGui::SetCursorScreenPos(rowPos(x, y, 3));
                 ImGui::SetNextItemWidth(fieldW);
-                int idx = std::clamp(ctx.musicTrack, 0, musN - 1);
-                if (ImGui::Combo("##music_track", &idx, ctx.musicTrackLabels, musN)) {
-                    if (actions.setMusicTrack) actions.setMusicTrack(idx);
+                const char* scaleLabels[] = { "100%（最清晰）", "75%", "50%" };
+                int scaleIdx = (ctx.renderScalePct >= 100) ? 0 : (ctx.renderScalePct >= 75) ? 1 : 2;
+                if (ImGui::Combo("##rscale", &scaleIdx, scaleLabels, 3)) {
+                    actions.setRenderScale(scaleIdx == 0 ? 100 : scaleIdx == 1 ? 75 : 50);
                 }
-            }
 
-            const int clkN = std::clamp(ctx.clickSoundCount, 0, 8);
-            rowLabel(x, y, 4, "按钮音效");
-            if (clkN > 0) {
+                ImGui::SetCursorScreenPos(rowPos(x, y, 4));
+                bool fs = ctx.isFullscreen;
+                if (ImGui::Checkbox("全屏（F11）", &fs)) actions.setFullscreen(fs);
+            }) + UI(16.0f);
+
+            rightY += drawCard(rightX, rightY, "视野 / 开镜", "VISION & SCOPE", 5, 0.0f,
+                               IM_COL32(150, 170, 220, 255), [&](float x, float y) {
+                rowLabel(x, y, 0, "迷雾透明度");
+                ImGui::SetCursorScreenPos(rowPos(x, y, 0));
+                ImGui::SetNextItemWidth(fieldW);
+                int fog = ctx.fogOpacityPct;
+                if (ImGui::SliderInt("##fogOpacity", &fog, 0, 100, "%d%%")) {
+                    actions.setFogOpacity(fog);
+                }
+
+                ImGui::SetCursorScreenPos(rowPos(x, y, 1));
+                bool delayed = ctx.sniperDelayedScopeClose;
+                if (ImGui::Checkbox("狙击枪延迟关镜", &delayed)) {
+                    actions.setSniperDelayedScopeClose(delayed);
+                }
+
+                rowLabel(x, y, 2, "开镜灵敏度");
+                ImGui::SetCursorScreenPos(rowPos(x, y, 2));
+                ImGui::SetNextItemWidth(fieldW);
+                float scopeSens = ctx.scopeSensitivity;
+                if (ImGui::SliderFloat("##scopeSens", &scopeSens, 0.5f, 2.0f, "%.2f")) {
+                    actions.setScopeSensitivity(scopeSens);
+                }
+
+                rowLabel(x, y, 3, "开镜准星粗细");
+                ImGui::SetCursorScreenPos(rowPos(x, y, 3));
+                ImGui::SetNextItemWidth(fieldW);
+                float scopeCrossThick = ctx.scopeCrossThickness;
+                if (ImGui::SliderFloat("##scopeCrossThick", &scopeCrossThick, 1.0f, 6.0f, "%.1f")) {
+                    actions.setScopeCrossThickness(scopeCrossThick);
+                }
+
+                ImGui::SetCursorScreenPos(rowPos(x, y, 4));
+                bool crossDyn = ctx.scopeCrossDynamic;
+                if (ImGui::Checkbox("开镜准星随移动扩散", &crossDyn)) {
+                    actions.setScopeCrossDynamic(crossDyn);
+                }
+
+            }) + UI(16.0f);
+
+        } else if (settingsSection == 1) {
+            leftY += drawCard(leftX, leftY, "准星", "CROSSHAIR", 6, 0.0f,
+                               IM_COL32(120, 196, 210, 255), [&](float x, float y) {
+                rowLabel(x, y, 0, "颜色");
+                ImGui::SetCursorScreenPos(rowPos(x, y, 0));
+                float col[4] = { ctx.crosshairR / 255.0f, ctx.crosshairG / 255.0f,
+                                 ctx.crosshairB / 255.0f, ctx.crosshairA / 255.0f };
+                if (ImGui::ColorEdit4("##crossColor", col,
+                        ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar)) {
+                    actions.setCrosshairColor(static_cast<Uint8>(col[0] * 255),
+                                              static_cast<Uint8>(col[1] * 255),
+                                              static_cast<Uint8>(col[2] * 255),
+                                              static_cast<Uint8>(col[3] * 255));
+                }
+
+                rowLabel(x, y, 1, "粗细");
+                ImGui::SetCursorScreenPos(rowPos(x, y, 1));
+                ImGui::SetNextItemWidth(fieldW);
+                float thick = ctx.crosshairThickness;
+                if (ImGui::SliderFloat("##crossThick", &thick, 0.5f, 4.0f, "%.1f")) {
+                    actions.setCrosshairThickness(thick);
+                }
+
+                rowLabel(x, y, 2, "长度");
+                ImGui::SetCursorScreenPos(rowPos(x, y, 2));
+                ImGui::SetNextItemWidth(fieldW);
+                float len = ctx.crosshairLength;
+                if (ImGui::SliderFloat("##crossLen", &len, 4.0f, 30.0f, "%.0f")) {
+                    actions.setCrosshairLength(len);
+                }
+
+                rowLabel(x, y, 3, "中心间隔");
+                ImGui::SetCursorScreenPos(rowPos(x, y, 3));
+                ImGui::SetNextItemWidth(fieldW);
+                float gap = ctx.crosshairGap;
+                if (ImGui::SliderFloat("##crossGap", &gap, 0.0f, 12.0f, "%.1f")) {
+                    actions.setCrosshairGap(gap);
+                }
+
+                ImGui::SetCursorScreenPos(rowPos(x, y, 4));
+                bool dot = ctx.crosshairCenterDot;
+                if (ImGui::Checkbox("显示中心点", &dot)) actions.setCrosshairCenterDot(dot);
+
+                ImGui::SetCursorScreenPos(rowPos(x, y, 5));
+                bool dyn = ctx.crosshairDynamic;
+                if (ImGui::Checkbox("动态准星（随移动扩散）", &dyn)) actions.setCrosshairDynamic(dyn);
+
+            }) + UI(16.0f);
+
+            rightY += drawCard(rightX, rightY, "瞄准线", "AIM LINE", 9, 0.0f,
+                               IM_COL32(80, 210, 220, 255), [&](float x, float y) {
+                ImGui::SetCursorScreenPos(rowPos(x, y, 0));
+                bool enabled = ctx.aimLine;
+                if (ImGui::Checkbox("显示瞄准线", &enabled)) actions.setAimLine(enabled);
+
+                AimLineStyle line = ctx.aimLineStyle;
+                bool changed = false;
+                ImGui::BeginDisabled(!enabled);
+                auto colorRow = [&](int row, const char* label, const char* id, SDL_Color& color) {
+                    rowLabel(x, y, row, label);
+                    ImGui::SetCursorScreenPos(rowPos(x, y, row));
+                    float rgb[] = {color.r / 255.0f, color.g / 255.0f, color.b / 255.0f};
+                    if (ImGui::ColorEdit3(id, rgb, ImGuiColorEditFlags_NoInputs)) {
+                        color.r = static_cast<Uint8>(rgb[0] * 255.0f);
+                        color.g = static_cast<Uint8>(rgb[1] * 255.0f);
+                        color.b = static_cast<Uint8>(rgb[2] * 255.0f);
+                        changed = true;
+                    }
+                };
+                auto widthRow = [&](int row, const char* label, const char* id, float& value, float minimum, float maximum) {
+                    rowLabel(x, y, row, label);
+                    ImGui::SetCursorScreenPos(rowPos(x, y, row));
+                    ImGui::SetNextItemWidth(fieldW);
+                    changed |= ImGui::SliderFloat(id, &value, minimum, maximum, "%.1f");
+                };
+                auto opacityRow = [&](int row, const char* label, const char* id, Uint8& alpha) {
+                    rowLabel(x, y, row, label);
+                    ImGui::SetCursorScreenPos(rowPos(x, y, row));
+                    ImGui::SetNextItemWidth(fieldW);
+                    int opacity = static_cast<int>(std::lround(alpha * 100.0f / 255.0f));
+                    if (ImGui::SliderInt(id, &opacity, 0, 100, "%d%%")) {
+                        alpha = static_cast<Uint8>(std::lround(opacity * 255.0f / 100.0f));
+                        changed = true;
+                    }
+                };
+                colorRow(1, "实线颜色", "##lineSolidColor", line.solid);
+                widthRow(2, "实线粗细", "##lineSolidWidth", line.solidThickness, 0.5f, 6.0f);
+                opacityRow(3, "实线不透明度", "##lineSolidAlpha", line.solid.a);
+                colorRow(4, "墙后虚线颜色", "##lineHiddenColor", line.hidden);
+                widthRow(5, "虚线粗细", "##lineHiddenWidth", line.hiddenThickness, 0.5f, 6.0f);
+                opacityRow(6, "虚线不透明度", "##lineHiddenAlpha", line.hidden.a);
+                widthRow(7, "虚线段长", "##lineDash", line.dashLength, 1.0f, 32.0f);
+                widthRow(8, "虚线间隔", "##lineGap", line.gapLength, 1.0f, 32.0f);
+                ImGui::EndDisabled();
+                if (changed) actions.setAimLineStyle(line);
+            }) + UI(16.0f);
+
+        } else if (settingsSection == 2) {
+            leftY += drawCard(leftX, leftY, "雷达", "RADAR", 6, 0.0f,
+                               IM_COL32(120, 200, 140, 255), [&](float x, float y) {
+                ImGui::SetCursorScreenPos(rowPos(x, y, 0));
+                bool pc = ctx.radarPlayerCentered;
+                if (ImGui::Checkbox("玩家居中", &pc)) actions.setRadarPlayerCentered(pc);
+
+                ImGui::SetCursorScreenPos(rowPos(x, y, 1));
+                bool rwp = ctx.radarRotateWithPlayer;
+                if (ImGui::Checkbox("随玩家旋转", &rwp)) actions.setRadarRotateWithPlayer(rwp);
+
+                ImGui::SetCursorScreenPos(rowPos(x, y, 2));
+                bool blend = ctx.radarBlendBg;
+                if (ImGui::Checkbox("半透明背景", &blend)) actions.setRadarBlendBg(blend);
+
+                rowLabel(x, y, 3, "背景透明度");
+                ImGui::SetCursorScreenPos(rowPos(x, y, 3));
+                ImGui::SetNextItemWidth(fieldW);
+                int alpha = ctx.radarBgAlpha;
+                if (ImGui::SliderInt("##radarAlpha", &alpha, 0, 255)) actions.setRadarBgAlpha(alpha);
+
+                rowLabel(x, y, 4, "雷达大小");
                 ImGui::SetCursorScreenPos(rowPos(x, y, 4));
                 ImGui::SetNextItemWidth(fieldW);
-                int idx = std::clamp(ctx.clickSound, 0, clkN - 1);
-                if (ImGui::Combo("##click_sound", &idx, ctx.clickSoundLabels, clkN)) {
-                    if (actions.setClickSound) actions.setClickSound(idx);
+                int size = ctx.radarHudSize;
+                if (ImGui::SliderInt("##radarSize", &size, 60, 220)) actions.setRadarHudSize(size);
+
+                rowLabel(x, y, 5, "地图缩放");
+                ImGui::SetCursorScreenPos(rowPos(x, y, 5));
+                ImGui::SetNextItemWidth(fieldW);
+                float zoom = ctx.radarMapZoom;
+                if (ImGui::SliderFloat("##radarZoom", &zoom, 1.0f, 8.0f, "%.2f")) {
+                    actions.setRadarMapZoom(zoom);
                 }
-            }
+            }) + UI(16.0f);
 
-            ImGui::SetCursorScreenPos(rowPos(x, y, 5));
-            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.11f, 0.15f, 0.20f, 0.92f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.16f, 0.21f, 0.27f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.20f, 0.26f, 0.33f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.32f, 0.40f, 0.48f, 0.55f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, UI(1.0f));
-            if (ImGui::Button(ctx.muted ? "已静音 · 点击恢复" : "静音",
-                              ImVec2(UI(180.0f), UI(32.0f)))) {
-                actions.toggleMute();
-            }
-            ImGui::PopStyleVar();
-            ImGui::PopStyleColor(4);
-        }) + UI(16.0f);
+        } else {
+            leftY += drawCard(leftX, leftY, "音频", "VOLUME & SOUNDTRACK", 6, 0.0f,
+                              Palette::U32(Palette::Accent()), [&](float x, float y) {
+                rowLabel(x, y, 0, "主音量");
+                ImGui::SetCursorScreenPos(rowPos(x, y, 0));
+                ImGui::SetNextItemWidth(fieldW);
+                if (ImGui::SliderInt("##master", &master, 0, 100)) actions.setMasterVolume(master);
 
-        leftY += drawCard(leftX, leftY, "操作", "INPUT & DISPLAY", 5, 0.0f,
-                          IM_COL32(86, 150, 210, 255), [&](float x, float y) {
-            rowLabel(x, y, 0, "鼠标灵敏度");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 0));
-            ImGui::SetNextItemWidth(fieldW);
-            float sens = ctx.mouseSensitivity;
-            if (ImGui::SliderFloat("##sens", &sens, 0.1f, 3.0f, "%.1f")) {
-                actions.setMouseSensitivity(sens);
-            }
+                rowLabel(x, y, 1, "音乐");
+                ImGui::SetCursorScreenPos(rowPos(x, y, 1));
+                ImGui::SetNextItemWidth(fieldW);
+                if (ImGui::SliderInt("##music", &music, 0, 100)) actions.setMusicVolume(music);
 
-            rowLabel(x, y, 1, "帧率上限");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 1));
-            ImGui::SetNextItemWidth(fieldW);
-            const char* fpsLabels[] = { "30", "60", "120" };
-            int fpsIdx = (ctx.targetFPS >= 120) ? 2 : (ctx.targetFPS >= 60) ? 1 : 0;
-            if (ImGui::Combo("##fps", &fpsIdx, fpsLabels, 3)) {
-                actions.setTargetFPS(fpsIdx == 2 ? 120 : fpsIdx == 1 ? 60 : 30);
-            }
+                rowLabel(x, y, 2, "音效");
+                ImGui::SetCursorScreenPos(rowPos(x, y, 2));
+                ImGui::SetNextItemWidth(fieldW);
+                if (ImGui::SliderInt("##effects", &effects, 0, 100)) actions.setEffectsVolume(effects);
 
-            rowLabel(x, y, 2, "分辨率");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 2));
-            ImGui::SetNextItemWidth(fieldW);
-            const char* resLabels[kResolutionCount];
-            for (int i = 0; i < kResolutionCount; ++i) resLabels[i] = kResolutions[i].label;
-            int resIdx = std::clamp(ctx.resIdx, 0, kResolutionCount - 1);
-            if (ImGui::Combo("##res", &resIdx, resLabels, kResolutionCount)) {
-                actions.setResolution(kResolutions[resIdx].w, kResolutions[resIdx].h, resIdx);
-            }
+                const int musN = std::clamp(ctx.musicTrackCount, 0, 8);
+                rowLabel(x, y, 3, "背景音乐");
+                if (musN > 0) {
+                    ImGui::SetCursorScreenPos(rowPos(x, y, 3));
+                    ImGui::SetNextItemWidth(fieldW);
+                    int idx = std::clamp(ctx.musicTrack, 0, musN - 1);
+                    if (ImGui::Combo("##music_track", &idx, ctx.musicTrackLabels, musN)) {
+                        if (actions.setMusicTrack) actions.setMusicTrack(idx);
+                    }
+                }
 
-            rowLabel(x, y, 3, "渲染缩放");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 3));
-            ImGui::SetNextItemWidth(fieldW);
-            const char* scaleLabels[] = { "100%（最清晰）", "75%", "50%" };
-            int scaleIdx = (ctx.renderScalePct >= 100) ? 0 : (ctx.renderScalePct >= 75) ? 1 : 2;
-            if (ImGui::Combo("##rscale", &scaleIdx, scaleLabels, 3)) {
-                actions.setRenderScale(scaleIdx == 0 ? 100 : scaleIdx == 1 ? 75 : 50);
-            }
+                const int clkN = std::clamp(ctx.clickSoundCount, 0, 8);
+                rowLabel(x, y, 4, "按钮音效");
+                if (clkN > 0) {
+                    ImGui::SetCursorScreenPos(rowPos(x, y, 4));
+                    ImGui::SetNextItemWidth(fieldW);
+                    int idx = std::clamp(ctx.clickSound, 0, clkN - 1);
+                    if (ImGui::Combo("##click_sound", &idx, ctx.clickSoundLabels, clkN)) {
+                        if (actions.setClickSound) actions.setClickSound(idx);
+                    }
+                }
 
-            ImGui::SetCursorScreenPos(rowPos(x, y, 4));
-            bool fs = ctx.isFullscreen;
-            if (ImGui::Checkbox("全屏（F11）", &fs)) actions.setFullscreen(fs);
-        }) + UI(16.0f);
+                ImGui::SetCursorScreenPos(rowPos(x, y, 5));
+                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.11f, 0.15f, 0.20f, 0.92f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.16f, 0.21f, 0.27f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.20f, 0.26f, 0.33f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.32f, 0.40f, 0.48f, 0.55f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, UI(1.0f));
+                if (ImGui::Button(ctx.muted ? "已静音 · 点击恢复" : "静音",
+                                  ImVec2(UI(180.0f), UI(32.0f)))) {
+                    actions.toggleMute();
+                }
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor(4);
+            }) + UI(16.0f);
 
-        // ---------------- 右列：准星 / 雷达 ----------------
-        rightY += drawCard(rightX, rightY, "准星", "CROSSHAIR", 6, UI(30.0f),
-                           IM_COL32(120, 196, 210, 255), [&](float x, float y) {
-            rowLabel(x, y, 0, "颜色");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 0));
-            float col[4] = { ctx.crosshairR / 255.0f, ctx.crosshairG / 255.0f,
-                             ctx.crosshairB / 255.0f, ctx.crosshairA / 255.0f };
-            if (ImGui::ColorEdit4("##crossColor", col,
-                    ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar)) {
-                actions.setCrosshairColor(static_cast<Uint8>(col[0] * 255),
-                                          static_cast<Uint8>(col[1] * 255),
-                                          static_cast<Uint8>(col[2] * 255),
-                                          static_cast<Uint8>(col[3] * 255));
-            }
-
-            rowLabel(x, y, 1, "粗细");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 1));
-            ImGui::SetNextItemWidth(fieldW);
-            float thick = ctx.crosshairThickness;
-            if (ImGui::SliderFloat("##crossThick", &thick, 0.5f, 4.0f, "%.1f")) {
-                actions.setCrosshairThickness(thick);
-            }
-
-            rowLabel(x, y, 2, "长度");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 2));
-            ImGui::SetNextItemWidth(fieldW);
-            float len = ctx.crosshairLength;
-            if (ImGui::SliderFloat("##crossLen", &len, 4.0f, 30.0f, "%.0f")) {
-                actions.setCrosshairLength(len);
-            }
-
-            rowLabel(x, y, 3, "中心间隔");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 3));
-            ImGui::SetNextItemWidth(fieldW);
-            float gap = ctx.crosshairGap;
-            if (ImGui::SliderFloat("##crossGap", &gap, 0.0f, 12.0f, "%.1f")) {
-                actions.setCrosshairGap(gap);
-            }
-
-            ImGui::SetCursorScreenPos(rowPos(x, y, 4));
-            bool dot = ctx.crosshairCenterDot;
-            if (ImGui::Checkbox("显示中心点", &dot)) actions.setCrosshairCenterDot(dot);
-
-            ImGui::SetCursorScreenPos(rowPos(x, y, 5));
-            bool dyn = ctx.crosshairDynamic;
-            if (ImGui::Checkbox("动态准星（随移动扩散）", &dyn)) actions.setCrosshairDynamic(dyn);
-
-            DrawImGuiText(imGuiUI_, "关闭后准星固定；开启后静止最准，移动时扩散",
-                          x + labelX, y + header + 6.0f * rowH + UI(6.0f),
-                          112, 132, 152, 220, 12);
-        }) + UI(16.0f);
-
-        rightY += drawCard(rightX, rightY, "雷达", "RADAR", 6, 0.0f,
-                           IM_COL32(120, 200, 140, 255), [&](float x, float y) {
-            ImGui::SetCursorScreenPos(rowPos(x, y, 0));
-            bool pc = ctx.radarPlayerCentered;
-            if (ImGui::Checkbox("玩家居中", &pc)) actions.setRadarPlayerCentered(pc);
-
-            ImGui::SetCursorScreenPos(rowPos(x, y, 1));
-            bool rwp = ctx.radarRotateWithPlayer;
-            if (ImGui::Checkbox("随玩家旋转", &rwp)) actions.setRadarRotateWithPlayer(rwp);
-
-            ImGui::SetCursorScreenPos(rowPos(x, y, 2));
-            bool blend = ctx.radarBlendBg;
-            if (ImGui::Checkbox("半透明背景", &blend)) actions.setRadarBlendBg(blend);
-
-            rowLabel(x, y, 3, "背景透明度");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 3));
-            ImGui::SetNextItemWidth(fieldW);
-            int alpha = ctx.radarBgAlpha;
-            if (ImGui::SliderInt("##radarAlpha", &alpha, 0, 255)) actions.setRadarBgAlpha(alpha);
-
-            rowLabel(x, y, 4, "雷达大小");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 4));
-            ImGui::SetNextItemWidth(fieldW);
-            int size = ctx.radarHudSize;
-            if (ImGui::SliderInt("##radarSize", &size, 60, 220)) actions.setRadarHudSize(size);
-
-            rowLabel(x, y, 5, "地图缩放");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 5));
-            ImGui::SetNextItemWidth(fieldW);
-            float zoom = ctx.radarMapZoom;
-            if (ImGui::SliderFloat("##radarZoom", &zoom, 1.0f, 8.0f, "%.2f")) {
-                actions.setRadarMapZoom(zoom);
-            }
-        }) + UI(16.0f);
-
-        rightY += drawCard(rightX, rightY, "视野 / 开镜", "VISION & SCOPE", 5, 0.0f,
-                           IM_COL32(150, 170, 220, 255), [&](float x, float y) {
-            rowLabel(x, y, 0, "迷雾透明度");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 0));
-            ImGui::SetNextItemWidth(fieldW);
-            int fog = ctx.fogOpacityPct;
-            if (ImGui::SliderInt("##fogOpacity", &fog, 0, 100, "%d%%")) {
-                actions.setFogOpacity(fog);
-            }
-
-            ImGui::SetCursorScreenPos(rowPos(x, y, 1));
-            bool delayed = ctx.sniperDelayedScopeClose;
-            if (ImGui::Checkbox("狙击枪延迟关镜", &delayed)) {
-                actions.setSniperDelayedScopeClose(delayed);
-            }
-
-            rowLabel(x, y, 2, "开镜灵敏度");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 2));
-            ImGui::SetNextItemWidth(fieldW);
-            float scopeSens = ctx.scopeSensitivity;
-            if (ImGui::SliderFloat("##scopeSens", &scopeSens, 0.5f, 2.0f, "%.2f")) {
-                actions.setScopeSensitivity(scopeSens);
-            }
-
-            rowLabel(x, y, 3, "开镜准星粗细");
-            ImGui::SetCursorScreenPos(rowPos(x, y, 3));
-            ImGui::SetNextItemWidth(fieldW);
-            float scopeCrossThick = ctx.scopeCrossThickness;
-            if (ImGui::SliderFloat("##scopeCrossThick", &scopeCrossThick, 1.0f, 6.0f, "%.1f")) {
-                actions.setScopeCrossThickness(scopeCrossThick);
-            }
-
-            ImGui::SetCursorScreenPos(rowPos(x, y, 4));
-            bool crossDyn = ctx.scopeCrossDynamic;
-            if (ImGui::Checkbox("开镜准星随移动扩散", &crossDyn)) {
-                actions.setScopeCrossDynamic(crossDyn);
-            }
-
-            DrawImGuiText(imGuiUI_, "迷雾只影响观感；开镜准星是切分镜筒的大十字，"
-                                    "灵敏度按 CS2 zoom_sensitivity_ratio 语义只作用于开镜期间",
-                          x + labelX, y + header + 5.0f * rowH + UI(6.0f),
-                          112, 132, 152, 220, 12);
-        }) + UI(16.0f);
+        }
 
         // 撑出内容高度，保证短分辨率下可滚动
         ImGui::SetCursorScreenPos(ImVec2(panelX, std::max(leftY, rightY)));
@@ -2059,9 +2122,8 @@ void GameUI::DrawMatchEnd(const MatchEndCtx& ctx, const Actions& actions) {
 
         const float x      = UI(28.0f);
         const float tableW = w - UI(56.0f);
-        const float colName  = tableW * 0.42f;
-        const float colKills = tableW * 0.18f;
-        const float colDeath = tableW * 0.18f;
+        const float colName  = tableW * 0.60f;
+        const float colKills = tableW * 0.20f;
         const float rowH     = UI(24.0f);
 
         float y = UI(140.0f);
@@ -2079,8 +2141,6 @@ void GameUI::DrawMatchEnd(const MatchEndCtx& ctx, const Actions& actions) {
             ImGui::TextColored(Palette::TextFaint(), "%s", "击杀");
             ImGui::SameLine(x + colName + colKills);
             ImGui::TextColored(Palette::TextFaint(), "%s", "死亡");
-            ImGui::SameLine(x + colName + colKills + colDeath);
-            ImGui::TextColored(Palette::TextFaint(), "%s", "余额");
             y += rowH;
 
             for (const auto& r : rows) {
@@ -2099,8 +2159,6 @@ void GameUI::DrawMatchEnd(const MatchEndCtx& ctx, const Actions& actions) {
                                    "%d", r.kills);
                 ImGui::SameLine(x + colName + colKills);
                 ImGui::TextColored(Palette::TextDim(), "%d", r.deaths);
-                ImGui::SameLine(x + colName + colKills + colDeath);
-                ImGui::TextColored(Palette::TextDim(), "$%d", r.money);
                 y += rowH;
             }
             y += UI(10.0f);

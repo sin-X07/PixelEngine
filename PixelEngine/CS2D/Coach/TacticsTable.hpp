@@ -20,6 +20,8 @@
 // ============================================================================
 
 #include <array>
+#include "../Tuning.hpp"
+#include <cmath>
 #include <map>
 #include <string>
 #include <cstdlib>
@@ -29,6 +31,16 @@
 #include "../Coach/CoachTypes.hpp"
 
 struct TacticsTable {
+    struct Perception {
+        float radius, angle, reaction, settle;
+    };
+    std::array<Perception, 4> perception = {{
+        {Tuning::BotFovRadiusMul[0], Tuning::BotFovAngleMul[0], Tuning::BotReactionSecs[0], Tuning::AimSettleSecs[0]},
+        {Tuning::BotFovRadiusMul[1], Tuning::BotFovAngleMul[1], Tuning::BotReactionSecs[1], Tuning::AimSettleSecs[1]},
+        {Tuning::BotFovRadiusMul[2], Tuning::BotFovAngleMul[2], Tuning::BotReactionSecs[2], Tuning::AimSettleSecs[2]},
+        {Tuning::BotFovRadiusMul[3], Tuning::BotFovAngleMul[3], Tuning::BotReactionSecs[3], Tuning::AimSettleSecs[3]}
+    }};
+    int botProfile = 4;
     bool loaded = false;
     std::string mapId;
 
@@ -49,16 +61,32 @@ struct TacticsTable {
     // path 由调用方用 PathUtils 解析（本头文件不引入 windows.h，避免 near/far 宏污染）
     void Load(const std::string& path, const std::string& id) {
         loaded = false;
+        botProfile = 4;
         mapId  = id;
         areas.clear();
         slots.clear();
         looks.clear();
         anchors.clear();
+        for (int d = 0; d < 4; ++d)
+            perception[d] = {Tuning::BotFovRadiusMul[d], Tuning::BotFovAngleMul[d], Tuning::BotReactionSecs[d], Tuning::AimSettleSecs[d]};
         if (id.empty()) return;
 
         IniFile ini = IniFile::Load(path);
         if (!ini.IsLoaded()) return;   // 没表 = 用代码默认，正常情况
 
+        botProfile = std::clamp(ini.GetInt("perception", "Profile", botProfile), 0, 7);
+        for (int d = 0; d < 4; ++d) {
+            const std::string section = "perception." + std::to_string(d);
+            auto positive = [&](const char* key, float fallback) {
+                const float value = ini.GetFloat(section, key, fallback);
+                return std::isfinite(value) && value > 0.0f ? value : fallback;
+            };
+            auto& p = perception[d];
+            p.radius = positive("FovRadiusMul", p.radius);
+            p.angle = positive("FovAngleMul", p.angle);
+            p.reaction = positive("ReactionSecs", p.reaction);
+            p.settle = positive("AimSettleSecs", p.settle);
+        }
         for (const auto& [key, value] : ini.GetSection("areas")) {
             const std::string clean = StripInlineComment(value);
             if (!clean.empty()) areas[key] = clean;

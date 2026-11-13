@@ -285,6 +285,15 @@ GameUI::Actions Engine::BuildActions() {
         cs2dOverlay.crosshair.gap = v;
         saveManager->MutableSettings().crossGap = v;
     };
+    a.setAimLine = [this](bool v) {
+        cs2dOverlay.crosshair.aimLine = v;
+        saveManager->MutableSettings().aimLine = v;
+    };
+    a.setAimLineStyle = [this](const AimLineStyle& style) {
+        cs2dOverlay.aimLineStyle = style;
+        cs2dOverlay.aimLineStyle.Normalize();
+        saveManager->MutableSettings().aimLineStyle = cs2dOverlay.aimLineStyle;
+    };
     a.setCrosshairDynamic = [this](bool v) {
         cs2dOverlay.crosshair.dynamic = v;
         saveManager->MutableSettings().crossDynamic = v;
@@ -593,6 +602,8 @@ void Engine::ApplySavedSettings() {
     cs2dOverlay.crosshair.length    = s.crossLength;
     cs2dOverlay.crosshair.gap       = s.crossGap;
     cs2dOverlay.crosshair.centerDot = s.crossCenterDot;
+    cs2dOverlay.crosshair.aimLine = s.aimLine;
+    cs2dOverlay.aimLineStyle = s.aimLineStyle;
     cs2dOverlay.crosshair.dynamic   = s.crossDynamic;
 
     // 雷达
@@ -660,24 +671,50 @@ void Engine::ResizeLogicalViewport(int winW, int winH) {
 // ============================================================================
 
 void Engine::Run() {
-    uint32_t previousTime = SDL_GetTicks64();
+    Uint64 previousTime = SDL_GetPerformanceCounter();
     float lag = 0.0f;
+    const char* profilePath = std::getenv("PIXEL_FRAME_STATS");
+    FILE* frameStats = profilePath ? std::fopen(profilePath, "w") : nullptr;
+    const char* profileLimit = std::getenv("PIXEL_PROFILE_FRAMES");
+    const int profileFrames = profileLimit ? std::atoi(profileLimit) : 0;
+    int measuredFrames = 0;
+    if (frameStats) std::fprintf(frameStats, "frame,input_ms,update_ms,render_ms,work_ms,interval_ms,fog_ms\n");
 
     while (isRunning) {
-        const uint32_t currentTime = SDL_GetTicks64();
-        const float elapsedTime = static_cast<float>(currentTime - previousTime);
+        const Uint64 frameStart = SDL_GetPerformanceCounter();
+        const Uint64 currentTime = frameStart;
+        const float elapsedTime = static_cast<float>((currentTime - previousTime) * 1000.0 / SDL_GetPerformanceFrequency());
         previousTime = currentTime;
         lag += elapsedTime;
 
         HandleInput();
+        const Uint64 inputEnd = SDL_GetPerformanceCounter();
 
         while (lag >= MS_PER_UPDATE) {
             Update(MS_PER_UPDATE / 1000.0f);
             lag -= MS_PER_UPDATE;
         }
 
+        const Uint64 updateEnd = SDL_GetPerformanceCounter();
+        PrepareGameplayCamera(elapsedTime / 1000.0f, lag / MS_PER_UPDATE);
         Render();
+        const Uint64 renderEnd = SDL_GetPerformanceCounter();
+        const double counterToMs = 1000.0 / SDL_GetPerformanceFrequency();
+        const double workMs = (renderEnd - frameStart) * counterToMs;
+        if (frameStats && currentState == PLAYING && !IsTransitionActive() && !sideChoicePending_) {
+            std::fprintf(frameStats, "%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n", measuredFrames++,
+                (inputEnd - frameStart) * counterToMs, (updateEnd - inputEnd) * counterToMs,
+                (renderEnd - updateEnd) * counterToMs, workMs, static_cast<double>(elapsedTime), cs2dRenderer ? cs2dRenderer->LastFogMilliseconds() : 0.0f);
+            if (profileFrames > 0 && measuredFrames >= profileFrames) isRunning = false;
+        }
+        const double remainingMs = 1000.0 / std::max(1, targetFPS_) - workMs;
+        if (remainingMs > 0.0) {
+            SDL_Delay(static_cast<Uint32>(remainingMs));
+            while ((SDL_GetPerformanceCounter() - frameStart) * counterToMs < 1000.0 / std::max(1, targetFPS_))
+                SDL_Delay(0);
+        }
     }
+    if (frameStats) std::fclose(frameStats);
 }
 
 // ============================================================================
@@ -798,7 +835,7 @@ void Engine::HandleInput() {
         }
     }
 
-    if (currentState != PLAYING) return;
+    if (currentState != PLAYING) { cursorCaptured_ = false; return; }
 
     // 转场期间锁住对局输入，避免进入对局时第一帧误开枪/误移动。
     if (IsTransitionActive()) {
@@ -814,6 +851,11 @@ void Engine::HandleInput() {
         return;
     }
 
+    if (cursorSpawnVersion_ != cs2dGame->PlayerSpawnVersion()) {
+        cursorSpawnVersion_ = cs2dGame->PlayerSpawnVersion();
+        cs2dOverlay.InitializeCursor(cs2dGame->GetPlayer().aimAngle);
+        cursorCaptured_ = false;
+    }
     // ---- 买枪菜单 ----
     if (inputManager->IsBuyMenuToggleRequested()) {
         buyMenuOpen_ = !buyMenuOpen_;
@@ -826,21 +868,28 @@ void Engine::HandleInput() {
         // 菜单打开：绝对鼠标，允许点击
         SDL_SetRelativeMouseMode(SDL_FALSE);
         SDL_ShowCursor(SDL_ENABLE);
+        cursorCaptured_ = false;
     } else {
         // 正常对局：相对鼠标瞄准
         SDL_SetRelativeMouseMode(SDL_TRUE);
         int relX = 0, relY = 0;
         SDL_GetRelativeMouseState(&relX, &relY);
+        if (!cursorCaptured_) { relX = relY = 0; cursorCaptured_ = true; }
+        SyncAimCursor();
         // 契约 v1.3：开镜时鼠标灵敏度再乘设置倍率（CS2 zoom_sensitivity_ratio 语义）
         const float scopeSensMul =
             (cs2dGame->GetScopeView().active && saveManager)
                 ? saveManager->GetSettings().scopeSensitivity : 1.0f;
+        const auto playerView = cs2dGame->GetActorView(cs2dGame->GetPlayer());
         cs2dOverlay.UpdateCursor(relX, relY,
                                  cs2dGame->GetMouseSensitivity() * scopeSensMul,
                                  cs2dRenderer->GetZoom(),
                                  cs2dRenderer->GetCameraX(), cs2dRenderer->GetCameraY(),
                                  logicalW_, logicalH_,
-                                 cs2dWorldMouseX, cs2dWorldMouseY);
+                                 cs2dGame->GetPlayer().x, cs2dGame->GetPlayer().y,
+                                 cs2dWorldMouseX, cs2dWorldMouseY, cs2dGame->GetPlayer().aimKick,
+                                 {playerView.x - cs2dGame->GetPlayer().x, playerView.y - cs2dGame->GetPlayer().y});
+        cs2dGame->SetAimTarget(cs2dWorldMouseX, cs2dWorldMouseY, !cs2dOverlay.ScreenAnchorActive());
         cs2dMouseDown = inputManager->IsMouseLeftDown();
 
     // G：丢弃当前武器（近战不可丢）。边沿触发，避免按住连丢。
@@ -1199,6 +1248,11 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
 #ifdef PIXEL_DEV_REPLAY
     OpenRecordFileIfNeeded();
 #endif
+    cs2dOverlay.InitializeCursor(cs2dGame->GetPlayer().aimAngle);
+    cursorCaptured_ = false;
+    cs2dOverlay.UpdateCursor(0, 0, 0.0f, cs2dRenderer->GetZoom(),
+        cs2dRenderer->GetCameraX(), cs2dRenderer->GetCameraY(), logicalW_, logicalH_,
+        cs2dGame->GetPlayer().x, cs2dGame->GetPlayer().y, cs2dWorldMouseX, cs2dWorldMouseY);
     if (debugKillPlayer_) debugKillDelay_ = 2.0f;   // --killplayer：进对局 2s 后杀一次
     cs2dOverlay.virtCursorX = logicalW_ * 0.5f;
     cs2dOverlay.virtCursorY = logicalH_ * 0.5f;
@@ -1301,7 +1355,7 @@ void Engine::OpenRecordFileIfNeeded() {
     if (cs2dGame) cs2dGame->SetRngSeed(kRecordSeed);
     recordTick_ = 0;
     std::fprintf(recordFile_,
-                 "# PXINPUT2 map=%s seed=%u viewport=%dx%d aimTurn=0.00 aimErr=0.0 "
+                 "# PXINPUT3 map=%s seed=%u viewport=%dx%d aimTurn=0.00 aimErr=0.0 "
                  "reaction=0 tag=human\n",
                  currentMapId_.c_str(), kRecordSeed, logicalW_, logicalH_);
     std::cout << "[Record] 开始录制: " << recordPath_ << " (seed=" << kRecordSeed << ")"
@@ -1315,6 +1369,43 @@ void Engine::CloseRecordFile() {
     std::cout << "[Record] 录制结束: " << recordTick_ << " tick" << std::endl;
 }
 #endif
+void Engine::PrepareGameplayCamera(float dt, float interpolation) {
+    if (!cs2dRenderer) return;
+    cs2dRenderer->SetFrameDelta(dt);
+    cs2dRenderer->FreezeCamera(currentState != PLAYING);
+    if (cs2dGame && currentState == PLAYING && !IsTransitionActive() &&
+        !sideChoicePending_ && !sidePopupOpen_ && !cs2dGame->CameraPrepared()) {
+        cs2dGame->PrepareCamera(logicalW_, logicalH_, interpolation);
+        SyncAimCursor(0.0f, true);
+    }
+}
+
+void Engine::SyncAimCursor(float dt, bool commitAllowed) {
+    const auto scope = cs2dGame->GetScopeView();
+    const auto& player = cs2dGame->GetPlayer();
+    const auto playerView = cs2dGame->GetActorView(player);
+    const float shift = scope.level > 0
+        ? CS2DGame::ScopeCameraShiftForZoom(scope.targetZoomMultiplier) : Tuning::CameraLookShift;
+    const auto& world = cs2dGame->GetWorld();
+    cs2dOverlay.SetReferenceWorldBounds(std::max(world.GetMapPixelW(), world.GetImageW()),
+        std::max(world.GetMapPixelH(), world.GetImageH()));
+    cs2dOverlay.SetReferenceMode(scope.targetZoomMultiplier, shift,
+        scope.level == 0 && cs2dGame->AngledCameraEnabled(), cs2dGame->AngledCameraEnabled());
+    if (!cs2dOverlay.ScreenAnchorActive()) {
+        cs2dOverlay.SetVisibleAimPoint(cs2dGame->GetRenderAimX(), cs2dGame->GetRenderAimY());
+        cs2dOverlay.virtCursorX = (cs2dGame->GetRenderAimX() - cs2dRenderer->GetCameraX()) * cs2dRenderer->GetZoom();
+        cs2dOverlay.virtCursorY = (cs2dGame->GetRenderAimY() - cs2dRenderer->GetCameraY()) * cs2dRenderer->GetZoom();
+    }
+    cs2dOverlay.SyncScopeCursor(scope.active, scope.level == 0,
+        cs2dGame->CameraScopeTransitionComplete(), dt, commitAllowed);
+    cs2dOverlay.UpdateCursor(0, 0, 0.0f, cs2dRenderer->GetZoom(),
+        cs2dRenderer->GetCameraX(), cs2dRenderer->GetCameraY(), logicalW_, logicalH_,
+        player.x, player.y, cs2dWorldMouseX, cs2dWorldMouseY, player.aimKick,
+        {playerView.x - player.x, playerView.y - player.y});
+    cs2dGame->SetAimTarget(cs2dWorldMouseX, cs2dWorldMouseY, !cs2dOverlay.ScreenAnchorActive());
+    cs2dGame->SetEdgeZoomRequested(cs2dOverlay.EdgeZoomRequested());
+}
+
 void Engine::Update(float dt) {
     if (currentState != PLAYING) {
         fireInputGate_.Block();
@@ -1368,6 +1459,7 @@ void Engine::Update(float dt) {
     if (scopeRightClicked && gameplayInputAllowed) recScopeToggle_ = true;
 #endif
     cs2dGame->UpdateScopeInput(scopeRightClicked, gameplayInputAllowed);
+    SyncAimCursor(dt);
 
     // Use fresh button state, not the aim input cached before the buy menu opened.
     const bool fireDown = fireInputGate_.Update(
@@ -1376,12 +1468,13 @@ void Engine::Update(float dt) {
 #ifdef PIXEL_DEV_REPLAY
     if (recordFile_) {
         std::fprintf(recordFile_,
-                     "%u %d %.9g %.9g %d %d %d %d %d %d %d %d %d %d %d\n",
+                     "%u %d %.9g %.9g %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
                      recordTick_++, fireDown ? 1 : 0, cs2dWorldMouseX, cs2dWorldMouseY,
                      cs2dKeyW ? 1 : 0, cs2dKeyA ? 1 : 0, cs2dKeyS ? 1 : 0, cs2dKeyD ? 1 : 0,
                      cs2dKeyShift ? 1 : 0, cs2dKeyR ? 1 : 0, interactHeld ? 1 : 0,
                      recScopeToggle_ ? 1 : 0, recSwitchSlot_,
-                     recBuyWeapon_, recBuyArmorTier_);
+                     recBuyWeapon_, recBuyArmorTier_, cs2dOverlay.EdgeZoomRequested() ? 1 : 0,
+                     cs2dOverlay.ScreenAnchorActive() ? 0 : 1);
         recScopeToggle_ = false;
         recSwitchSlot_ = 0;
         recBuyWeapon_ = 0;
@@ -1392,6 +1485,7 @@ void Engine::Update(float dt) {
                      cs2dKeyW, cs2dKeyA, cs2dKeyS, cs2dKeyD,
                      cs2dKeyShift, cs2dKeyR, interactHeld,
                      audioManager.get());
+    SyncAimCursor();
 
 #ifdef PIXEL_DEV_REPLAY
     // 开发期预览：PE_DEBUG_MATCH_END=1 时，进入对局 3 秒后强制结束比赛
@@ -1832,6 +1926,8 @@ void Engine::Render() {
         ctx.crosshairCenterDot = cs2dOverlay.crosshair.centerDot;
         ctx.crosshairLength    = cs2dOverlay.crosshair.length;
         ctx.crosshairGap       = cs2dOverlay.crosshair.gap;
+        ctx.aimLine = cs2dOverlay.crosshair.aimLine;
+        ctx.aimLineStyle = cs2dOverlay.aimLineStyle;
         ctx.crosshairDynamic   = cs2dOverlay.crosshair.dynamic;
 
         ctx.radarPlayerCentered   = cs2dOverlay.radar.playerCentered;
@@ -2336,7 +2432,7 @@ void Engine::Render() {
         }
     }
 
-    SDL_Delay(1000 / std::max(1, targetFPS_));
+
 }
 
 // ============================================================================

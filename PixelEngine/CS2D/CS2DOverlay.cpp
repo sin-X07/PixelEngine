@@ -6,23 +6,149 @@
 #include "Tuning.hpp"
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <utility>
 
 // ============================================================================
 // 虚拟准星更新
 // ============================================================================
-void CS2DOverlay::UpdateCursor(int relX, int relY, float sensitivity, float zoom,
-                                float camX, float camY,
-                                int viewW, int viewH,
-                                float& outWorldX, float& outWorldY) {
-    virtCursorX += static_cast<float>(relX) * sensitivity;
-    virtCursorY += static_cast<float>(relY) * sensitivity;
-    virtCursorX = std::clamp(virtCursorX, 0.0f, static_cast<float>(viewW));
-    virtCursorY = std::clamp(virtCursorY, 0.0f, static_cast<float>(viewH));
+void CS2DOverlay::InitializeCursor(float angle) {
+    aimOffsetX_ = std::cos(angle) * Tuning::InitialAimDistance;
+    aimOffsetY_ = std::sin(angle) * Tuning::InitialAimDistance;
+    cursorScoped_ = false;
+    screenAnchor_ = scopeClosing_ = edgeZoomRequested_ = finishHandoff_ = false;
+    handoffElapsed_ = 0.0f;
+    visibleWorldValid_ = anchorWorldValid_ = false;
+    referenceModeZoom_ = 1.0f;
+    referenceCameraShift_ = Tuning::CameraLookShift;
+    referenceAngled_ = limitAngled_ = false;
+}
 
-    const float centerWX = camX + viewW * 0.5f / zoom;
-    const float centerWY = camY + viewH * 0.5f / zoom;
-    outWorldX = centerWX + (virtCursorX - viewW * 0.5f) / zoom;
-    outWorldY = centerWY + (virtCursorY - viewH * 0.5f) / zoom;
+void CS2DOverlay::SetReferenceMode(float zoom, float cameraShift, bool angled, bool normalAngled) {
+    referenceModeZoom_ = std::max(zoom, 1.0f);
+    referenceCameraShift_ = std::clamp(cameraShift, 0.0f, Tuning::CameraLookShift);
+    referenceAngled_ = angled;
+    limitAngled_ = angled || normalAngled;
+}
+
+void CS2DOverlay::SyncScopeCursor(bool scoped, bool closing, bool cameraReady, float dt, bool commitAllowed) {
+    if (cursorScoped_ && !scopeClosing_ && (closing || !scoped)) {
+        anchorX_ = virtCursorX;
+        anchorY_ = virtCursorY;
+        anchorWorld_ = visibleWorld_;
+        anchorWorldValid_ = visibleWorldValid_;
+        screenAnchor_ = true;
+        finishHandoff_ = false;
+        handoffElapsed_ = 0.0f;
+    }
+    if (screenAnchor_) {
+        handoffElapsed_ += std::max(dt, 0.0f);
+        finishHandoff_ = commitAllowed && ((scoped && !closing) || (!scoped &&
+            (cameraReady || handoffElapsed_ >= Tuning::AimHandoffMaxSeconds)));
+    }
+    scopeClosing_ = closing;
+    cursorScoped_ = scoped;
+}
+
+void CS2DOverlay::UpdateCursor(int relX, int relY, float sensitivity, float zoom,
+                              float camX, float camY, int viewW, int viewH,
+                              float playerX, float playerY, float& outWorldX, float& outWorldY,
+                              float recoilAngle, SDL_FPoint renderOffset) {
+    zoom = std::max(zoom, 0.001f);
+    const float motionX = static_cast<float>(relX) * sensitivity;
+    const float motionY = static_cast<float>(relY) * sensitivity;
+    const bool moved = relX != 0 || relY != 0;
+    const float referenceZoom = VisibilityQuery::BaseZoomForViewport(viewW, viewH) * referenceModeZoom_;
+    const float halfW = viewW * 0.5f / referenceZoom;
+    const float halfH = viewH * 0.5f / referenceZoom;
+
+    if (screenAnchor_) {
+        if (!anchorWorldValid_) {
+            anchorWorld_ = {camX + anchorX_ / zoom, camY + anchorY_ / zoom};
+            anchorWorldValid_ = true;
+        }
+        anchorWorld_.x += motionX / referenceZoom;
+        anchorWorld_.y += motionY / referenceZoom;
+        outWorldX = anchorWorld_.x;
+        outWorldY = anchorWorld_.y;
+        anchorX_ = (anchorWorld_.x - camX) * zoom;
+        anchorY_ = (anchorWorld_.y - camY) * zoom;
+        // The anchor stores the visible, recoil-adjusted point. Invert recoil once
+        // so gameplay and the eventual base offset reproduce that same point.
+        const float originX = playerX + (finishHandoff_ ? renderOffset.x : 0.0f);
+        const float originY = playerY + (finishHandoff_ ? renderOffset.y : 0.0f);
+        const float dx = outWorldX - originX, dy = outWorldY - originY;
+        outWorldX = playerX + dx * std::cos(recoilAngle) + dy * std::sin(recoilAngle);
+        outWorldY = playerY - dx * std::sin(recoilAngle) + dy * std::cos(recoilAngle);
+        virtCursorX = anchorX_;
+        virtCursorY = anchorY_;
+        if (!finishHandoff_) return; // Keep the base offset and edge target frozen during handoff.
+        aimOffsetX_ = outWorldX - playerX;
+        aimOffsetY_ = outWorldY - playerY;
+        screenAnchor_ = false;
+        finishHandoff_ = false;
+    } else {
+        // Input uses the fixed mode scale, independent of animated edge zoom and camera smoothing.
+        aimOffsetX_ += motionX / referenceZoom;
+        aimOffsetY_ += motionY / referenceZoom;
+    }
+
+    // Logical camera ranges include map clamping, using only fixed reference zooms.
+    auto cameraRange = [](float halfExtent, float player, float worldExtent) {
+        const float infinity = std::numeric_limits<float>::infinity();
+        if (worldExtent <= 0.0f) return std::pair<float, float>{-infinity, infinity};
+        const float lo = -Tuning::VisionRadius;
+        const float hi = std::max(lo, worldExtent - halfExtent * 2.0f + Tuning::VisionRadius);
+        return std::pair<float, float>{lo + halfExtent - player, hi + halfExtent - player};
+    };
+    const auto rangeX = cameraRange(halfW, playerX, referenceWorldW_);
+    const auto rangeY = cameraRange(halfH, playerY, referenceWorldH_);
+    if (moved) {
+        const float limitZoom = VisibilityQuery::BaseZoomForViewport(viewW, viewH) * Tuning::EdgeZoomOutMin;
+        const float maxHalfW = viewW * 0.5f / limitZoom;
+        const float maxHalfH = viewH * 0.5f / limitZoom;
+        const auto maxRangeX = cameraRange(maxHalfW, playerX, referenceWorldW_);
+        const auto maxRangeY = cameraRange(maxHalfH, playerY, referenceWorldH_);
+        if (limitAngled_) {
+            const float distance = std::max(std::hypot(aimOffsetX_, aimOffsetY_), 0.001f);
+            const float ux = aimOffsetX_ / distance, uy = aimOffsetY_ / distance;
+            const float cx = std::clamp(ux * Tuning::CameraAngledLength, maxRangeX.first, maxRangeX.second);
+            const float cy = std::clamp(uy * Tuning::CameraAngledLength, maxRangeY.first, maxRangeY.second);
+            const float infinity = std::numeric_limits<float>::infinity();
+            const float limitX = ux != 0.0f ? (cx + std::copysign(maxHalfW, ux)) / ux : infinity;
+            const float limitY = uy != 0.0f ? (cy + std::copysign(maxHalfH, uy)) / uy : infinity;
+            const float scale = std::clamp(std::min(limitX, limitY) / distance, 0.0f, 1.0f);
+            aimOffsetX_ *= scale;
+            aimOffsetY_ *= scale;
+        } else {
+            const float cameraLimitX = Tuning::CameraLookShift * maxHalfW / (1.0f - Tuning::CameraLookShift);
+            const float cameraLimitY = Tuning::CameraLookShift * maxHalfH / (1.0f - Tuning::CameraLookShift);
+            const float minX = std::clamp(-cameraLimitX, maxRangeX.first, maxRangeX.second) - maxHalfW;
+            const float maxX = std::clamp(cameraLimitX, maxRangeX.first, maxRangeX.second) + maxHalfW;
+            const float minY = std::clamp(-cameraLimitY, maxRangeY.first, maxRangeY.second) - maxHalfH;
+            const float maxY = std::clamp(cameraLimitY, maxRangeY.first, maxRangeY.second) + maxHalfH;
+            aimOffsetX_ = std::clamp(aimOffsetX_, minX, maxX);
+            aimOffsetY_ = std::clamp(aimOffsetY_, minY, maxY);
+        }
+    }
+    const float distance = std::max(std::hypot(aimOffsetX_, aimOffsetY_), 0.001f);
+    const float cameraShift = referenceAngled_
+        ? std::min(1.0f, Tuning::CameraAngledLength / distance) : referenceCameraShift_;
+    const float cameraX = std::clamp(aimOffsetX_ * cameraShift, rangeX.first, rangeX.second);
+    const float cameraY = std::clamp(aimOffsetY_ * cameraShift, rangeY.first, rangeY.second);
+    const float referenceX = aimOffsetX_ - cameraX;
+    const float referenceY = aimOffsetY_ - cameraY;
+    const float edgeDistance = std::min(halfW - std::abs(referenceX), halfH - std::abs(referenceY));
+    const float band = std::max(halfW, halfH) * 2.0f * Tuning::EdgeZoomOutZone;
+    if (edgeZoomRequested_) {
+        if (edgeDistance >= band * Tuning::EdgeZoomHysteresis) edgeZoomRequested_ = false;
+    } else if (edgeDistance < band) {
+        edgeZoomRequested_ = true;
+    }
+    outWorldX = playerX + aimOffsetX_;
+    outWorldY = playerY + aimOffsetY_;
+    virtCursorX = (outWorldX - camX) * zoom;
+    virtCursorY = (outWorldY - camY) * zoom;
 }
 
 void CS2DOverlay::UpdateTabToggle() {
@@ -39,6 +165,11 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
     // 契约 v1.3：开镜期间不画普通准星，改用镜筒里的大十字（四象限）
     const Presentation::ScopeView scope = game->GetScopeView();
     const bool scoped = scope.active && scope.supported;
+    const float reticleX = (game->GetRenderAimX() - renderer->GetCameraX()) * renderer->GetZoom();
+    const float reticleY = (game->GetRenderAimY() - renderer->GetCameraY()) * renderer->GetZoom();
+    SetVisibleAimPoint(game->GetRenderAimX(), game->GetRenderAimY());
+    virtCursorX = reticleX;
+    virtCursorY = reticleY;
     // 准星尺寸随 UI 缩放（设置里的数值是 1920x1080 基准）
     float crosshairGap = crosshair.gap * g_uiScale;
     if (crosshair.dynamic) {
@@ -47,7 +178,15 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
                         Tuning::CrosshairBloomMaxPx * g_uiScale;
     }
     if (!scoped) {
-        renderer->DrawCrosshair(virtCursorX, virtCursorY,
+        const auto& player = game->GetPlayer();
+        const auto playerView = game->GetActorView(player);
+        const WeaponClass cls = player.CurrentWeapon().cls;
+        if (crosshair.aimLine && player.alive && !game->IsSpectating() &&
+            cls != WeaponClass::Melee && cls != WeaponClass::Grenade && cls != WeaponClass::Bomb) {
+            renderer->DrawAimLine(playerView.x, playerView.y, player.size, game->GetRenderAimAngle(),
+                player.weaponSlot, game->GetRenderAimX(), game->GetRenderAimY(), aimLineStyle, g_uiScale);
+        }
+        renderer->DrawCrosshair(reticleX, reticleY,
                                 crosshair.r, crosshair.g, crosshair.b, crosshair.a,
                                 crosshair.thickness * g_uiScale, crosshair.centerDot,
                                 crosshair.length * g_uiScale, crosshairGap);
@@ -60,7 +199,7 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
         const float hm = game->GetHitMarkerTimer();
         if (hm > 0.0f) {
             const float k = std::min(1.0f, hm / 0.18f);
-            renderer->DrawHitMarker(virtCursorX, virtCursorY, g_uiScale,
+            renderer->DrawHitMarker(reticleX, reticleY, g_uiScale,
                                     static_cast<Uint8>(220.0f * k));
         }
     }
@@ -90,7 +229,7 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
         }
         for (const auto& c : game->GetContactsOfTeam(myTeam)) {
             if (c.age > 6.0f) continue;                  // 情报超过 6 秒不再显示
-            dots.push_back({c.x, c.y, 235, 75, 70});     // 可见敌人：红色
+            dots.push_back({c.x, c.y, 235, 75, 70, static_cast<Uint8>(255.0f * std::clamp((Tuning::RadarFadeEnd - c.age) / (Tuning::RadarFadeEnd - Tuning::RadarFadeStart), 0.0f, 1.0f))});     // 可见敌人：红色
         }
     }
 

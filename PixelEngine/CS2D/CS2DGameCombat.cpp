@@ -67,7 +67,7 @@ void CS2DGame::UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bo
     // 指数缓动追赶目标：按下静步平滑聚合，松开静步平滑散开。
     const float rate = (targetBloom > crosshairBloom_)
         ? Tuning::CrosshairBloomExpandRate
-        : Tuning::CrosshairBloomContractRate;
+        : (player_.CurrentWeapon().cls == WeaponClass::Sniper ? Tuning::BloomSniper : player_.CurrentWeapon().cls == WeaponClass::SMG ? Tuning::BloomSmg : Tuning::CrosshairBloomContractRate);
     const float k = 1.0f - std::exp(-rate * dt);
     crosshairBloom_ += (targetBloom - crosshairBloom_) * k;
     if (std::abs(targetBloom - crosshairBloom_) < 0.002f) {
@@ -107,6 +107,7 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     if (!player_.alive) return;
 
     player_.aimAngle = std::atan2(worldMY - player_.y, worldMX - player_.x);
+    player_.aimDistance = std::max(std::hypot(worldMX - player_.x, worldMY - player_.y), 0.001f);
 
     // 射击冷却每帧都要推进（持投掷物 / 换弹期间也一样），
     // 否则切到投掷物后冷却会「冻住」，表现为怎么点都扔不出去
@@ -184,8 +185,11 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
         1.0f + bloom * (Tuning::MoveSpreadMaxMul - 1.0f);
     const float shotSpread = def.spreadBase * moveSpreadMul;
     std::uniform_real_distribution<float> spreadDist(-shotSpread, shotSpread);
+    player_.ApplyRecoil(def.recoilKickDeg);
+    recoilShake_ = std::min(Tuning::RecoilShakeMax, recoilShake_ + def.recoilKickDeg * Tuning::RecoilShakePerDegree);
+    recoilShakeAge_ = 0.0f;
     for (int p = 0; p < std::max(1, def.pellets); ++p) {
-        const float angle = player_.aimAngle + spreadDist(rng_);
+        const float angle = player_.EffectiveAim() + spreadDist(rng_);
         FireBullet(player_.x, player_.y, angle, def, -1, player_.team);
     }
 
@@ -305,6 +309,13 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             const float dx = bullet.x - bot.x;
             const float dy = bullet.y - bot.y;
             const float hitR = bot.size * 0.5f + 2.0f;
+            if (dx * dx + dy * dy < Tuning::BulletNearRadius * Tuning::BulletNearRadius) {
+                auto& ai = AiAt(i);
+                const float speed = std::max(std::hypot(bullet.vx, bullet.vy), 1.0f);
+                ai.dodgeX = bot.x - bullet.vy / speed * Tuning::BulletDodgeDistance;
+                ai.dodgeY = bot.y + bullet.vx / speed * Tuning::BulletDodgeDistance;
+                ai.Perceive(-4, clockSec_, tactics_.perception[std::clamp(ai.difficulty, 0, 3)].reaction * Tuning::BulletReactionMul);
+            }
             if (dx * dx + dy * dy >= hitR * hitR) continue;
 
             bullet.active = false;
@@ -313,6 +324,7 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
                 bot.name.empty() ? ("BOT#" + std::to_string(i)) : bot.name;
             {
                 auto& hitAi = AiAt(i);
+                hitAi.Perceive(bullet.ownerIdx, clockSec_, tactics_.perception[std::clamp(hitAi.difficulty, 0, 3)].reaction);
                 hitAi.lastHitTimer = 2.0f;   // 拆包安全判定：最近受击
                 if (bullet.ownerIdx == -1) {
                     hitAi.threatX = player_.x;
@@ -440,7 +452,7 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
 // 手雷
 // ============================================================================
 
-void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle, AudioManager* audio) {
+void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle, AudioManager* audio, float targetDistance) {
     if (thrower.grenadeCount <= 0) return;
 
     const WeaponId type = thrower.ActiveGrenade();
@@ -450,9 +462,12 @@ void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle, AudioManager* audio
     Grenade g;
     g.x = thrower.x;
     g.y = thrower.y;
-    // 摩擦 2.0/s → 投掷距离 ≈ 速度/2；420 约 210px
-    g.vx = std::cos(aimAngle) * 420.0f;
-    g.vy = std::sin(aimAngle) * 420.0f;
+    // Drag maps cursor distance to launch speed, with the configured range limits.
+    const float distance = targetDistance >= 0.0f ? targetDistance
+        : std::hypot(aimWorldX_ - thrower.x, aimWorldY_ - thrower.y);
+    const float speed = std::clamp(Tuning::NadeFriction * distance, Tuning::NadeThrowSpeedMin, Tuning::NadeThrowSpeedMax);
+    g.vx = std::cos(aimAngle) * speed;
+    g.vy = std::sin(aimAngle) * speed;
     g.fuse = 1.4f;
     g.type = type;
     g.team = thrower.team;
@@ -569,8 +584,8 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
         const float spinSpeed = std::sqrt(g.vx * g.vx + g.vy * g.vy);
         if (spinSpeed > 8.0f) g.spin = std::fmod(g.spin + spinSpeed * dt * 1.4f, 360.0f);
 
-        g.vx -= g.vx * 2.0f * dt;
-        g.vy -= g.vy * 2.0f * dt;
+        g.vx -= g.vx * Tuning::NadeFriction * dt;
+        g.vy -= g.vy * Tuning::NadeFriction * dt;
         g.x = std::clamp(g.x, 0.0f, world_->GetMapPixelW() - 1.0f);
         g.y = std::clamp(g.y, 0.0f, world_->GetMapPixelH() - 1.0f);
 

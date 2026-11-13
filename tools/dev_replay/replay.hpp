@@ -30,6 +30,8 @@ struct InputFrame {
     float aimY = 0.0f;
     bool w = false, a = false, s = false, d = false;
     bool shift = false, reload = false, interact = false;
+    bool edgeZoom = false;
+    bool relativeAim = false;
     bool scopeToggle = false;   // 本 tick 是否切换开镜档位
     int  switchSlot = 0;        // 切枪槽位（0..4），0 表示无动作
     int  buyWeapon = 0;      // 购买动作（WeaponId 数值），0 = 无
@@ -54,17 +56,18 @@ inline bool WriteJournal(const std::string& path, const JournalHeader& h,
     std::FILE* f = std::fopen(path.c_str(), "wb");
     if (!f) return false;
     std::fprintf(f,
-                 "# PXINPUT2 map=%s seed=%d viewport=%dx%d aimTurn=%.2f aimErr=%.1f "
+                 "# PXINPUT3 map=%s seed=%d viewport=%dx%d aimTurn=%.2f aimErr=%.1f "
                  "reaction=%d tag=%s final_hash=%016llx ticks=%zu\n",
                  h.map.c_str(), h.seed, h.viewportW, h.viewportH,
                  h.aimTurnRate, h.aimErrorDeg, h.reactionTicks, h.tag.c_str(),
                  static_cast<unsigned long long>(h.finalHash), frames.size());
     for (const auto& fr : frames) {
-        std::fprintf(f, "%u %d %.9g %.9g %d %d %d %d %d %d %d %d %d %d %d\n",
+        std::fprintf(f, "%u %d %.9g %.9g %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
                      fr.tick, fr.mouseDown ? 1 : 0, fr.aimX, fr.aimY,
                      fr.w ? 1 : 0, fr.a ? 1 : 0, fr.s ? 1 : 0, fr.d ? 1 : 0,
                      fr.shift ? 1 : 0, fr.reload ? 1 : 0, fr.interact ? 1 : 0,
-                     fr.scopeToggle ? 1 : 0, fr.switchSlot, fr.buyWeapon, fr.buyArmorTier);
+                     fr.scopeToggle ? 1 : 0, fr.switchSlot, fr.buyWeapon, fr.buyArmorTier, fr.edgeZoom ? 1 : 0,
+                     fr.relativeAim ? 1 : 0);
     }
     std::fclose(f);
     return true;
@@ -113,16 +116,18 @@ inline bool ReadJournal(const std::string& path, JournalHeader& out,
     while (std::fgets(line, sizeof(line), f)) {
         if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
         InputFrame fr;
-        int md = 0, w = 0, a = 0, s = 0, d = 0, sh = 0, rl = 0, it = 0, sc = 0;
-        const int n = std::sscanf(line, "%u %d %f %f %d %d %d %d %d %d %d %d %d %d %d",
+        int md = 0, w = 0, a = 0, s = 0, d = 0, sh = 0, rl = 0, it = 0, sc = 0, edge = 0, relative = 0;
+        const int n = std::sscanf(line, "%u %d %f %f %d %d %d %d %d %d %d %d %d %d %d %d %d",
                                   &fr.tick, &md, &fr.aimX, &fr.aimY,
                                   &w, &a, &s, &d, &sh, &rl, &it,
-                                  &sc, &fr.switchSlot, &fr.buyWeapon, &fr.buyArmorTier);
+                                  &sc, &fr.switchSlot, &fr.buyWeapon, &fr.buyArmorTier, &edge, &relative);
         if (n < 15) continue;
         fr.mouseDown = md != 0;
         fr.w = w != 0; fr.a = a != 0; fr.s = s != 0; fr.d = d != 0;
         fr.shift = sh != 0; fr.reload = rl != 0; fr.interact = it != 0;
         fr.scopeToggle = sc != 0;
+        fr.edgeZoom = edge != 0;
+        fr.relativeAim = relative != 0;
         frames.push_back(fr);
     }
     std::fclose(f);

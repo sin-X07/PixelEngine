@@ -43,6 +43,7 @@ std::unique_ptr<LLMBotController> g_llm;
 struct Options {
     int   ticks = 60 * 30;
     int   seed = 1;
+    int botProfile = 4;
     std::string map = "dust_2";
     int   viewportW = 1728;
     int   viewportH = 1080;
@@ -85,6 +86,7 @@ Options ParseArgs(int argc, char** argv) {
         if (a.rfind("--ticks=", 0) == 0)         o.ticks = std::atoi(a.c_str() + 8);
         else if (a.rfind("--seed=", 0) == 0)     o.seed = std::atoi(a.c_str() + 7);
         else if (a.rfind("--map=", 0) == 0)      o.map = a.substr(6);
+        else if (a.rfind("--bot-profile=", 0) == 0) o.botProfile = std::clamp(std::atoi(a.c_str() + 14), 0, 7);
         else if (a.rfind("--hash=", 0) == 0)     o.hashPath = a.substr(7);
         else if (a.rfind("--out=", 0) == 0)      o.outDir = a.substr(6);
         else if (a.rfind("--tag=", 0) == 0)      o.tag = a.substr(6);
@@ -251,6 +253,7 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
         std::fprintf(stderr, "[dev_replay] 地图加载失败: %s\n", mapPath.c_str());
         return s;
     }
+    for (size_t i = 0; i < game.GetBOTs().size(); ++i) game.SetBotProfile(i, opt.botProfile);
     game.Visibility().SetVisionRadius(
         VisibilityQuery::RadiusForViewport(opt.viewportW, opt.viewportH));
 
@@ -494,6 +497,8 @@ int RunReplay(const Options& opt) {
         if (fr.switchSlot > 0) game.SwitchWeaponSlot(fr.switchSlot);
         ApplyBuy(game, fr.buyWeapon, fr.buyArmorTier);
         if (fr.scopeToggle) game.UpdateScopeInput(true, true);
+        game.SetEdgeZoomRequested(fr.edgeZoom);
+        game.SetAimTarget(fr.aimX, fr.aimY, fr.relativeAim);
         game.Update(dt, fr.mouseDown, fr.aimX, fr.aimY,
                     fr.w, fr.a, fr.s, fr.d,
                     fr.shift, fr.reload, fr.interact,

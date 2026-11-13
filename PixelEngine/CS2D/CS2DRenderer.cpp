@@ -133,9 +133,11 @@ void CS2DRenderer::Clean() {
 // ============================================================================
 
 void CS2DRenderer::SetWorld(const CS2DWorld* world) {
+    cameraInitialized_ = false;
     Clean();
     world_ = world;
     vis_.SetWorld(world);
+    vis_.SetDistanceLimited(false);
     failedLoads_ = 0;
     if (!world_) return;
 
@@ -293,7 +295,7 @@ bool CS2DRenderer::FindTileSrc(int gid, SDL_Texture*& outTex, SDL_Rect& outSrc) 
 
 void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
                                 int viewportW, int viewportH, float zoomMultiplier) {
-    if (!world_) return;
+    if (!world_ || cameraFrozen_) return;
 
     // 视野是半径 VISION_RADIUS 的圆：先按「整圆刚好装进较窄的那一屏边」算 fit，
     // 再整体放大 15% —— 画面更近、角色更大；四角雾边被裁掉属预期。
@@ -307,8 +309,8 @@ void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
     const float viewW = static_cast<float>(viewportW) / zoom_;
     const float viewH = static_cast<float>(viewportH) / zoom_;
 
-    // PIX-20：固定世界半径（旧 1728×1080 基准），不随视口或开镜倍率变化。
-    visionRadius_ = VisibilityQuery::RadiusForViewport(viewportW, viewportH, baseZoom);
+    // PIX-31: scale the reference radius with the final scope/edge zoom factor.
+    visionRadius_ = VisibilityQuery::RadiusForViewport(viewportW, viewportH, baseZoom) / zoomMultiplier;
     vis_.SetVisionRadius(visionRadius_);
 
     float totalW = world_->GetMapPixelW();
@@ -325,8 +327,23 @@ void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
     const float loY = -VISION_RADIUS;
     const float hiY = std::max(loY, totalH - viewH + VISION_RADIUS);
 
-    cameraX_ = std::clamp(playerCenterX - viewW * 0.5f, loX, hiX);
-    cameraY_ = std::clamp(playerCenterY - viewH * 0.5f, loY, hiY);
+    const float targetX = std::clamp(playerCenterX - viewW * 0.5f, loX, hiX);
+    const float targetY = std::clamp(playerCenterY - viewH * 0.5f, loY, hiY);
+    const float blend = cameraInitialized_ && frameDelta_ > 0.0f
+        ? 1.0f - std::exp(-Tuning::CameraSmoothRate * frameDelta_) : 1.0f;
+    if (cameraAnchored_) {
+        const float baseX = cameraAnchorX_ - viewW * 0.5f;
+        const float baseY = cameraAnchorY_ - viewH * 0.5f;
+        cameraOffsetX_ += (targetX - baseX - cameraOffsetX_) * blend;
+        cameraOffsetY_ += (targetY - baseY - cameraOffsetY_) * blend;
+        cameraX_ = baseX + cameraOffsetX_;
+        cameraY_ = baseY + cameraOffsetY_;
+    } else {
+        cameraX_ += (targetX - cameraX_) * blend;
+        cameraY_ += (targetY - cameraY_) * blend;
+    }
+    cameraSettled_ = std::hypot(targetX - cameraX_, targetY - cameraY_) * zoom_ <= Tuning::CameraSettlePixels;
+    cameraInitialized_ = true;
 }
 
 // ============================================================================
@@ -673,13 +690,58 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
 
 }
 // 枪口火焰：cx/cy 为武器中心的屏幕坐标
+void CS2DRenderer::DrawAimLine(float playerX, float playerY, float size, float angle,
+                                 int slot, float targetX, float targetY,
+                                 const AimLineStyle& inputStyle, float uiScale) {
+    if (!renderer_ || !world_) return;
+    // A ray begins at the actor and extends beyond every visible viewport corner.
+    const float muzzleX = playerX, muzzleY = playerY;
+    const float viewWorldW = viewW_ / std::max(zoom_, 0.001f);
+    const float viewWorldH = viewH_ / std::max(zoom_, 0.001f);
+    const float farX = std::max(std::abs(cameraX_ - playerX), std::abs(cameraX_ + viewWorldW - playerX));
+    const float farY = std::max(std::abs(cameraY_ - playerY), std::abs(cameraY_ + viewWorldH - playerY));
+    const float rayLength = std::hypot(farX, farY) + viewWorldW + viewWorldH;
+    targetX = playerX + std::cos(angle) * rayLength;
+    targetY = playerY + std::sin(angle) * rayLength;
+    const float fraction = vis_.FirstBulletWallFraction(muzzleX, muzzleY, targetX, targetY);
+    const float startX = (muzzleX - cameraX_) * zoom_, startY = (muzzleY - cameraY_) * zoom_;
+    const float endX = (targetX - cameraX_) * zoom_, endY = (targetY - cameraY_) * zoom_;
+    const float dx = endX - startX, dy = endY - startY;
+    const float length = std::hypot(dx, dy);
+    if (length <= 0.0f) return;
+    AimLineStyle style = inputStyle;
+    style.Normalize();
+    uiScale = std::isfinite(uiScale) ? std::max(uiScale, 0.1f) : 1.0f;
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    auto segment = [&](float from, float to, float thickness, SDL_Color color) {
+        if (to <= from || color.a == 0) return;
+        const float nx = -dy / length * thickness * uiScale * 0.5f;
+        const float ny = dx / length * thickness * uiScale * 0.5f;
+        const float ax = startX + dx * from, ay = startY + dy * from;
+        const float bx = startX + dx * to, by = startY + dy * to;
+        const SDL_Vertex vertices[] = {
+            {{ax + nx, ay + ny}, color, {0, 0}}, {{bx + nx, by + ny}, color, {0, 0}},
+            {{bx - nx, by - ny}, color, {0, 0}}, {{ax - nx, ay - ny}, color, {0, 0}}
+        };
+        const int indices[] = {0, 1, 2, 0, 2, 3};
+        SDL_RenderGeometry(renderer_, nullptr, vertices, 4, indices, 6);
+    };
+    segment(0.0f, fraction, style.solidThickness, style.solid);
+    for (float distance = length * fraction; distance < length;
+         distance += (style.dashLength + style.gapLength) * uiScale) {
+        const float from = distance / length;
+        const float to = std::min(distance + style.dashLength * uiScale, length) / length;
+        segment(from, to, style.hiddenThickness, style.hidden);
+    }
+}
+
 void CS2DRenderer::DrawMuzzleFlash(float cx, float cy, float size, float aimAngle,
                                    int weaponSlot) {
-    const float weaponSz = (weaponSlot == 1) ? 3.0f
+    const float weaponSz = (weaponSlot == 1) ? Tuning::PistolDrawSize
                          : (weaponSlot == 2) ? 4.5f
-                         : 4.0f;
+                         : Tuning::PrimaryDrawSize;
     // 枪口位置 = 角色中心 + 瞄准方向 * (武器偏移 + 武器长度*/
-    const float tip = size * 0.35f + weaponSz * 0.55f;
+    const float tip = size * Tuning::WeaponOffsetMul + weaponSz * Tuning::MuzzleLengthMul;
     const float mx = cx + std::cos(aimAngle) * tip * zoom_;
     const float my = cy + std::sin(aimAngle) * tip * zoom_;
 
@@ -738,7 +800,7 @@ void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float 
 
     // 开枪瞬间的枪口火焰（近战/投掷物不画）
     if (muzzleFlash && def.cls != WeaponClass::Melee && def.cls != WeaponClass::Grenade) {
-        DrawMuzzleFlash(wx, wy, size, aimAngle, weaponSlot);   // wx/wy 已是屏幕坐标
+        DrawMuzzleFlash(cx, cy, size, aimAngle, weaponSlot);   // wx/wy 已是屏幕坐标
     }
 }
 
@@ -1127,7 +1189,7 @@ void CS2DRenderer::SetFogOpacityPct(int pct) {
 }
 
 int CS2DRenderer::EffectiveFogAlpha() const {
-    const int baseAlpha = scopeMaskActive_ ? SCOPE_FOG_ALPHA : VISION_FOG_ALPHA;
+    const int baseAlpha = VISION_FOG_ALPHA;
     return std::clamp(static_cast<int>(std::lround(
                           static_cast<float>(baseAlpha) *
                           (static_cast<float>(fogOpacityPct_) / 100.0f))),
@@ -1569,13 +1631,14 @@ void CS2DRenderer::DrawDamageVignette(Uint8 alpha) {
 }
 
 void CS2DRenderer::DrawVisionFog(float playerX, float playerY, float aimAngle) {
+    const Uint64 fogStart = SDL_GetPerformanceCounter();
+    lastFogMs_ = 0.0f;
     if (!visionTex_ || visionPixels_.empty() || !world_) return;
 
     const float px = playerX;
     const float py = playerY;
-    // 开镜时镜外要"看不见"而不是"看不清"：同一套圆形可见区下把雾压得更实
     // 契约 v1.2：雾 alpha 再乘用户设置的透明度百分比（只影响视觉，不影响可见性判定）
-    const int baseAlpha = scopeMaskActive_ ? SCOPE_FOG_ALPHA : VISION_FOG_ALPHA;
+    const int baseAlpha = VISION_FOG_ALPHA;
     const float pctScale = static_cast<float>(std::clamp(fogOpacityPct_, 0, 100)) / 100.0f;
     const Uint8 maxFogAlpha = static_cast<Uint8>(
         std::lround(static_cast<float>(baseAlpha) * pctScale));
@@ -1600,6 +1663,7 @@ void CS2DRenderer::DrawVisionFog(float playerX, float playerY, float aimAngle) {
     SDL_UpdateTexture(visionTex_, nullptr, visionPixels_.data(), maskW_ * 4);
     SDL_Rect viewport = {0, 0, viewW_, viewH_};
     SDL_RenderCopy(renderer_, visionTex_, nullptr, &viewport);
+    lastFogMs_ = static_cast<float>((SDL_GetPerformanceCounter() - fogStart) * 1000.0 / SDL_GetPerformanceFrequency());
 }
 
 // ============================================================================
@@ -1710,8 +1774,8 @@ void CS2DRenderer::DrawRadarHUD(float playerX, float playerY, float playerAngle,
     }
 
     // 屏幕空间实心圆（半径很小时逐行扫描比多边形更干净）
-    auto fillCircle = [&](float ccx, float ccy, float rad, Uint8 cr, Uint8 cg, Uint8 cb) {
-        SDL_SetRenderDrawColor(renderer_, cr, cg, cb, 255);
+    auto fillCircle = [&](float ccx, float ccy, float rad, Uint8 cr, Uint8 cg, Uint8 cb, Uint8 alpha = 255) {
+        SDL_SetRenderDrawColor(renderer_, cr, cg, cb, alpha);
         const int ri = static_cast<int>(std::ceil(rad));
         for (int dy = -ri; dy <= ri; ++dy) {
             const float w2 = rad * rad - static_cast<float>(dy * dy);
@@ -1731,8 +1795,8 @@ void CS2DRenderer::DrawRadarHUD(float playerX, float playerY, float playerAngle,
             ry < radarY + 1 || ry > radarY + radarSize - 1) continue;
 
         // 深色描边 + 彩色圆点，避免与地图底色糊在一起
-        fillCircle(rx, ry, dotR + 0.9f, 10, 12, 16);
-        fillCircle(rx, ry, dotR, d.r, d.g, d.b);
+        fillCircle(rx, ry, dotR + 0.9f, 10, 12, 16, d.alpha);
+        fillCircle(rx, ry, dotR, d.r, d.g, d.b, d.alpha);
     }
 
     // ---- 玩家：与 BOT 同样是圆点，用更亮的青色 + 外圈区分自己 ----

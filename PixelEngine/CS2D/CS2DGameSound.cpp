@@ -80,6 +80,7 @@ void CS2DGame::EmitSound(SoundEventType type, float x, float y, Team team,
         if (ai.heard.size() > kMaxHeard) ai.heard.erase(ai.heard.begin());
 
         if (AlertsListener(type)) {
+            ai.Perceive(sourceIdx >= -1 ? sourceIdx : -3, clockSec_, tactics_.perception[std::clamp(ai.difficulty, 0, 3)].reaction);
             ai.alertX = x;
             ai.alertY = y;
             ai.alertTimer = Tuning::SoundAlertMemory;
