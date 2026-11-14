@@ -1635,7 +1635,7 @@ void Engine::BeginTransition(GameState from, GameState to) {
     transitionElapsed_ = 0.0f;
     transitionSlideDir_ = 1;
     transitionKind_ = TransitionKind::Fade;
-    transitionDuration_ = 0.9f;
+    transitionDuration_ = 0.3f;
 }
 
 void Engine::DrawTransition(SDL_Texture* oldTex, SDL_Texture* newTex) {
