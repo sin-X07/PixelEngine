@@ -80,7 +80,7 @@ public:
         float y       = 0.0f;
         float vx      = 0.0f;
         float vy      = 0.0f;
-        float size    = 7.0f;
+        float size    = Tuning::PlayerSize;
         float aimAngle = 0.0f;
         float aimKick = 0.0f;
         float aimDistance = Tuning::RecoilReferenceDistance;
@@ -397,7 +397,7 @@ public:
         float vx = 0.0f;
         float vy = 0.0f;
         float traveled = 0.0f;
-        float maxDist  = 800.0f;
+        float maxDist  = 1600.0f;
         int   damage   = 25;
         int   ownerIdx  = -1;        // -1=玩家, >=0=BOT索引
         Team  ownerTeam = Team::None;
@@ -424,7 +424,7 @@ public:
     // 燃烧弹 / 燃烧瓶留下的火区
     struct FireZone {
         float x = 0.0f, y = 0.0f;
-        float radius = 58.0f;
+        float radius = Tuning::FireRadius;
         float life = 7.0f;
         float maxLife = 7.0f;
         float age = 0.0f;
@@ -432,7 +432,7 @@ public:
     };
     struct SmokeCloud {
         float x = 0.0f, y = 0.0f;
-        float radius = 70.0f;
+        float radius = Tuning::SmokeRadius;
         float life = 12.0f;        // 剩余寿命
         float maxLife = 12.0f;     // 初始寿命（用于淡出）
         float age = 0.0f;          // 已存在时间（用于爆开 + 向外扩张）

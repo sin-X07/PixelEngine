@@ -68,7 +68,7 @@ void CS2DGame::SpectatorMoveFree(float dx, float dy, float dt) {
     if (mode_ == MatchMode::DeathMatch) return;
     if (specMode_ != SpectateMode::Free || !world_) return;
 
-    const float speed = 420.0f;
+    const float speed = 840.0f;
     specFreeX_ += dx * speed * dt;
     specFreeY_ += dy * speed * dt;
     specFreeX_ = std::clamp(specFreeX_, 0.0f, world_->GetMapPixelW());

@@ -8,7 +8,7 @@
 //
 // 策略（固定、可复现，属于基准的一部分）：
 //   1. 有视线内敌人 → 瞄准它；进入反应延迟后开火；按距离拉近/拉开/侧移。
-//   2. 没有敌人 → 跟随最近的存活队友（队友由 BOT 负责寻路），保持 80px 距离。
+//   2. 没有敌人 → 跟随最近的存活队友（队友由 BOT 负责寻路），保持 160px 距离。
 //   3. 弹药不足 → 按 R 换弹；购买期按固定顺序补装备（主武器 → 护甲）。
 //   4. 不使用任何随机数（不污染游戏 RNG）。
 // ============================================================================
@@ -28,7 +28,7 @@ public:
         int   burstOn = 12;         // 连发窗口（tick），与 burstOff 组成点射节奏
         int   burstOff = 24;
         int   reactionTicks = 15;   // 看见目标后多少 tick 才开火（0.25s @60Hz）
-        float engageRange = 300.0f; // 开火距离上限
+        float engageRange = 600.0f; // 开火距离上限
     };
 
     ScriptedPlayer() = default;
@@ -72,8 +72,8 @@ public:
                               std::sin(static_cast<float>(tick_) * 0.13f);
             const float wantAngle = std::atan2(target->y - me.y, target->x - me.x) + err;
             TurnToward(wantAngle, dt);
-            in.aimX = me.x + std::cos(virtualAim_) * 200.0f;
-            in.aimY = me.y + std::sin(virtualAim_) * 200.0f;
+            in.aimX = me.x + std::cos(virtualAim_) * 400.0f;
+            in.aimY = me.y + std::sin(virtualAim_) * 400.0f;
 
             // 反应延迟 + 对准：看见 15 tick 且方向误差 < 3° 才开火
             float diff = wantAngle - virtualAim_;
@@ -92,8 +92,8 @@ public:
             const float dx = target->x - me.x;
             const float dy = target->y - me.y;
             const float dist = std::sqrt(dx * dx + dy * dy);
-            if (dist > 320.0f)      MoveToward(in, dx, dy);
-            else if (dist < 110.0f) MoveToward(in, -dx, -dy);
+            if (dist > 640.0f)      MoveToward(in, dx, dy);
+            else if (dist < 220.0f) MoveToward(in, -dx, -dy);
             else                    Strafe(in, dx, dy);
 
             // 低弹换弹
@@ -109,12 +109,12 @@ public:
             const float dx = mate->x - me.x;
             const float dy = mate->y - me.y;
             const float dist = std::sqrt(dx * dx + dy * dy);
-            if (dist > 80.0f) MoveToward(in, dx, dy);
+            if (dist > 160.0f) MoveToward(in, dx, dy);
             in.aimX = mate->x;
             in.aimY = mate->y;
         } else {
-            in.aimX = me.x + std::cos(me.aimAngle) * 100.0f;
-            in.aimY = me.y + std::sin(me.aimAngle) * 100.0f;
+            in.aimX = me.x + std::cos(me.aimAngle) * 200.0f;
+            in.aimY = me.y + std::sin(me.aimAngle) * 200.0f;
         }
         if (!me.reloading && me.ammo < me.maxAmmo && me.reserve > 0) in.reload = true;
         return in;
@@ -170,10 +170,10 @@ private:
     }
 
     static void MoveToward(Inputs& in, float dx, float dy) {
-        in.d = dx > 8.0f;
-        in.a = dx < -8.0f;
-        in.s = dy > 8.0f;
-        in.w = dy < -8.0f;
+        in.d = dx > 16.0f;
+        in.a = dx < -16.0f;
+        in.s = dy > 16.0f;
+        in.w = dy < -16.0f;
     }
 
     void Strafe(Inputs& in, float dx, float dy) {

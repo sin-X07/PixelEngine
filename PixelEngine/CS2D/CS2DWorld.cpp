@@ -65,7 +65,7 @@ bool CS2DWorld::Build(const CS2DMapData& data) {
                     // 移动碰撞用原始矩形（像素级）；margin 只影响网格（伤害/渲染）
                     exactRects_.push_back({rx, ry, rw, rh});
                     // margin：把矩形向外放宽，压低"人物嵌进墙里"的最大深度
-                    const float m = std::max(0.0f, std::min(8.0f, data.collisionMargin));
+                    const float m = std::max(0.0f, std::min(16.0f, data.collisionMargin));
                     float x0 = rx - m, y0 = ry - m, x1 = rx + rw + m, y1 = ry + rh + m;
                     if (x1 - x0 < tileWidth_) {
                         const float mid = (x0 + x1) * 0.5f;

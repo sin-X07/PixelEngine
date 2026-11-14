@@ -20,7 +20,7 @@
 struct SpriteDrawParams {
     float x       = 0.0f;
     float y       = 0.0f;
-    float size    = 6.0f;       // 仅作命中盒参考，视觉尺寸由 SPRITE_VISUAL_SIZE 决定
+    float size    = Tuning::PlayerSize; // 角色视觉盒与碰撞盒共享尺寸。
     float aimAngle = 0.0f;
     int   spriteKey  = 0;   // 0=CT头盔, 1=T无头盔, 2=T备选
     int   weaponId   = 0;   // WeaponId（决定手持武器贴图）
@@ -200,7 +200,7 @@ private:
     float zoom_    = 6.0f;   // 镜头缩放（6px 命中盒 → 屏上约 36px）
     // 玩家视野半径：随视口/缩放动态更新，覆盖屏幕边缘但不超过上限。
     float visionRadius_ = Tuning::VisionRadius;
-    static constexpr float MAX_PLAYER_VISION_RADIUS = 320.0f;
+    static constexpr float MAX_PLAYER_VISION_RADIUS = 640.0f;
     // 视线/视野几何的唯一实现（不再依赖 SDL）：渲染器只同步参数，判定在 VisibilityQuery
     VisibilityQuery vis_;
 

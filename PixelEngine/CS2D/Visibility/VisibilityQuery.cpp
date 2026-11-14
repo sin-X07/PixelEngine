@@ -102,7 +102,7 @@ float VisibilityQuery::ComputeVisibility(float playerX, float playerY, float aim
 float VisibilityQuery::BaseZoomForViewport(int viewportW, int viewportH) {
     const float minView = static_cast<float>(std::min(viewportW, viewportH));
     const float fitZoom = minView / (2.0f * Tuning::VisionRadius) * kBaseZoomScale;
-    return std::clamp(fitZoom, 1.2f, 6.0f);
+    return std::clamp(fitZoom, 0.6f, 3.0f);
 }
 
 float VisibilityQuery::RadiusForViewport(int, int, float) {

@@ -85,7 +85,7 @@ struct CS2DMapData {
     //   0 = 空气墙最少，但靠墙最多可嵌入 4px
     //   2 = 折中（嵌入 ≤2px，空气墙 ≤6px）
     //   4 = 等价 cover（不嵌入，但外扩最多 8px）
-    float collisionMargin = 2.0f;
+    float collisionMargin = 4.0f;
 
     std::vector<TilesetDef>     tilesets;
     std::vector<TileLayerDef>   tileLayers;

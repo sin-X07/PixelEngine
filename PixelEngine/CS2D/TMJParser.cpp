@@ -188,9 +188,9 @@ bool TMJParser::Parse(const std::string& resolvedPath, CS2DMapData& out) {
             try {
                 out.collisionMargin = std::stof(itMargin->second);
             } catch (...) {
-                out.collisionMargin = 2.0f;
+                out.collisionMargin = 4.0f;
             }
-            out.collisionMargin = std::max(0.0f, std::min(8.0f, out.collisionMargin));
+            out.collisionMargin = std::max(0.0f, std::min(16.0f, out.collisionMargin));
         }
     }
     if (out.collisionMode != "cover") {

@@ -56,7 +56,7 @@ bool CS2DRenderer::Initialize(SDL_Renderer* ren, const std::string& mapDir, int 
     mapDir_   = mapDir;
     viewW_    = viewW;
     viewH_    = viewH;
-    zoom_     = 6.0f;   // 镜头缩放（6px 命中盒 → 屏上约 36px）
+    zoom_     = 3.0f;   // 初始镜头缩放，随后由视野与视口计算。
     const std::string absDir = PathUtils::ResolveAppPath(mapDir);
     if (std::filesystem::exists(absDir)) {
         mapDir_ = absDir;
@@ -582,7 +582,7 @@ void CS2DRenderer::DrawOverlay() {
 //   主武器 → 第1行第1列；副武器 → 第2行第2列；近战 → 第2行第1列
 // ============================================================================
 
-static constexpr float WALK_BOB_AMPLITUDE   = 0.6f;   // 世界单位（×zoom 后约 2.4px）
+static constexpr float WALK_BOB_AMPLITUDE   = 1.2f;   // 世界单位（×zoom 后约 2.4px）
 
 void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
     // 选序列帧 sheet
@@ -634,7 +634,7 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
     // 射击后坐力（世界单位）
     float xOff = 0.0f;
     if (p.animState == 2) {
-        xOff = -std::max(0.0f, 1.0f - p.animTimer * 6.0f) * 0.8f * zoom_;
+        xOff = -std::max(0.0f, 1.0f - p.animTimer * 6.0f) * 1.6f * zoom_;
     }
 
     SDL_FRect dst;
@@ -737,14 +737,14 @@ void CS2DRenderer::DrawAimLine(float playerX, float playerY, float angle,
 void CS2DRenderer::DrawMuzzleFlash(float cx, float cy, float size, float aimAngle,
                                    int weaponSlot) {
     const float weaponSz = (weaponSlot == 1) ? Tuning::PistolDrawSize
-                         : (weaponSlot == 2) ? 4.5f
+                         : (weaponSlot == 2) ? 9.0f
                          : Tuning::PrimaryDrawSize;
     // 枪口位置 = 角色中心 + 瞄准方向 * (武器偏移 + 武器长度*/
     const float tip = size * Tuning::WeaponOffsetMul + weaponSz * Tuning::MuzzleLengthMul;
     const float mx = cx + std::cos(aimAngle) * tip * zoom_;
     const float my = cy + std::sin(aimAngle) * tip * zoom_;
 
-    const float r = 2.6f * zoom_;
+    const float r = 5.2f * zoom_;
 
     // 外层：橙色柔光
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
@@ -775,10 +775,10 @@ void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float 
 
     const WeaponDef& def = WeaponDB::Get(static_cast<WeaponId>(weaponId));
     const float degOffset = def.degOffset;
-    const float weaponSz  = (weaponSlot == 1) ? 3.0f
-                          : (weaponSlot == 2) ? 4.5f
-                          : (weaponSlot == 3) ? 2.2f   // 投掷物手持：缩小
-                          : 4.0f;
+    const float weaponSz  = (weaponSlot == 1) ? Tuning::PistolDrawSize
+                          : (weaponSlot == 2) ? 9.0f
+                          : (weaponSlot == 3) ? 4.4f   // 投掷物手持：缩小
+                          : Tuning::PrimaryDrawSize;
 
     // 武器绘制在精灵前方偏移
     const float offset = size * 0.35f * zoom_;
@@ -960,7 +960,7 @@ void CS2DRenderer::DrawDroppedWeapon(int weaponId, float worldX, float worldY,
     if (tw <= 0 || th <= 0) return;
 
     // 统一放进约 9 个世界单位的方框，保持宽高比
-    const float box = 5.5f * zoom_;
+    const float box = 11.0f * zoom_;
     float dw = box, dh = box;
     if (tw >= th) dh = box * static_cast<float>(th) / static_cast<float>(tw);
     else          dw = box * static_cast<float>(tw) / static_cast<float>(th);
@@ -1267,11 +1267,11 @@ void CS2DRenderer::DrawThrownGrenade(int weaponId, float worldX, float worldY,
     if (!tex) return;
 
     // 地面投影，避免看起来像浮在空中
-    DrawCircleFilled(worldX + 0.6f, worldY + 1.1f, 3.2f, 0, 0, 0, 70);
+    DrawCircleFilled(worldX + 1.2f, worldY + 2.2f, 6.4f, 0, 0, 0, 70);
 
     const float cx = (worldX - cameraX_) * zoom_;
     const float cy = (worldY - cameraY_) * zoom_;
-    const float box = 3.0f * zoom_;   // 投出状态：缩小到原来的 3/7
+    const float box = 6.0f * zoom_;   // 投出状态：缩小到原来的 3/7
     SDL_FRect dst = { cx - box * 0.5f, cy - box * 0.5f, box, box };
     const SDL_FPoint center = { box * 0.5f, box * 0.5f };
     SDL_RenderCopyExF(renderer_, tex, nullptr, &dst, spinDeg, &center, SDL_FLIP_NONE);

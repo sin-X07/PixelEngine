@@ -25,7 +25,7 @@ float CS2DGame::ComputeFlashIntensity(float dist) {
 }
 
 void CS2DGame::UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bool stealth) {
-    constexpr float ACCEL    = 600.0f;
+    constexpr float ACCEL    = Tuning::PlayerAcceleration;
     constexpr float FRICTION = 8.0f;
     // 持械移速惩罚：步枪最慢、手枪次之、近战最快（倍率来自武器表）
     const float weaponMul = player_.CurrentWeapon().moveSpeedMul;
@@ -42,8 +42,8 @@ void CS2DGame::UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bo
     } else {
         player_.vx -= player_.vx * FRICTION * dt;
         player_.vy -= player_.vy * FRICTION * dt;
-        if (std::abs(player_.vx) < 1.0f) player_.vx = 0.0f;
-        if (std::abs(player_.vy) < 1.0f) player_.vy = 0.0f;
+        if (std::abs(player_.vx) < Tuning::PlayerStopSpeed) player_.vx = 0.0f;
+        if (std::abs(player_.vy) < Tuning::PlayerStopSpeed) player_.vy = 0.0f;
     }
 
     const float speed = std::sqrt(player_.vx * player_.vx + player_.vy * player_.vy);
@@ -308,7 +308,7 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
 
             const float dx = bullet.x - bot.x;
             const float dy = bullet.y - bot.y;
-            const float hitR = bot.size * 0.5f + 2.0f;
+            const float hitR = bot.size * 0.5f + Tuning::BulletHitPadding;
             if (dx * dx + dy * dy < Tuning::BulletNearRadius * Tuning::BulletNearRadius) {
                 auto& ai = AiAt(i);
                 const float speed = std::max(std::hypot(bullet.vx, bullet.vy), 1.0f);
@@ -410,7 +410,7 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
             IsHostileTeam(bullet.ownerTeam, player_.team)) {
             const float dx = bullet.x - player_.x;
             const float dy = bullet.y - player_.y;
-            const float hitR = player_.size * 0.5f + 2.0f;
+            const float hitR = player_.size * 0.5f + Tuning::BulletHitPadding;
             if (dx * dx + dy * dy < hitR * hitR) {
                 bullet.active = false;
                 segImpact = true;   // 打中玩家 = 实际碰撞终止
@@ -582,7 +582,7 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
         // 地面摩擦（指数衰减；v0/friction ≈ 总投掷距离）
         // 飞行时缓慢自转（停下后保持角度）
         const float spinSpeed = std::sqrt(g.vx * g.vx + g.vy * g.vy);
-        if (spinSpeed > 8.0f) g.spin = std::fmod(g.spin + spinSpeed * dt * 1.4f, 360.0f);
+        if (spinSpeed > 16.0f) g.spin = std::fmod(g.spin + spinSpeed * dt * 0.7f, 360.0f);
 
         g.vx -= g.vx * Tuning::NadeFriction * dt;
         g.vy -= g.vy * Tuning::NadeFriction * dt;
@@ -593,7 +593,7 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
         // 阈值取 200 而不是几十，是为了给反应留出约 1 秒的窗口。
         if (!g.landingWarned) {
             const float spd2 = g.vx * g.vx + g.vy * g.vy;
-            if (spd2 < 200.0f * 200.0f) {
+            if (spd2 < 400.0f * 400.0f) {
                 g.landingWarned = true;
                 EmitSound(SoundEventType::GrenadeBounce, g.x, g.y, g.team);
                 std::cout << "[Nade] 落点 (" << static_cast<int>(g.x) << ","
@@ -726,7 +726,7 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
             SmokeCloud s;
             s.x = g.x;
             s.y = g.y;
-            s.radius = 70.0f;
+            s.radius = Tuning::SmokeRadius;
             s.maxLife = 12.0f;
             s.age = 0.0f;
             s.expandTime = 1.6f;
@@ -1098,7 +1098,7 @@ void CS2DGame::DropEquipmentOnDeath(const Player& victim) {
     it.reserveAmmo  = dropReserve;
     // 随机平铺朝向 + 少量抖动，避免多件物品完全重叠
     std::uniform_real_distribution<float> ang(0.0f, 360.0f);
-    std::uniform_real_distribution<float> jitter(-5.0f, 5.0f);
+    std::uniform_real_distribution<float> jitter(-10.0f, 10.0f);
     it.x   = victim.x + jitter(rng_);
     it.y   = victim.y + jitter(rng_);
     it.rot = ang(rng_);
@@ -1118,7 +1118,7 @@ void CS2DGame::TryPickupDrops(bool manual) {
 
     // 找最近的掉落物
     int   best = -1;
-    float bestD2 = (manual ? 30.0f * 30.0f : 16.0f * 16.0f);
+    float bestD2 = (manual ? Tuning::ManualPickupRadius * Tuning::ManualPickupRadius : Tuning::DropPickupRadius * Tuning::DropPickupRadius);
     for (size_t i = 0; i < drops_.size(); ++i) {
         if (drops_[i].id == WeaponId::None) continue;
         if (drops_[i].pickupDelay > 0.0f) continue;   // 冷却中
@@ -1207,7 +1207,7 @@ void CS2DGame::DropWeaponToGround(int slot, float x, float y) {
     it.magAmmo      = magAmmo;
     it.reserveAmmo  = reserveAmmo;
     std::uniform_real_distribution<float> ang(0.0f, 360.0f);
-    std::uniform_real_distribution<float> jitter(-6.0f, 6.0f);
+    std::uniform_real_distribution<float> jitter(-12.0f, 12.0f);
     it.x = x + jitter(rng_);
     it.y = y + jitter(rng_);
     it.rot = ang(rng_);
@@ -1288,7 +1288,7 @@ void CS2DGame::DropCurrentWeapon() {
     it.magAmmo      = dropMag;
     it.reserveAmmo  = dropReserve;
     std::uniform_real_distribution<float> ang(0.0f, 360.0f);
-    std::uniform_real_distribution<float> jitter(-5.0f, 5.0f);
+    std::uniform_real_distribution<float> jitter(-10.0f, 10.0f);
     it.x   = player_.x + jitter(rng_);
     it.y   = player_.y + jitter(rng_);
     it.rot = ang(rng_);

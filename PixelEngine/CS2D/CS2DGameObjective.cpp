@@ -301,10 +301,10 @@ void CS2DGame::DetonateBomb(AudioManager* audio) {
     bombPlanted_ = false;
     bombTimer_ = 0.0f;
     std::cout << "[CS2D] C4 爆炸! T 获胜本回合" << std::endl;
-    EmitSound(SoundEventType::Explosion, bombX_, bombY_, Team::T, -2, 1600.0f);
+    EmitSound(SoundEventType::Explosion, bombX_, bombY_, Team::T, -2, 3200.0f);
 
     // 爆炸范围伤害（不分阵营）
-    constexpr float RADIUS = 160.0f;
+    constexpr float RADIUS = 320.0f;
     auto damageAt = [&](Player& p) {
         if (!p.alive) return;
         const float dx = p.x - bombX_;

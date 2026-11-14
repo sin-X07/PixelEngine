@@ -33,7 +33,7 @@ void CS2DGame::UpdateBombItem(float dt) {
     // ---- 掉落在地上的 C4：最近的 T 靠近即拾取（丢下 1 秒内不捡）----
     if (bombDropped_ && bombDropDelay_ <= 0.0f) {
         Player* best = nullptr;
-        float bestD2 = 24.0f * 24.0f;
+        float bestD2 = Tuning::BombPickupRadius * Tuning::BombPickupRadius;
 
         auto consider = [&](Player& p) {
             if (!p.alive || p.team != Team::T) return;

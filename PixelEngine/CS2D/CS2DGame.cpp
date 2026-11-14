@@ -623,7 +623,7 @@ void CS2DGame::SpawnBOT(Player& bot, Team team) {
 
     for (int attempt = 0; attempt < 20; ++attempt) {
         PickSpawnForTeam(team, bot.x, bot.y);
-        if (!IsEnemyNearby(bot.x, bot.y, 60.0f, team)) break;
+        if (!IsEnemyNearby(bot.x, bot.y, 120.0f, team)) break;
     }
 }
 
@@ -1000,7 +1000,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
         if (!b.alive) { bai.footstepTimer = 0.0f; continue; }
         bai.footstepTimer -= dt;
         const float spd = std::sqrt(b.vx * b.vx + b.vy * b.vy);
-        if (!b.stealth && spd > 5.0f && bai.footstepTimer <= 0.0f) {
+        if (!b.stealth && spd > 10.0f && bai.footstepTimer <= 0.0f) {
             bai.footstepTimer = 0.34f + static_cast<float>(i % 5) * 0.02f;
             if (audio) {
                 audio->PlaySoundAt(SoundEffect::FOOTSTEP, b.x, b.y, ListenerX(), ListenerY());
@@ -1031,7 +1031,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
             p.animState = AnimState::Dead;
         } else if (p.shootAnimTimer > 0.0f) {
             p.animState = AnimState::Shoot;
-        } else if (std::abs(p.vx) > 5.0f || std::abs(p.vy) > 5.0f) {
+        } else if (std::abs(p.vx) > 10.0f || std::abs(p.vy) > 10.0f) {
             p.animState = AnimState::Walk;
         } else {
             p.animState = AnimState::Idle;
@@ -1096,7 +1096,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     if (player_.alive && !player_.stealth) {
         footstepTimer_ -= dt;
         const float spd = std::sqrt(player_.vx * player_.vx + player_.vy * player_.vy);
-        if (spd > 5.0f && footstepTimer_ <= 0.0f) {
+        if (spd > 10.0f && footstepTimer_ <= 0.0f) {
             footstepTimer_ = 0.32f;
             if (audio) audio->PlaySound(SoundEffect::FOOTSTEP);
             OnFootstepSound(player_, player_.x, player_.y);
@@ -1326,18 +1326,18 @@ void CS2DGame::Render(int viewW, int viewH) {
         if (visible) {
             const float pulse = 0.5f + 0.5f * std::sin(clockSec_ * 5.0f);
             renderer_->DrawCircleOutline(bombDropX_, bombDropY_,
-                                         10.0f + 4.0f * pulse,
+                                         20.0f + 8.0f * pulse,
                                          255, 170, 60, static_cast<Uint8>(150 + 90 * pulse));
-            renderer_->DrawCircleOutline(bombDropX_, bombDropY_, 4.0f,
+            renderer_->DrawCircleOutline(bombDropX_, bombDropY_, 8.0f,
                                          255, 220, 140, 230);
         }
     }
 
     if (bombPlanted_) {
         const float pulse = 0.5f + 0.5f * std::sin(clockSec_ * 6.0f);
-        renderer_->DrawCircleOutline(bombX_, bombY_, 18.0f + 4.0f * pulse,
+        renderer_->DrawCircleOutline(bombX_, bombY_, 36.0f + 8.0f * pulse,
                                      255, 70, 60, static_cast<Uint8>(170 + 70 * pulse));
-        renderer_->DrawCircleFilled(bombX_, bombY_, 5.0f + 1.5f * pulse,
+        renderer_->DrawCircleFilled(bombX_, bombY_, 10.0f + 3.0f * pulse,
                                     255, 90, 70, 220);
         // 拆包有效范围（很小）
         renderer_->DrawCircleOutline(bombX_, bombY_, Tuning::DefuseRadius,

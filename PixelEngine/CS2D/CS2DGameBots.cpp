@@ -273,7 +273,7 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     {
         const float adx = destX - bot.x;
         const float ady = destY - bot.y;
-        constexpr float kArriveR = 14.0f;
+        constexpr float kArriveR = 28.0f;
         if (adx * adx + ady * ady < kArriveR * kArriveR) {
             ai.goalX = destX;
             ai.goalY = destY;
@@ -351,7 +351,7 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     float dirX = dx / d, dirY = dy / d;
     {
         const float half = bot.size * 0.5f;
-        const float probe = std::max(8.0f, moveSpeed * dt * 2.0f);
+        const float probe = std::max(16.0f, moveSpeed * dt * 2.0f);
         static const float kOffsets[7] = {
             0.0f,
              0.5235988f, -0.5235988f,   // ±30°
@@ -380,9 +380,9 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
         ApplyAvoidance(bot.vx, bot.vy, sepX, sepY);
         // 前进分量被分离力淹没时，保底给一点朝向目标的推力
         const float dot = bot.vx * (dx / d) + bot.vy * (dy / d);
-        if (dot < 12.0f) {
-            bot.vx += dx / d * 20.0f;
-            bot.vy += dy / d * 20.0f;
+        if (dot < 24.0f) {
+            bot.vx += dx / d * 40.0f;
+            bot.vy += dy / d * 40.0f;
             const float s2 = std::sqrt(bot.vx * bot.vx + bot.vy * bot.vy);
             if (s2 > moveSpeed) {
                 bot.vx = bot.vx / s2 * moveSpeed;
@@ -396,7 +396,7 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     // 朝向：只在真正移动时朝「速度方向」，并限制转向速率。
     // 之前朝航点算，航点落在身后时会让 BOT 一直转圈找方向。
     const float speed2 = bot.vx * bot.vx + bot.vy * bot.vy;
-    if (speed2 > 25.0f) {
+    if (speed2 > 100.0f) {
         const float moveAng = std::atan2(bot.vy, bot.vx);
         float desired = moveAng
                       + std::sin(ai.scanPhase * 2.2f) * Tuning::BotScanAmplitudeRad;
@@ -424,7 +424,7 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     {
         const float dxm = bot.x - ai.lastX;
         const float dym = bot.y - ai.lastY;
-        if (dxm * dxm + dym * dym > 1.0f) {
+        if (dxm * dxm + dym * dym > 4.0f) {
             ai.lastX = bot.x;
             ai.lastY = bot.y;
             ai.stuckTimer = 0.0f;
@@ -502,7 +502,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             for (auto& alert : ai.alerts) if (alert.enemyId == -4) alert = {};
             continue;
         }
-        const bool moving = std::hypot(bot.vx, bot.vy) > 1.0f;
+        const bool moving = std::hypot(bot.vx, bot.vy) > 2.0f;
         if (ai.wasMoving && !moving) ai.settleTimer = 0.0f;
         ai.wasMoving = moving;
         AgeHeardSounds(ai, dt);
@@ -521,7 +521,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 const float dx = ai.utilX - bot.x;
                 const float dy = ai.utilY - bot.y;
                 const float d2 = dx * dx + dy * dy;
-                if (d2 < 230.0f * 230.0f && d2 > 80.0f * 80.0f) {
+                if (d2 < 460.0f * 460.0f && d2 > 160.0f * 160.0f) {
                     float ang = 0.0f;
                     if (PlanGrenadeThrow(bot, ai.utilX, ai.utilY, ang)) {
                         ThrowGrenade(bot, ang, audio, std::sqrt(d2));
@@ -747,8 +747,8 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 const Player& mate = bots_[static_cast<size_t>(bestMate)];
                 // 停在队友侧后方 40px，别挤进同一条火线
                 const float ang = std::atan2(mate.y - bot.y, mate.x - bot.x) + 0.6f;
-                float ax = mate.x + std::cos(ang) * 40.0f;
-                float ay = mate.y + std::sin(ang) * 40.0f;
+                float ax = mate.x + std::cos(ang) * 80.0f;
+                float ay = mate.y + std::sin(ang) * 80.0f;
                 if (world_) {
                     ax = std::clamp(ax, 1.0f, world_->GetMapPixelW() - 1.0f);
                     ay = std::clamp(ay, 1.0f, world_->GetMapPixelH() - 1.0f);
@@ -787,7 +787,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             if (ai.rotateTimer <= 0.0f) {
                 ai.rotateTimer = 6.0f;
                 std::uniform_real_distribution<float> ang(0.0f, 6.2831853f);
-                std::uniform_real_distribution<float> rad(30.0f, 80.0f);
+                std::uniform_real_distribution<float> rad(60.0f, 160.0f);
                 for (int tries = 0; tries < 6; ++tries) {
                     const float a = ang(rng_);
                     const float r = rad(rng_);
@@ -816,7 +816,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         if (!target && bStep && !bombPlanted_ && !bombDropped_) {
             const float hdx = hearStep.x - bot.x;
             const float hdy = hearStep.y - bot.y;
-            constexpr float kHearArrive = 14.0f;
+            constexpr float kHearArrive = 28.0f;
             if (hdx * hdx + hdy * hdy <= kHearArrive * kHearArrive) {
                 // 到声源附近：原地压枪警戒，等记忆过期或看到敌人
                 bot.vx = bot.vy = 0.0f;
@@ -833,7 +833,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         if (!target && ai.hasPlanHold && !bombPlanted_ && !heardPush) {
             const float pdx = ai.planHoldX - bot.x;
             const float pdy = ai.planHoldY - bot.y;
-            constexpr float kPlanArrive = 16.0f;
+            constexpr float kPlanArrive = 32.0f;
             if (pdx * pdx + pdy * pdy < kPlanArrive * kPlanArrive) {
                 // Arrived at plan point: clear hold so peek/patrol/default goals can resume.
                 std::cout << "[Bot] #" << i << " 到达计划点，解除驻守"
@@ -858,7 +858,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                     const float fdx = focus->x - bot.x;
                     const float fdy = focus->y - bot.y;
                     const float fdist = std::sqrt(fdx * fdx + fdy * fdy);
-                    if (fdist <= 340.0f) {
+                    if (fdist <= 680.0f) {
                         target = focus;
                         targetDist = fdist;
                     }
@@ -1035,13 +1035,13 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                         const EnemyContact* c = FindNearestContact(Team::CT, bombX_, bombY_);
                         const float cdx = c ? (c->x - bombX_) : 0.0f;
                         const float cdy = c ? (c->y - bombY_) : 0.0f;
-                        if (c && cdx * cdx + cdy * cdy < 260.0f * 260.0f) {
+                        if (c && cdx * cdx + cdy * cdy < 520.0f * 520.0f) {
                             static const float kApproach[8] = {
                                 0.0f, 0.79f, 1.57f, 2.36f, 3.14f, 3.93f, 4.71f, 5.50f
                             };
                             const float ang = kApproach[i % 8];
-                            destX = c->x + std::cos(ang) * 34.0f;
-                            destY = c->y + std::sin(ang) * 34.0f;
+                            destX = c->x + std::cos(ang) * 68.0f;
+                            destY = c->y + std::sin(ang) * 68.0f;
                         } else {
                             static const float kCover[8] = {
                                 0.0f, 0.79f, 1.57f, 2.36f, 3.14f, 3.93f, 4.71f, 5.50f
@@ -1173,11 +1173,11 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                             rx = ai.planHoldX + static_cast<float>(rng_() % 181) - Tuning::PatrolHoldSpread;
                             ry = ai.planHoldY + static_cast<float>(rng_() % 181) - Tuning::PatrolHoldSpread;
                         } else if (hasEnemyCentroid) {
-                            rx = ecx + static_cast<float>(rng_() % 521) - 260.0f;
-                            ry = ecy + static_cast<float>(rng_() % 521) - 260.0f;
+                            rx = ecx + static_cast<float>(rng_() % 521) * 2.0f - 520.0f;
+                            ry = ecy + static_cast<float>(rng_() % 521) * 2.0f - 520.0f;
                         } else {
-                            rx = bot.x + static_cast<float>(rng_() % 601) - 300.0f;
-                            ry = bot.y + static_cast<float>(rng_() % 601) - 300.0f;
+                            rx = bot.x + static_cast<float>(rng_() % 601) * 2.0f - 600.0f;
+                            ry = bot.y + static_cast<float>(rng_() % 601) * 2.0f - 600.0f;
                         }
                         if (pathFinder_.IsWalkableWorld(rx, ry)) {
                             ai.wanderX = rx;
@@ -1338,7 +1338,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 float vy = mvy * spd;
 
                 const float half = bot.size * 0.5f;
-                const float probe = std::max(12.0f, spd * dt * 4.0f);
+                const float probe = std::max(24.0f, spd * dt * 4.0f);
                 auto blockedAt = [&](float dx, float dy) {
                     return !world_ || world_->CheckRectCollision(bot.x + dx * probe - half,
                                                                  bot.y + dy * probe - half,
@@ -1373,8 +1373,8 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                     if (!solved) {
                         // 贴墙时用一次短程寻路绕开（交火中也允许，代价是一次 A*）
                         const float flankAng = std::atan2(mvy, mvx) + 1.5708f;
-                        const float fx = bot.x + std::cos(flankAng) * 70.0f;
-                        const float fy = bot.y + std::sin(flankAng) * 70.0f;
+                        const float fx = bot.x + std::cos(flankAng) * 140.0f;
+                        const float fy = bot.y + std::sin(flankAng) * 140.0f;
                         if (world_ && !world_->CheckRectCollision(fx - half, fy - half,
                                                                   bot.size, bot.size) &&
                             FollowPathTo(bot, ai, fx, fy, dt, roleMul)) {
@@ -1439,14 +1439,14 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             spreadMul        = 0.4f;
         } else {
             // 连发：按距离分档，近距离更快更准
-            if (engageDist < 60.0f)      { shootCooldownMul = 0.8f; spreadMul = 0.7f; }
-            else if (engageDist < 150.0f){ shootCooldownMul = 1.0f; spreadMul = 1.0f; }
+            if (engageDist < 120.0f)      { shootCooldownMul = 0.8f; spreadMul = 0.7f; }
+            else if (engageDist < 300.0f){ shootCooldownMul = 1.0f; spreadMul = 1.0f; }
             else                          { shootCooldownMul = 1.5f; spreadMul = 1.3f; }
         }
 
         // 撤退/借掩体途中，除非目标贴脸（<50px）否则不开火
         if ((stance == BotStance::Retreat || stance == BotStance::MoveToCover) &&
-            engageDist > 50.0f) {
+            engageDist > 100.0f) {
             shouldShoot = false;
         }
         // 近战只在触及范围内出手（按体型算，不再用固定 25px 留出死区）
@@ -1455,7 +1455,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         if (bot.weaponSlot >= 2 && engageDist > meleeReachNow) shouldShoot = false;
 
         // 站姿=被动：只打贴脸，不主动拉远枪线
-        if (ai.holdStyle == 3 && engageDist > 250.0f) shouldShoot = false;
+        if (ai.holdStyle == 3 && engageDist > 500.0f) shouldShoot = false;
 
         // 结算展示期与回合中一致：BOT 同样可以开火
         // 枪械 / 霰弹（必须真实可见才开火，换弹中不开火）
@@ -1464,7 +1464,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             if (bot.shootCooldown > 0.0f) bot.shootCooldown -= dt;
 
             if (bot.shootCooldown <= 0.0f) {
-                if (engageDist < def.range + 200.0f) {
+                if (engageDist < def.range + 400.0f) {
                     if (bot.ammo <= 0) {
                         // 还有备弹就换弹；弹匣+备弹都空则本帧不开火（换枪逻辑在上方处理）
                         if (bot.reserve > 0) StartReload(bot, audio);

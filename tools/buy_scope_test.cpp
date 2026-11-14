@@ -935,7 +935,7 @@ static void TestFireInputGate() {
 
 static void TestFixedVisionRadius() {
     const float reference = VisibilityQuery::RadiusForViewport(1728, 1080);
-    check(std::fabs(reference - 189.8f) < 0.1f, "PIX-20 preserves reference world radius");
+    check(std::fabs(reference - 379.6f) < 0.2f, "global HD calibration preserves the doubled reference world radius");
     VisibilityQuery baseline;
     baseline.SetVisionRadius(reference);
     for (const auto viewport : std::vector<std::pair<int, int>>{{1280,720}, {1920,1080}, {2560,1600}, {800,1200}}) {
@@ -1064,6 +1064,7 @@ static void TestMenuWeaponMountSelection() {
 // cover / center 两种碰撞栅格化模式（地图属性 collisionMode）
 static void TestCollisionModes() {
     CS2DMapData data;
+    data.collisionMargin = 2.0f; // This fixture uses the original 8px grid.
     data.mapWidth  = 4;
     data.mapHeight = 1;
     data.tileWidth = 8;
@@ -1129,17 +1130,17 @@ static void TestStableCursorAndWallRay() {
     check(x == 200 + Tuning::InitialAimDistance && y == 200, "camera and zoom do not feed back into aim");
     overlay.SyncScopeCursor(true, false, false);
     overlay.UpdateCursor(60, -30, 1, 6, 0, 100, 1920, 1080, 200, 200, x, y);
-    check(x == 255 && y == 195, "scoped cursor accepts relative motion");
+    check(x == 310 && y == 190, "scoped cursor accepts relative motion");
     overlay.SetVisibleAimPoint(x, y);
     overlay.SyncScopeCursor(true, true, false);
     overlay.UpdateCursor(0, 0, 1, 4, -30, 80, 1920, 1080, 200, 200, x, y);
-    check(std::abs(x - 255) < 0.001f && std::abs(y - 195) < 0.001f,
+    check(std::abs(x - 310) < 0.001f && std::abs(y - 190) < 0.001f,
           "scope closing preserves the last map pixel");
     overlay.SyncScopeCursor(false, true, false);
     overlay.UpdateCursor(0, 0, 1, 6, 0, 0, 1920, 1080, 200, 200, x, y);
-    check(std::abs(x - 255) < 0.001f && std::abs(y - 195) < 0.001f, "zoom changes preserve anchored world point");
+    check(std::abs(x - 310) < 0.001f && std::abs(y - 190) < 0.001f, "zoom changes preserve anchored world point");
     overlay.UpdateCursor(0, 0, 1, 4, -80, -90, 1920, 1080, 200, 200, x, y);
-    check(std::abs(x - 255) < 0.001f && std::abs(y - 195) < 0.001f, "camera changes preserve anchored world point");
+    check(std::abs(x - 310) < 0.001f && std::abs(y - 190) < 0.001f, "camera changes preserve anchored world point");
     overlay.SyncScopeCursor(false, true, true);
     overlay.UpdateCursor(0, 0, 1, 4, -80, -90, 1920, 1080, 200, 200, x, y);
     check(!overlay.ScreenAnchorActive(), "settled closing camera commits the anchor to the base offset");
@@ -1156,7 +1157,7 @@ static void TestStableCursorAndWallRay() {
           "reopening during handoff commits the current point without jumping back");
     overlay.InitializeCursor(0.0f);
     overlay.UpdateCursor(0, 0, 1, 6, 0, 0, 1920, 1080, 210, 205, x, y);
-    check(x == 255 && y == 205, "player motion preserves relative cursor offset");
+    check(x == 210 + Tuning::InitialAimDistance && y == 205, "player motion preserves relative cursor offset");
 
     CS2DMapData data;
     data.mapWidth = 8; data.mapHeight = 8;
@@ -1401,7 +1402,7 @@ static void TestFixedReferenceCursor() {
         cursor.UpdateCursor(-10, 0, 1, 4, 100, 50, 1920, 1080, 500, 500, x, y);
         check(cursor.EdgeZoomRequested(), "scope handoff freezes the edge target while accepting mouse motion");
     }
-    check(std::abs(cursor.virtCursorX - 1100) < 0.01f, "handoff anchor accepts relative mouse movement");
+    check(std::abs(cursor.virtCursorX - 900) < 0.01f, "handoff anchor accepts relative mouse movement");
     cursor.SyncScopeCursor(false, true, false, Tuning::AimHandoffMaxSeconds);
     cursor.UpdateCursor(0, 0, 1, 4, 100, 50, 1920, 1080, 500, 500, x, y);
     check(!cursor.ScreenAnchorActive(), "handoff has a finite completion deadline");
@@ -1770,7 +1771,9 @@ static void TestCameraEdgeZoom() {
             check(renderer.GetZoom() == zoom, "repeated Render preserves edge transition state");
             SDL_RenderPresent(software);
             SDL_SaveBMP(surface, "build-evidence/pix31-render.bmp");
-            cursor.UpdateCursor(-1000, 0, 1, renderer.GetZoom(), renderer.GetCameraX(), renderer.GetCameraY(),
+            const int inwardMotion = static_cast<int>(std::lround((x + Tuning::InitialAimDistance - targetX) *
+                VisibilityQuery::BaseZoomForViewport(1920, 1080)));
+            cursor.UpdateCursor(inwardMotion, 0, 1, renderer.GetZoom(), renderer.GetCameraX(), renderer.GetCameraY(),
                 1920, 1080, x, y, targetX, targetY);
             game.SetEdgeZoomRequested(cursor.EdgeZoomRequested());
             for (int frame = 0; frame < 25; ++frame) {

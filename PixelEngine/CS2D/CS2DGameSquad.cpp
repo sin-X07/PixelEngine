@@ -112,7 +112,7 @@ bool CS2DGame::NudgeOutOfStuck(Player& bot, BotRuntime& ai) {
 
     // 只在「侧向」找可走方向；绝不把 BOT 瞬移到别的位置
     const float offsets[4] = { 1.5707963f, -1.5707963f, 0.7853982f, -0.7853982f };
-    const float probe = 14.0f;
+    const float probe = 28.0f;
 
     for (float off : offsets) {
         const float ang = baseAng + off;
@@ -499,7 +499,7 @@ void CS2DGame::UpdateSquadFocus(float dt) {
             if (mode_ == MatchMode::BombDefusal && bombPlanted_ && bot.team == Team::T) {
                 const float bdx = c.x - bombX_;
                 const float bdy = c.y - bombY_;
-                if (bdx * bdx + bdy * bdy < 140.0f * 140.0f) score -= 150.0f;
+                if (bdx * bdx + bdy * bdy < 280.0f * 280.0f) score -= 300.0f;
             }
 
             // 集火偏好：情报点周围队友越多越优先

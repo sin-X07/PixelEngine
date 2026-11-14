@@ -24,7 +24,7 @@ public:
     static constexpr float kSoftEdge     = Tuning::VisionSoftEdge;
     static constexpr float kConeDeg      = Tuning::VisionConeDeg;
     static constexpr float kAngleSoftDeg = Tuning::VisionAngleSoftDeg;
-    static constexpr float kMaxRadius    = 320.0f;   // 原 MAX_PLAYER_VISION_RADIUS
+    static constexpr float kMaxRadius    = 640.0f;   // 原 MAX_PLAYER_VISION_RADIUS
     static constexpr float kBaseZoomScale = 1.15f;   // 与 UpdateCamera 的镜头放大系数一致
 
     void SetWorld(const CS2DWorld* world) { world_ = world; }

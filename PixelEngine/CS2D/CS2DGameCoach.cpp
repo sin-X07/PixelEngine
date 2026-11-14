@@ -1148,7 +1148,7 @@ void CS2DGame::CoachApplyPlan(Team t) {
         float cx = 0.0f, cy = 0.0f;
         // 保枪：不跑回出生点，就地收缩（以当前位置为中心小范围站位）
         if (st.plan.intent == PlanIntent::Save) {
-            std::uniform_real_distribution<float> jit(-18.0f, 18.0f);
+            std::uniform_real_distribution<float> jit(-36.0f, 36.0f);
             cx = bot.x + jit(rng_);
             cy = bot.y + jit(rng_);
             // goalArea 必须在 SetBotGoal 之前写好：SetBotGoal 用它查战术表 [look] 的守点朝向
@@ -1499,7 +1499,7 @@ bool CS2DGame::CanRotateNow(Team t) const {
             if (static_cast<int>(i) == bombCarrier_) {
                 for (const auto& s : world_->GetBombSites()) {
                     const float dx = s.cx - b.x, dy = s.cy - b.y;
-                    if (dx * dx + dy * dy < 140.0f * 140.0f) return false;
+                    if (dx * dx + dy * dy < 280.0f * 280.0f) return false;
                 }
             }
         }

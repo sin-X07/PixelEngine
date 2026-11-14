@@ -438,7 +438,7 @@ void AudioManager::PlayChunkAt(Mix_Chunk* chunk, float sourceX, float sourceY,
     if (dist > 0.001f) {
         pan = dx / dist;                       // -1=左侧, 0=正上/正下, +1=右侧
         // 贴脸时淡化声像，避免极近距离突然完全单边
-        const float nearFade = std::min(1.0f, dist / 40.0f);
+        const float nearFade = std::min(1.0f, dist / 80.0f);
         pan *= nearFade;
         pan *= 0.85f;                          // 保留少量另一声道，听感更自然
     }
@@ -450,7 +450,7 @@ void AudioManager::PlayChunkAt(Mix_Chunk* chunk, float sourceX, float sourceY,
     // 距离衰减：FULL_RANGE 内全音量，之后线性衰减，但保留一个可听见的底噪，
     // 避免「一过 MAX_RANGE 就彻底静音」——那会让远处的枪战听着像时有时无
     constexpr float FULL_RANGE = 0.0f;
-    constexpr float MAX_RANGE  = 100.0f;
+    constexpr float MAX_RANGE  = 200.0f;
     constexpr float MIN_FACTOR = 0.0f;   // 最远处仍保留 12% 音量
     float distFactor = 1.0f;
     if (dist > FULL_RANGE) {
