@@ -96,16 +96,6 @@
 
 ---
 
-## dust_1（de_dust 草案）
-
-- Capdisk — Dust callouts & map guide（可开）  
-  https://capdisk.com/csgo/maps/dust  
-  → 比 dust2 紧；Mid 定全局；T split A 或 rush tunnels B；CT 叠点留 Mid。
-
-说明: CS2 未正式带 de_dust；本图 tmj 空壳，区域名全部待建 site。
-
----
-
 ## mirage（公开 Mirage → 本图 site 名）
 
 - GamGem — Mirage strats: T default, CT setup, executes（可开）  

@@ -96,6 +96,7 @@ private:
     void ObjectWorldPosition(int index, float& x, float& y, float& z) const;
     void FocusCurrentPosition(float& x, float& z) const;
     void ReadbackToTexture();
+    void CaptureScenePreviews();
 
     SDL_Window*   glWindow_ = nullptr;
     SDL_GLContext glContext_ = nullptr;
@@ -105,6 +106,7 @@ private:
     int width_ = 1024;
     int height_ = 576;
     bool ready_ = false;
+    bool previewCapture_ = false;  // 抓拍场景预览时：DrawScene 只画环境本体
 
     std::vector<uint8_t> pixels_;   // 原始 glReadPixels 数据（左下原点）
     std::vector<uint8_t> flipped_;  // 上下翻转后的 SDL 上传数据

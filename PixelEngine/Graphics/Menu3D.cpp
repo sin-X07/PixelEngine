@@ -290,6 +290,7 @@ bool Menu3D::Initialize(SDL_Renderer* mainRenderer, int width, int height) {
     animationTime_ = 0.0f;
     pendingAnimationTime_ = 0.0f;
     lastRenderTicks_ = 0;
+    CaptureScenePreviews();
     ready_ = true;
 
     std::cout << "[Menu3D] 实时 3D 背景就绪 (" << width_ << "x" << height_
@@ -382,10 +383,10 @@ void Menu3D::Shutdown() {
 bool Menu3D::LoadModels() {
     const char* scenes[] = { "ancient_ruins", "dust_2", "mirage" };
     for (int i = 0; i < 3; ++i) {
-        const std::string previewPath = PathUtils::ResolveAppPath(
-            std::string("assets/models/menu/scenes/") + scenes[i] + ".png");
-        scenePreviews_[i] = IMG_LoadTexture(mainRenderer_, previewPath.c_str());
-        if (scenePreviews_[i]) SDL_SetTextureScaleMode(scenePreviews_[i], SDL_ScaleModeLinear);
+        // 场景预览不再从 assets/models/menu/scenes/*.png 读取：那些 PNG 是旧的人工
+        // 抓拍（含漫游聚光灯光柱与小鸡，三个预览几乎一样且常被漂白），仓库里从未提交
+        // 过、也没有生成器。改由 Initialize() 末尾的 CaptureScenePreviews() 对三个
+        // 环境做纯环境抓拍（无光柱、无角色、无小鸡），随运行实时生成。
         auto environment = std::make_unique<Menu3DModel>();
         if (environment->Load(std::string("assets/models/menu/scenes/") + scenes[i] + ".glb")) {
             environments_[i] = std::move(environment);
@@ -1465,28 +1466,32 @@ void Menu3D::DrawScene(float timeSec) {
     }
     DrawEnvironment();
 
-    DrawSpotlight();
+    // 预览抓拍时只画环境本体：不画聚光灯光柱、角色与小鸡、悬停光圈。
+    // 否则三个预览会被漫游光柱漂白、被同一组角色/小鸡占满，看不出场景区别。
+    if (!previewCapture_) {
+        DrawSpotlight();
 
-    const float bobT = std::sin(timeSec * 1.7f) * 0.035f;
-    if (tModel_ && ctModel_ && chickens_.size() == 3) {
-        DrawModels();
-    } else {
-        DrawCharacter(-3.6f, 0.0f, false, bobT);
-        DrawCharacter( 3.6f, 0.0f, true, -bobT);
+        const float bobT = std::sin(timeSec * 1.7f) * 0.035f;
+        if (tModel_ && ctModel_ && chickens_.size() == 3) {
+            DrawModels();
+        } else {
+            DrawCharacter(-3.6f, 0.0f, false, bobT);
+            DrawCharacter( 3.6f, 0.0f, true, -bobT);
 
-        // 三只小鸡：错开相位
-        DrawChicken(-1.6f, 2.2f, timeSec * 2.4f);
-        DrawChicken( 0.0f, 2.8f, timeSec * 2.4f + 1.7f);
-        DrawChicken( 1.55f, 2.1f, timeSec * 2.4f + 3.4f);
-    }
+            // 三只小鸡：错开相位
+            DrawChicken(-1.6f, 2.2f, timeSec * 2.4f);
+            DrawChicken( 0.0f, 2.8f, timeSec * 2.4f + 1.7f);
+            DrawChicken( 1.55f, 2.1f, timeSec * 2.4f + 3.4f);
+        }
 
-    if (hoveredObject_ >= 0) {
-        float x, y, z;
-        ObjectWorldPosition(hoveredObject_, x, y, z);
-        const float r = (hoveredObject_ < 2) ? 0.78f : 0.30f;
-        const float pulse = 0.65f + 0.35f * std::sin(animationTime_ * 5.0f);
-        DrawObjectRing(x, z, r, 0.95f * pulse);
-        DrawObjectRing(x, z, r * 0.72f, 0.55f * pulse);
+        if (hoveredObject_ >= 0) {
+            float x, y, z;
+            ObjectWorldPosition(hoveredObject_, x, y, z);
+            const float r = (hoveredObject_ < 2) ? 0.78f : 0.30f;
+            const float pulse = 0.65f + 0.35f * std::sin(animationTime_ * 5.0f);
+            DrawObjectRing(x, z, r, 0.95f * pulse);
+            DrawObjectRing(x, z, r * 0.72f, 0.55f * pulse);
+        }
     }
 }
 
@@ -1520,4 +1525,38 @@ void Menu3D::ReadbackToTexture() {
         }
     }
     SDL_UpdateTexture(texture_, nullptr, flipped_.data(), static_cast<int>(stride));
+}
+
+// 预览抓拍：逐个切到三个环境，只画环境本体并回读为预览纹理。
+// 在 Initialize() 末尾做一次（1024x576，与主 3D 纹理同分辨率，面板 164x90 绘制足够清晰）。
+// 抓拍会临时写掉 texture_（最后一帧是 mirage），但下一帧 Render() 会把主纹理
+// 重绘回当前场景，因此不会在主菜单上闪现。环境 .glb 加载失败的槽位保持空纹理，
+// 面板按原有逻辑跳过绘制（GameUI.cpp 的 if (ctx.menuScenePreviews[i]) 守卫）。
+void Menu3D::CaptureScenePreviews() {
+    if (!glContext_ || !mainRenderer_) return;
+    if (SDL_GL_MakeCurrent(glWindow_, glContext_) != 0) return;
+    glViewport(0, 0, width_, height_);
+
+    const int savedScene = displayedScene_;
+    const bool savedSuppressed = spotlightSuppressed_;
+    spotlightSuppressed_ = true;
+    previewCapture_ = true;
+    for (int i = 0; i < 3; ++i) {
+        if (!environments_[i]) continue;
+        displayedScene_ = i;
+        DrawScene(0.0f);
+        ReadbackToTexture();
+        SDL_Texture* preview = SDL_CreateTexture(
+            mainRenderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, width_, height_);
+        if (!preview) {
+            std::cerr << "[Menu3D] 预览纹理创建失败: " << SDL_GetError() << std::endl;
+            continue;
+        }
+        SDL_UpdateTexture(preview, nullptr, flipped_.data(), width_ * 4);
+        SDL_SetTextureScaleMode(preview, SDL_ScaleModeLinear);
+        scenePreviews_[i] = preview;
+    }
+    previewCapture_ = false;
+    spotlightSuppressed_ = savedSuppressed;
+    displayedScene_ = savedScene;
 }

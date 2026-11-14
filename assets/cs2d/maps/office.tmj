@@ -2640,21 +2640,6 @@
   "renderorder": "left-up",
   "tiledversion": "1.12.2",
   "tileheight": 16,
-  "tilesets": [
-    {
-      "columns": 3,
-      "firstgid": 1,
-      "image": "../tilesets/cs_office_tiles.png",
-      "imageheight": 704,
-      "imagewidth": 96,
-      "margin": 0,
-      "name": "cs_office_original",
-      "spacing": 0,
-      "tilecount": 66,
-      "tileheight": 32,
-      "tilewidth": 32
-    }
-  ],
   "tilewidth": 16,
   "type": "map",
   "version": "1.10",

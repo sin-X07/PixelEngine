@@ -120,13 +120,12 @@
 
 ## 4. Tileset
 
-| 路径 | 尺寸 | 说明 |
-|---|---|---|
-| `assets/cs2d/tilesets/office_tiles.png` | 96×704 | office 地图图块集 |
-
-- 图块 32×32，**3 列 × 22 行 = 66 块**，`columns` 必须与 TMJ 中的 `columns` 一致。
-- 图块集在 TMJ 中以相对路径 `../tilesets/office_tiles.png` 引用。
-- 缺失时渲染器自动回退为纯色块（`DrawTileFallback`），不崩溃。
+目前没有任何地图使用图块集：office 是纯图片层地图（`office.tmj` 只有 imagelayer），
+旧的 `assets/cs2d/tilesets/office_tiles.png`（96×704，3 列 × 22 行 = 66 块）已删除，
+其在 `office.tmj` 中的声明也已移除。如将来某张地图重新引入图块层，再按以下约定
+补齐：图块 32×32，`columns` 必须与 TMJ 中的 `columns` 一致；图块集在 TMJ 中以
+相对路径 `../tilesets/<name>.png` 引用；缺失时渲染器自动回退为纯色块
+（`DrawTileFallback`），不崩溃。
 
 ---
 
