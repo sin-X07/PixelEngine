@@ -35,7 +35,7 @@ struct SpriteDrawParams {
     bool  localPlayer = false;   // 本地玩家自己
 };
 
-// 序列帧精灵图元数据：3 行 × 2 列，共 6 帧移动姿态
+// 序列帧精灵图元数据：3 行 × 2 列，其中 3 格对应长枪、近战与短枪姿态
 struct SpriteSheetDef {
     SDL_Texture* tex  = nullptr;
     int frameW   = 32;
@@ -78,7 +78,7 @@ public:
     void DrawScopeOverlay(const Presentation::ScopeOverlayParams& p);
     // 飞行中的投掷物：按类型画对应的旋转图标（替代原来的 bullet 占位）
     void DrawThrownGrenade(int weaponId, float worldX, float worldY, float spinDeg);
-    // 掉在地上的武器：用 _d 图标（与 HUD 同一套素材），带轻微上下浮动
+    // 掉在地上的武器：使用主视图，与购买菜单和 HUD 共用图标
     // angleDeg：平铺朝向（不浮动）
     void DrawDroppedWeapon(int weaponId, float worldX, float worldY, float angleDeg);
     // 世界坐标圆（用于手雷爆炸范围提示 / 爆炸特效）
@@ -192,6 +192,7 @@ private:
     bool cameraFrozen_ = false;
     bool cameraInitialized_ = false;
     friend struct MapPerimeterReview;
+    friend struct SpriteAssetReview;
     SDL_Renderer* renderer_ = nullptr;
     const CS2DWorld* world_ = nullptr;
     std::string mapDir_;

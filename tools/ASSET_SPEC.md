@@ -61,17 +61,17 @@
 | `mp5sd.png` | MP5-SD | 朝上 | 90° |
 | `ump45.png` | UMP-45 | 朝上 | 90° |
 | `p90.png` | P90 | 朝上 | 90° |
-| `deagle.png` | 沙鹰 | **朝右** | **0°** |
-| `glock.png` | Glock-18（T 起始手枪） | **朝右** | **0°** |
-| `usp.png` | USP-S（CT 起始手枪） | **朝右** | **0°** |
-| `p2000.png` | P2000（CT 起始手枪备选） | **朝右** | **0°** |
-| `dualberettas.png` | Dual Berettas | **朝右** | **0°** |
-| `p250.png` | P250 | **朝右** | **0°** |
-| `fn57.png` | Five-SeveN (CT) | **朝右** | **0°** |
-| `tec9.png` | Tec-9 (T) | **朝右** | **0°** |
-| `cz75.png` | CZ75-Auto | **朝右** | **0°** |
-| `r8.png` | R8 Revolver | **朝右** | **0°** |
-| `zeus.png` | Zeus x27 | **朝右** | **0°** |
+| `deagle.png` | 沙鹰 | 朝上 | 90° |
+| `glock.png` | Glock-18（T 起始手枪） | 朝上 | 90° |
+| `usp.png` | USP-S（CT 起始手枪） | 朝上 | 90° |
+| `p2000.png` | P2000（CT 起始手枪备选） | 朝上 | 90° |
+| `dual_berettas.png` | Dual Berettas | 朝上 | 90° |
+| `p250.png` | P250 | 朝上 | 90° |
+| `fn57.png` | Five-SeveN (CT) | 朝上 | 90° |
+| `tec9.png` | Tec-9 (T) | 朝上 | 90° |
+| `cz75.png` | CZ75-Auto | 朝上 | 90° |
+| `r8.png` | R8 Revolver | 朝上 | 90° |
+| `zeus.png` | Zeus x27 | 朝上 | 90° |
 | `knife.png` | 匕首 | 朝上 | 90° |
 | `grenade_he.png` | 高爆手雷 | 朝上 | 90° |
 | `grenade_flash.png` | 闪光弹 | 朝上 | 90° |
@@ -82,11 +82,7 @@
 | `c4.png` | C4 炸弹 | 朝上 | 90° |
 | `defuse_kit.png` | 拆弹器 | 朝上 | 90° |
 
-> **占位素材说明**：上表中新增的 CS2 武器（标 `(T)` / `(CT)` 及部分通用枪）
-> 当前由 `tools/gen_weapon_placeholders.py` 生成的**占位图**填充。
-> 直接用真实素材覆盖同名文件即可，无需改代码。
-> 重新生成缺失项：`python tools/gen_weapon_placeholders.py`
-> 检查还缺哪些：`python tools/list_missing_sprites.py`
+2026-11-15 已接入 Muse 的 41 组写实武器。所有俯视贴图枪口朝上，WeaponDef 的 degOffset 统一为 90°。运行时按原始宽高比绘制。人物格为 512×512，完整规格见 `assets/cs2d/sprites/CREDITS.md`。缺失引用使用 `tools/list_missing_sprites.py` 检查。
 
 ---
 
@@ -221,7 +217,7 @@
 | `bomb_plant.wav` | C4 下包 |
 | `bomb_defuse.wav` | C4 拆包 |
 | `bomb_beep.wav` | C4 滴答 |
-| `round_start.wav` | 回合开始 |
+| `round_start.mp3` | 回合开始 |
 | `round_win.wav` | 回合胜利 |
 | `round_lose.wav` | 回合失败 |
 | `sfx_hit.wav` | 命中 |

@@ -201,21 +201,21 @@ void CS2DRenderer::SetWorld(const CS2DWorld* world) {
 
     // ---- 加载角色精灵（2列×3行；切片帧按武器槽固定，不循环播放） ----
     ctSheet_.tex     = LoadTexture(mapDir_ + "/../sprites/ct_player.png");
-    ctSheet_.frameW  = 32; ctSheet_.frameH = 32; ctSheet_.cols = 2; ctSheet_.rows = 3;
+    ctSheet_.frameW  = 512; ctSheet_.frameH = 512; ctSheet_.cols = 2; ctSheet_.rows = 3;
 
     tSheet_.tex      = LoadTexture(mapDir_ + "/../sprites/t_player.png");
-    tSheet_.frameW   = 32; tSheet_.frameH  = 32; tSheet_.cols  = 2; tSheet_.rows  = 3;
+    tSheet_.frameW   = 512; tSheet_.frameH  = 512; tSheet_.cols  = 2; tSheet_.rows  = 3;
 
     tAltSheet_.tex   = LoadTexture(mapDir_ + "/../sprites/t_player_alt.png");
-    tAltSheet_.frameW = 32; tAltSheet_.frameH = 31; tAltSheet_.cols = 2; tAltSheet_.rows = 3;
+    tAltSheet_.frameW = 512; tAltSheet_.frameH = 512; tAltSheet_.cols = 2; tAltSheet_.rows = 3;
 
     // 敌我轮廓素材（tools/gen_outline_sprites.py 生成；缺失则退回几何环）
     ctOutlineSheet_.tex     = LoadTexture(mapDir_ + "/../sprites/ct_player_outline.png");
-    ctOutlineSheet_.frameW  = 32; ctOutlineSheet_.frameH = 32; ctOutlineSheet_.cols = 2; ctOutlineSheet_.rows = 3;
+    ctOutlineSheet_.frameW  = 512; ctOutlineSheet_.frameH = 512; ctOutlineSheet_.cols = 2; ctOutlineSheet_.rows = 3;
     tOutlineSheet_.tex      = LoadTexture(mapDir_ + "/../sprites/t_player_outline.png");
-    tOutlineSheet_.frameW   = 32; tOutlineSheet_.frameH = 32; tOutlineSheet_.cols = 2; tOutlineSheet_.rows = 3;
+    tOutlineSheet_.frameW   = 512; tOutlineSheet_.frameH = 512; tOutlineSheet_.cols = 2; tOutlineSheet_.rows = 3;
     tAltOutlineSheet_.tex   = LoadTexture(mapDir_ + "/../sprites/t_player_alt_outline.png");
-    tAltOutlineSheet_.frameW = 32; tAltOutlineSheet_.frameH = 31; tAltOutlineSheet_.cols = 2; tAltOutlineSheet_.rows = 3;
+    tAltOutlineSheet_.frameW = 512; tAltOutlineSheet_.frameH = 512; tAltOutlineSheet_.cols = 2; tAltOutlineSheet_.rows = 3;
 
     // ---- 武器贴图 / 图标（来自 WeaponDB，索引 = WeaponId）----
     const int wcount = static_cast<int>(WeaponId::Count);
@@ -598,7 +598,9 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
     if (p.animState != 3) {           // 非死亡状态才按槽位切帧
         switch (p.weaponSlot) {
             case 1:  frameCol = 1; frameRow = 1; break;  // 副武器：第2行第2列
-            case 2:  frameCol = 0; frameRow = 1; break;  // 近战：  第2行第1列
+            case 2:
+            case 3:
+            case 4:  frameCol = 0; frameRow = 1; break;  // 近战：  第2行第1列
             default: frameCol = 0; frameRow = 0; break;  // 主武器：第1行第1列
         }
     }
@@ -645,9 +647,10 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
 
     SDL_SetTextureAlphaMod(sheet->tex, alpha);
     SDL_FPoint center = { sz * 0.5f, sz * 0.5f };
-    // 精灵默认面朝上方，需 +90° 使人物朝向与武器朝向一致
+    // 近战姿势原图的身体朝向与持枪姿势相反，共用该帧的槽位一同校正。
+    const float poseAngleOffset = frameRow == 1 && frameCol == 0 ? -90.0f : 90.0f;
     const float charAngle = p.aimAngle * 180.0f / 3.14159265f + tiltDeg
-                            + (p.animState == 3 ? 0.0f : 90.0f);
+                            + (p.animState == 3 ? 0.0f : poseAngleOffset);
 
     // ---- 敌我轮廓素材（紧贴角色剪影）----
     // 友军蓝 / 敌军红 / 自己白；白色描边素材 + ColorMod，所以一份素材服务三色。
@@ -786,13 +789,13 @@ void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float 
     const float wy = cy + std::sin(aimAngle) * offset;
     const float drawSz = weaponSz * zoom_;
 
-    SDL_FRect wdst;
-    wdst.x = wx - drawSz * 0.5f;
-    wdst.y = wy - drawSz * 0.5f;
-    wdst.w = drawSz;
-    wdst.h = drawSz;
-
-    SDL_FPoint wcenter = { drawSz * 0.5f, drawSz * 0.5f };
+    int textureW = 0, textureH = 0;
+    if (SDL_QueryTexture(tex, nullptr, nullptr, &textureW, &textureH) != 0 || textureW <= 0 || textureH <= 0) return;
+    const float scale = drawSz / static_cast<float>(std::max(textureW, textureH));
+    const float drawW = textureW * scale;
+    const float drawH = textureH * scale;
+    SDL_FRect wdst{wx - drawW * 0.5f, wy - drawH * 0.5f, drawW, drawH};
+    SDL_FPoint wcenter{drawW * 0.5f, drawH * 0.5f};
     SDL_RenderCopyExF(renderer_, tex, nullptr, &wdst,
                       aimAngle * 180.0f / 3.14159265f + degOffset,
                       &wcenter, SDL_FLIP_NONE);
@@ -947,12 +950,10 @@ void CS2DRenderer::DrawDroppedWeapon(int weaponId, float worldX, float worldY,
                                      float angleDeg) {
     if (!renderer_ || weaponId <= 0) return;
 
-    // 掉落物属于「状态栏那一类素材」：优先 _d 图标
+    // 地面掉落使用主视图，与购买菜单和 HUD 共用图标。
     SDL_Texture* tex = nullptr;
     if (weaponId < static_cast<int>(weaponIcons_.size())) tex = weaponIcons_[weaponId];
-    if (!tex && weaponId < static_cast<int>(weaponSprites_.size())) {
-        tex = weaponSprites_[weaponId];
-    }
+    if (!tex && weaponId < static_cast<int>(weaponSprites_.size())) tex = weaponSprites_[weaponId];
     if (!tex) return;
 
     int tw = 0, th = 0;
@@ -1273,8 +1274,12 @@ void CS2DRenderer::DrawThrownGrenade(int weaponId, float worldX, float worldY,
     const float cx = (worldX - cameraX_) * zoom_;
     const float cy = (worldY - cameraY_) * zoom_;
     const float box = 6.0f * zoom_;   // 投出状态：缩小到原来的 3/7
-    SDL_FRect dst = { cx - box * 0.5f, cy - box * 0.5f, box, box };
-    const SDL_FPoint center = { box * 0.5f, box * 0.5f };
+    int width = 0, height = 0;
+    if (SDL_QueryTexture(tex, nullptr, nullptr, &width, &height) != 0 || width <= 0 || height <= 0) return;
+    const float fit = box / static_cast<float>(std::max(width, height));
+    const float drawW = width * fit, drawH = height * fit;
+    SDL_FRect dst{cx - drawW * 0.5f, cy - drawH * 0.5f, drawW, drawH};
+    const SDL_FPoint center{drawW * 0.5f, drawH * 0.5f};
     SDL_RenderCopyExF(renderer_, tex, nullptr, &dst, spinDeg, &center, SDL_FLIP_NONE);
 }
 

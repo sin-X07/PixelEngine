@@ -13,6 +13,7 @@
 // 运行（工作目录为仓库根）：
 //   build/tests/gameplay_tests.exe
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <cmath>
 #include <string>
@@ -2128,12 +2129,163 @@ static void TestScopeBoundsAndMovement() {
     SDL_FreeSurface(surface);
 }
 
+struct SpriteAssetReview {
+    static void Run() {
+        SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 1280, 720, 32, SDL_PIXELFORMAT_RGBA32);
+        SDL_Renderer* output = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+        check(output != nullptr, "HD sprite review renderer");
+        if (!output) { SDL_FreeSurface(surface); return; }
+        {
+            CS2DRenderer renderer;
+            renderer.Initialize(output, "assets/cs2d/maps", 1280, 720);
+            CS2DMapData data;
+            data.mapWidth = data.mapHeight = 200;
+            data.tileWidth = data.tileHeight = 8;
+            CS2DWorld world;
+            world.Build(data);
+            renderer.SetWorld(&world);
+            for (const auto* sheet : {&renderer.ctSheet_, &renderer.tSheet_, &renderer.tAltSheet_,
+                                     &renderer.ctOutlineSheet_, &renderer.tOutlineSheet_, &renderer.tAltOutlineSheet_}) {
+                int width = 0, height = 0;
+                check(sheet->tex && SDL_QueryTexture(sheet->tex, nullptr, nullptr, &width, &height) == 0 &&
+                      width == 1024 && height == 1536 && sheet->frameW == 512 && sheet->frameH == 512,
+                      "HD character and outline sheets use matching 512-pixel cells");
+            }
+            for (int index = 1; index < WeaponDB::kWeaponCount; ++index) {
+                const auto& weapon = WeaponDB::Get(static_cast<WeaponId>(index));
+                if (!weapon.spritePath) continue;
+                check(renderer.weaponSprites_[index] && renderer.weaponIcons_[index], "new weapon world/icon pair loads");
+                check(weapon.degOffset == 90, "overhead weapon axis points along actor aim");
+            }
+            std::filesystem::create_directories("build-evidence/pix32-assets");
+            auto clear = [&] {
+                SDL_SetRenderDrawColor(output, 65, 72, 80, 255);
+                SDL_RenderClear(output);
+            };
+            auto save = [&](const std::string& name) {
+                SDL_RenderPresent(output);
+                check(IMG_SavePNG(surface, ("build-evidence/pix32-assets/" + name + ".png").c_str()) == 0,
+                      "sprite acceptance image saved");
+            };
+            renderer.SetPreviewCamera(1280.0f/24, 720.0f/24, 12, false);
+            clear();
+            renderer.DrawDroppedWeapon(static_cast<int>(WeaponId::AWP), 40, 30, 0);
+            SDL_RenderFlush(output);
+            int minX = surface->w, minY = surface->h, maxX = -1, maxY = -1;
+            for (int y = 0; y < surface->h; ++y) {
+                const auto* pixels = static_cast<const Uint8*>(surface->pixels) + y * surface->pitch;
+                for (int x = 0; x < surface->w; ++x) {
+                    if (pixels[x*4] == 65 && pixels[x*4+1] == 72 && pixels[x*4+2] == 80) continue;
+                    minX = std::min(minX, x);
+                    minY = std::min(minY, y);
+                    maxX = std::max(maxX, x);
+                    maxY = std::max(maxY, y);
+                }
+            }
+            check(maxX > minX && maxX-minX > maxY-minY,
+                  "dropped AWP uses the horizontal main-view icon");
+            save("ground-main-view");
+            clear();
+            for (int team = 0; team < 3; ++team) {
+                for (int slot = 0; slot < 4; ++slot) {
+                    SpriteDrawParams actor;
+                    actor.x = (150 + slot * 300)/12.0f;
+                    actor.y = (120 + team * 240)/12.0f;
+                    actor.spriteKey = team;
+                    actor.weaponSlot = slot;
+                    actor.weaponId = static_cast<int>(WeaponId::None);
+                    renderer.DrawCharacter(actor);
+                }
+            }
+            save("character-poses");
+            for (int team = 0; team < 3; ++team) {
+                SpriteDrawParams actor;
+                actor.x = 20;
+                actor.y = 20;
+                actor.spriteKey = team;
+                actor.weaponSlot = 2;
+                clear();
+                renderer.DrawCharacter(actor);
+                SDL_RenderFlush(output);
+                const auto* pixels = static_cast<const Uint8*>(surface->pixels);
+                const std::vector<Uint8> melee(pixels, pixels + surface->pitch * surface->h);
+                clear();
+                actor.weaponSlot = 3;
+                renderer.DrawCharacter(actor);
+                SDL_RenderFlush(output);
+                check(std::memcmp(melee.data(), surface->pixels, melee.size()) == 0,
+                      "grenade and melee use the same character pose");
+            }
+            for (int team = 0; team < 3; ++team) {
+                auto& sheet = team == 0 ? renderer.ctSheet_ : (team == 1 ? renderer.tSheet_ : renderer.tAltSheet_);
+                auto& outline = team == 0 ? renderer.ctOutlineSheet_ :
+                    (team == 1 ? renderer.tOutlineSheet_ : renderer.tAltOutlineSheet_);
+                SDL_Texture* outlineTexture = outline.tex;
+                outline.tex = nullptr;
+                for (float aim : {0.0f, Tuning::Pi/2, Tuning::Pi, -Tuning::Pi/2}) {
+                    SpriteDrawParams actor;
+                    actor.x = actor.y = 20;
+                    actor.spriteKey = team;
+                    actor.weaponSlot = 2;
+                    actor.aimAngle = aim;
+                    clear();
+                    renderer.DrawCharacter(actor);
+                    SDL_RenderFlush(output);
+                    const auto* pixels = static_cast<const Uint8*>(surface->pixels);
+                    const std::vector<Uint8> actual(pixels, pixels + surface->pitch * surface->h);
+                    clear();
+                    SDL_Rect source{0, 512, 512, 512};
+                    const float size = actor.size * renderer.GetZoom();
+                    SDL_FRect target{(actor.x-renderer.GetCameraX())*renderer.GetZoom()-size/2,
+                                     (actor.y-renderer.GetCameraY())*renderer.GetZoom()-size/2, size, size};
+                    SDL_FPoint center{size/2, size/2};
+                    SDL_RenderCopyExF(output, sheet.tex, &source, &target,
+                                      aim*180.0f/3.14159265f-90.0f, &center, SDL_FLIP_NONE);
+                    SDL_RenderFlush(output);
+                    check(std::memcmp(actual.data(), surface->pixels, actual.size()) == 0,
+                          "melee body uses corrected facing in all four aim directions");
+                }
+                outline.tex = outlineTexture;
+            }
+            int row = 0, page = 0;
+            clear();
+            for (int index = 1; index < WeaponDB::kWeaponCount; ++index) {
+                const auto& weapon = WeaponDB::Get(static_cast<WeaponId>(index));
+                if (!weapon.spritePath) continue;
+                SpriteDrawParams actor;
+                actor.x = 150/12.0f;
+                actor.y = (90 + row * 180)/12.0f;
+                actor.weaponId = index;
+                actor.weaponSlot = weapon.cls == WeaponClass::Melee ? 2 :
+                    (weapon.cls == WeaponClass::Grenade ? 3 : (weapon.slot == WeaponSlotKind::Secondary ? 1 : 0));
+                renderer.DrawCharacter(actor);
+                renderer.DrawDroppedWeapon(index, 450/12.0f, actor.y, 0);
+                int width = 0, height = 0;
+                SDL_QueryTexture(renderer.weaponIcons_[index], nullptr, nullptr, &width, &height);
+                const float fit = std::min(220.0f/width, 100.0f/height);
+                SDL_FRect icon{800-width*fit/2, 90+row*180-height*fit/2, width*fit, height*fit};
+                SDL_RenderCopyF(output, renderer.weaponIcons_[index], nullptr, &icon);
+                renderer.DrawWeaponStatus(index, 5, 30, 1280, 180*(row+1));
+                if (++row == 4) {
+                    save("weapons-" + std::to_string(page++));
+                    row = 0;
+                    clear();
+                }
+            }
+            if (row) save("weapons-" + std::to_string(page));
+        }
+        SDL_DestroyRenderer(output);
+        SDL_FreeSurface(surface);
+    }
+};
+
 int main() {
     std::printf("===== 合并契约 v1 玩法回归测试 =====\n");
     std::printf("地图: %s\n", MapPath());
 
     CS2DGameTestAccess::TestSharedBotVisibility();
     CS2DGameTestAccess::TestBotScopeMovement();
+    SpriteAssetReview::Run();
     TestResolutionMigration();
     TestHdMapNavigation();
     TestScopeBoundsAndMovement();

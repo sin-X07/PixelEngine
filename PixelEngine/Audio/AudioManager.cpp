@@ -150,7 +150,7 @@ bool AudioManager::Initialize() {
     bombPlantSound      = loadChunk("assets/audio/bomb_plant.wav", "下包");
     bombDefuseSound     = loadChunk("assets/audio/bomb_defuse.wav", "拆包");
     bombBeepSound       = loadChunk("assets/audio/bomb_beep.wav", "C4 滴答");
-    roundStartSound     = loadChunk("assets/audio/round_start.wav", "回合开始");
+    roundStartSound     = loadChunk("assets/audio/round_start.mp3", "回合开始");
     roundWinSound       = loadChunk("assets/audio/round_win.wav", "回合胜利");
     roundLoseSound      = loadChunk("assets/audio/round_lose.wav", "回合失败");
     daggerSound         = loadChunk("assets/audio/melee_knife.wav", "匕首攻击");

@@ -79,8 +79,12 @@ def main():
         if not os.path.exists(src_path):
             print("MISSING", src_path)
             continue
-        build(src_path, base, 64).save(os.path.join(OUT, f"grenade_{name}.png"))
-        build(src_path, base, 128).save(os.path.join(OUT, f"grenade_{name}_d.png"))
+        for suffix, size in (("", 64), ("_d", 128)):
+            destination = os.path.join(OUT, f"grenade_{name}{suffix}.png")
+            if os.path.exists(destination):
+                print("kept", destination)
+                continue
+            build(src_path, base, size).save(destination)
         print("wrote", name, "from", src)
 
 

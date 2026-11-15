@@ -31,13 +31,6 @@ MANIFEST = os.path.join(ROOT, "tools", "placeholders.json")
 
 # 武器/道具世界贴图: (相对路径, 标签, RGB)
 WORLD_SPRITES = [
-    ("assets/cs2d/sprites/glock.png",         "GLOCK",   (90,  90, 160)),
-    ("assets/cs2d/sprites/galil.png",         "GALIL",   (120, 90,  60)),
-    ("assets/cs2d/sprites/awp.png",           "AWP",     (60,  80, 110)),
-    ("assets/cs2d/sprites/shotgun.png",       "SHOTGUN", (110, 70,  70)),
-    ("assets/cs2d/sprites/grenade_he.png",    "HE",      (80, 120,  60)),
-    ("assets/cs2d/sprites/grenade_flash.png", "FLASH",   (150,150,  60)),
-    ("assets/cs2d/sprites/grenade_smoke.png", "SMOKE",   (100,100, 110)),
     ("assets/cs2d/sprites/c4.png",            "C4",      (140, 60,  60)),
     ("assets/cs2d/sprites/defuse_kit.png",    "KIT",     (60, 110, 120)),
 ]

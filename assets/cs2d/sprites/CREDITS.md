@@ -1,21 +1,22 @@
-# 2D 贴图来源与授权
+# 2D 贴图来源与规范
 
-## 投掷物图标（`grenade_*.png` / `grenade_*_d.png`）
+## 2026-11-15 Muse 批量素材
 
-- 素材：**FPS Icons (51 high res icons)** by David Stenfors（da_st）
-- 来源：https://opengameart.org/content/fps-icons-51-high-res-icons
-- 作者站点：https://www.davidstenfors.com
-- 授权：**CC-BY 3.0**（使用时需署名并提供作者站点链接）
-- 使用与修改：
-  - 用 `hand_grenade_icon_1`、`flashbang_icon_2`、`smoke_grenade_icon_1` 分别做
-    高爆雷 / 闪光弹 / 烟雾弹；
-  - 燃烧弹、燃烧瓶、诱饵弹没有对应造型，使用 `hand_grenade_icon_4`、
-    `smoke_grenade_icon_2`、`remote_icon_1` 做色相调整区分；
-  - 统一裁剪、缩放为 64×64（世界/手持）与 128×128（掉落物/HUD），
-    并加上主色、左上高光、右下压暗和深色描边。
-- 生成脚本：`tools/gen_grenade_sprites.py`
-- 原始压缩包：`prev_assets/grenade_icons/FPS Icons.zip`
+41 把武器的俯视贴图及侧视图标、CT/T/T 备选人物与描边表由 Muse 使用 AI 生图并完成透明底后期，经 Sun 确认后交付。当前提交素材基准为 fd729b9。燃烧瓶侧视图标为 Muse 程序绘制临时版本，后续可同名替换。
 
-## 其他角色 / 武器贴图
+- 武器俯视图采用正上方 90° 视角，枪口朝上。保留原始细长宽高比，渲染按长边缩放，并旋转 90° 对齐角色朝向。
+- 武器侧视图枪口朝右，以 256×128 透明画布为交付规范。地面掉落、购买菜单与 HUD 共用主视图，按原图比例绘制。
+- 人物为正头顶视角，武器独立绘制。每张表 1024×1536、2 列 3 行、每格 512×512。长枪位于 (0,0)，近战/投掷物位于 (0,1)，短枪位于 (1,1)，其余格透明。近战帧原生朝向与持枪帧相反，渲染采用 -90° 偏移，人物与描边同步旋转。
+- CT 为蓝绿系，T 为沙褐系，T 备选为另一服装造型。三表共用姿势布局，描边与本体尺寸一致，描边宽 16 源像素。
+- 风格采用写实材质、哑光金属、织物和木纹，同一光源与色温。后续素材接入保持透明边缘、居中留白及原始比例。
 
-`ct_player.png`、`t_player.png`、`weapon_*` / `*_d.png` 等为项目原有素材。
+原 sprites 备份由 Muse 保存于 D:/PixelEngineBuild-Archive/sprites-20261115。批量文件映射见 docs/PIX-32素材接入清单.md。
+
+## 历史素材来源
+
+旧投掷物版本使用 David Stenfors（da_st）的 FPS Icons，授权为 CC-BY 3.0。原始包位于 prev_assets/grenade_icons/FPS Icons.zip，旧版本署名保留用于历史来源追溯。
+
+- 来源 https://opengameart.org/content/fps-icons-51-high-res-icons
+- 作者 https://www.davidstenfors.com
+
+其余未参与批量替换的 bullet、C4、拆弹器沿用项目原有素材。
