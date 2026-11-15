@@ -342,6 +342,7 @@ public:
         float alertX = 0.0f, alertY = 0.0f;
         float grenadeCooldown = 0.0f;  // 投掷冷却
         bool  tradePushed     = false; // 本回合是否已补过枪
+        bool  scoped = false; // BOT scopes while tracking a visible target with a scoped weapon
         bool  hadTarget       = false; // 上一帧是否看得见敌人（决定是否原地扫描）
         float scanPhase       = 0.0f;  // 扫视相位（行走时左右小幅摆头）
         float scanBase        = 0.0f;  // 原地扫视的中心朝向
@@ -943,12 +944,6 @@ public:
     std::string GetWeaponName() const;
     std::string GetWeaponNameFor(const Player& p) const;   // 观战/记分板用
 
-    // BOT 视野半径（发现敌人并交火的距离）
-    // 与玩家视野圆共用 Tuning::VisionRadius，避免两边数值漂移
-    static constexpr float BOT_VIEW_RADIUS = Tuning::VisionRadius;
-    // 探点距离：超过交火距离但能「看到并上报」的范围（团队情报来源）
-    // 保持旧版 2 倍关系，随视野半径一起收紧
-    static constexpr float BOT_SPOT_RADIUS = 2.0f * Tuning::VisionRadius;
     // 情报保留时长（秒）
     static constexpr float CONTACT_MEMORY  = 6.0f;
 
@@ -961,6 +956,7 @@ public:
     static constexpr int TOTAL_BOTS = TEAM_SIZE * 2 - 1;   // 玩家占 CT 一席 → 9 BOT
 
 private:
+    friend struct CS2DGameTestAccess;
     std::unique_ptr<CS2DWorld> world_;
     VisibilityQuery visibility_;   // 视线/视野判定的唯一实现（无 SDL 依赖）
     CS2DRenderer* renderer_ = nullptr;
@@ -1279,8 +1275,8 @@ private:
     // 下包后指定一个 CT 拆包手：优先安全、离炸弹最近；其余 CT 清点/掩护。
     int  PickDefuseBot() const;
     // 目标是否落在以 self 朝向为中心的视野扇形内（玩家/BOT 共用几何）
-    bool InViewCone(float fromX, float fromY, float aim,
-                    float toX, float toY, float maxDist, float angleMul = 1.0f) const;
+    bool CanSeePoint(const Player& observer, float x, float y) const;
+    bool CanSeeActor(const Player& observer, const Player& target) const;
     // 沿 A* 路径移动；返回 true 表示本帧移动已由寻路接管
     bool FollowPathTo(Player& bot, BotRuntime& ai,
                       float destX, float destY, float dt, float speedMul = 1.0f);

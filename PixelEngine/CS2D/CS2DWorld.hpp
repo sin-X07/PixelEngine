@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <optional>
 
 // ============================================================================
 // CS2DWorld —— CS2D 运行时世界：
@@ -100,7 +101,7 @@ public:
     // 指定阵营的出生点；无专属点时回退到全部出生点
     std::vector<const SpawnPoint*> SpawnsForTeam(bool isCT) const;
 
-    const CS2DMapData* GetMapData() const { return mapData_; }
+    const CS2DMapData* GetMapData() const { return mapData_ ? &*mapData_ : nullptr; }
 
     // 检查世界坐标矩形是否与任何固体瓦片碰撞
     bool CheckRectCollision(float x, float y, float w, float h) const;
@@ -111,7 +112,7 @@ private:
     int tileWidth_    = 8;
     int tileHeight_   = 8;
 
-    const CS2DMapData* mapData_ = nullptr;
+    std::optional<CS2DMapData> mapData_;
 
     // 图片层背景
     std::string backgroundImagePath_;

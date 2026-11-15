@@ -274,7 +274,7 @@ void ImGuiUI::SetUiScale(float scale) {
     ImGui::GetStyle().ScaleAllSizes(scale);
 
     ImGuiIO& io = ImGui::GetIO();
-    io.FontGlobalScale = scale;
+    io.FontGlobalScale = std::max(scale, 0.75f);
 
     std::cout << "[UI] 缩放=" << scale
               << " 内边距=" << ImGui::GetStyle().FramePadding.y

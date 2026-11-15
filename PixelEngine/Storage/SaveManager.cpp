@@ -23,6 +23,10 @@ void SaveManager::Load() {
     // ---- 通用设置 ----
     settings_.mouseSensitivity = ini.GetFloat("settings", "sensitivity", 1.0f);
     settings_.resIdx           = ini.GetInt  ("settings", "res_idx", 0);
+    if (ini.GetInt("settings", "resolution_list_version", 1) < 2) {
+        if (settings_.resIdx == 11) settings_.resIdx = 12; // retired 800x600 -> 1024x768
+        if (settings_.resIdx > 11) --settings_.resIdx;
+    }
     settings_.fullscreen       = ini.GetBool ("settings", "fullscreen", false);
     settings_.targetFPS        = ini.GetInt  ("settings", "target_fps", 60);
     settings_.renderScalePct   = ini.GetInt  ("settings", "render_scale", 100);
@@ -99,6 +103,7 @@ void SaveManager::Save() {
 
     ini.SetFloat("settings", "sensitivity", settings_.mouseSensitivity);
     ini.SetInt  ("settings", "res_idx",     settings_.resIdx);
+    ini.SetInt("settings", "resolution_list_version", 2);
     ini.SetBool ("settings", "fullscreen",  settings_.fullscreen);
     ini.SetInt  ("settings", "target_fps",  settings_.targetFPS);
     ini.SetInt  ("settings", "render_scale", settings_.renderScalePct);

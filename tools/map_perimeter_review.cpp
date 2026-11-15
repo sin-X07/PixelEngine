@@ -18,12 +18,13 @@ struct MapPerimeterReview {
     static void CheckBundle(const CS2DRenderer& map) {
         Require(map.perimeterTex_ && map.perimeterGroundTex_, "Missing authored perimeter");
         Require(map.perimeterTileW_ > 0 && map.perimeterTileH_ > 0, "Invalid material scale");
-        Require(map.perimeterWorldRect_.x < 0 && map.perimeterWorldRect_.y < 0, "Invalid padding");
+        Require(std::abs(map.perimeterWorldRect_.x + 256) < 0.01f &&
+                std::abs(map.perimeterWorldRect_.y + 256) < 0.01f, "Expected 256 world units of padding");
     }
 
     static void Capture(CS2DRenderer& map, SDL_Renderer* renderer,
                         const std::filesystem::path& path, int width, int height) {
-        SDL_SetRenderDrawColor(renderer, 18, 26, 36, 255);
+        SDL_SetRenderDrawColor(renderer, 255, 0, 255, 255);
         SDL_RenderClear(renderer);
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
         map.DrawWorld();
@@ -40,7 +41,7 @@ struct MapPerimeterReview {
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
                 const auto* pixel = bytes+y*surface->pitch+x*4;
-                Require(!(pixel[0] == 18 && pixel[1] == 26 && pixel[2] == 36), "Exposed old clear color");
+                Require(!(pixel[0] == 255 && pixel[1] == 0 && pixel[2] == 255), "Exposed old clear color");
             }
         }
         Require(IMG_SavePNG(surface.get(), path.string().c_str()) == 0, IMG_GetError());
@@ -106,7 +107,7 @@ int main(int argc, char** argv) {
         map.Initialize(renderer.get(), (root/"assets/cs2d/maps").string(), 1280, 720);
         std::ofstream performance(output/"performance.csv");
         performance << "map,mean_ms,p95_ms\n";
-        for (const std::string name : {"ancient_ruins", "dust_2", "mirage"}) {
+        for (const std::string name : {"ancient_ruins", "dust_2", "mirage", "office"}) {
             CS2DMapData data;
             MapPerimeterReview::Require(TMJParser::Parse((root/"assets/cs2d/maps"/(name+".tmj")).string(), data),
                                          "Cannot parse map");

@@ -4,7 +4,7 @@
 #include <cmath>
 
 bool CS2DWorld::Build(const CS2DMapData& data) {
-    mapData_    = &data;
+    mapData_    = data;
     mapWidth_   = data.mapWidth;
     mapHeight_  = data.mapHeight;
     tileWidth_  = data.tileWidth;

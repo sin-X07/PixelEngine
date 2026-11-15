@@ -10,6 +10,7 @@
 // ============================================================================
 
 namespace Tuning {
+constexpr float ScopeMoveMul = 0.6f;
 // 全地图共享的固定世界属性，按高清地图的全局空间基准校准。
 constexpr float PlayerSize = 14.0f;
 constexpr float SmokeRadius = 140.0f;
@@ -60,16 +61,12 @@ constexpr float NadeFriction = 2.0f;
 
 
 // ---------------- 视野（玩家与 BOT 共用同一套几何）----------------
-// 半径 200：镜头按「视野圆刚好装进较窄一边」自动拉近；
-// 迷雾、敌人剔除、BOT 视野/探点都从这里取数，改一处即同步生效。
-constexpr float VisionRadius      = 200.0f;  // 扇形半径（世界单位）
+// 半径 200 用于相机标定和可选的距离限制。
+// 当前玩家与 BOT 共用不限距离的扇形、墙体和烟雾判定。
+constexpr float VisionRadius      = 200.0f;  // 相机标定半径（世界单位）
 constexpr float VisionSoftEdge    = 40.0f;   // 距离软边（按半径等比收紧）
 constexpr float VisionConeDeg     = 120.0f;  // 扇形总角度
 constexpr float VisionAngleSoftDeg= 14.0f;   // 角度软边（度）
-// 含软边后的有效半角（玩家实际能看到的边缘）：(120 + 14) / 2 = 67°
-constexpr float VisionHalfAngleRad =
-    ((VisionConeDeg + VisionAngleSoftDeg) * 0.5f) * 3.14159265f / 180.0f;
-
 // ---------------- 回合 ----------------
 constexpr float BuyWindowSeconds = 15.0f;   // 开局可购买时间（秒，自回合开始计）
 

@@ -1221,6 +1221,10 @@ void CS2DGame::PrepareCamera(int viewW, int viewH, float interpolation) {
             recoilShake_ * std::cos(recoilShakeAge_ * 2.0f * Tuning::Pi * 18.0f),
             recoilShake_ * std::sin(recoilShakeAge_ * 2.0f * Tuning::Pi * 13.0f));
     }
+    if (scope.active && !IsSpectating()) {
+        const float radius = Presentation::kScopeCircleRadiusFrac * std::min(viewW, viewH);
+        renderer_->KeepScopeInViewport(GetRenderAimX(), GetRenderAimY(), radius, viewW, viewH);
+    }
     visibility_.SetVisionRadius(renderer_->GetVisionRadius());
 
     cameraPrepared_ = true;
@@ -1235,7 +1239,7 @@ void CS2DGame::Render(int viewW, int viewH) {
     cameraPrepared_ = false;
     const Presentation::ScopeView scope = GetScopeView();
 
-    // 镜筒保留屏幕空间装饰，开镜和普通模式共用无距离上限的扇形视野。
+    // 镜内沿用扇形视野，镜外叠加雾遮罩。
     const float scopeRadiusPx =
         Presentation::kScopeCircleRadiusFrac * static_cast<float>(std::min(viewW, viewH));
 

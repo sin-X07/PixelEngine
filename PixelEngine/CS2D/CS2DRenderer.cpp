@@ -987,35 +987,14 @@ void CS2DRenderer::DrawObjectiveMarkers(float timeSec) {
 
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 
-    // 包点：琥珀色区域 + 呼吸边线（一个包点可能由多个矩形组成）
-    const auto& sites = world_->GetBombSites();
-    const float pulse = 0.5f + 0.5f * std::sin(timeSec * 2.2f);
-    for (const auto& site : sites) {
-        for (const auto& s : site.rects) {
-            SDL_FRect r;
-            r.x = (s.x - cameraX_) * zoom_;
-            r.y = (s.y - cameraY_) * zoom_;
-            r.w = s.width * zoom_;
-            r.h = s.height * zoom_;
-
+    // 包点保留淡色地面填充。
+    (void)timeSec;
+    for (const auto& site : world_->GetBombSites()) {
+        for (const auto& area : site.rects) {
+            SDL_FRect rect{(area.x - cameraX_) * zoom_, (area.y - cameraY_) * zoom_,
+                           area.width * zoom_, area.height * zoom_};
             SDL_SetRenderDrawColor(renderer_, 240, 190, 60, 34);
-            SDL_RenderFillRectF(renderer_, &r);
-
-            SDL_SetRenderDrawColor(renderer_, 250, 205, 80,
-                                   static_cast<Uint8>(110 + 70 * pulse));
-            SDL_RenderDrawRectF(renderer_, &r);
-
-            // 四角加粗，强调边界
-            const float arm = std::min(r.w, r.h) * 0.22f;
-            SDL_SetRenderDrawColor(renderer_, 255, 225, 120, 200);
-            for (int i = 0; i < 4; ++i) {
-                const float cx = (i % 2 == 0) ? r.x : r.x + r.w;
-                const float cy = (i / 2 == 0) ? r.y : r.y + r.h;
-                const float dx = (i % 2 == 0) ? arm : -arm;
-                const float dy = (i / 2 == 0) ? arm : -arm;
-                SDL_RenderDrawLineF(renderer_, cx, cy, cx + dx, cy);
-                SDL_RenderDrawLineF(renderer_, cx, cy, cx, cy + dy);
-            }
+            SDL_RenderFillRectF(renderer_, &rect);
         }
     }
 }
@@ -1165,6 +1144,13 @@ int CS2DRenderer::EffectiveFogAlpha() const {
                       0, 255);
 }
 
+void CS2DRenderer::KeepScopeInViewport(float aimX, float aimY, float radiusPx, int width, int height) {
+    // Constrain the camera itself so world aim, cursor and scope center stay coincident.
+    const float margin = radiusPx + 5.0f;
+    cameraX_ = std::clamp(cameraX_, aimX - (width - margin) / zoom_, aimX - margin / zoom_);
+    cameraY_ = std::clamp(cameraY_, aimY - (height - margin) / zoom_, aimY - margin / zoom_);
+}
+
 void CS2DRenderer::DrawScopeOverlay(const Presentation::ScopeOverlayParams& p) {
     if (!renderer_) return;
     const float t = std::clamp(p.scope.transition, 0.0f, 1.0f);
@@ -1175,6 +1161,21 @@ void CS2DRenderer::DrawScopeOverlay(const Presentation::ScopeOverlayParams& p) {
     const float cx = p.centerX;
     const float cy = p.centerY;
     const float r  = radiusPx * (0.62f + 0.38f * t);   // 开镜瞬间由小放大到镜筒尺寸
+
+    // Cover every pixel outside the lens, including the viewport corners.
+    SDL_SetRenderDrawColor(renderer_, 6, 8, 10, static_cast<Uint8>(VISION_FOG_ALPHA * t));
+    for (int y = 0; y < viewH_; ++y) {
+        const float dy = y + 0.5f - cy;
+        if (std::abs(dy) >= r) {
+            SDL_RenderDrawLine(renderer_, 0, y, viewW_ - 1, y);
+        } else {
+            const float half = std::sqrt(r * r - dy * dy);
+            const int left = static_cast<int>(std::floor(cx - half));
+            const int right = static_cast<int>(std::ceil(cx + half));
+            if (left > 0) SDL_RenderDrawLine(renderer_, 0, y, left - 1, y);
+            if (right < viewW_) SDL_RenderDrawLine(renderer_, right, y, viewW_ - 1, y);
+        }
+    }
 
     // 屏幕空间圆：SDL 没有线宽，用多段折线近似
     auto ring = [&](float rr, int segments, Uint8 cr, Uint8 cg, Uint8 cb, Uint8 a) {

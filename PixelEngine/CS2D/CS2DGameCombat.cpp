@@ -30,7 +30,7 @@ void CS2DGame::UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bo
     // 持械移速惩罚：步枪最慢、手枪次之、近战最快（倍率来自武器表）
     const float weaponMul = player_.CurrentWeapon().moveSpeedMul;
     const float baseSpeed = stealth ? Tuning::PlayerStealthSpeed : Tuning::PlayerBaseSpeed;
-    const float maxSpeed  = baseSpeed * weaponMul;
+    const float maxSpeed  = baseSpeed * weaponMul * (scopeLevel_ > 0 ? Tuning::ScopeMoveMul : 1.0f);
 
     const int dx = (d ? 1 : 0) - (a ? 1 : 0);
     const int dy = (s ? 1 : 0) - (w ? 1 : 0);

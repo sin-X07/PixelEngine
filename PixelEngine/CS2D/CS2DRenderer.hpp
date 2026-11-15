@@ -74,6 +74,7 @@ public:
     // 当前为可运行的最小占位实现，接线与调用时序由功能方保证。
     // 参数里 centerX/Y、radiusPx、crossThickness、crossGap 都是逻辑画布坐标，
     // 由 CS2DGame 按准星世界点投影 + 设置项算好，UI 不做命中/相机计算。
+    void KeepScopeInViewport(float aimX, float aimY, float radiusPx, int width, int height);
     void DrawScopeOverlay(const Presentation::ScopeOverlayParams& p);
     // 飞行中的投掷物：按类型画对应的旋转图标（替代原来的 bullet 占位）
     void DrawThrownGrenade(int weaponId, float worldX, float worldY, float spinDeg);

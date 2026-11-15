@@ -23,6 +23,7 @@
 #include "CS2D/CS2DOverlay.hpp"
 #include "Storage/SaveManager.hpp"
 #include "CS2D/CS2DWorld.hpp"
+#include "CS2D/TMJParser.hpp"
 #include "Core/PathUtils.hpp"
 #include "Core/PresentationContract.hpp"
 #include "Core/BuildInfo.hpp"
@@ -1869,10 +1870,273 @@ static void TestPerceptionAndRecoil() {
     check(tactics.perception[0].reaction > tactics.perception[3].reaction, "missing tactics preserves ordered difficulty defaults");
 }
 
+static void TestResolutionMigration() {
+    const auto previousBase = PathUtils::BaseDir();
+    const auto isolated = std::filesystem::absolute("build-evidence/pix32-settings-test");
+    std::filesystem::create_directories(isolated);
+    PathUtils::SetBaseDir(isolated.string());
+    const auto savePath = isolated / (std::string("cs2d_save") + std::string(BuildInfo::SaveSuffix()) + ".ini");
+    for (int oldIndex = 0; oldIndex < 18; ++oldIndex) {
+        IniFile legacy;
+        legacy.SetInt("settings", "res_idx", oldIndex);
+        legacy.Save(savePath.string());
+        SaveManager settings;
+        settings.Load();
+        const int expected = oldIndex < 11 ? oldIndex : (oldIndex == 11 ? 11 : oldIndex - 1);
+        check(settings.GetSettings().resIdx == expected, "legacy resolution index migrates to matching retained entry");
+        settings.Save();
+        SaveManager loaded;
+        loaded.Load();
+        check(loaded.GetSettings().resIdx == expected, "versioned resolution migration applies once across reloads");
+    }
+    PathUtils::SetBaseDir(previousBase);
+}
+
+static void TestHdMapNavigation() {
+    for (const char* name : {"dust_2", "mirage", "ancient_ruins", "office"}) {
+        CS2DMapData data;
+        const std::string path = std::string("assets/cs2d/maps/") + name + ".tmj";
+        check(TMJParser::Parse(path, data), "HD collision map parses");
+        bool aligned = true;
+        for (const auto& layer : data.objectLayers) {
+            if (layer.name != "Collisions") continue;
+            for (const auto& rect : layer.objects) {
+                aligned &= std::fmod(rect.x, data.tileWidth) == 0 && std::fmod(rect.width, data.tileWidth) == 0 &&
+                           std::fmod(rect.y, data.tileHeight) == 0 && std::fmod(rect.height, data.tileHeight) == 0;
+            }
+        }
+        check(aligned, "HD collision rectangles align with the runtime grid");
+        CS2DWorld world;
+        check(world.Build(data), "HD collision world builds");
+        check(world.GetMapData() != &data, "world owns its parsed map metadata across later renderer bindings");
+        PathFinder navigation;
+        navigation.Build(world, Tuning::PathAgentRadius);
+        check(navigation.Width() == world.GetMapWidth() && navigation.Height() == world.GetMapHeight(),
+              "navigation uses HD map grid dimensions");
+        const int columns = navigation.Width();
+        const int rows = navigation.Height();
+        std::vector<unsigned char> walkable(columns * rows, 0);
+        for (int row = 0; row < rows; ++row) {
+            for (int column = 0; column < columns; ++column) {
+                walkable[row * columns + column] = navigation.IsWalkableWorld(
+                    (column + 0.5f) * navigation.TileW(), (row + 0.5f) * navigation.TileH());
+            }
+        }
+        int components = 0;
+        int largest = 0;
+        int total = 0;
+        for (int start = 0; start < columns * rows; ++start) {
+            if (!walkable[start]) continue;
+            ++components;
+            std::vector<int> pending{start};
+            walkable[start] = 0;
+            for (size_t head = 0; head < pending.size(); ++head) {
+                const int cell = pending[head];
+                const int x = cell % columns;
+                const int y = cell / columns;
+                for (const auto& step : std::array<std::pair<int, int>, 4>{{{1,0},{-1,0},{0,1},{0,-1}}}) {
+                    const int nx = x + step.first;
+                    const int ny = y + step.second;
+                    if (nx < 0 || nx >= columns || ny < 0 || ny >= rows) continue;
+                    const int neighbor = ny * columns + nx;
+                    if (!walkable[neighbor]) continue;
+                    walkable[neighbor] = 0;
+                    pending.push_back(neighbor);
+                }
+            }
+            if (pending.size() < 1000) {
+                int minX = columns, minY = rows, maxX = 0, maxY = 0;
+                for (int cell : pending) {
+                    minX = std::min(minX, cell % columns);
+                    maxX = std::max(maxX, cell % columns);
+                    minY = std::min(minY, cell / columns);
+                    maxY = std::max(maxY, cell / columns);
+                }
+                std::printf("[PIX32 pocket] %s cells=%zu world=(%.0f,%.0f)-(%.0f,%.0f)\n", name, pending.size(),
+                    minX * navigation.TileW(), minY * navigation.TileH(),
+                    (maxX + 1) * navigation.TileW(), (maxY + 1) * navigation.TileH());
+            }
+            largest = std::max(largest, static_cast<int>(pending.size()));
+            total += static_cast<int>(pending.size());
+        }
+        std::printf("[PIX32 BFS] %s components=%d largest=%d total=%d\n", name, components, largest, total);
+        const auto& spawns = world.GetSpawnPoints();
+        if (spawns.empty()) continue;
+        std::vector<PathFinder::Point> pathPoints;
+        for (const auto& spawn : spawns) {
+            const bool clear = !world.CheckRectCollision(spawn.x - 7, spawn.y - 7, 14, 14);
+            const bool connected = navigation.FindPath(spawns.front().x, spawns.front().y, spawn.x, spawn.y, pathPoints);
+            std::printf("[PIX32 map] %s spawn %.1f %.1f clear=%d reachable=%d\n", name, spawn.x, spawn.y, clear, connected);
+            check(clear && connected, "HD spawn clear and reachable with 16-unit navigation footprint");
+        }
+        for (const auto& site : world.GetBombSites()) {
+            const bool connected = navigation.FindPath(spawns.front().x, spawns.front().y, site.cx, site.cy, pathPoints);
+            std::printf("[PIX32 map] %s site %s reachable=%d\n", name, site.name.c_str(), connected);
+            check(connected, "HD bomb site reachable from spawn");
+        }
+        bool accessibleCT = false;
+        bool accessibleT = false;
+        for (const auto& zone : world.GetBuyZones()) {
+            bool reachable = false;
+            for (float y = zone.y + navigation.TileH() * 0.5f; y < zone.y + zone.height; y += navigation.TileH()) {
+                for (float x = zone.x + navigation.TileW() * 0.5f; x < zone.x + zone.width; x += navigation.TileW()) {
+                    if (navigation.IsWalkableWorld(x, y) && navigation.FindPath(
+                            spawns.front().x, spawns.front().y, x, y, pathPoints)) {
+                        reachable = true;
+                        break;
+                    }
+                }
+                if (reachable) break;
+            }
+            if (reachable) {
+                const auto team = zone.properties.find("team");
+                const std::string tag = team == zone.properties.end() ? "both" : team->second;
+                accessibleCT |= tag == "ct" || tag == "both";
+                accessibleT |= tag == "t" || tag == "both";
+            }
+        }
+        check(accessibleCT && accessibleT, "both teams have reachable HD buy-zone ground");
+
+    }
+}
+
+struct CS2DGameTestAccess {
+    static void Move(CS2DGame& game) { game.UpdatePlayerMovement(1.0f/60, false, false, false, true, false); }
+    static void TestBotScopeMovement() {
+        CS2DGame game;
+        if (!LoadDeathMatch(game)) return;
+        CS2DMapData data;
+        data.mapWidth = data.mapHeight = 100;
+        data.tileWidth = data.tileHeight = 8;
+        game.GetWorld().Build(data);
+        game.pathFinder_.Build(game.GetWorld(), Tuning::PathAgentRadius);
+        auto& bot = game.GetBOTs().front();
+        bot.SetSlotWeapon(0, WeaponId::AWP);
+        bot.weaponSlot = 0;
+        bot.stealth = false;
+        auto& ai = game.AiAt(0);
+        bot.x = bot.y = 100;
+        ai.scoped = false;
+        game.FollowPathTo(bot, ai, 600, 100, 1.0f/60);
+        const float normal = std::hypot(bot.vx, bot.vy);
+        bot.x = bot.y = 100;
+        ai.scoped = true;
+        game.FollowPathTo(bot, ai, 600, 100, 1.0f/60);
+        const float scoped = std::hypot(bot.vx, bot.vy);
+        check(normal > 1 && std::abs(scoped/normal - Tuning::ScopeMoveMul) < 0.01f,
+              "scoped BOT path movement uses the same 0.6 multiplier");
+    }
+
+    static void TestSharedBotVisibility() {
+        CS2DGame game;
+        if (!LoadDeathMatch(game)) return;
+        CS2DMapData data;
+        data.mapWidth = 200;
+        data.mapHeight = 40;
+        data.tileWidth = data.tileHeight = 8;
+        game.GetWorld().Build(data);
+        game.GetBOTs().resize(1);
+        game.ResetBotAi(0);
+        auto& player = game.GetPlayer();
+        auto& bot = game.GetBOTs()[0];
+        player.alive = bot.alive = true;
+        player.team = Team::CT;
+        bot.team = Team::T;
+        player.x = 20;
+        player.y = 100;
+        player.aimAngle = 0;
+        bot.x = 1200;
+        bot.y = 100;
+        bot.aimAngle = Tuning::Pi;
+        check(game.PlayerCanSeeBot(bot) && game.BotCanSeePlayer(bot),
+              "both sides see distant forward targets under the same unlimited rule");
+        bot.aimAngle = 0;
+        check(!game.BotCanSeePlayer(bot), "BOT cannot see a player behind its cone");
+        bot.aimAngle = Tuning::Pi;
+        auto& smoke = game.smokes_;
+        CS2DGame::SmokeCloud cloud;
+        cloud.x = 600;
+        cloud.y = 100;
+        cloud.age = 3;
+        cloud.radius = 100;
+        smoke.push_back(cloud);
+        check(!game.PlayerCanSeeBot(bot) && !game.BotCanSeePlayer(bot), "smoke occludes both visibility directions");
+        smoke.clear();
+        ObjectLayerDef layer;
+        layer.name = "Collisions";
+        ObjectDef wall;
+        wall.x = 600;
+        wall.y = 0;
+        wall.width = 8;
+        wall.height = 320;
+        layer.objects.push_back(wall);
+        data.objectLayers.push_back(layer);
+        game.GetWorld().Build(data);
+        check(!game.PlayerCanSeeBot(bot) && !game.BotCanSeePlayer(bot), "walls occlude both visibility directions");
+    }
+};
+
+static void TestScopeBoundsAndMovement() {
+    CS2DGame game;
+    if (!LoadDeathMatch(game)) return;
+    game.GetBOTs().clear();
+    CS2DMapData open;
+    open.mapWidth = 400;
+    open.mapHeight = 400;
+    open.tileWidth = open.tileHeight = 8;
+    game.GetWorld().Build(open);
+    auto& player = game.GetPlayer();
+    player.x = player.y = 1000;
+    player.weapons[0] = WeaponId::AWP;
+    player.weaponSlot = 0;
+    game.UpdateScopeInput(true, true);
+    game.UpdateScopeInput(false, true);
+    check(game.GetScopeView().level > 0, "scope movement test enters scoped state");
+    for (int tick = 0; tick < 120; ++tick) CS2DGameTestAccess::Move(game);
+    check(std::hypot(player.vx, player.vy) > 1 && std::hypot(player.vx, player.vy) <= Tuning::PlayerBaseSpeed * player.CurrentWeapon().moveSpeedMul * Tuning::ScopeMoveMul + .01f,
+          "scoped player movement obeys 0.6 speed cap");
+    SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 1280, 720, 32, SDL_PIXELFORMAT_RGBA32);
+    SDL_Renderer* software = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+    check(software != nullptr, "scope bounds software renderer");
+    if (software) {
+        CS2DRenderer renderer;
+        renderer.Initialize(software, "assets/cs2d/maps", 1280, 720);
+        renderer.SetWorld(&game.GetWorld());
+        const float radius = 720 * Presentation::kScopeCircleRadiusFrac;
+        for (const auto& point : std::vector<SDL_FPoint>{{0,0},{1600,0},{1600,1600},{0,1600}}) {
+            renderer.UpdateCamera(500,500,1280,720,2);
+            renderer.KeepScopeInViewport(point.x,point.y,radius,1280,720);
+            const float x = (point.x-renderer.GetCameraX())*renderer.GetZoom();
+            const float y = (point.y-renderer.GetCameraY())*renderer.GetZoom();
+            check(x >= radius && x <= 1280-radius && y >= radius && y <= 720-radius,
+                  "scope lens fully inside viewport at every edge");
+        }
+        SDL_SetRenderDrawColor(software, 255, 255, 255, 255);
+        SDL_RenderClear(software);
+        Presentation::ScopeOverlayParams overlay;
+        overlay.scope.transition = 1;
+        overlay.centerX = 640;
+        overlay.centerY = 360;
+        overlay.radiusPx = radius;
+        renderer.DrawScopeOverlay(overlay);
+        SDL_RenderPresent(software);
+        const auto* pixel = static_cast<const Uint8*>(surface->pixels);
+        check(pixel[0] < 150, "scope exterior has fog coverage at viewport corner");
+        SDL_SaveBMP(surface,"build-evidence/pix32-scope.bmp");
+    }
+    SDL_DestroyRenderer(software);
+    SDL_FreeSurface(surface);
+}
+
 int main() {
     std::printf("===== 合并契约 v1 玩法回归测试 =====\n");
     std::printf("地图: %s\n", MapPath());
 
+    CS2DGameTestAccess::TestSharedBotVisibility();
+    CS2DGameTestAccess::TestBotScopeMovement();
+    TestResolutionMigration();
+    TestHdMapNavigation();
+    TestScopeBoundsAndMovement();
     TestAimLinePersistenceAndRecoilRecovery();
     TestStableCursorAndWallRay();
     TestReactionBenchmark();

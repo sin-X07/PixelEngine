@@ -1,7 +1,7 @@
-"""Bake world-aligned map surrounds from authored void seeds and ground materials.
+"""Bake HD map surrounds with 256 world units of padding and a 64-unit transition.
 
-Run with Python, Pillow, NumPy and SciPy. Original TMJ and map images are inputs.
-The PNG masks and generated-image materials beside this script are editable sources.
+Run with Python, Pillow, NumPy and SciPy. Current TMJ and map images are inputs.
+Source map pixels are preserved exactly. Ground is sampled from the current artwork.
 """
 import hashlib
 import json
@@ -13,17 +13,15 @@ from scipy import ndimage
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE = Path(__file__).parent
 OUTPUT = ROOT / 'build-map-perimeters/baked'
 EVIDENCE = ROOT / 'build-evidence/map-perimeters'
 PAD = 256
 TILE = 256
 THEMES = {
-    'ancient_ruins': {'seeds': [(7, 392), (426, 106), (353, 341), (295, 599),
-                                (547, 423), (714, 573), (679, 719)],
-                      'soil': (94, 90, 77), 'seed': 714},
-    'dust_2': {'seeds': [], 'soil': (182, 157, 83), 'seed': 208},
-    'mirage': {'seeds': [(184, 1093)], 'soil': (137, 127, 107), 'seed': 319},
+    'ancient_ruins': {'seed': 714},
+    'dust_2': {'seed': 208},
+    'mirage': {'seed': 319},
+    'office': {'seed': 420},
 }
 
 
@@ -31,27 +29,20 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def ground_tile(name, settings, original):
-    image = Image.open(SOURCE / 'materials' / (name + '.png')).convert('RGB')
-    pixels = np.asarray(image.resize((TILE, TILE), Image.Resampling.LANCZOS), dtype=np.float32)
-    mean = pixels.mean(axis=(0, 1))
-    pixels = np.array(settings['soil']) + (pixels - mean) * .65
-    if name == 'dust_2':
-        # Quilt varied source-sand patches on a torus, retaining the map's grain.
-        rng = np.random.default_rng(settings['seed'])
-        accumulated = np.zeros((TILE, TILE, 3), dtype=np.float32)
-        weights = np.zeros((TILE, TILE), dtype=np.float32)
-        window = np.sin(np.pi*(np.arange(24)+.5)/24)**2
-        weight = window[:, None]*window[None, :]
-        for y in range(0, TILE, 16):
-            for x in range(0, TILE, 16):
-                source_x = int(rng.integers(0, original.shape[1]-24))
-                patch = np.rot90(original[:24, source_x:source_x+24], int(rng.integers(4)))
-                iy, ix = np.ix_((np.arange(24)+y) % TILE, (np.arange(24)+x) % TILE)
-                accumulated[iy, ix] += patch*weight[:, :, None]
-                weights[iy, ix] += weight
-        variation = ndimage.gaussian_filter(pixels.mean(axis=2), 9)
-        pixels = accumulated/weights[:, :, None] + (variation-variation.mean())[:, :, None]*.2
+def ground_tile(name, original):
+    # Select a quiet ground patch from the current HD artwork, avoiding walls and vegetation.
+    candidates = []
+    for y in range(32, original.shape[0]-64, 32):
+        for x in range(32, original.shape[1]-64, 32):
+            patch = original[y:y+64, x:x+64].astype(np.float32)
+            mean = patch.mean(axis=(0, 1))
+            if mean.min() < 70 or mean.max() > 220 or mean[1] > mean[0]*1.12:
+                continue
+            candidates.append((float(patch.std(axis=(0, 1)).mean()), x, y))
+    assert candidates, (name, 'no quiet ground patch found')
+    _, x, y = min(candidates)
+    patch = original[y:y+64, x:x+64]
+    pixels = np.tile(patch, (4, 4, 1)).astype(np.float32)
     # Match opposite borders with a smooth, narrow correction on both sides.
     for axis in (0, 1):
         pixels = np.swapaxes(pixels, 0, axis)
@@ -62,31 +53,6 @@ def ground_tile(name, settings, original):
             pixels[-1 - offset] -= difference * weight
         pixels = np.swapaxes(pixels, 0, axis)
     return np.clip(np.rint(pixels), 0, 255).astype(np.uint8)
-
-
-def void_mask(name, original, settings):
-    """Only deliberately selected dark components are eligible for replacement."""
-    labels, _ = ndimage.label(original.max(axis=2) < 20)
-    mask = np.zeros(original.shape[:2], dtype=bool)
-    if name == 'dust_2':
-        yy, xx = np.indices(mask.shape)
-        mask = np.minimum.reduce([xx, yy, mask.shape[1]-1-xx, mask.shape[0]-1-yy]) < 20
-    for x, y in settings['seeds']:
-        label = labels[y, x]
-        assert label != 0, (name, 'void seed no longer matches the source', x, y)
-        mask |= labels == label
-    path = SOURCE / (name + '_void.png')
-    if not path.exists():
-        Image.fromarray(mask.astype(np.uint8) * 255).save(path)
-    else:
-        edited = np.asarray(Image.open(path).convert('L'))
-        assert edited.shape == mask.shape, (name, 'mask dimensions')
-        mask = edited > 127
-    if name == 'dust_2':
-        assert np.all(original[mask, 0] > original[mask, 2]+30), 'Sand mask covers non-sand artwork'
-    else:
-        assert not np.any(mask & (original.max(axis=2) >= 20)), (name, 'mask covers map artwork')
-    return mask
 
 
 def draw_decorations(name, size, allowed, distance, scale, rng, original):
@@ -168,53 +134,43 @@ def bake(name, settings):
     image_path = (ROOT / 'assets/cs2d/maps' / image_layer['image']).resolve()
     original = np.asarray(Image.open(image_path).convert('RGB'))
     height, width = original.shape[:2]
-    scale = width / image_layer['imagewidth']
-    assert scale == height / image_layer['imageheight']
-    tile = ground_tile(name, settings, original)
+    world_width = document['width'] * document['tilewidth']
+    world_height = document['height'] * document['tileheight']
+    assert (width, height) == (world_width, world_height), (name, 'expected HD world-aligned input')
+    tile = ground_tile(name, original)
     Image.fromarray(tile).save(OUTPUT / (name + '_ground.png'))
-    mask = void_mask(name, original, settings)
     full_h, full_w = height + 2*PAD, width + 2*PAD
     yy, xx = np.indices((full_h, full_w))
     ground = tile[(yy-PAD) % TILE, (xx-PAD) % TILE].copy()
-    allowed = np.ones((full_h, full_w), dtype=bool)
-    allowed[PAD:PAD+height, PAD:PAD+width] = mask
-    distance = ndimage.distance_transform_edt(allowed)
-
-    # Occlusion is strongest at wall feet, with a restrained far-field contrast.
-    shade = 1 - .22*np.exp(-distance/(7*scale))
-    shade *= 1 - .08*np.clip(distance/(110*scale), 0, 1)
-    if name == 'dust_2':
-        # The source rectangle ends in continuous sand, with no wall to cast a shadow.
-        shade = np.ones_like(shade)
-    border = np.minimum.reduce([xx, yy, full_w-1-xx, full_h-1-yy])
-    border_mix = np.clip(border/(40*scale), 0, 1)
-    shade = 1 + (shade-1)*border_mix
-    ground = np.rint(ground*shade[:, :, None]).astype(np.uint8)
-
-    scene = Image.fromarray(ground).convert('RGBA')
-    scene.alpha_composite(draw_decorations(name, scene.size, allowed,
-                                           distance, scale, np.random.default_rng(settings['seed']), original))
+    source_y = np.clip(yy-PAD, 0, height-1)
+    source_x = np.clip(xx-PAD, 0, width-1)
+    outside_x = np.maximum.reduce([PAD-xx, xx-(PAD+width-1), np.zeros_like(xx)])
+    outside_y = np.maximum.reduce([PAD-yy, yy-(PAD+height-1), np.zeros_like(yy)])
+    distance = np.hypot(outside_x, outside_y)
+    # Preserve the exact edge at the seam, gently blending into the looping material.
+    blend = np.clip(distance/64.0, 0, 1)
+    blend = blend*blend*(3-2*blend)
+    edge = original[source_y, source_x].astype(np.float32)
+    blurred = ndimage.gaussian_filter(edge, (1.5, 1.5, 0))
+    edge_mix = np.clip(distance/8.0, 0, 1)[:, :, None]
+    edge = edge*(1-edge_mix) + blurred*edge_mix
+    pixels = np.rint(edge*(1-blend[:, :, None]) + ground*blend[:, :, None]).astype(np.uint8)
+    allowed = distance > 64
+    scene = Image.fromarray(pixels).convert('RGBA')
+    scene.alpha_composite(draw_decorations(name, scene.size, allowed, distance, 1.0,
+                                           np.random.default_rng(settings['seed']), original))
     pixels = np.array(scene.convert('RGB'))
-    center = pixels[PAD:PAD+height, PAD:PAD+width]
-    if name == 'dust_2':
-        iy, ix = np.indices((height, width))
-        inset = np.minimum.reduce([ix, iy, width-1-ix, height-1-iy])
-        # Feather only the authored twenty-pixel sand margin, outside all walls.
-        blend = np.clip((inset-2)/17, 0, 1)
-        blend = blend*blend*(3-2*blend)
-        center[:] = np.rint(original*blend[:, :, None] + center*(1-blend[:, :, None]))
-    center[~mask] = original[~mask]
-    assert np.array_equal(center[~mask], original[~mask]), 'Protected source pixels changed'
-    assert np.array_equal(pixels[0], tile[(-PAD) % TILE, (np.arange(full_w)-PAD) % TILE])
+    pixels[PAD:PAD+height, PAD:PAD+width] = original
+    assert np.array_equal(pixels[PAD:PAD+height, PAD:PAD+width], original)
+    assert np.array_equal(pixels[0], ground[0])
     output = OUTPUT / (name + '_scene.png')
     Image.fromarray(pixels).save(output, compress_level=6)
     preview = Image.fromarray(pixels)
     preview.thumbnail((1200, 900), Image.Resampling.LANCZOS)
     preview.save(EVIDENCE / (name + '-overview.jpg'), quality=94)
-    return dict(theme=name, source_sha256=digest(image_path), mask_sha256=digest(SOURCE/(name+'_void.png')),
-                scene_sha256=digest(output), scene_size=[full_w, full_h], native_padding=PAD,
-                world_padding=PAD/scale, modified_source_pixels=int(mask.sum()),
-                protected_source_pixels=int((~mask).sum()), protected_pixels_identical=True)
+    return dict(theme=name, source_sha256=digest(image_path), scene_sha256=digest(output),
+                scene_size=[full_w, full_h], world_padding=PAD, transition_world_units=64,
+                protected_source_pixels=height*width, protected_pixels_identical=True)
 
 
 if __name__ == '__main__':

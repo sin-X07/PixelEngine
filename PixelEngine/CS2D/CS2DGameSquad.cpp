@@ -198,18 +198,10 @@ void CS2DGame::UpdateTeamContacts(float dt) {
         if (!b.alive) continue;
         if (AiAt(i).blindTimer > 0.0f) continue;   // 致盲：看不见任何东西，也无法上报情报
 
-        const auto& perception = tactics_.perception[std::clamp(AiAt(i).difficulty, 0, 3)];
-        const float spotRadius = BOT_SPOT_RADIUS * perception.radius;
         auto scan = [&](const Player& e, int id) {
             if (!e.alive || e.team == b.team) return;
 
-            const float dx = e.x - b.x;
-            const float dy = e.y - b.y;
-            if (dx * dx + dy * dy > spotRadius * spotRadius) return;
-            // 上报同样受朝向限制：背后看不到的东西不能报告
-            if (!InViewCone(b.x, b.y, b.EffectiveAim(), e.x, e.y, spotRadius, perception.angle)) return;
-            if (SegmentBlockedBySmoke(b.x, b.y, e.x, e.y)) return;
-            if (!visibility_.HasLineOfSight(b.x, b.y, e.x, e.y)) return;
+            if (!CanSeeActor(b, e)) return;
 
             ReportContact(b.team, id, e.x, e.y);
         };
@@ -234,28 +226,31 @@ void CS2DGame::UpdateTeamContacts(float dt) {
 
 // 真实可见敌人（交火距离 + 烟雾 + LOS）
 
-// 目标是否在以 from 为顶点、aim 为中轴的视野扇形内（含角度软边的有效边界）
-bool CS2DGame::InViewCone(float fromX, float fromY, float aim,
-                          float toX, float toY, float maxDist, float angleMul) const {
-    const float dx = toX - fromX;
-    const float dy = toY - fromY;
-    const float d2 = dx * dx + dy * dy;
-    if (d2 > maxDist * maxDist) return false;
-    if (d2 < 0.0001f) return true;
+bool CS2DGame::CanSeeActor(const Player& observer, const Player& target) const {
+    return target.alive && CanSeePoint(observer, target.x, target.y);
+}
 
-    float diff = std::atan2(dy, dx) - aim;
-    while (diff >  3.14159265f) diff -= 6.28318531f;
-    while (diff < -3.14159265f) diff += 6.28318531f;
-
-    return std::abs(diff) <= Tuning::VisionHalfAngleRad * angleMul;
+bool CS2DGame::CanSeePoint(const Player& observer, float x, float y) const {
+    if (!observer.alive) return false;
+    VisibilityQuery query = visibility_;
+    if (&observer == &player_) {
+        if (flashTimer_ > 0.0f) return false;
+    } else {
+        const auto& ai = AiAt(AiIndexOf(observer));
+        if (ai.blindTimer > 0.0f) return false;
+        const auto& perception = tactics_.perception[std::clamp(ai.difficulty, 0, 3)];
+        query.SetVisionRadius(Tuning::VisionRadius * perception.radius);
+        query.SetConeAngleDeg(Tuning::VisionConeDeg * perception.angle);
+    }
+    if (SegmentBlockedBySmoke(observer.x, observer.y, x, y)) return false;
+    if (!query.World()) return true;
+    return query.ComputeVisibility(observer.x, observer.y, observer.EffectiveAim(), x, y) > 0.0f;
 }
 
 const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& outDist) const {
     outDist = 0.0f;
     if (AiAt(AiIndexOf(self)).blindTimer > 0.0f) return nullptr;   // 被闪光致盲，看不到任何人
 
-    const auto& perception = tactics_.perception[std::clamp(AiAt(AiIndexOf(self)).difficulty, 0, 3)];
-    const float viewRadius = BOT_VIEW_RADIUS * perception.radius;
     const Player* best = nullptr;
     float bestD2 = 1e18f;
 
@@ -265,11 +260,7 @@ const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& ou
         const float dx = e.x - self.x;
         const float dy = e.y - self.y;
         const float d2 = dx * dx + dy * dy;
-        if (d2 > viewRadius * viewRadius) return;
-        // 视野扇形：和玩家同一套几何，背后看不见
-        if (!InViewCone(self.x, self.y, self.EffectiveAim(), e.x, e.y, viewRadius, perception.angle)) return;
-        if (SegmentBlockedBySmoke(self.x, self.y, e.x, e.y)) return;
-        if (!visibility_.HasLineOfSight(self.x, self.y, e.x, e.y)) return;
+        if (!CanSeeActor(self, e)) return;
 
         if (d2 < bestD2) { bestD2 = d2; best = &e; }
     };

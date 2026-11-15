@@ -178,21 +178,11 @@ void CS2DGame::ClearBotGoal(size_t i) {
 }
 bool CS2DGame::BotCanSeePlayer(const Player& bot) const {
     if (!player_.alive || !IsHostile(player_, bot)) return false;   // 死斗 FFA：所有人都敌对
-    const float dx = player_.x - bot.x;
-    const float dy = player_.y - bot.y;
-    const auto& p = tactics_.perception[std::clamp(AiAt(AiIndexOf(bot)).difficulty, 0, 3)];
-    if (!InViewCone(bot.x, bot.y, bot.EffectiveAim(), player_.x, player_.y, BOT_VIEW_RADIUS * p.radius, p.angle)) return false;
-    if (!visibility_.World()) return true;   // 无世界数据时保持宽松语义（测试/初始化阶段）
-    return visibility_.HasLineOfSight(bot.x, bot.y, player_.x, player_.y);
+    return CanSeeActor(bot, player_);
 }
 
 bool CS2DGame::PlayerCanSeeBot(const Player& bot) const {
-    if (!bot.alive) return false;
-    // 烟雾遮挡
-    if (SegmentBlockedBySmoke(player_.x, player_.y, bot.x, bot.y)) return false;
-    if (!visibility_.World()) return true;   // 无世界数据时保持宽松语义（测试/初始化阶段）
-    return visibility_.IsVisibleToPlayer(player_.x, player_.y, player_.EffectiveAim(),
-                                        bot.x, bot.y);
+    return CanSeeActor(player_, bot);
 }
 
 // 拆包安全判定：CT BOT 只有在「没有可见敌人、最近没挨打」时才拆包；
@@ -328,7 +318,7 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     const float d  = std::sqrt(dx * dx + dy * dy);
     if (d < 0.001f) return false;
 
-    const float weaponMul = bot.CurrentWeapon().moveSpeedMul;
+    const float weaponMul = bot.CurrentWeapon().moveSpeedMul * (ai.scoped ? Tuning::ScopeMoveMul : 1.0f);
     // 教练节奏：fast 略快、slow 略慢（只影响推进欲望，不影响武器惩罚）
     const Tempo tempo = GetCoachPlan(bot.team).tempo;
     const float tempoMul = (tempo == Tempo::Fast) ? 1.08f
@@ -490,6 +480,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // BOT 阵亡掉落 / 切换武器读取的都是 ammoSlot，必须保持最新。
         bot.SaveAmmoToSlot();
         auto& ai = AiAt(i);
+        ai.scoped = false;
         const auto& perception = tactics_.perception[std::clamp(ai.difficulty, 0, 3)];
         bot.recoilRecoveryTimer = std::max(0.0f, bot.recoilRecoveryTimer - dt);
         if (bot.recoilRecoveryTimer <= 0.0f)
@@ -618,6 +609,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // ---- 目标选择：只用「看得见」的敌人 + 团队情报 ----
         float targetDist = 0.0f;
         const Player* visibleTarget = FindVisibleEnemy(bot, targetDist);
+        ai.scoped = visibleTarget && bot.CurrentWeapon().scoped && !bot.reloading;
         bot.aimDistance = std::max(targetDist, 0.001f);
         const Player* target = visibleTarget;
         if (visibleTarget) {
@@ -1332,7 +1324,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
             if (mvx != 0.0f || mvy != 0.0f) {
                 // 与寻路保持同一套速度基准：基础速度 × 武器倍率 × 角色倍率
-                const float cap = Tuning::BotMoveSpeed * def.moveSpeedMul * roleMul;
+                const float cap = Tuning::BotMoveSpeed * def.moveSpeedMul * roleMul * (ai.scoped ? Tuning::ScopeMoveMul : 1.0f);
                 const float spd = (maneuver == BotManeuver::BackOff ? cap : cap * 0.55f);
                 float vx = mvx * spd;
                 float vy = mvy * spd;

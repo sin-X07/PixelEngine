@@ -81,13 +81,7 @@ bool CS2DGame::SpectatorCanSeeEnemy(const Player& e) const {
 
     auto seenBy = [&](const Player& f) {
         if (!f.alive || f.team == e.team) return false;
-        const float dx = e.x - f.x;
-        const float dy = e.y - f.y;
-        if (dx * dx + dy * dy > Tuning::VisionRadius * Tuning::VisionRadius) return false;
-        if (!InViewCone(f.x, f.y, f.aimAngle, e.x, e.y, Tuning::VisionRadius)) return false;
-        if (SegmentBlockedBySmoke(f.x, f.y, e.x, e.y)) return false;
-        if (!visibility_.HasLineOfSight(f.x, f.y, e.x, e.y)) return false;
-        return true;
+        return CanSeeActor(f, e);
     };
 
     if (specMode_ == SpectateMode::Follow &&

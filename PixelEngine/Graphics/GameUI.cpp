@@ -1709,9 +1709,16 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
             const ImU32 iconTintMod = enabled ? IM_COL32(255, 255, 255, 235)
                                              : IM_COL32(255, 255, 255, 110);
             if (iconTex) {
-                dl->AddImage(reinterpret_cast<ImTextureID>(iconTex), iconPos,
-                             ImVec2(iconPos.x + iconBox, iconPos.y + iconBox),
-                             ImVec2(0, 0), ImVec2(1, 1), iconTintMod);
+                int width = 0, height = 0;
+                if (SDL_QueryTexture(iconTex, nullptr, nullptr, &width, &height) == 0 && width > 0 && height > 0) {
+                    const float fit = iconBox / static_cast<float>(std::max(width, height));
+                    const ImVec2 size(width * fit, height * fit);
+                    const ImVec2 pos(iconPos.x + (iconBox - size.x) * 0.5f,
+                                     iconPos.y + (iconBox - size.y) * 0.5f);
+                    dl->AddImage(reinterpret_cast<ImTextureID>(iconTex), pos,
+                                 ImVec2(pos.x + size.x, pos.y + size.y),
+                                 ImVec2(0, 0), ImVec2(1, 1), iconTintMod);
+                }
             } else {
                 // 降级：轮廓占位（护甲画盾牌轮廓，其它画武器剪影框）
                 const ImU32 oc = enabled ? IM_COL32(170, 182, 198, 200)
