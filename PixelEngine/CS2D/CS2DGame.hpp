@@ -76,6 +76,7 @@ public:
 
     // ---- 战斗单位（玩家与 BOT 共用）----
     struct Player {
+        bool hasDefuseKit = false;
         float x       = 0.0f;
         float y       = 0.0f;
         float vx      = 0.0f;
@@ -933,7 +934,7 @@ public:
     void CoachDrainLlm();
     void CoachWarmupPlaybook();   // 换图后预加载战术库并校验区域名
     // 玩家操作：主动拾取（E）/ 丢弃当前武器（G）
-    void TryPickupDrops(bool manual);
+    void TryPickupDrops(bool manual, AudioManager* audio = nullptr);
     void DropCurrentWeapon();
     // 把指定槽位的武器丢到地面（换枪 / 被替换时用）
     void DropWeaponToGround(int slot, float x, float y);
@@ -1151,6 +1152,10 @@ private:
     bool  bombIntel_ = false;
     float bombIntelX_ = 0.0f, bombIntelY_ = 0.0f;
     float bombIntelAge_ = 0.0f;
+    int plantingChannel_ = -1;
+    int defusingChannel_ = -1;
+    int activeDefuser_ = -2;
+    void StopObjectiveAudio(class AudioManager* audio);
     float plantProgress_ = 0.0f;
 
     SpectateMode specMode_ = SpectateMode::None;

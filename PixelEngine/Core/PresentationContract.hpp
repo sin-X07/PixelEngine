@@ -16,7 +16,7 @@
 namespace Presentation {
 
 // ---- 购买 ----
-enum class BuyKind { Weapon, Armor };
+enum class BuyKind { Weapon, Armor, DefuseKit };
 
 struct BuyRequest {
     BuyKind  kind  = BuyKind::Weapon;

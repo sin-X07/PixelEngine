@@ -287,7 +287,7 @@ inline const WeaponDef kWeapons[] = {
     // ---------------- C4 ----------------
     { WeaponId::C4, "C4", WeaponClass::Bomb, WeaponSlotKind::Melee, WeaponTeam::Both,
       0, 0.0f, 0.0f, 0.0f, 0.0f, 1, 0.00f, false, 0, 0.0f, 1.00f, false, 90.0f,
-      nullptr, nullptr, 0 },
+      "cs2d/sprites/c4.png", "cs2d/sprites/c4_d.png", 0 },
 };
 
 inline constexpr int kWeaponCount = static_cast<int>(sizeof(kWeapons) / sizeof(kWeapons[0]));

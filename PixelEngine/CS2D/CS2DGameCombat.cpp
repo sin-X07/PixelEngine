@@ -459,6 +459,10 @@ void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle, AudioManager* audio
     const WeaponDef& def = WeaponDB::Get(type);
     if (def.cls != WeaponClass::Grenade) return;
 
+    if (audio) {
+        if (&thrower == &player_) audio->PlaySound(SoundEffect::PULL_PIN);
+        else audio->PlaySoundAt(SoundEffect::PULL_PIN, thrower.x, thrower.y, ListenerX(), ListenerY());
+    }
     Grenade g;
     g.x = thrower.x;
     g.y = thrower.y;
@@ -800,6 +804,8 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio, Player* ki
 
     // 玩家阵亡 → 开镜立即归零（不依赖 game.Update 的 dt）
     if (&victim == &player_) {
+        StopObjectiveAudio(audio);
+        if (audio) audio->PlaySound(SoundEffect::DEATH);
         ResetScope(Presentation::ScopeResetReason::PlayerDied);
     }
 
@@ -965,55 +971,43 @@ void CS2DGame::StartReload(Player& p, AudioManager* audio) {
     }
 }
 
-// 武器 → 换弹音效（新增武器回退到最接近的已有音效，后续替换真实素材）
+// 武器 → 独立换弹音效。
 SoundEffect CS2DGame::ReloadSoundFor(WeaponId id) {
     switch (id) {
-        // 手枪
-        case WeaponId::Glock18:      return SoundEffect::RELOAD_GLOCK;
-        case WeaponId::USP_S:
-        case WeaponId::P2000:        return SoundEffect::RELOAD_USP;
-        case WeaponId::Deagle:
-        case WeaponId::R8Revolver:   return SoundEffect::RELOAD_DEAGLE;
-        case WeaponId::P250:
-        case WeaponId::FiveSeven:
-        case WeaponId::Tec9:
-        case WeaponId::CZ75:
-        case WeaponId::DualBerettas: return SoundEffect::RELOAD_GLOCK;
-
-        // 冲锋枪
-        case WeaponId::MAC10:
-        case WeaponId::MP9:
-        case WeaponId::MP7:
-        case WeaponId::MP5SD:
-        case WeaponId::UMP45:
-        case WeaponId::P90:          return SoundEffect::RELOAD_GALIL;
-
-        // 步枪
-        case WeaponId::AK47:
-        case WeaponId::SG553:        return SoundEffect::RELOAD_AK47;
-        case WeaponId::M4A4:
-        case WeaponId::M4A1S:
-        case WeaponId::AUG:          return SoundEffect::RELOAD_M4A1;
-        case WeaponId::GalilAR:
-        case WeaponId::FAMAS:        return SoundEffect::RELOAD_GALIL;
-
-        // 狙击枪
-        case WeaponId::AWP:
-        case WeaponId::SSG08:
-        case WeaponId::SCAR20:
-        case WeaponId::G3SG1:        return SoundEffect::RELOAD_AWP;
-
-        // 霰弹枪
-        case WeaponId::Nova:
-        case WeaponId::XM1014:
-        case WeaponId::SawedOff:
-        case WeaponId::MAG7:         return SoundEffect::RELOAD_SHOTGUN;
-
-        // 机枪
-        case WeaponId::M249:
-        case WeaponId::Negev:        return SoundEffect::RELOAD_AK47;
-
-        default:                     return SoundEffect::CLICK;
+        case WeaponId::Glock18: return SoundEffect::RELOAD_GLOCK;
+        case WeaponId::USP_S: return SoundEffect::RELOAD_USP;
+        case WeaponId::Deagle: return SoundEffect::RELOAD_DEAGLE;
+        case WeaponId::GalilAR: return SoundEffect::RELOAD_GALIL;
+        case WeaponId::AK47: return SoundEffect::RELOAD_AK47;
+        case WeaponId::M4A1S: return SoundEffect::RELOAD_M4A1;
+        case WeaponId::AWP: return SoundEffect::RELOAD_AWP;
+        case WeaponId::Nova: return SoundEffect::RELOAD_SHOTGUN;
+        case WeaponId::P2000: return SoundEffect::RELOAD_P2000;
+        case WeaponId::DualBerettas: return SoundEffect::RELOAD_DUALBERETTAS;
+        case WeaponId::P250: return SoundEffect::RELOAD_P250;
+        case WeaponId::FiveSeven: return SoundEffect::RELOAD_FN57;
+        case WeaponId::Tec9: return SoundEffect::RELOAD_TEC9;
+        case WeaponId::CZ75: return SoundEffect::RELOAD_CZ75;
+        case WeaponId::R8Revolver: return SoundEffect::RELOAD_R8;
+        case WeaponId::MAC10: return SoundEffect::RELOAD_MAC10;
+        case WeaponId::MP9: return SoundEffect::RELOAD_MP9;
+        case WeaponId::MP7: return SoundEffect::RELOAD_MP7;
+        case WeaponId::MP5SD: return SoundEffect::RELOAD_MP5SD;
+        case WeaponId::UMP45: return SoundEffect::RELOAD_UMP45;
+        case WeaponId::P90: return SoundEffect::RELOAD_P90;
+        case WeaponId::FAMAS: return SoundEffect::RELOAD_FAMAS;
+        case WeaponId::M4A4: return SoundEffect::RELOAD_M4A4;
+        case WeaponId::SG553: return SoundEffect::RELOAD_SG553;
+        case WeaponId::AUG: return SoundEffect::RELOAD_AUG;
+        case WeaponId::SSG08: return SoundEffect::RELOAD_SSG08;
+        case WeaponId::SCAR20: return SoundEffect::RELOAD_SCAR20;
+        case WeaponId::G3SG1: return SoundEffect::RELOAD_G3SG1;
+        case WeaponId::XM1014: return SoundEffect::RELOAD_XM1014;
+        case WeaponId::SawedOff: return SoundEffect::RELOAD_SAWEDOFF;
+        case WeaponId::MAG7: return SoundEffect::RELOAD_MAG7;
+        case WeaponId::M249: return SoundEffect::RELOAD_M249;
+        case WeaponId::Negev: return SoundEffect::RELOAD_NEGEV;
+        default: return SoundEffect::CLICK;
     }
 }
 
@@ -1113,7 +1107,7 @@ void CS2DGame::DropEquipmentOnDeath(const Player& victim) {
               << static_cast<int>(victim.y) << ")" << std::endl;
 }
 
-void CS2DGame::TryPickupDrops(bool manual) {
+void CS2DGame::TryPickupDrops(bool manual, AudioManager* audio) {
     if (!player_.alive) return;
 
     // 找最近的掉落物
@@ -1180,7 +1174,10 @@ void CS2DGame::TryPickupDrops(bool manual) {
         }
     }
 
-    if (taken) d.id = WeaponId::None;
+    if (taken) {
+        d.id = WeaponId::None;
+        if (audio) audio->PlaySound(SoundEffect::PICKUP);
+    }
 }
 
 // G：丢弃当前武器（近战不可丢弃）

@@ -103,7 +103,8 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
         ResetToNewMatch();
     } else {
         // 选阵营前只保留地图世界，不生成玩家和 BOT。
-        bots_.clear();
+        player_.hasDefuseKit = false;
+    bots_.clear();
         botAi_.clear();
         bullets_.clear();
         bulletVisuals_.clear();
@@ -244,6 +245,7 @@ bool CS2DGame::IsBuyWindowOpen() const {
 }
 
 int CS2DGame::PurchasePriceOf(const Presentation::BuyRequest& request) const {
+    if (request.kind == Presentation::BuyKind::DefuseKit) return 400;
     if (request.kind == Presentation::BuyKind::Armor) {
         if (request.armorTier == 1) return 650;
         if (request.armorTier == 2) return 1000;
@@ -255,6 +257,7 @@ int CS2DGame::PurchasePriceOf(const Presentation::BuyRequest& request) const {
 }
 
 int CS2DGame::PurchaseQuantityOf(const Presentation::BuyRequest& request) const {
+    if (request.kind == Presentation::BuyKind::DefuseKit) return player_.hasDefuseKit ? 1 : 0;
     if (request.kind == Presentation::BuyKind::Armor) {
         // tier1 = 满甲即已拥有；tier2 = 满甲且有头盔才算已拥有
         if (player_.armor >= 100 &&
@@ -279,16 +282,20 @@ Presentation::BuyCode CS2DGame::EvaluatePurchase(
 
     // 1) 非法请求 / 非售卖项：先校验 enum，再索引 WeaponDB
     if (request.kind != Presentation::BuyKind::Weapon &&
-        request.kind != Presentation::BuyKind::Armor) return BuyCode::InvalidItem;
+        request.kind != Presentation::BuyKind::Armor &&
+        request.kind != Presentation::BuyKind::DefuseKit) return BuyCode::InvalidItem;
     if (request.kind == Presentation::BuyKind::Armor) {
         if (request.armorTier < 1 || request.armorTier > 2) return BuyCode::InvalidItem;
-    } else {
+    } else if (request.kind == Presentation::BuyKind::Weapon) {
         const int idx = static_cast<int>(request.weapon);
         if (idx <= 0 || idx >= WeaponDB::kWeaponCount) return BuyCode::InvalidItem;
         const WeaponDef& def = WeaponDB::Get(request.weapon);
         if (def.price <= 0) return BuyCode::InvalidItem;                    // 刀 / C4 不售卖
         if (def.slot == WeaponSlotKind::Melee) return BuyCode::InvalidItem;
     }
+
+    if (request.kind == Presentation::BuyKind::DefuseKit && player_.team != Team::CT)
+        return BuyCode::InvalidItem;
 
     // 2) 存活 → 时窗 → 区域 → 阵营（固定优先序，保证失败原因稳定可测）
     if (!player_.alive) return BuyCode::PlayerDead;
@@ -298,6 +305,7 @@ Presentation::BuyCode CS2DGame::EvaluatePurchase(
         !WeaponDB::TeamAllowed(request.weapon, player_.team == Team::T)) {
         return BuyCode::TeamRestricted;
     }
+
 
     // 3) 已拥有：同一把主/副武器不再重复扣款补弹；
     //    投掷物可叠加，容量由下一步的 InventoryFull / ItemLimitReached 判定
@@ -342,7 +350,10 @@ Presentation::BuyResult CS2DGame::ExecutePurchase(
         return result;                            // 失败：金额 / 装备 / 音效都不动
     }
 
-    if (request.kind == Presentation::BuyKind::Armor) {
+    if (request.kind == Presentation::BuyKind::DefuseKit) {
+        player_.money -= 400;
+        player_.hasDefuseKit = true;
+    } else if (request.kind == Presentation::BuyKind::Armor) {
         const int tier  = request.armorTier;
         const int price = PurchasePriceOf(request);
         player_.money -= price;
@@ -1013,7 +1024,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     if (interactHeld && !prevInteract_ && player_.alive) {
         const bool busyDefusing = (mode_ == MatchMode::BombDefusal && bombPlanted_ &&
                                    defuseProgress_ > 0.0f);
-        if (!busyDefusing) TryPickupDrops(true);
+        if (!busyDefusing) TryPickupDrops(true, audio);
     }
     prevInteract_ = interactHeld;
 
@@ -1069,7 +1080,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     for (auto& d : drops_) {
         if (d.pickupDelay > 0.0f) d.pickupDelay -= dt;
     }
-    TryPickupDrops(false);
+    TryPickupDrops(false, audio);
 
     // 爆炸特效寿命
     for (auto& fx : blasts_) fx.life -= dt;

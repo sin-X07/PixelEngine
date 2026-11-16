@@ -11,7 +11,7 @@
 namespace {
 constexpr float BOMB_FUSE        = 40.0f;   // 下包后倒计时
 constexpr float PLANT_TIME       = 2.0f;    // T 在包点停留多久完成下包
-constexpr float DEFUSE_TIME      = 5.0f;    // CT 拆包耗时
+constexpr float DEFUSE_TIME      = 10.0f;    // CT 拆包耗时
 } // namespace
 
 void CS2DGame::PushKillFeed(const std::string& text) {
@@ -75,29 +75,23 @@ void CS2DGame::SetupObjective() {
 
 // 每帧推进目标物（仅交战期）
 void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio) {
-    if (mode_ != MatchMode::BombDefusal) return;
-    if (!round_.IsLive()) return;
-
-    // ---------------- 爆破 ----------------
-    // 玩家持包且站在包点：按住 E 安装 C4
-    if (mode_ == MatchMode::BombDefusal && !bombPlanted_ && PlayerHasC4()) {
-        const bool inSite = world_ && world_->FindBombSiteAt(player_.x, player_.y) != nullptr;
-        if (inSite && interactHeld) {
-            plantProgress_ += dt;
-            if (audio) {
-                // 安装阶段用下包音效做反馈（每 0.75 秒一次）
-                static float tick = 0.0f;
-                tick += dt;
-                if (tick >= 0.75f) { tick = 0.0f; audio->PlaySound(SoundEffect::BOMB_BEEP); }
-            }
-            if (plantProgress_ >= 3.0f) {
-                PlantBomb(player_.x, player_.y, audio);
-                bombCarrier_ = -2;
-                plantProgress_ = 0.0f;
-            }
-        } else {
+    if (mode_ != MatchMode::BombDefusal || !round_.IsLive()) {
+        StopObjectiveAudio(audio);
+        return;
+    }
+    const bool planting = player_.alive && !bombPlanted_ && PlayerHasC4()
+        && interactHeld && world_ && world_->FindBombSiteAt(player_.x, player_.y);
+    if (planting) {
+        if (plantProgress_ == 0.0f && audio)
+            plantingChannel_ = audio->PlaySoundTracked(SoundEffect::BOMB_PLANTING);
+        plantProgress_ += dt;
+        if (plantProgress_ >= 3.0f) {
+            PlantBomb(player_.x, player_.y, audio);
             plantProgress_ = 0.0f;
         }
+    } else {
+        plantProgress_ = 0.0f;
+        if (audio) audio->StopChannel(plantingChannel_);
     }
 
     if (mode_ == MatchMode::BombDefusal) {
@@ -208,6 +202,20 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
                 if (AiAt(bi).defusing) bots_[bi].vx = bots_[bi].vy = 0.0f;
             }
 
+            if (defuserIdx != activeDefuser_) {
+                defuseProgress_ = 0.0f;
+                if (audio) audio->StopChannel(defusingChannel_);
+                activeDefuser_ = defuserIdx;
+            }
+            if (playerDefusing) {
+                if (defusingChannel_ < 0 && audio)
+                    defusingChannel_ = audio->PlaySoundTracked(player_.hasDefuseKit
+                        ? SoundEffect::BOMB_DEFUSING_KIT : SoundEffect::BOMB_DEFUSING);
+            } else if (defusing) {
+                if (defusingChannel_ < 0 && audio)
+                    defusingChannel_ = audio->PlaySoundTrackedAt(SoundEffect::BOMB_DEFUSING,
+                        bombX_, bombY_, ListenerX(), ListenerY());
+            } else if (audio) audio->StopChannel(defusingChannel_);
             if (defusing) {
                 if (defuseProgress_ <= 0.0f) {
                     const std::string bArea = world_ ? world_->FindAreaAt(bombX_, bombY_)
@@ -215,10 +223,11 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
                     CoachOnEvent(Team::T,  CoachEventType::DefuseStarted, bArea);
                     CoachOnEvent(Team::CT, CoachEventType::DefuseStarted, bArea);
                 }
-                defuseProgress_ += dt / DEFUSE_TIME;
+                defuseProgress_ += dt / ((playerDefusing && player_.hasDefuseKit) ? 4.0f : DEFUSE_TIME);
                 if (defuseProgress_ >= 1.0f) {
                     std::cout << "[Defuse] #" << defuserIdx << " success" << std::endl;
                     std::cout << "[CS2D] C4 已拆除!" << std::endl;
+                    StopObjectiveAudio(audio);
                     bombPlanted_ = false;
                     bombTimer_ = 0.0f;
                     defuseProgress_ = 0.0f;
@@ -256,6 +265,7 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
 }
 
 void CS2DGame::PlantBomb(float x, float y, AudioManager* audio) {
+    StopObjectiveAudio(audio);
     // C4 已安装：从玩家手里/槽位里移除
     bombCarrier_ = -2;
     playerHoldingC4_ = false;
@@ -298,6 +308,7 @@ void CS2DGame::PlantBomb(float x, float y, AudioManager* audio) {
 }
 
 void CS2DGame::DetonateBomb(AudioManager* audio) {
+    StopObjectiveAudio(audio);
     bombPlanted_ = false;
     bombTimer_ = 0.0f;
     std::cout << "[CS2D] C4 爆炸! T 获胜本回合" << std::endl;
@@ -319,7 +330,7 @@ void CS2DGame::DetonateBomb(AudioManager* audio) {
     damageAt(player_);
     for (auto& b : bots_) damageAt(b);
 
-    if (audio) audio->PlaySound(SoundEffect::GRENADE_EXPLODE);
+    if (audio) audio->PlaySound(SoundEffect::BOMB_EXPLODE);
 
     ApplyRoundResult(Team::T, audio);
     round_.EndRound(Team::T);
@@ -347,4 +358,14 @@ void CS2DGame::AssignBombCarrier() {
     } else if (!tBots.empty()) {
         bombCarrier_ = tBots[rng_() % tBots.size()];
     }
+}
+
+void CS2DGame::StopObjectiveAudio(AudioManager* audio) {
+    if (audio) {
+        audio->StopChannel(plantingChannel_);
+        audio->StopChannel(defusingChannel_);
+    }
+    plantingChannel_ = defusingChannel_ = -1;
+    activeDefuser_ = -2;
+    plantProgress_ = 0.0f;
 }

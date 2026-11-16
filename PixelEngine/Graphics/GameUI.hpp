@@ -188,6 +188,7 @@ public:
         int   health = 100;
         int   maxHealth = 100;
         bool  helmet = false;
+        bool hasDefuseKit = false;
         bool  matchOver = false;
         bool  matchWinnerIsCT = false;
         float matchOverReturn = -1.0f;   // 距返回主菜单的秒数（<0 表示未知）

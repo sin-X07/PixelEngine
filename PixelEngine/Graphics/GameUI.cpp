@@ -2375,6 +2375,12 @@ void GameUI::DrawInGame(const InGameCtx& ctx, ImGuiUI* imGuiUI) {
                       235, 240, 235, 255, 18);
 
         // 护甲条（与血条同样式，紧贴其下）
+        if (ctx.hasDefuseKit && weaponIconCache_) {
+            SDL_Texture* kit = weaponIconCache_->Get("cs2d/sprites/defuse_kit_d.png");
+            if (kit) dl->AddImage((ImTextureID)kit,
+                ImVec2(barX + barW + UI(110.0f), barY),
+                ImVec2(barX + barW + UI(142.0f), barY + UI(32.0f)));
+        }
         const float armorY = barY + barH + UI(6.0f);
         const float armorFrac = std::clamp(static_cast<float>(ctx.armor) / 100.0f, 0.0f, 1.0f);
 

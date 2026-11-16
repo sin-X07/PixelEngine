@@ -2256,6 +2256,7 @@ void Engine::Render() {
         ictx.health           = status.health;
         ictx.maxHealth        = status.maxHealth;
         ictx.helmet           = status.helmet;
+        ictx.hasDefuseKit = status.team == Team::CT && status.hasDefuseKit;
         ictx.matchOver        = cs2dGame->IsMatchOver();
         ictx.matchWinnerIsCT  = (cs2dGame->GetMatchWinner() == Team::CT);
         ictx.matchOverReturn  = 8.0f - cs2dGame->GetMatchOverTimer();
@@ -2558,6 +2559,21 @@ void Engine::RenderBuyMenu() {
         bctx.items.push_back(k);
     }
 
+    {
+        GameUI::BuyItem kit;
+        kit.kind = 2;
+        kit.weaponId = -3;
+        kit.name = "拆包钳";
+        kit.price = 400;
+        kit.group = 4;
+        kit.categoryLabel = "拆包 4 秒";
+        kit.iconPath = "cs2d/sprites/defuse_kit_d.png";
+        kit.request.kind = Presentation::BuyKind::DefuseKit;
+        kit.affordable = bctx.money >= kit.price;
+        kit.availability = cs2dGame->EvaluatePurchase(kit.request);
+        kit.owned = kit.availability == Presentation::BuyCode::AlreadyEquipped;
+        bctx.items.push_back(kit);
+    }
     gameUI->DrawBuyMenu(bctx, [this](const Presentation::BuyRequest& r) {
         // 一帧最多一次：DrawBuyMenu 内部保证，这里只负责提交与返回真实结果
         const Presentation::BuyResult res = cs2dGame->ExecutePurchase(r, audioManager.get());

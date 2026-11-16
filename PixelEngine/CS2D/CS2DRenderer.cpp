@@ -647,8 +647,8 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
 
     SDL_SetTextureAlphaMod(sheet->tex, alpha);
     SDL_FPoint center = { sz * 0.5f, sz * 0.5f };
-    // 近战姿势原图的身体朝向与持枪姿势相反，共用该帧的槽位一同校正。
-    const float poseAngleOffset = frameRow == 1 && frameCol == 0 ? -90.0f : 90.0f;
+    // 最新三套人物的全部姿势均朝上，统一旋转到实际瞄准方向。
+    constexpr float poseAngleOffset = 90.0f;
     const float charAngle = p.aimAngle * 180.0f / 3.14159265f + tiltDeg
                             + (p.animState == 3 ? 0.0f : poseAngleOffset);
 

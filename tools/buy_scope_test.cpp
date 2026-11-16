@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "CS2D/CS2DGame.hpp"
+#include "Audio/AudioManager.hpp"
 #include "CS2D/CS2DRenderer.hpp"
 #include "CS2D/CS2DOverlay.hpp"
 #include "Storage/SaveManager.hpp"
@@ -2002,6 +2003,62 @@ static void TestHdMapNavigation() {
 }
 
 struct CS2DGameTestAccess {
+    static void TestPix33() {
+        CS2DGame game;
+        if (!LoadDeathMatch(game)) return;
+        game.bots_.clear();
+        game.player_.team = Team::CT;
+        Presentation::BuyRequest kit;
+        kit.kind = Presentation::BuyKind::DefuseKit;
+        const int money = game.player_.money;
+        check(game.ExecutePurchase(kit).code == Presentation::BuyCode::Ok, "PIX-33 kit purchase succeeds");
+        check(game.player_.money == money - 400 && game.player_.hasDefuseKit, "PIX-33 kit costs $400");
+        check(game.EvaluatePurchase(kit) == Presentation::BuyCode::AlreadyEquipped, "PIX-33 duplicate kit rejected");
+        game.OnCombatantKilled(game.player_, nullptr);
+        game.RespawnAllForRound(false);
+        check(game.player_.hasDefuseKit, "PIX-33 kit survives death and new round");
+        game.player_.team = Team::T;
+        check(game.EvaluatePurchase(kit) == Presentation::BuyCode::InvalidItem, "PIX-33 T kit purchase invalid");
+        game.player_.team = Team::CT;
+        game.mode_ = MatchMode::BombDefusal;
+        for (bool hasKit : {false, true}) {
+            game.player_.hasDefuseKit = hasKit;
+            game.round_.Reset(RoundConfig{});
+            game.round_.Update(2.1f);
+            game.round_.Update(6.1f);
+            game.PlantBomb(game.player_.x, game.player_.y, nullptr);
+            game.UpdateObjective(1.0f, true, nullptr);
+            check(std::abs(game.defuseProgress_ - (hasKit ? .25f : .1f)) < .001f,
+                "PIX-33 defuse advances at 4s/10s rate");
+            game.UpdateObjective(.1f, false, nullptr);
+            check(game.defuseProgress_ == 0, "PIX-33 release cancels defuse progress");
+            game.UpdateObjective(hasKit ? 3.9f : 9.9f, true, nullptr);
+            check(game.bombPlanted_, "PIX-33 defuse incomplete before deadline");
+            game.UpdateObjective(.11f, true, nullptr);
+            check(!game.bombPlanted_, "PIX-33 defuse succeeds at deadline");
+        }
+        SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
+        AudioManager audio;
+        check(audio.Initialize(), "PIX-33 mixer initializes and decodes assets");
+        for (int id = 1; id < WeaponDB::kWeaponCount; ++id) {
+            auto weapon = static_cast<WeaponId>(id);
+            if (WeaponDB::Get(weapon).reloadTime <= 0 || WeaponDB::Get(weapon).magazine <= 1) continue;
+            int channel = audio.PlaySoundTracked(game.ReloadSoundFor(weapon));
+            check(channel >= 0, "PIX-33 firearm reload track available");
+            audio.StopChannel(channel);
+        }
+        for (auto effect : {SoundEffect::PICKUP, SoundEffect::DEATH, SoundEffect::PULL_PIN,
+                SoundEffect::BOMB_PLANTING, SoundEffect::BOMB_DEFUSING_KIT,
+                SoundEffect::BOMB_DEFUSING, SoundEffect::BOMB_EXPLODE,
+                SoundEffect::BOMB_PLANT, SoundEffect::BOMB_DEFUSE}) {
+            int channel = audio.PlaySoundTracked(effect);
+            check(channel >= 0 && Mix_Playing(channel), "PIX-33 event audio starts");
+            const int original = channel;
+            audio.StopChannel(channel);
+            check(channel == -1 && !Mix_Playing(original), "PIX-33 tracked audio stops");
+        }
+    }
+
     static void Move(CS2DGame& game) { game.UpdatePlayerMovement(1.0f/60, false, false, false, true, false); }
     static void TestBotScopeMovement() {
         CS2DGame game;
@@ -2240,10 +2297,10 @@ struct SpriteAssetReview {
                                      (actor.y-renderer.GetCameraY())*renderer.GetZoom()-size/2, size, size};
                     SDL_FPoint center{size/2, size/2};
                     SDL_RenderCopyExF(output, sheet.tex, &source, &target,
-                                      aim*180.0f/3.14159265f-90.0f, &center, SDL_FLIP_NONE);
+                                      aim*180.0f/3.14159265f+90.0f, &center, SDL_FLIP_NONE);
                     SDL_RenderFlush(output);
                     check(std::memcmp(actual.data(), surface->pixels, actual.size()) == 0,
-                          "melee body uses corrected facing in all four aim directions");
+                          "latest melee atlas faces along aim in all four directions");
                 }
                 outline.tex = outlineTexture;
             }
@@ -2283,6 +2340,7 @@ int main() {
     std::printf("===== 合并契约 v1 玩法回归测试 =====\n");
     std::printf("地图: %s\n", MapPath());
 
+    CS2DGameTestAccess::TestPix33();
     CS2DGameTestAccess::TestSharedBotVisibility();
     CS2DGameTestAccess::TestBotScopeMovement();
     SpriteAssetReview::Run();

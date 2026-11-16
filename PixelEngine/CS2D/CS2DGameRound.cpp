@@ -54,6 +54,7 @@ void CS2DGame::UpdateRoundFlow(float dt, AudioManager* audio) {
 }
 
 void CS2DGame::BeginNewRound(AudioManager* audio) {
+    StopObjectiveAudio(audio);
     if (teams_.MatchOver()) return;
     CoachResetRound();
     SnapshotRoundEconomy();   // 必须在任何采购之前：save/eco 看的是买枪前经济
@@ -455,6 +456,7 @@ void CS2DGame::CheckWinConditions(AudioManager* audio) {
 }
 
 void CS2DGame::ApplyRoundResult(Team winner, AudioManager* audio) {
+    StopObjectiveAudio(audio);
     if (round_.IsRoundEnd()) return;   // 防重复结算（目标物与歼灭可能同帧触发）
 
     if (winner != Team::None) {

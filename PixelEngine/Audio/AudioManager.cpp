@@ -150,7 +150,7 @@ bool AudioManager::Initialize() {
     bombPlantSound      = loadChunk("assets/audio/bomb_plant.wav", "下包");
     bombDefuseSound     = loadChunk("assets/audio/bomb_defuse.wav", "拆包");
     bombBeepSound       = loadChunk("assets/audio/bomb_beep.wav", "C4 滴答");
-    roundStartSound     = loadChunk("assets/audio/round_start.mp3", "回合开始");
+    roundStartSound     = loadChunk("assets/audio/round_start.wav", "回合开始");
     roundWinSound       = loadChunk("assets/audio/round_win.wav", "回合胜利");
     roundLoseSound      = loadChunk("assets/audio/round_lose.wav", "回合失败");
     daggerSound         = loadChunk("assets/audio/melee_knife.wav", "匕首攻击");
@@ -420,12 +420,12 @@ void AudioManager::PlayWeaponSwitch(WeaponId id) {
     Mix_SetPanning(chan, 255, 255);
 }
 
-void AudioManager::PlayChunkAt(Mix_Chunk* chunk, float sourceX, float sourceY,
-                               float listenerX, float listenerY) {
-    if (!audioInitialized || !chunk) return;
+int AudioManager::PlayChunkAt(Mix_Chunk* chunk, float sourceX, float sourceY,
+                             float listenerX, float listenerY, int channel) {
+    if (!audioInitialized || !chunk) return -1;
 
-    const int chan = Mix_PlayChannel(-1, chunk, 0);
-    if (chan < 0) return;
+    const int chan = Mix_PlayChannel(channel, chunk, 0);
+    if (chan < 0) return -1;
 
     // ---- 声像：由「声源相对玩家的世界位置」决定 ----
     // 俯视视角镜头不做旋转，因此屏幕水平方向恒等于世界 +x。
@@ -459,6 +459,7 @@ void AudioManager::PlayChunkAt(Mix_Chunk* chunk, float sourceX, float sourceY,
     }
     const int vol = static_cast<int>(distFactor * effectsLevel_);
     Mix_Volume(chan, vol);
+    return chan;
 }
 
 void AudioManager::PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
