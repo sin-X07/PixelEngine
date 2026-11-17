@@ -24,6 +24,7 @@
 // 对局逻辑全部在 CS2DGame 内，本类只做接线。
 // ============================================================================
 class Engine {
+    friend struct EngineTestAccess;
 private:
     bool isRunning = false;
     bool cleaned = false;
@@ -32,6 +33,7 @@ private:
     bool isFullscreen = false;
     int  logicalW_ = 800;
     int  logicalH_ = 600;
+    int viewportWindowW_ = 0, viewportWindowH_ = 0;
 
     // 子系统
     std::unique_ptr<AudioManager> audioManager;
@@ -77,6 +79,10 @@ private:
     Uint64 sidePauseStartMs_ = 0;
     bool exitToDesktop = false;
     int  targetFPS_ = 60;
+    bool vsync_ = false;
+    std::string displayError_;
+    void SetVSync(bool enabled);
+    void ResetSettingsSection(GameUI::SettingsSection section);
     bool cursorCaptured_ = false;
     unsigned cursorSpawnVersion_ = 0;
 
@@ -88,6 +94,10 @@ private:
     // 这样切页时可以直接拿到旧页面快照，不需要每帧读像素。
     enum class TransitionKind { None, Fade, Slide, MapZoom, GoldWipe, PauseFreeze };
     SDL_Texture* sceneTex_[2] = { nullptr, nullptr };
+    SDL_Texture* deathWorldTex_ = nullptr;
+    std::uint64_t deathWorldEvent_ = 0;
+    void ClearDeathSnapshot();
+    void DrawGameplayWorld();
     int          sceneWrite_ = 0;
     int          sceneW_ = 0, sceneH_ = 0;
     bool         sceneValid_ = false;

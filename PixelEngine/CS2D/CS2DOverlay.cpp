@@ -186,7 +186,7 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
     // 准星
     // 契约 v1.3：开镜期间不画普通准星，改用镜筒里的大十字（四象限）
     const Presentation::ScopeView scope = game->GetRenderScopeView();
-    const bool scoped = scope.active && scope.supported;
+    const bool scoped = scope.supported && (scope.active || scope.transition > .001f);
     const float reticleX = (game->GetRenderAimX() - renderer->GetCameraX()) * renderer->GetZoom();
     const float reticleY = (game->GetRenderAimY() - renderer->GetCameraY()) * renderer->GetZoom();
     SetVisibleAimPoint(game->GetRenderAimX(), game->GetRenderAimY());
@@ -199,7 +199,8 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
         crosshairGap += game->GetCrosshairBloom() *
                         Tuning::CrosshairBloomMaxPx * g_uiScale;
     }
-    if (!scoped) {
+    const bool localAimVisible = game->GetPlayer().alive && !game->IsSpectating();
+    if (!scoped && localAimVisible) {
         const auto& player = game->GetPlayer();
         const auto playerView = game->GetActorView(player);
         const WeaponClass cls = player.CurrentWeapon().cls;
@@ -218,7 +219,7 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
     // ---- 命中反馈：准星处短暂 X ----
     {
         const float hm = game->GetHitMarkerTimer();
-        if (hm > 0.0f) {
+        if (hm > 0.0f && localAimVisible) {
             const auto kind = game->GetHitMarkerKind();
             const bool kill = kind == CS2DGame::HitMarkerKind::Kill;
             const SDL_Color color = kill ? SDL_Color{244, 83, 72, 255} :

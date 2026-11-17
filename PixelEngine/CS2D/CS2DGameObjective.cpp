@@ -169,11 +169,13 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
                     CoachOnEvent(Team::T,CoachEventType::DefuseStarted,area);
                     CoachOnEvent(Team::CT,CoachEventType::DefuseStarted,area);
                 }
+                const auto sound = actor.hasDefuseKit ? SoundEffect::BOMB_DEFUSING_KIT : SoundEffect::BOMB_DEFUSING;
                 if (actor.defuseChannel < 0 && audio) {
-                    const auto sound = actor.hasDefuseKit ? SoundEffect::BOMB_DEFUSING_KIT : SoundEffect::BOMB_DEFUSING;
                     actor.defuseChannel = id == -1 ? audio->PlaySoundTracked(sound, 2) :
                         audio->PlaySoundTrackedAt(sound,actor.x,actor.y,ListenerX(),ListenerY(),id+3);
                 }
+                if (audio && id >= 0)
+                    audio->UpdateTrackedSoundAt(actor.defuseChannel, sound, actor.x, actor.y, ListenerX(), ListenerY());
                 actor.defuseProgress = std::min(1.0f,actor.defuseProgress+stepTime/duration);
                 if (finishIn <= stepTime && finishIn < firstFinish) {
                     winner = id;
@@ -315,6 +317,18 @@ void CS2DGame::AssignBombCarrier() {
     } else if (!tBots.empty()) {
         bombCarrier_ = tBots[rng_() % tBots.size()];
     }
+}
+
+void CS2DGame::SetObjectiveAudioPaused(bool paused) {
+    if (!Mix_QuerySpec(nullptr,nullptr,nullptr)) return;
+    auto setPaused = [paused](int channel) {
+        if (channel < 0) return;
+        if (paused) Mix_Pause(channel);
+        else Mix_Resume(channel);
+    };
+    setPaused(plantingChannel_);
+    setPaused(player_.defuseChannel);
+    for (const auto& bot : bots_) setPaused(bot.defuseChannel);
 }
 
 void CS2DGame::StopObjectiveAudio(AudioManager* audio) {

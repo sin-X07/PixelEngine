@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "Engine.hpp"
 #include "CS2D/CS2DGame.hpp"
 #include "Audio/AudioManager.hpp"
 #include "CS2D/CS2DRenderer.hpp"
@@ -802,7 +803,7 @@ static void TestDamageAndScopeShot() {
         teamCam.SetMatchMode(MatchMode::TeamElimination);
         if (!teamCam.LoadMap(MapPath(), nullptr, true)) return;
         teamCam.DebugKillPlayerForTest();
-        check(teamCam.IsSpectating(), "团队模式阵亡：进入观察者");
+        check(teamCam.IsDeathFreeze() && !teamCam.IsSpectating(), "团队模式阵亡：先定格死亡画面");
         check(!teamCam.IsDeathCam(), "团队模式没有死亡镜头");
     }
     {
@@ -2025,6 +2026,110 @@ static void TestHdMapNavigation() {
 }
 
 struct CS2DGameTestAccess {
+    static void EquipExperienceActor(CS2DGame& game) {
+        game.bots_.clear();game.botAi_.clear();
+        game.player_.SetSlotWeapon(0,WeaponId::AWP);
+        game.player_.weaponSlot=0;
+        game.player_.ammo=10;
+        game.player_.armor=100;
+        game.player_.helmet=true;
+        game.SetAimTarget(game.player_.x+80,game.player_.y,true);
+    }
+    static void PlaceExperienceBomb(CS2DGame& game) {
+        game.player_.team=Team::T;
+        game.bombPlanted_=true;
+        game.bombX_=game.player_.x+50;
+        game.bombY_=game.player_.y;
+        game.bombTimer_=40;
+        game.UpdateSpectatorState();
+    }
+
+    static void KillExperienceActor(CS2DGame& game) {
+        CS2DGame::Player attacker;
+        attacker.name="长风";attacker.team=Team::T;
+        game.OnCombatantKilled(game.player_,nullptr,&attacker,WeaponId::AK47);
+    }
+
+    static void TestExperienceStates() {
+        CS2DGame game;
+        game.SetMatchMode(MatchMode::BombDefusal);
+        if (!game.LoadMap(MapPath(),nullptr,true)) return;
+        game.player_.team = Team::CT;
+        game.bots_.clear();
+        game.botAi_.clear();
+        for (int i=0;i<2;++i) {
+            CS2DGame::Player teammate;
+            teammate.team=Team::CT;
+            teammate.alive=true;
+            teammate.name="teammate"+std::to_string(i);
+            teammate.x=game.player_.x; teammate.y=game.player_.y;
+            game.bots_.push_back(teammate);
+            game.botAi_.emplace_back();
+        }
+        CS2DGame::Player attacker;
+        attacker.name="attacker";
+        attacker.team=Team::T;
+        game.OnCombatantKilled(game.player_,nullptr,&attacker,WeaponId::AK47);
+        check(game.IsDeathFreeze() && !game.IsSpectating(),"experience death begins with a frozen presentation");
+        check(game.GetDeathPresentation().event.killer=="attacker" &&
+              game.GetDeathPresentation().event.weapon==WeaponId::AK47,"experience death snapshots actual killer and weapon");
+        game.killFeed_.clear();
+        check(game.GetDeathPresentation().event.killer=="attacker","experience death attribution survives kill-feed eviction");
+        game.Update(1.79f,false,game.player_.x,game.player_.y,false,false,false,false,false,false,false,nullptr);
+        check(game.IsDeathFreeze() && !game.IsSpectating(),"experience death holds for the full 1.8 seconds");
+        game.Update(.02f,false,game.player_.x,game.player_.y,false,false,false,false,false,false,false,nullptr);
+        check(!game.IsDeathFreeze() && game.GetSpectatedPlayer(),"experience death hands off to a live teammate");
+        const int target=game.specTarget_;
+        game.bots_[target].alive=false;
+        game.UpdateSpectatorState();
+        check(game.GetSpectatedPlayer() && game.specTarget_!=target,"experience spectator automatically replaces a dead target");
+        for (auto& bot:game.bots_) bot.alive=false;
+        game.bombPlanted_=true;
+        game.bombX_=310; game.bombY_=420;
+        game.specMode_=CS2DGame::SpectateMode::Free;
+        game.UpdateSpectatorState();
+        check(game.specMode_==CS2DGame::SpectateMode::Bomb && !game.GetSpectatedPlayer(),"experience planted bomb becomes the target after team elimination");
+        check(game.ListenerX()==310 && game.ListenerY()==420,"experience bomb camera also owns the audio listener");
+        game.SpectatorToggle();game.SpectatorCycle(1);
+        check(game.specMode_==CS2DGame::SpectateMode::Bomb,"experience bomb spectator ignores actor cycling");
+        game.bombPlanted_=false;
+        game.UpdateSpectatorState();
+        check(game.specMode_==CS2DGame::SpectateMode::Bomb,"experience resolved objective retains the last bomb camera");
+        game.RespawnAllForRound();
+        check(!game.IsDeathFreeze() && !game.IsSpectating(),"experience round respawn clears death and spectator presentation");
+        game.SetCameraDistanceTier(1);
+        game.Update(.2f,false,game.player_.x+80,game.player_.y,false,false,false,false,false,false,false,nullptr);
+        const float halfTransition=game.EdgeZoomAmount();
+        game.SetCameraDistanceTier(0);
+        game.Update(.001f,false,game.player_.x+80,game.player_.y,false,false,false,false,false,false,false,nullptr);
+        check(std::abs(halfTransition-.5f)<.001f && std::abs(game.EdgeZoomAmount()-halfTransition)<.001f,
+              "experience edge transition reverses from its current smoothstep position");
+        game.Update(.4f,false,game.player_.x+80,game.player_.y,false,false,false,false,false,false,false,nullptr);
+        check(game.EdgeZoomAmount()==0,"experience reversed edge transition reaches its new target in 0.4 seconds");
+
+        SDL_setenv("SDL_AUDIODRIVER","dummy",1);
+        AudioManager audio;
+        check(audio.Initialize(),"experience objective audio initializes");
+        int channel=audio.PlaySoundTrackedAt(SoundEffect::BOMB_DEFUSING,300,0,0,0,3);
+        const int midVolume=Mix_Volume(channel,-1);
+        check(channel==3 && midVolume>0,"experience BOT defuse remains audible beyond 200 world units");
+        audio.UpdateTrackedSoundAt(channel,SoundEffect::BOMB_DEFUSING,300,0,300,0);
+        check(Mix_Volume(channel,-1)>midVolume,"experience moving listener refreshes an active process sound");
+        audio.UpdateTrackedSoundAt(channel,SoundEffect::BOMB_DEFUSING,600,0,0,0);
+        check(Mix_Volume(channel,-1)==0,"experience defuse audio reaches zero at the configured hearing radius");
+        game.bots_[0].defuseChannel=channel;
+        game.bots_[0].defuseProgress=.3f;
+        game.SetObjectiveAudioPaused(true);
+        check(Mix_Paused(channel),"experience pause suspends the owned process sound");
+        game.SetObjectiveAudioPaused(false);
+        check(!Mix_Paused(channel) && Mix_Playing(channel),"experience resume continues the same process sound");
+        game.player_.alive=true;
+        game.player_.defuseChannel=audio.PlaySoundTracked(SoundEffect::BOMB_DEFUSING,2);
+        game.OnCombatantKilled(game.player_,&audio,&attacker,WeaponId::AK47);
+        check(Mix_Playing(channel) && !Mix_Playing(2),"experience player death preserves the teammate defuse voice");
+        audio.StopChannel(game.bots_[0].defuseChannel);
+    }
+
     static void TestPerformanceInterpolation() {
         CS2DGame game;
         game.player_.alive=true;
@@ -3295,8 +3400,7 @@ static void TestScopeBoundsAndMovement() {
         renderer.SetWorld(&game.GetWorld());
         const float radius = 720 * Presentation::kScopeCircleRadiusFrac;
         for (const auto& point : std::vector<SDL_FPoint>{{0,0},{1600,0},{1600,1600},{0,1600}}) {
-            renderer.UpdateCamera(500,500,1280,720,2);
-            renderer.KeepScopeInViewport(point.x,point.y,radius,1280,720);
+            renderer.UpdatePlayerCamera(500,500,14,point.x,point.y,1280,720,1,radius);
             const float x = (point.x-renderer.GetCameraX())*renderer.GetZoom();
             const float y = (point.y-renderer.GetCameraY())*renderer.GetZoom();
             check(x >= radius && x <= 1280-radius && y >= radius && y <= 720-radius,
@@ -3911,9 +4015,7 @@ static void TestRound3PartialRendering() {
                         const float angle = direction * 6.2831853f / 8;
                         const float aimX = std::cos(angle) * distance, aimY = std::sin(angle) * distance;
                         const float lens = scope > 1 ? 100.f : 8.f;
-                        renderer.UpdateCamera(0, 0, 640, 480, tier * scope);
-                        renderer.ApplyCameraShake(20, -20);
-                        renderer.KeepActorInViewport(0, 0, 14, aimX, aimY, lens);
+                        renderer.UpdatePlayerCamera(0,0,14,aimX,aimY,640,480,tier,lens,{20,-20});
                         const float zoom = renderer.GetZoom();
                         const float actorX = -renderer.GetCameraX() * zoom,
                                     actorY = -renderer.GetCameraY() * zoom;
@@ -3932,8 +4034,8 @@ static void TestRound3PartialRendering() {
     SDL_FreeSurface(surface);
 }
 
-static void TestRound3HudLayouts() {
-    const std::filesystem::path directory = "build-evidence/pix34-round3";
+static void TestRound3HudLayouts(bool experience = false) {
+    const std::filesystem::path directory = experience ? "build-evidence/experience/hud" : "build-evidence/pix34-round3";
     std::filesystem::create_directories(directory);
     SDL_InitSubSystem(SDL_INIT_VIDEO);
     const int dimensions[][2] = {{1280, 720}, {1920, 1080}, {2560, 1600}, {3440, 1440}, {1024, 768}};
@@ -3960,8 +4062,8 @@ static void TestRound3HudLayouts() {
                 SDL_RenderSetLogicalSize(renderer, logicalW, logicalH);
                 ui.SetUiScale(std::min(logicalW / 1920.f, logicalH / 1080.f));
                 const char *scenes[] = {"buy",      "combat",    "planted",   "defusing",
-                                        "low-time", "round-end", "deathmatch"};
-                for (int scene = 0; scene < 7; ++scene) {
+                                        "low-time", "round-end", "deathmatch", "death-card", "c4-view", "armor-only", "no-armor"};
+                for (int scene = 0; scene < (experience ? 11 : 7); ++scene) {
                     GameUI::InGameCtx hud;
                     hud.state = PLAYING;
                     hud.playerTeam = scene == 6 ? Team::None : Team::CT;
@@ -3977,7 +4079,22 @@ static void TestRound3HudLayouts() {
                     hud.health = 83;
                     hud.maxHealth = 100;
                     hud.armor = 100;
-                    hud.helmet = true;
+                    hud.helmet = scene != 9;
+                    if (scene == 10) hud.armor = 0;
+                    if (scene == 7) {
+                        hud.health = 0;
+                        hud.death.active = true;
+                        hud.death.remaining = 1.2f;
+                        hud.death.killer = "长名称测试玩家甲";
+                        hud.death.killerTeam = Team::T;
+                        hud.death.weapon = "AK-47";
+                        hud.death.icon = WeaponDB::Get(WeaponId::AK47).iconPath;
+                    }
+                    if (scene == 8) {
+                        hud.health = 0;
+                        hud.spectating = true;
+                        hud.bombSpectating = true;
+                    }
                     hud.money = 4200;
                     hud.ammo = 7;
                     hud.magazineSize = 30;
@@ -3985,7 +4102,7 @@ static void TestRound3HudLayouts() {
                     hud.hasDefuseKit = scene != 6;
                     hud.kills = 24;
                     hud.deaths = 9;
-                    hud.bombPlanted = scene == 2 || scene == 3;
+                    hud.bombPlanted = scene == 2 || scene == 3 || scene == 8;
                     hud.bombTimer = scene == 3 ? 9.2f : 31.8f;
                     hud.defuseProgress = scene == 3 ? .62f : 0;
                     hud.defuseRemaining = 1.52f;
@@ -4030,7 +4147,7 @@ static void TestRound3HudLayouts() {
                         for (const auto &vertex : draws->CmdLists[list]->VtxBuffer)
                             valid &= std::isfinite(vertex.pos.x) && std::isfinite(vertex.pos.y);
                     check(valid, "round3 HUD stage resolution and rendering scale emit finite geometry");
-                    if (scene == 3 || (width == 1920 && percent == 100)) {
+                    if (scene == 3 || (experience && scene >= 7) || (width == 1920 && percent == 100)) {
                         const auto path = directory / ("hud-" + std::string(scenes[scene]) + "-" +
                                                        std::to_string(width) + "x" + std::to_string(height) +
                                                        "-" + std::to_string(percent) + ".png");
@@ -4090,7 +4207,330 @@ static int ExportRound3Ballistics() {
     return parameters && curves && impacts ? 0 : 1;
 }
 
+struct EngineTestAccess {
+    static void TestExperienceEntryPoints() {
+        const auto previousBase=PathUtils::BaseDir();
+        const auto directory=std::filesystem::absolute("build-evidence/experience/engine");
+        std::filesystem::create_directories(directory);
+        PathUtils::SetBaseDir(directory.string());
+        SDL_setenv("SDL_AUDIODRIVER","dummy",1);
+        SDL_InitSubSystem(SDL_INIT_VIDEO);
+        {
+            Engine engine;
+            engine.window=SDL_CreateWindow("Experience entry points",0,0,1280,720,SDL_WINDOW_HIDDEN);
+            engine.renderer=SDL_CreateRenderer(engine.window,-1,SDL_RENDERER_ACCELERATED|SDL_RENDERER_TARGETTEXTURE);
+            check(engine.renderer!=nullptr,"experience Engine renderer initializes");
+            if (!engine.renderer) return;
+            engine.imGuiUI->Initialize(engine.window,engine.renderer);
+            ImGui::GetIO().IniFilename=nullptr;
+            engine.weaponIconCache_->Initialize(engine.renderer);
+            engine.gameUI->SetWeaponIconCache(engine.weaponIconCache_.get());
+            engine.cs2dRenderer->Initialize(engine.renderer,"assets/cs2d/maps",1920,1080);
+            engine.cs2dGame->SetMatchMode(MatchMode::BombDefusal);
+            engine.cs2dGame->LoadMap(MapPath(),engine.cs2dRenderer.get(),true);
+            engine.currentState=PLAYING;engine.lastRenderedState_=PLAYING;
+            engine.ResizeLogicalViewport(1280,720);
+            CS2DGameTestAccess::EquipExperienceActor(*engine.cs2dGame);
+            engine.cs2dOverlay.InitializeCursor(0);
+            const auto actions=engine.BuildActions();
+            auto& settings=engine.saveManager->MutableSettings();
+            actions.setTargetFPS(165);actions.setVSync(true);
+            check(engine.targetFPS_==165 && settings.targetFPS==165 && engine.vsync_,"experience actual Engine actions apply custom FPS and VSync");
+            actions.resetSettingsSection(GameUI::SettingsSection::InputDisplay);
+            check(engine.targetFPS_==60 && !engine.vsync_ && settings.renderScalePct==100,"experience display reset applies runtime and persisted defaults");
+            settings.crossThickness=3;actions.setCrosshairThickness(3);
+            settings.aimLineStyle.solidThickness=5;
+            actions.setAimLineStyle(settings.aimLineStyle);
+            actions.resetSettingsSection(GameUI::SettingsSection::Crosshair);
+            check(settings.crossThickness==1.5f && engine.cs2dOverlay.crosshair.thickness==1.5f &&
+                  settings.aimLineStyle.solidThickness==5,"experience crosshair reset synchronizes runtime and preserves the other panel");
+            actions.resetSettingsSection(GameUI::SettingsSection::AimLine);
+            check(settings.aimLineStyle.solidThickness==1 && engine.cs2dOverlay.aimLineStyle.solidThickness==1,"experience aim line reset updates its live preview state");
+            actions.setFogOpacity(20);actions.setScopeSensitivity(.5f);
+            actions.resetSettingsSection(GameUI::SettingsSection::VisionScope);
+            check(settings.fogOpacityPct==100 && settings.scopeSensitivity==1,"experience vision reset applies default values");
+            actions.setRadarHudSize(300);actions.resetSettingsSection(GameUI::SettingsSection::Radar);
+            check(settings.radarHudSize==120 && engine.cs2dOverlay.radar.hudSize==120,"experience radar reset updates the active overlay");
+            engine.audioManager->SetMusicVolume(7);engine.audioManager->SetMuted(true);
+            actions.resetSettingsSection(GameUI::SettingsSection::Audio);
+            check(engine.audioManager->GetMusicVolume()==40 && !engine.audioManager->IsMuted(),"experience audio reset applies default volume and unmute");
+            settings.bindings.keys[0]=SDL_SCANCODE_UP;
+            actions.resetSettingsSection(GameUI::SettingsSection::Bindings);
+            check(settings.bindings.keys[0]==InputBinding(SDL_SCANCODE_W) && engine.inputManager->captureAction<0,"experience bindings reset clears input capture");
+            auto saveScene=[&](const char* name) {
+                SDL_Texture* target=SDL_GetRenderTarget(engine.renderer);
+                SDL_Texture* scene=engine.sceneTex_[1-engine.sceneWrite_];
+                int width=0,height=0;SDL_QueryTexture(scene,nullptr,nullptr,&width,&height);
+                SDL_Surface* image=SDL_CreateRGBSurfaceWithFormat(0,width,height,32,SDL_PIXELFORMAT_RGBA32);
+                SDL_SetRenderTarget(engine.renderer,scene);
+                SDL_RenderReadPixels(engine.renderer,nullptr,SDL_PIXELFORMAT_RGBA32,image->pixels,image->pitch);
+                const auto path=directory/name;
+                check(IMG_SavePNG(image,path.string().c_str())==0,"experience actual Engine scene evidence saved");
+                SDL_SetRenderTarget(engine.renderer,target);SDL_FreeSurface(image);
+            };
+            auto frame=[&] {
+                engine.cs2dRenderer->SetFrameDelta(1.f/60);
+                engine.cs2dGame->PrepareCamera(engine.logicalW_,engine.logicalH_,1);
+                engine.Render();
+            };
+            engine.currentState=SETTINGS;engine.lastRenderedState_=SETTINGS;
+            engine.Render();saveScene("settings-display.png");
+            SDL_Texture* priorTarget = SDL_GetRenderTarget(engine.renderer);
+            SDL_SetRenderTarget(engine.renderer,engine.sceneTex_[1-engine.sceneWrite_]);
+            actions.setFullscreen(true);
+            int windowWidth=0,windowHeight=0;
+            SDL_GetWindowSize(engine.window,&windowWidth,&windowHeight);
+            check(engine.isFullscreen && std::abs(float(engine.logicalW_)/engine.logicalH_-
+                  float(windowWidth)/windowHeight)<.002f,"experience fullscreen uses the desktop aspect while a scene target is active");
+            SDL_SetRenderTarget(engine.renderer,priorTarget);
+            engine.Render();saveScene("settings-fullscreen.png");
+            actions.setFullscreen(false);
+            SDL_GetWindowSize(engine.window,&windowWidth,&windowHeight);
+            check(!engine.isFullscreen && windowWidth==engine.currentResW_ && windowHeight==engine.currentResH_,
+                  "experience leaving fullscreen restores the saved window size");
+            engine.currentState=PLAYING;engine.lastRenderedState_=PLAYING;
+            frame();saveScene("armor-hud.png");
+            engine.cs2dGame->SetCameraDistanceTier(1);
+            for (int tick=0;tick<=24;++tick) {
+                const auto& actor=engine.cs2dGame->GetPlayer();
+                engine.cs2dGame->Update(1.f/60,false,actor.x+80,actor.y,false,false,false,false,false,false,false,nullptr);
+                frame();
+                if (tick%6==0) {
+                    const auto name="camera-transition-"+std::to_string(tick)+".png";
+                    saveScene(name.c_str());
+                }
+            }
+            engine.cs2dGame->SetCameraDistanceTier(0);
+            for (int level=1;level<=2;++level) {
+                engine.cs2dGame->UpdateScopeInput(true,true);
+                const auto& player=engine.cs2dGame->GetPlayer();
+                engine.cs2dGame->Update(.15f,false,player.x+80,player.y,false,false,false,false,false,false,false,nullptr);
+                for(int i=0;i<30;++i) frame();
+                saveScene(level==1?"scope-1.5x.png":"scope-2x.png");
+            }
+            CS2DGameTestAccess::KillExperienceActor(*engine.cs2dGame);
+            const auto& player=engine.cs2dGame->GetPlayer();
+            engine.cs2dGame->Update(.2f,false,player.x,player.y,false,false,false,false,false,false,false,nullptr);
+            frame();saveScene("death-card.png");
+            check(engine.deathWorldTex_!=nullptr,"experience real Engine captures the death world texture");
+            int width=0,height=0;SDL_QueryTexture(engine.deathWorldTex_,nullptr,nullptr,&width,&height);
+            std::vector<Uint8> first(width*height*4),second(first.size());
+            SDL_SetRenderTarget(engine.renderer,engine.deathWorldTex_);
+            SDL_RenderReadPixels(engine.renderer,nullptr,SDL_PIXELFORMAT_RGBA32,first.data(),width*4);
+            SDL_SetRenderTarget(engine.renderer,nullptr);
+            for(int i=0;i<45;++i) {
+                engine.cs2dGame->Update(1.f/60,false,player.x,player.y,false,false,false,false,false,false,false,nullptr);
+                frame();
+            }
+            SDL_SetRenderTarget(engine.renderer,engine.deathWorldTex_);
+            SDL_RenderReadPixels(engine.renderer,nullptr,SDL_PIXELFORMAT_RGBA32,second.data(),width*4);
+            SDL_SetRenderTarget(engine.renderer,nullptr);
+            check(first==second,"experience death world remains pixel-identical while simulation advances");
+            const float remaining=engine.cs2dGame->GetDeathPresentation().remaining;
+            engine.currentState=PAUSED;engine.Update(.5f);engine.currentState=PLAYING;
+            check(engine.cs2dGame->GetDeathPresentation().remaining==remaining,"experience pause preserves the death presentation timer");
+            SDL_Texture* snapshot=engine.deathWorldTex_;
+            engine.ResizeLogicalViewport(1024,768);
+            engine.DrawGameplayWorld();
+            check(engine.deathWorldTex_==snapshot,"experience resizing reuses the frozen world image");
+            engine.cs2dGame->Update(1.f,false,player.x,player.y,false,false,false,false,false,false,false,nullptr);
+            engine.DrawGameplayWorld();
+            check(!engine.deathWorldTex_ && !engine.cs2dGame->IsDeathFreeze(),"experience spectator handoff releases the death texture");
+            CS2DGameTestAccess::PlaceExperienceBomb(*engine.cs2dGame);
+            for(int i=0;i<45;++i) frame();
+            saveScene("c4-spectator.png");
+            engine.Clean();
+        }
+        PathUtils::SetBaseDir(previousBase);
+    }
+};
+
+static void TestExperienceDisplaySettings() {
+    const auto previous=PathUtils::BaseDir();
+    const auto directory=std::filesystem::absolute("build-evidence/experience/settings");
+    std::filesystem::create_directories(directory);
+    PathUtils::SetBaseDir(directory.string());
+    const auto filename=directory/(std::string("cs2d_save")+std::string(BuildInfo::SaveSuffix())+".ini");
+    IniFile legacy;
+    legacy.SetInt("settings","target_fps",165);
+    legacy.Save(filename.string());
+    SaveManager settings;
+    settings.Load();
+    check(settings.GetSettings().targetFPS==165 && !settings.GetSettings().vsync,"experience legacy custom FPS and missing VSync load correctly");
+    for (int fps:{0,30,60,75,144,165,240}) {
+        settings.MutableSettings().targetFPS=fps;
+        settings.MutableSettings().vsync=true;
+        settings.Save();
+        SaveManager restored;restored.Load();
+        check(restored.GetSettings().targetFPS==fps && restored.GetSettings().vsync,"experience arbitrary FPS and VSync survive saving");
+    }
+    IniFile malformed=IniFile::Load(filename.string());
+    malformed.SetInt("settings","target_fps",-7);malformed.Save(filename.string());
+    settings.Load();
+    check(settings.GetSettings().targetFPS==0,"experience negative FPS normalizes to unlimited");
+    PathUtils::SetBaseDir(previous);
+}
+
+static void TestExperienceCameraMotion() {
+    CS2DMapData data;data.mapWidth=data.mapHeight=200;data.tileWidth=data.tileHeight=16;
+    CS2DWorld world;world.Build(data);
+    std::filesystem::create_directories("build-evidence/experience");
+    std::ofstream trace("build-evidence/experience/camera-motion.csv");
+    trace<<"fps,frame,camera_x,camera_y,zoom,aim_screen_x,aim_screen_y\n";
+    CS2DRenderer camera;camera.SetWorld(&world);
+    for (int fps:{30,60,120,144}) for (const auto size:{SDL_Point{1280,720},SDL_Point{1024,768},SDL_Point{2560,1600},SDL_Point{3440,1440}})
+        for(int direction=0;direction<8;++direction) for(float distance:{50.f,400.f,800.f}) for(float lens:{8.f,size.y*.42f}) {
+            const float angle=direction*Tuning::Pi/4;
+            const float aimX=1600+std::cos(angle)*distance,aimY=1600+std::sin(angle)*distance;
+            camera.SetFrameDelta(0);
+            camera.UpdatePlayerCamera(1600,1600,14,aimX,aimY,size.x,size.y,1.12f,lens);
+            camera.SetFrameDelta(1.f/fps);
+            bool valid=true;
+            for(int frame=0;frame<fps;++frame) {
+                const float t=std::min(1.f,frame/(fps*.4f));
+                const float ease=t*t*(3-2*t);
+                const float multiplier=1.12f+(.70f-1.12f)*ease;
+                camera.UpdatePlayerCamera(1600,1600,14,aimX,aimY,size.x,size.y,multiplier,lens);
+                const float zoom=camera.GetZoom();
+                const float actorX=(1600-camera.GetCameraX())*zoom,actorY=(1600-camera.GetCameraY())*zoom;
+                const float aimScreenX=(aimX-camera.GetCameraX())*zoom,aimScreenY=(aimY-camera.GetCameraY())*zoom;
+                valid=valid && std::isfinite(zoom) && zoom>0 && actorX-14*zoom>=11.8f && actorX+14*zoom<=size.x-11.8f &&
+                    actorY-14*zoom>=11.8f && actorY+14*zoom<=size.y-11.8f && aimScreenX>=lens+11.8f &&
+                    aimScreenX<=size.x-lens-11.8f && aimScreenY>=lens+11.8f && aimScreenY<=size.y-lens-11.8f;
+                if(size.x==1280 && direction==0 && distance==50 && lens==8)
+                    trace<<fps<<','<<frame<<','<<camera.GetCameraX()<<','<<camera.GetCameraY()<<','<<zoom<<','<<aimScreenX<<','<<aimScreenY<<'\n';
+            }
+            check(valid,"experience joint camera framing stays finite and bounded across FPS aspect direction distance and scope");
+        }
+}
+
+static void TestExperienceRendering(bool gpu) {
+    SDL_InitSubSystem(SDL_INIT_VIDEO);
+    SDL_Window* window=nullptr;
+    SDL_Surface* surface=nullptr;
+    SDL_Renderer* output=nullptr;
+    if (gpu) {
+        SDL_SetHint(SDL_HINT_RENDER_DRIVER,"direct3d11");
+        window=SDL_CreateWindow("PixelEngine rendering regression",0,0,640,480,SDL_WINDOW_HIDDEN);
+        if (window) output=SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED|SDL_RENDERER_TARGETTEXTURE);
+    } else {
+        surface=SDL_CreateRGBSurfaceWithFormat(0,640,480,32,SDL_PIXELFORMAT_RGBA32);
+        if (surface) output=SDL_CreateSoftwareRenderer(surface);
+    }
+    check(output!=nullptr,gpu ? "experience real D3D11 renderer initializes" : "experience software renderer initializes");
+    if (output) {
+        CS2DRenderer renderer;
+        renderer.Initialize(output,"assets/cs2d/maps",640,480);
+        CS2DMapData data;data.mapWidth=data.mapHeight=100;data.tileWidth=data.tileHeight=16;
+        CS2DWorld world;world.Build(data);renderer.SetWorld(&world);
+        SDL_Surface* pixels=SDL_CreateRGBSurfaceWithFormat(0,48,48,32,SDL_PIXELFORMAT_RGBA32);
+        const SDL_Rect sample{296,216,48,48};
+        auto brightness=[&](int left,int top,int right,int bottom) {
+            int sum=0;
+            for(int y=top;y<bottom;++y) for(int x=left;x<right;++x)
+                sum+=static_cast<const Uint8*>(pixels->pixels)[y*pixels->pitch+x*4];
+            return sum;
+        };
+        for(float scale:{.5f,.75f,1.f}) for(float width:{.5f,.8f,1.f,1.1f,1.19f,1.2f,1.5f,2.f})
+            for(float phase:{0.f,.25f,.5f,.75f}) {
+                SDL_SetRenderDrawColor(output,0,0,0,255);SDL_RenderClear(output);
+                renderer.DrawCrosshair(320+phase,240+phase,255,255,255,255,width*scale,false,12,5);
+                SDL_RenderReadPixels(output,&sample,SDL_PIXELFORMAT_RGBA32,pixels->pixels,pixels->pitch);
+                const int left=brightness(6,20,19,29),right=brightness(29,20,43,29);
+                const int top=brightness(20,6,29,19),bottom=brightness(20,29,29,43);
+                check(left>80 && right>80 && top>80 && bottom>80,"experience every thin reticle arm survives width scale and subpixel phase");
+            }
+        SDL_SetRenderDrawColor(output,0,0,0,255);SDL_RenderClear(output);
+        for(int i=0;i<8;++i) renderer.DrawCrosshair(50+i*76,240,255,255,255,255,.5f+i*.22f,false,12,5);
+        std::filesystem::create_directories("build-evidence/experience");
+        SDL_Surface* capture=SDL_CreateRGBSurfaceWithFormat(0,640,480,32,SDL_PIXELFORMAT_RGBA32);
+        SDL_RenderReadPixels(output,nullptr,SDL_PIXELFORMAT_RGBA32,capture->pixels,capture->pitch);
+        IMG_SavePNG(capture,gpu ? "build-evidence/experience/thin-lines-d3d11.png" : "build-evidence/experience/thin-lines-software.png");
+        std::ofstream magnification(gpu ? "build-evidence/experience/scope-magnification-d3d11.csv" :
+            "build-evidence/experience/scope-magnification-software.csv");
+        magnification<<"requested,measured,error_percent\n";
+        for (float zoom:{1.5f,2.f}) {
+            SDL_SetRenderDrawColor(output,0,0,0,255);SDL_RenderClear(output);
+            const SDL_Rect clip{5,6,620,460};
+            SDL_RenderSetClipRect(output,&clip);
+            renderer.UpdateCamera(800,800,640,480);
+            const float mainZoom=renderer.GetZoom(),mainX=renderer.GetCameraX(),mainY=renderer.GetCameraY();
+            SDL_Texture* target=SDL_GetRenderTarget(output);
+            const bool began=renderer.BeginScopeScene(900,850,320,240,zoom);
+            check(began,"experience independent lens render target initializes");
+            if (began) {
+                check(std::abs(renderer.GetZoom()/mainZoom-zoom)<.001f,"experience actual lens magnification matches its selected level");
+                check(std::abs((900-renderer.GetCameraX())*renderer.GetZoom()-320)<.001f &&
+                      std::abs((850-renderer.GetCameraY())*renderer.GetZoom()-240)<.001f,"experience lens optical center projects the actual aim world point");
+                const float expectedX=320+40*renderer.GetZoom();
+                renderer.DrawCircleFilled(940,850,2,255,255,255,255);
+                renderer.EndScopeScene();
+                SDL_Rect restoredClip{};SDL_RenderGetClipRect(output,&restoredClip);
+                check(SDL_RenderIsClipEnabled(output) && restoredClip.x==clip.x && restoredClip.y==clip.y &&
+                      restoredClip.w==clip.w && restoredClip.h==clip.h,"experience independent lens restores the main clipping state");
+                renderer.DrawScopeScene(320,240,180,1);
+                SDL_RenderReadPixels(output,nullptr,SDL_PIXELFORMAT_RGBA32,capture->pixels,capture->pitch);
+                double totalX=0;int count=0;
+                for(int y=230;y<250;++y) for(int x=320;x<500;++x) {
+                    const auto* pixel=static_cast<const Uint8*>(capture->pixels)+y*capture->pitch+x*4;
+                    if(pixel[0]>200 && pixel[1]>200 && pixel[2]>200) {totalX+=x+.5; ++count;}
+                }
+                const double center=count ? totalX/count : 0;
+                const double measured=(center-320)/(40*mainZoom);
+                const double error=100*std::abs(measured/zoom-1);
+                magnification<<zoom<<','<<measured<<','<<error<<'\n';
+                check(count>0 && std::abs(center-expectedX)<1 && error<1,"experience rendered marker measures lens magnification within one percent");
+                check(renderer.GetCameraX()==mainX && renderer.GetCameraY()==mainY && renderer.GetZoom()==mainZoom &&
+                      SDL_GetRenderTarget(output)==target,"experience lens restores main camera and render target");
+            }
+            SDL_RenderSetClipRect(output,nullptr);
+        }
+        for (float width:{.5f,.8f,1.f,1.19f}) {
+            SDL_SetRenderDrawColor(output,0,0,0,255);SDL_RenderClear(output);
+            AimLineStyle style;style.solid={255,255,255,255};style.hidden=style.solid;
+            style.solidThickness=style.hiddenThickness=width;
+            renderer.DrawAimLinePreview(style,640,480);
+            SDL_RenderReadPixels(output,&sample,SDL_PIXELFORMAT_RGBA32,pixels->pixels,pixels->pitch);
+            check(brightness(5,20,20,29)>80,"experience thin horizontal aim line remains visible");
+        }
+        for (float scale : {.5f,.75f,1.f}) {
+            for (float width : {.5f,.8f,1.f,1.1f,1.19f,1.2f,1.5f,2.f}) {
+                for (float angle : {0.f,Tuning::Pi/2,Tuning::Pi/4}) {
+                    for (float phase : {0.f,.25f,.5f,.75f}) {
+                        SDL_SetRenderDrawColor(output,0,0,0,255);
+                        SDL_RenderClear(output);
+                        AimLineStyle style;
+                        style.solid={255,255,255,255};
+                        style.solidThickness=width;
+                        const float worldX=renderer.GetCameraX()+(320+phase)/renderer.GetZoom();
+                        const float worldY=renderer.GetCameraY()+(240+phase)/renderer.GetZoom();
+                        renderer.DrawAimLine(worldX,worldY,angle,style,scale);
+                        SDL_RenderReadPixels(output,&sample,SDL_PIXELFORMAT_RGBA32,pixels->pixels,pixels->pitch);
+                        const int x=24+static_cast<int>(std::cos(angle)*12);
+                        const int y=24+static_cast<int>(std::sin(angle)*12);
+                        check(brightness(x-3,y-3,x+4,y+4)>80,
+                              "experience horizontal vertical and diagonal aim lines survive thin width scale and phase");
+                    }
+                }
+            }
+        }
+        SDL_FreeSurface(capture);SDL_FreeSurface(pixels);
+    }
+    SDL_DestroyRenderer(output);SDL_FreeSurface(surface);SDL_DestroyWindow(window);
+}
+
 int main(int argc,char** argv) {
+    if (argc>1 && std::string(argv[1])=="--experience") {
+        CS2DGameTestAccess::TestExperienceStates();
+        EngineTestAccess::TestExperienceEntryPoints();
+        TestExperienceDisplaySettings();
+        TestExperienceCameraMotion();
+        TestExperienceRendering(false);
+        TestExperienceRendering(true);
+        TestRound3HudLayouts(true);
+        std::printf("Experience regressions: %d passed, %d failed\n",g_pass,g_fail);
+        return g_fail ? 1 : 0;
+    }
     if (argc>1 && std::string(argv[1])=="--benchmark-visibility") return CS2DGameTestAccess::BenchmarkRound3Visibility();
     if (argc>1 && std::string(argv[1])=="--round3-visuals") {
         TestRound3PartialRendering();TestRound3HudLayouts();

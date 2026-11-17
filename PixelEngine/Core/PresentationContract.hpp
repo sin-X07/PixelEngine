@@ -87,15 +87,15 @@ struct BulletVisualSegment {
     bool  impact = false;               // 实际碰撞终止；寿命/射程到期不算命中
 };
 
-// 开镜固定参数（契约 v1.1 第 4 节）
+// 独立镜内放大参数，同帧镜内比例 = 主场景实际比例 × 档位倍率。
 // 档位倍率表：level 即下标，0=关；右键循环 关 → 1 → 2 → 关
 inline constexpr int   kScopeLevelCount = 3;
 inline constexpr float kScopeZoomLevels[kScopeLevelCount] = { 1.0f, 1.5f, 2.0f };
 inline constexpr float kScopeZoomMultiplier = 1.5f;      // 兼容旧调用（== 档位 1）
 inline constexpr float kScopeTransitionSeconds = 0.12f;  // 每次换档的过渡时长
-// 镜筒半径 = 短边 × 该系数（屏幕上），世界半径 = 半径像素 / 当前倍率
+// 镜筒半径 = 短边 × 该系数（屏幕上），镜内世界半径 = 半径像素 / 镜内比例。
 inline constexpr float kScopeCircleRadiusFrac = 0.42f;
-// 相机向准星偏移的比例上限（1.5x ≈ 0.35，2x ≈ 0.5，其余按倍率线性插值）
+// 保留旧公开相机偏移查询的参数，主场景使用统一的角色与镜圈约束求解。
 inline constexpr float kScopeCameraShiftMax = 0.5f;
 
 // 契约 v1.3：开镜覆盖层的绘制参数（大十字把镜筒分成四象限；不再画中心小十字）

@@ -68,10 +68,15 @@ public:
 
     void SetWorld(const CS2DWorld* world);
 
-    // zoomMultiplier：开镜倍率（契约 v1 第 4 节）。GetZoom() 返回 base*multiplier，
-    // 逻辑视野半径始终按 baseZoom 计算，不因开镜改变敌人知情规则。
+    // zoomMultiplier 控制主场景距离档。镜内倍率由 BeginScopeScene 独立应用。
     void UpdateCamera(float playerCenterX, float playerCenterY,
                       int viewportW, int viewportH, float zoomMultiplier = 1.0f);
+    void UpdatePlayerCamera(float playerX, float playerY, float actorRadius, float aimX, float aimY,
+                            int viewportW, int viewportH, float zoomMultiplier, float lensRadius,
+                            SDL_FPoint shake = {});
+    bool BeginScopeScene(float aimX, float aimY, float centerX, float centerY, float magnification);
+    void EndScopeScene();
+    void DrawScopeScene(float centerX, float centerY, float radius, float alpha);
 
     // 背景 + tile 层
     void DrawWorld();
@@ -88,8 +93,6 @@ public:
     // 当前为可运行的最小占位实现，接线与调用时序由功能方保证。
     // 参数里 centerX/Y、radiusPx、crossThickness、crossGap 都是逻辑画布坐标，
     // 由 CS2DGame 按准星世界点投影 + 设置项算好，UI 不做命中/相机计算。
-    void KeepActorInViewport(float x,float y,float radius,float aimX,float aimY,float scopeRadius);
-    void KeepScopeInViewport(float aimX, float aimY, float radiusPx, int width, int height);
     void DrawScopeOverlay(const Presentation::ScopeOverlayParams& p);
     // 飞行中的投掷物：按类型画对应的旋转图标（替代原来的 bullet 占位）
     void DrawThrownGrenade(int weaponId, float worldX, float worldY, float spinDeg);
@@ -119,7 +122,6 @@ public:
     void DrawBombCarrierMarker(float worldX, float worldY, float size, float timeSec);
 
     void SetConeAngleDeg(float angle) { vis_.SetConeAngleDeg(angle); }
-    void ApplyCameraShake(float x, float y) { cameraX_ += x; cameraY_ += y; }
     void DrawAimLine(float playerX, float playerY, float angle,
                      const AimLineStyle& style = AimLineStyle{}, float uiScale = 1.0f, float blur = 0.0f);
     void DrawAimLinePreview(const AimLineStyle& style, float width, float height);
@@ -179,16 +181,6 @@ public:
 
     int GetViewW() const { return viewW_; }
     int GetViewH() const { return viewH_; }
-    void SetCameraAnchor(float x, float y) {
-        if (!cameraAnchored_) cameraInitialized_ = false;
-        cameraAnchored_ = true;
-        cameraAnchorX_ = x;
-        cameraAnchorY_ = y;
-    }
-    void ClearCameraAnchor() {
-        if (cameraAnchored_) cameraInitialized_ = false;
-        cameraAnchored_ = false;
-    }
     bool CameraSettled() const { return cameraSettled_; }
     void FreezeCamera(bool frozen) { cameraFrozen_ = frozen; }
     float LastFogMilliseconds() const { return lastFogMs_; }
@@ -206,9 +198,7 @@ public:
 private:
     std::function<bool(float,float)> visibilityFilter_;
     std::vector<std::int8_t> visibilityPixels_;
-    float cameraAnchorX_ = 0.0f, cameraAnchorY_ = 0.0f;
-    float cameraOffsetX_ = 0.0f, cameraOffsetY_ = 0.0f;
-    bool cameraAnchored_ = false, cameraSettled_ = true;
+    bool cameraSettled_ = true;
     float frameDelta_ = 0.0f;
     float lastFogMs_ = 0.0f;
     bool cameraFrozen_ = false;
@@ -216,6 +206,14 @@ private:
     friend struct MapPerimeterReview;
     friend struct SpriteAssetReview;
     SDL_Renderer* renderer_ = nullptr;
+    SDL_Texture* scopeSceneTex_ = nullptr;
+    SDL_Texture* scopeReturnTarget_ = nullptr;
+    SDL_Rect scopeReturnViewport_{}, scopeReturnClip_{};
+    SDL_FPoint scopeReturnScale_{1.0f,1.0f};
+    bool scopeReturnClipped_ = false;
+    int scopeSceneW_ = 0, scopeSceneH_ = 0;
+    std::array<float, 3> scopeMainCamera_{};
+    float scopeMainFogMs_ = 0;
     std::vector<std::int8_t> observerVisibilityPixels_;
     bool visibilityObserver_ = false;
     const CS2DWorld* world_ = nullptr;
@@ -283,6 +281,9 @@ private:
 
     // 雷达底图：把地图背景（或碰撞网格）一次性烘焙成纹理，避免每帧逐像素采样
     SDL_Texture* kitTexture_ = nullptr;
+    // 燃烧弹火区贴图：三张无缝火焰贴图，按 32 世界单位拼贴火区地面
+    std::array<SDL_Texture*, 3> fireTileTex_{};
+    void EnsureFireTiles();
     SDL_Texture* radarMapTex_ = nullptr;
     std::array<SDL_Texture*, 2> radarFrameTex_{};
     std::array<int, 2> radarFrameSize_{};

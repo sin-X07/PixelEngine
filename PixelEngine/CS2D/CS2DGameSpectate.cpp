@@ -30,6 +30,26 @@ void CS2DGame::SpectatorBegin() {
     specFreeY_ = player_.y;
     const int found = NextTeammateBot(-1, +1);
     specTarget_ = (found >= 0) ? found : -1;
+    UpdateSpectatorState();
+}
+
+void CS2DGame::UpdateSpectatorState() {
+    if (player_.alive || IsDeathFreeze() || mode_ == MatchMode::DeathMatch) return;
+    if (bombPlanted_ && AliveCount(player_.team) == 0) {
+        specMode_ = SpectateMode::Bomb;
+        specTarget_ = -1;
+        return;
+    }
+    if (specMode_ == SpectateMode::Bomb) return;
+    if (specMode_ == SpectateMode::None) {
+        specFreeX_ = player_.x;
+        specFreeY_ = player_.y;
+        specMode_ = SpectateMode::Follow;
+    }
+    if (specMode_ == SpectateMode::Follow && !GetSpectatedPlayer()) {
+        specTarget_ = NextTeammateBot(specTarget_, 1);
+        if (specTarget_ < 0) specMode_ = SpectateMode::Free;
+    }
 }
 
 void CS2DGame::SpectatorEnd() {
@@ -38,6 +58,7 @@ void CS2DGame::SpectatorEnd() {
 }
 
 void CS2DGame::SpectatorToggle() {
+    if (IsDeathFreeze() || specMode_ == SpectateMode::Bomb) return;
     if (mode_ == MatchMode::DeathMatch) return;   // 死斗不允许切观战视角
     if (specMode_ == SpectateMode::Follow) {
         // 切到自由视角：从当前跟随目标的位置起步
@@ -97,6 +118,7 @@ bool CS2DGame::SpectatorCanSeeEnemy(const Player& e) const {
 
 // 音频听者：观战跟随 → 被观战者；自由视角 → 镜头中心；否则玩家自己
 float CS2DGame::ListenerX() const {
+    if (specMode_ == SpectateMode::Bomb) return bombX_;
     if (specMode_ == SpectateMode::Follow &&
         specTarget_ >= 0 && specTarget_ < static_cast<int>(bots_.size())) {
         return bots_[static_cast<size_t>(specTarget_)].x;
@@ -106,6 +128,7 @@ float CS2DGame::ListenerX() const {
 }
 
 float CS2DGame::ListenerY() const {
+    if (specMode_ == SpectateMode::Bomb) return bombY_;
     if (specMode_ == SpectateMode::Follow &&
         specTarget_ >= 0 && specTarget_ < static_cast<int>(bots_.size())) {
         return bots_[static_cast<size_t>(specTarget_)].y;

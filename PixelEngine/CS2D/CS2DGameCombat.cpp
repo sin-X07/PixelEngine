@@ -981,7 +981,17 @@ void CS2DGame::OnCombatantKilled(Player &victim, AudioManager *audio, Player *ki
 
     // 玩家阵亡 → 开镜立即归零（不依赖 game.Update 的 dt）
     if (&victim == &player_) {
-        StopObjectiveAudio(audio);
+        deathPresentation_.event = event;
+        deathPresentation_.remaining = DeathFreezeSeconds;
+        hitMarkerTimer_ = 0.0f;
+        if (audio) {
+            audio->StopChannel(plantingChannel_);
+            audio->StopFootstepLoop();
+        } else if (plantingChannel_ >= 0 && Mix_QuerySpec(nullptr, nullptr, nullptr)) {
+            Mix_HaltChannel(plantingChannel_);
+        }
+        plantingChannel_ = -1;
+        plantProgress_ = 0.0f;
         if (audio)
             audio->PlaySound(SoundEffect::DEATH);
         ResetScope(Presentation::ScopeResetReason::PlayerDied);
@@ -999,9 +1009,7 @@ void CS2DGame::OnCombatantKilled(Player &victim, AudioManager *audio, Player *ki
         if (mode_ == MatchMode::DeathMatch) {
             SpectatorEnd();
             deathCam_ = true;
-        } else {
-            SpectatorBegin();
-        }
+        } else SpectatorEnd();
     }
 
     // 敌方阵亡位置也是一种情报（会衰减）

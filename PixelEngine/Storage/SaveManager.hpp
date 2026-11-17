@@ -22,6 +22,7 @@ struct GameSettings {
     int   resIdx           = 0;
     bool  fullscreen       = false;
     int   targetFPS        = 60;
+    bool  vsync            = false;
     int   renderScalePct   = 100;   // 内部渲染缩放（100 / 75 / 50），与窗口大小解耦
 
     // 视野 / 开镜（契约 v1.2）

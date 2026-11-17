@@ -20,6 +20,7 @@ class WeaponIconCache;
 // ============================================================================
 class GameUI {
 public:
+    enum class SettingsSection { InputDisplay, VisionScope, Crosshair, AimLine, Radar, Audio, Bindings };
     void DrawDamageDirections(const std::array<Presentation::DamageDirection, 4>& hits);
     void DrawCombatHints(const KeyBindings& bindings);
     struct Actions {
@@ -50,6 +51,8 @@ public:
         std::function<void(int)>           setClickSound;
         std::function<void(float)>         setMouseSensitivity;
         std::function<void(int)>           setTargetFPS;
+        std::function<void(bool)>          setVSync;
+        std::function<void(SettingsSection)> resetSettingsSection;
         // 准星
         std::function<void(Uint8,Uint8,Uint8,Uint8)> setCrosshairColor;
         std::function<void(float)>  setCrosshairThickness;
@@ -101,6 +104,8 @@ public:
         const char* clickSoundLabels[8] = {};
         float     mouseSensitivity = 1.0f;
         int       targetFPS = 60;
+        bool      vsync = false;
+        std::string displayError;
 
         // 准星
         Uint8 crosshairR = 255, crosshairG = 255, crosshairB = 255, crosshairA = 200;
@@ -171,6 +176,13 @@ public:
     };
 
     struct InGameCtx {
+        struct DeathView {
+            bool active = false;
+            float remaining = 0.0f;
+            std::string killer, weapon, icon;
+            Team killerTeam = Team::None;
+        } death;
+        bool bombSpectating = false;
         const KeyBindings* bindings = nullptr;
         GameState   state = PLAYING;
         std::string weaponName;
@@ -203,7 +215,6 @@ public:
         bool hasDefuseKit = false;
         bool  matchOver = false;
         bool  matchWinnerIsCT = false;
-        float matchOverReturn = -1.0f;   // 距返回主菜单的秒数（<0 表示未知）
         std::string coachReason;          // 教练本回合计划（HUD 展示）
         bool  coachFlash = false;         // 计划刚变更 → 高亮
 

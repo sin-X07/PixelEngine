@@ -206,8 +206,7 @@ add_custom_command(TARGET EngineApp POST_BUILD
 )
 
 # ---- 玩法回归测试（无窗口 / 无渲染器）----
-# 只链接玩法层：去掉 main.cpp / Engine.cpp（应用外壳与 ImGui/Menu3D 不需要），
-# 复用其余源码，保证测试跑的子树与游戏一致。
+# 复用应用代码，通过隐藏窗口验证玩法、设置动作及死亡画面缓存。
 option(BUILD_GAMEPLAY_TESTS "Build headless gameplay regression tests" OFF)
 if(BUILD_GAMEPLAY_TESTS)
     add_executable(map_perimeter_review ../tools/map_perimeter_review.cpp
@@ -234,7 +233,7 @@ if(BUILD_GAMEPLAY_TESTS)
         target_link_options(menu_art_review PRIVATE -mconsole -static -static-libgcc -static-libstdc++)
     endif()
     set(TEST_SOURCES ${SOURCES})
-    list(REMOVE_ITEM TEST_SOURCES main.cpp Engine.cpp Engine.hpp)
+    list(REMOVE_ITEM TEST_SOURCES main.cpp)
     add_executable(gameplay_tests
         "${CMAKE_CURRENT_SOURCE_DIR}/../tools/buy_scope_test.cpp"
         ${TEST_SOURCES}

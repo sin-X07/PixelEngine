@@ -1,5 +1,6 @@
 #include "AudioManager.hpp"
 #include "../Core/PathUtils.hpp"
+#include "../CS2D/Tuning.hpp"
 #include <algorithm>
 #include <iostream>
 #include <cmath>
@@ -98,9 +99,9 @@ bool AudioManager::Initialize() {
     }
 
     Mix_AllocateChannels(44);
-    // 0 为自动开火，1 为下包，2 为玩家拆包，3–11 为九名 BOT 拆包。
+    // 0 为自动开火，1 为下包，2 为玩家拆包，3–11 为九名 BOT 拆包，12 为玩家脚步循环。
     // 过程音结束后保留通道归属，取消操作时不会停止其他新播放的声音。
-    Mix_ReserveChannels(12);
+    Mix_ReserveChannels(13);
     audioInitialized = true;
 
     int failedAudio = 0;
@@ -199,6 +200,7 @@ bool AudioManager::Initialize() {
     armorHitSound = loadChunk("assets/audio/sfx_armor_hit.wav", "护甲受击");
     dryFireSound = loadChunk("assets/audio/sfx_dryfire.wav", "空仓");
     footstepSound = loadChunk("assets/audio/sfx_footstep.mp3", "脚步");
+    footstepLoopSound = loadChunk("assets/audio/sfx_footstep_loop.wav", "脚步循环");
     equipSound = loadChunk("assets/audio/sfx_equip.mp3", "购买装备");
 
     // ---- 战局事件 ----
@@ -288,6 +290,7 @@ void AudioManager::Clean() {
     if (bombBeepSound)       { Mix_FreeChunk(bombBeepSound);       bombBeepSound = nullptr; }
     if (roundWinSound)       { Mix_FreeChunk(roundWinSound);       roundWinSound = nullptr; }
     if (footstepSound)       { Mix_FreeChunk(footstepSound);       footstepSound = nullptr; }
+    if (footstepLoopSound)   { Mix_FreeChunk(footstepLoopSound);   footstepLoopSound = nullptr; footstepLoopChannel_ = -1; }
     if (armorHitSound)       { Mix_FreeChunk(armorHitSound);       armorHitSound = nullptr; }
     if (dryFireSound) { Mix_FreeChunk(dryFireSound); dryFireSound = nullptr; }
 
@@ -423,6 +426,7 @@ Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
         case SoundEffect::BOMB_BEEP:        return bombBeepSound;
         case SoundEffect::ROUND_WIN:        return roundWinSound;
         case SoundEffect::FOOTSTEP:         return footstepSound;
+        case SoundEffect::FOOTSTEP_LOOP:    return footstepLoopSound;
         case SoundEffect::ARMOR_HIT:        return armorHitSound;
 
         case SoundEffect::RELOAD_GLOCK:      return reloadGlockSound;
@@ -489,6 +493,13 @@ int AudioManager::PlayChunkAt(Mix_Chunk* chunk, float sourceX, float sourceY,
     const int chan = Mix_PlayChannel(channel, chunk, 0);
     if (chan < 0) return -1;
 
+    PositionChannel(chan, sourceX, sourceY, listenerX, listenerY, 0.0f, 200.0f);
+    return chan;
+}
+
+void AudioManager::PositionChannel(int chan, float sourceX, float sourceY,
+                                  float listenerX, float listenerY, float fullRange, float maxRange) {
+    if (!audioInitialized || chan < 0 || !Mix_Playing(chan)) return;
     // ---- 声像：由「声源相对玩家的世界位置」决定 ----
     // 俯视视角镜头不做旋转，因此屏幕水平方向恒等于世界 +x。
     // 注意：这里刻意不使用玩家朝向，避免转身时左右声道跟着翻转。
@@ -509,19 +520,10 @@ int AudioManager::PlayChunkAt(Mix_Chunk* chunk, float sourceX, float sourceY,
     const int rightVol = static_cast<int>((1.0f + pan) * 0.5f * 255.0f);
     Mix_SetPanning(chan, leftVol, rightVol);
 
-    // 距离衰减：FULL_RANGE 内全音量，之后线性衰减，但保留一个可听见的底噪，
-    // 避免「一过 MAX_RANGE 就彻底静音」——那会让远处的枪战听着像时有时无
-    constexpr float FULL_RANGE = 0.0f;
-    constexpr float MAX_RANGE  = 200.0f;
-    constexpr float MIN_FACTOR = 0.0f;   // 最远处仍保留 12% 音量
-    float distFactor = 1.0f;
-    if (dist > FULL_RANGE) {
-        const float t = std::min(1.0f, (dist - FULL_RANGE) / (MAX_RANGE - FULL_RANGE));
-        distFactor = 1.0f - (1.0f - MIN_FACTOR) * t;
-    }
+    const float t = std::clamp((dist - fullRange) / std::max(1.0f, maxRange - fullRange), 0.0f, 1.0f);
+    const float distFactor = 1.0f - t;
     const int vol = static_cast<int>(distFactor * effectsLevel_);
     Mix_Volume(chan, vol);
-    return chan;
 }
 
 void AudioManager::PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
@@ -597,5 +599,30 @@ int AudioManager::PlaySoundTracked(SoundEffect effect, int channel) {
 
 int AudioManager::PlaySoundTrackedAt(SoundEffect effect, float x, float y,
                                      float listenerX, float listenerY, int channel) {
-    return PlayChunkAt(ChunkFor(effect), x, y, listenerX, listenerY, channel);
+    const int playing = PlayChunkAt(ChunkFor(effect), x, y, listenerX, listenerY, channel);
+    UpdateTrackedSoundAt(playing, effect, x, y, listenerX, listenerY);
+    return playing;
+}
+
+void AudioManager::UpdateTrackedSoundAt(int channel, SoundEffect effect, float x, float y,
+                                      float listenerX, float listenerY) {
+    const bool defusing = effect == SoundEffect::BOMB_DEFUSING || effect == SoundEffect::BOMB_DEFUSING_KIT;
+    PositionChannel(channel, x, y, listenerX, listenerY,
+                    defusing ? Tuning::DefuseRadius : 0.0f,
+                    defusing ? Tuning::DefuseHearRadius : 200.0f);
+}
+
+void AudioManager::PlayFootstepLoop() {
+    if (!audioInitialized || !footstepLoopSound) return;
+    if (footstepLoopChannel_ >= 0 && Mix_Playing(footstepLoopChannel_)) return;
+    const int chan = Mix_PlayChannel(CHANNEL_FOOTSTEP_LOOP, footstepLoopSound, -1);
+    if (chan >= 0) {
+        Mix_Volume(chan, effectsLevel_);
+        Mix_SetPanning(chan, 255, 255);
+        footstepLoopChannel_ = chan;
+    }
+}
+
+void AudioManager::StopFootstepLoop() {
+    StopChannel(footstepLoopChannel_);
 }

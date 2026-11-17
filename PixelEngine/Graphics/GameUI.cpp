@@ -542,7 +542,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                           186, 200, 216, 255, 15);
         };
         auto drawCard = [&](float x, float y, const char* title, const char* tag,
-                            int rows, float extraH, ImU32 accent,
+                            int rows, float extraH, ImU32 accent, SettingsSection section,
                             const std::function<void(float, float)>& body) -> float {
             const float h = header + static_cast<float>(rows) * rowH + extraH;
             ImDrawList* cdl = ImGui::GetWindowDrawList();
@@ -556,6 +556,11 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
             if (tag) {
                 DrawImGuiText(imGuiUI_, tag, x + UI(34.0f), y + UI(36.0f), 116, 136, 156, 220, 12);
             }
+            ImGui::PushID(static_cast<int>(section));
+            ImGui::SetCursorScreenPos(ImVec2(x + colW - UI(114), y + UI(17)));
+            if (ImGui::Button("恢复默认", ImVec2(UI(94), UI(28))) && actions.resetSettingsSection)
+                actions.resetSettingsSection(section);
+            ImGui::PopID();
             body(x, y);
             return h;
         };
@@ -567,8 +572,8 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         float rightY = topY;
 
         if (settingsSection == 0) {
-            leftY += drawCard(leftX, leftY, "操作", "INPUT & DISPLAY", 6, 0.0f,
-                              IM_COL32(130, 158, 180, 255), [&](float x, float y) {
+            leftY += drawCard(leftX, leftY, "操作", "INPUT & DISPLAY", 7, UI(40),
+                              IM_COL32(130, 158, 180, 255), SettingsSection::InputDisplay, [&](float x, float y) {
                 rowLabel(x, y, 5, "BOT 难度");
                 ImGui::SetCursorScreenPos(rowPos(x, y, 5));
                 ImGui::SetNextItemWidth(fieldW);
@@ -585,13 +590,12 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 rowLabel(x, y, 1, "帧率上限");
                 ImGui::SetCursorScreenPos(rowPos(x, y, 1));
                 ImGui::SetNextItemWidth(fieldW);
-                const char* fpsLabels[] = { "30", "60", "120" };
-                int fpsIdx = (ctx.targetFPS >= 120) ? 2 : (ctx.targetFPS >= 60) ? 1 : 0;
-                if (ImGui::Combo("##fps", &fpsIdx, fpsLabels, 3)) {
-                    actions.setTargetFPS(fpsIdx == 2 ? 120 : fpsIdx == 1 ? 60 : 30);
-                }
+                int fps = ctx.targetFPS;
+                if (ImGui::InputInt("##fps", &fps, 1, 10)) actions.setTargetFPS(std::max(0, fps));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 表示不限帧");
 
-                rowLabel(x, y, 2, "分辨率");
+                rowLabel(x, y, 2, "窗口分辨率");
+                ImGui::BeginDisabled(ctx.isFullscreen);
                 ImGui::SetCursorScreenPos(rowPos(x, y, 2));
                 ImGui::SetNextItemWidth(fieldW);
                 const char* resLabels[kResolutionCount];
@@ -600,6 +604,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 if (ImGui::Combo("##res", &resIdx, resLabels, kResolutionCount)) {
                     actions.setResolution(kResolutions[resIdx].w, kResolutions[resIdx].h, resIdx);
                 }
+                ImGui::EndDisabled();
 
                 rowLabel(x, y, 3, "渲染缩放");
                 ImGui::SetCursorScreenPos(rowPos(x, y, 3));
@@ -613,11 +618,19 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 ImGui::SetCursorScreenPos(rowPos(x, y, 4));
                 bool fs = ctx.isFullscreen;
                 if (ImGui::Checkbox("全屏（F11）", &fs)) actions.setFullscreen(fs);
+                ImGui::SetCursorScreenPos(rowPos(x, y, 6));
+                bool vsync = ctx.vsync;
+                if (ImGui::Checkbox("垂直同步", &vsync) && actions.setVSync) actions.setVSync(vsync);
+                const char* displayHint = ctx.displayError.empty()
+                    ? (ctx.isFullscreen ? "全屏下请用渲染缩放调清晰度" : "帧率上限设为 0 表示不限帧")
+                    : ctx.displayError.c_str();
+                DrawImGuiText(imGuiUI_, displayHint, x + UI(28), y + header + rowH * 7,
+                              155, 174, 190, 255, 13);
             }) + UI(16.0f);
 
             if (!twoColumns) rightY = leftY;
             rightY += drawCard(rightX, rightY, "视野 / 开镜", "VISION & SCOPE", 5, 0.0f,
-                               IM_COL32(150, 170, 220, 255), [&](float x, float y) {
+                               IM_COL32(150, 170, 220, 255), SettingsSection::VisionScope, [&](float x, float y) {
                 rowLabel(x, y, 0, "迷雾透明度");
                 ImGui::SetCursorScreenPos(rowPos(x, y, 0));
                 ImGui::SetNextItemWidth(fieldW);
@@ -658,7 +671,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 
         } else if (settingsSection == 1) {
             leftY += drawCard(leftX, leftY, "准星", "CROSSHAIR", 6, 0.0f,
-                               IM_COL32(130, 158, 180, 255), [&](float x, float y) {
+                               IM_COL32(130, 158, 180, 255), SettingsSection::Crosshair, [&](float x, float y) {
                 rowLabel(x, y, 0, "颜色");
                 ImGui::SetCursorScreenPos(rowPos(x, y, 0));
                 float col[4] = { ctx.crosshairR / 255.0f, ctx.crosshairG / 255.0f,
@@ -707,7 +720,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 
             if (!twoColumns) rightY = leftY;
             rightY += drawCard(rightX, rightY, "瞄准线", "AIM LINE", 9, 0.0f,
-                               IM_COL32(130, 158, 180, 255), [&](float x, float y) {
+                               IM_COL32(130, 158, 180, 255), SettingsSection::AimLine, [&](float x, float y) {
                 ImGui::SetCursorScreenPos(rowPos(x, y, 0));
                 bool enabled = ctx.aimLine;
                 if (ImGui::Checkbox("显示瞄准线", &enabled)) actions.setAimLine(enabled);
@@ -756,7 +769,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 
         } else if (settingsSection == 2) {
             leftY += drawCard(leftX, leftY, "雷达", "RADAR", 6, 0.0f,
-                               IM_COL32(130, 158, 180, 255), [&](float x, float y) {
+                               IM_COL32(130, 158, 180, 255), SettingsSection::Radar, [&](float x, float y) {
                 ImGui::SetCursorScreenPos(rowPos(x, y, 0));
                 bool pc = ctx.radarPlayerCentered;
                 if (ImGui::Checkbox("玩家居中", &pc)) actions.setRadarPlayerCentered(pc);
@@ -811,7 +824,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 }
             }
             leftY += drawCard(leftX, leftY, "键位", nullptr, GameActionCount + 2, 0.0f,
-                IM_COL32(130, 158, 180, 255), [&](float x, float y) {
+                IM_COL32(130, 158, 180, 255), SettingsSection::Bindings, [&](float x, float y) {
                 for (int i = 0; i < GameActionCount; ++i) {
                     ImGui::PushID(i);
                     rowLabel(x, y, i, ActionNames[i]);
@@ -827,9 +840,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                     ImGui::EndDisabled();
                     ImGui::PopID();
                 }
-                ImGui::SetCursorScreenPos(rowPos(x, y, GameActionCount));
-                if (ImGui::Button("恢复默认键位")) { bindings = KeyBindings{}; input.CancelCapture(); }
-                rowLabel(x, y, GameActionCount + 1, "Esc 取消捕获");
+                rowLabel(x, y, GameActionCount, "Esc 取消捕获");
             });
             ImGui::SetNextWindowPos(ImVec2(wp.x + ws.x/2, wp.y + ws.y/2), ImGuiCond_Always, ImVec2(.5f,.5f));
             ImGui::SetNextWindowSize(ImVec2(UI(520), 0), ImGuiCond_Always);
@@ -854,7 +865,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
             }
         } else {
             leftY += drawCard(leftX, leftY, "音频", "VOLUME & SOUNDTRACK", 6, 0.0f,
-                              IM_COL32(130,158,180,255), [&](float x, float y) {
+                              IM_COL32(130,158,180,255), SettingsSection::Audio, [&](float x, float y) {
                 rowLabel(x, y, 0, "主音量");
                 ImGui::SetCursorScreenPos(rowPos(x, y, 0));
                 ImGui::SetNextItemWidth(fieldW);
@@ -2394,6 +2405,20 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
     const float vpH = ImGui::GetIO().DisplaySize.y;
     ImDrawList *fg = ImGui::GetWindowDrawList();
 
+    // Weapon images retain their native aspect ratio in every HUD surface.
+    auto weaponImage = [&](const std::string &path, float x, float y, float w, float h, int alpha) {
+        SDL_Texture *texture = weaponIconCache_ ? weaponIconCache_->GetHud(path) : nullptr;
+        int tw = 0, th = 0;
+        if (!texture || SDL_QueryTexture(texture, nullptr, nullptr, &tw, &th) || tw <= 0 || th <= 0)
+            return false;
+        const float scale = std::min(w / tw, h / th);
+        const float iw = tw * scale, ih = th * scale;
+        fg->AddImage((ImTextureID)texture, ImVec2(x + (w - iw) * .5f, y + (h - ih) * .5f),
+                     ImVec2(x + (w + iw) * .5f, y + (h + ih) * .5f), ImVec2(0, 0), ImVec2(1, 1),
+                     IM_COL32(255, 255, 255, alpha));
+        return true;
+    };
+
     {
         const float w = std::min(UI(560), vpW * .56f), x = (vpW - w) * .5f, y = UI(12), h = UI(76);
         fg->AddRectFilled(ImVec2(x - UI(3), y + UI(3)), ImVec2(x + w + UI(3), y + h + UI(5)),
@@ -2444,7 +2469,7 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
     }
 
     // ---- 左上角雷达下方：教练计划 ----
-    if (!ctx.coachReason.empty()) {
+    if (!ctx.death.active && !ctx.bombSpectating && !ctx.coachReason.empty()) {
         char buf[256];
         snprintf(buf, sizeof(buf), "教练: %s", ctx.coachReason.c_str());
         if (ctx.coachFlash) {
@@ -2457,7 +2482,7 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
     }
 
     // 血量与护甲共用数值列、进度条列及图标尺寸。
-    {
+    if (!ctx.death.active && !ctx.bombSpectating) {
         const bool armored = ctx.armor > 0;
         const float x = UI(24), width = UI(286);
         const float height = UI(armored ? 82 : 46);
@@ -2485,6 +2510,8 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
             const float armorY = y + UI(47);
             const ImU32 armorColor = IM_COL32(139,193,230,255);
             vitalRow(armorY, ctx.armor, std::clamp(ctx.armor / 100.0f, 0.0f, 1.0f), armorColor);
+            const std::string armorIcon = ctx.helmet ? "cs2d/sprites/armor_helmet_d.png" : "cs2d/sprites/armor_d.png";
+            if (!weaponImage(armorIcon, x + UI(11), armorY - UI(2), UI(28), UI(29), 245)) {
             // 护甲背心轮廓，肩带、领口及下摆均保持可辨。
             const float ax = x + UI(15), ay = armorY + UI(3);
             const ImVec2 vest[] = {
@@ -2503,6 +2530,7 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
                 fg->PathFillConvex(armorColor);
                 fg->AddLine(ImVec2(hx-UI(6),hy+UI(4)), ImVec2(hx-UI(4),hy+UI(9)), armorColor, UI(2));
             }
+            }
         }
     }
 
@@ -2517,12 +2545,7 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
     if (ctx.matchOver) {
         DrawImGuiTextCentered(imGuiUI, ctx.matchWinnerIsCT ? "比赛结束  CT 获胜" : "比赛结束  T 获胜",
                               ImGui::GetIO().DisplaySize.y * 0.42f, 255, 220, 90, 255, 30);
-        if (ctx.matchOverReturn >= 0.0f) {
-            char buf[64];
-            snprintf(buf, sizeof(buf), "%d 秒后返回主菜单", static_cast<int>(ctx.matchOverReturn) + 1);
-            DrawImGuiTextCentered(imGuiUI, buf, ImGui::GetIO().DisplaySize.y * 0.42f + UI(40.0f), 200, 210,
-                                  220, 255, 20);
-        }
+
     }
 
     // ---- 目标物状态 ----
@@ -2552,18 +2575,6 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
         }
     }
 
-    // Weapon images retain their native aspect ratio in every HUD surface.
-    auto weaponImage = [&](const std::string &path, float x, float y, float w, float h, int alpha) {
-        SDL_Texture *texture = weaponIconCache_ ? weaponIconCache_->GetHud(path) : nullptr;
-        int tw = 0, th = 0;
-        if (!texture || SDL_QueryTexture(texture, nullptr, nullptr, &tw, &th) || tw <= 0 || th <= 0)
-            return;
-        const float scale = std::min(w / tw, h / th);
-        const float iw = tw * scale, ih = th * scale;
-        fg->AddImage((ImTextureID)texture, ImVec2(x + (w - iw) * .5f, y + (h - ih) * .5f),
-                     ImVec2(x + (w + iw) * .5f, y + (h + ih) * .5f), ImVec2(0, 0), ImVec2(1, 1),
-                     IM_COL32(255, 255, 255, alpha));
-    };
     {
         float nextKillY = UI(100);
         const float w = UI(344), x = vpW - w - UI(24);
@@ -2704,7 +2715,7 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
         ImGui::PopStyleColor();
     }
 
-    {
+    if (!ctx.death.active && !ctx.bombSpectating) {
         const float w = UI(260), x = vpW - w - UI(24);
         const float rowH = UI(42), selectedH = UI(68);
         const auto selected = std::find_if(ctx.equipment.begin(), ctx.equipment.end(),
@@ -2848,7 +2859,7 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
     }
 
     // 死斗：阵亡后是「原地死亡镜头」，不是观战——给一个明确的等待重生提示
-    if (!ctx.spectating && ctx.playerTeam == Team::None && ctx.health <= 0) {
+    if (!ctx.death.active && !ctx.spectating && ctx.playerTeam == Team::None && ctx.health <= 0) {
         const float yWait = ImGui::GetIO().DisplaySize.y - UI(96.0f) - UI(26.0f);
         DrawImGuiTextCentered(imGuiUI, "阵亡 · 等待重生", yWait, 240, 128, 118, 240, 22);
     }
@@ -2870,7 +2881,11 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
             const std::string carrierText = "C4 携带者：" + ctx.c4CarrierName;
             DrawImGuiTextCentered(imGuiUI, carrierText.c_str(), yBase - UI(30.0f), 255, 210, 100, 255, 20);
         }
-        if (ctx.spectating) {
+        if (ctx.death.active) {
+            // The death card occupies this area until the spectator handoff.
+        } else if (ctx.bombSpectating) {
+            DrawImGuiTextCentered(imGuiUI, "观战 C4", yBase, 232, 196, 126, 255, 20);
+        } else if (ctx.spectating) {
             if (ctx.spectateMode == 1) {
                 DrawImGuiTextCentered(imGuiUI,
                                       ("自由视角 · " + keyName(GameAction::Spectate) + " 回到队友视角 · " +
@@ -2912,6 +2927,25 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
                     yBase, 255, 190, 90, 255, 16);
             }
         }
+    }
+    if (ctx.death.active) {
+        const float elapsed = CS2DGame::DeathFreezeSeconds - ctx.death.remaining;
+        const float alpha = std::min(std::clamp(elapsed / .12f, 0.0f, 1.0f),
+                                     std::clamp(ctx.death.remaining / .18f, 0.0f, 1.0f));
+        const int opacity = static_cast<int>(255 * alpha);
+        const float width = std::min(UI(480), vpW - UI(48));
+        const float x = (vpW - width) * .5f, y = vpH - UI(128);
+        const auto accent = GetTeamVisualStyle(ctx.death.killerTeam).accent;
+        Palette::DrawGlassPanel(fg, ImVec2(x,y), ImVec2(x+width,y+UI(96)),
+                               IM_COL32(15,19,25,static_cast<int>(220*alpha)), UI(8), alpha);
+        fg->AddRect(ImVec2(x,y),ImVec2(x+width,y+UI(96)),IM_COL32(255,255,255,opacity/8),UI(8));
+        fg->AddRectFilled(ImVec2(x,y+UI(16)),ImVec2(x+UI(3),y+UI(80)),
+                          IM_COL32(accent.r,accent.g,accent.b,opacity),UI(1));
+        DrawImGuiText(imGuiUI,"你已阵亡",x+UI(22),y+UI(12),166,180,192,opacity,14);
+        DrawImGuiText(imGuiUI,FitHudText(imGuiUI,ctx.death.killer,width-UI(150),23).c_str(),
+                      x+UI(22),y+UI(35),accent.r,accent.g,accent.b,opacity,23);
+        DrawImGuiText(imGuiUI,ctx.death.weapon.c_str(),x+UI(22),y+UI(69),205,218,229,opacity,14);
+        weaponImage(ctx.death.icon,x+width-UI(125),y+UI(29),UI(102),UI(42),opacity);
     }
     ImGui::End();
     ImGui::PopStyleVar(2);

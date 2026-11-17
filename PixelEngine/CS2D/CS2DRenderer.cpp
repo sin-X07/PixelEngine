@@ -108,7 +108,11 @@ void CS2DRenderer::DrawDroppedKit(float x, float y) {
 }
 
 void CS2DRenderer::Clean() {
+    if (scopeSceneTex_) SDL_DestroyTexture(scopeSceneTex_);
+    scopeSceneTex_ = nullptr;
+    scopeReturnTarget_ = nullptr;
     if (kitTexture_) { SDL_DestroyTexture(kitTexture_); kitTexture_=nullptr; }
+    for (auto*& tex : fireTileTex_) { if (tex) SDL_DestroyTexture(tex); tex = nullptr; }
     if (radarMapTex_) { SDL_DestroyTexture(radarMapTex_); radarMapTex_ = nullptr; }
     for (auto*& texture : radarFrameTex_) {
         if (texture) SDL_DestroyTexture(texture);
@@ -319,14 +323,14 @@ void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
     // 公式已抽到 VisibilityQuery，无头仿真用同一个函数算半径，保证判定一致。
     const float baseZoom = VisibilityQuery::BaseZoomForViewport(viewportW, viewportH);
 
-    // 开镜只乘一次倍率：zoom_ 就是实际倍率，GetZoom()/UpdateCursor 不得再乘
+    // 主场景距离档只乘一次，GetZoom() 返回最终世界到屏幕比例。
     zoomMultiplier = std::clamp(zoomMultiplier, 0.25f, 4.0f);
     zoom_ = baseZoom * zoomMultiplier;
 
     const float viewW = static_cast<float>(viewportW) / zoom_;
     const float viewH = static_cast<float>(viewportH) / zoom_;
 
-    // PIX-31: scale the reference radius with the final scope/edge zoom factor.
+    // 视野半径跟随主场景距离档，独立镜内放大沿用主场景可见性。
     visionRadius_ = VisibilityQuery::RadiusForViewport(viewportW, viewportH, baseZoom) / zoomMultiplier;
     vis_.SetVisionRadius(visionRadius_);
 
@@ -348,19 +352,118 @@ void CS2DRenderer::UpdateCamera(float playerCenterX, float playerCenterY,
     const float targetY = std::clamp(playerCenterY - viewH * 0.5f, loY, hiY);
     const float blend = cameraInitialized_ && frameDelta_ > 0.0f
         ? 1.0f - std::exp(-Tuning::CameraSmoothRate * frameDelta_) : 1.0f;
-    if (cameraAnchored_) {
-        const float baseX = cameraAnchorX_ - viewW * 0.5f;
-        const float baseY = cameraAnchorY_ - viewH * 0.5f;
-        cameraOffsetX_ += (targetX - baseX - cameraOffsetX_) * blend;
-        cameraOffsetY_ += (targetY - baseY - cameraOffsetY_) * blend;
-        cameraX_ = baseX + cameraOffsetX_;
-        cameraY_ = baseY + cameraOffsetY_;
-    } else {
-        cameraX_ += (targetX - cameraX_) * blend;
-        cameraY_ += (targetY - cameraY_) * blend;
-    }
+    cameraX_ += (targetX - cameraX_) * blend;
+    cameraY_ += (targetY - cameraY_) * blend;
     cameraSettled_ = std::hypot(targetX - cameraX_, targetY - cameraY_) * zoom_ <= Tuning::CameraSettlePixels;
     cameraInitialized_ = true;
+}
+
+// Solve framing before applying the camera transform. Zoom preserves the visible aim point.
+void CS2DRenderer::UpdatePlayerCamera(float playerX, float playerY, float actorRadius,
+                                      float aimX, float aimY, int viewportW, int viewportH,
+                                      float zoomMultiplier, float lensRadius, SDL_FPoint shake) {
+    if (!world_ || cameraFrozen_) return;
+    const float baseZoom = VisibilityQuery::BaseZoomForViewport(viewportW, viewportH);
+    constexpr float safe = 12.0f;
+    const float availableX = std::max(1.0f, viewportW - safe * 2 - lensRadius);
+    const float availableY = std::max(1.0f, viewportH - safe * 2 - lensRadius);
+    const float fitZoom = std::min(availableX / (std::abs(aimX-playerX)+actorRadius),
+                                   availableY / (std::abs(aimY-playerY)+actorRadius));
+    const float targetZoom = std::max(.001f, std::min(baseZoom * zoomMultiplier, fitZoom));
+    const float blend = cameraInitialized_ && frameDelta_ > 0
+        ? 1.0f - std::exp(-Tuning::CameraSmoothRate * frameDelta_) : 1.0f;
+    const float screenAimX = (aimX-cameraX_) * zoom_;
+    const float screenAimY = (aimY-cameraY_) * zoom_;
+    const float nextZoom = std::min(fitZoom, zoom_ + (targetZoom-zoom_) * blend);
+    const float viewWidth = viewportW / nextZoom, viewHeight = viewportH / nextZoom;
+    bool positionSettled = true;
+    auto axis = [&](float actor, float aim, float extent, float worldExtent, float previousScreen, float recoil) {
+        const float actorLo = actor + actorRadius - extent + safe / nextZoom;
+        const float actorHi = actor - actorRadius - safe / nextZoom;
+        const float aimLo = aim - extent + (lensRadius+safe) / nextZoom;
+        const float aimHi = aim - (lensRadius+safe) / nextZoom;
+        const float lo = std::max(actorLo, aimLo), hi = std::min(actorHi, aimHi);
+        const float desiredCenter = actor + (aim-actor) * Tuning::CameraLookShift;
+        const float mapLo = -Tuning::VisionRadius;
+        const float mapHi = std::max(mapLo, worldExtent-extent+Tuning::VisionRadius);
+        const float desired = std::clamp(desiredCenter-extent*.5f,mapLo,mapHi);
+        const float target = std::clamp(desired,std::min(lo,hi),std::max(lo,hi));
+        const float targetScreen = (aim-target)*nextZoom;
+        const float screen = previousScreen + (targetScreen-previousScreen)*blend;
+        const float position = aim-screen/nextZoom + recoil;
+        const float finalPosition = std::clamp(position,std::min(lo,hi),std::max(lo,hi));
+        positionSettled = positionSettled && std::abs(finalPosition-target)*nextZoom <= Tuning::CameraSettlePixels;
+        return finalPosition;
+    };
+    cameraX_ = axis(playerX,aimX,viewWidth,std::max(world_->GetMapPixelW(),world_->GetImageW()),screenAimX,shake.x);
+    cameraY_ = axis(playerY,aimY,viewHeight,std::max(world_->GetMapPixelH(),world_->GetImageH()),screenAimY,shake.y);
+    zoom_ = nextZoom;
+    visionRadius_ = VisibilityQuery::RadiusForViewport(viewportW,viewportH,baseZoom) / zoomMultiplier;
+    vis_.SetVisionRadius(visionRadius_);
+    cameraSettled_ = positionSettled && std::abs(zoom_-targetZoom) < .001f;
+    cameraInitialized_ = true;
+}
+
+bool CS2DRenderer::BeginScopeScene(float aimX, float aimY, float centerX, float centerY,
+                                  float magnification) {
+    if (!renderer_) return false;
+    if (!scopeSceneTex_ || scopeSceneW_ != viewW_ || scopeSceneH_ != viewH_) {
+        if (scopeSceneTex_) SDL_DestroyTexture(scopeSceneTex_);
+        scopeSceneTex_ = SDL_CreateTexture(renderer_,SDL_PIXELFORMAT_RGBA8888,
+                                            SDL_TEXTUREACCESS_TARGET,viewW_,viewH_);
+        scopeSceneW_ = viewW_;
+        scopeSceneH_ = viewH_;
+        if (!scopeSceneTex_) return false;
+        SDL_SetTextureBlendMode(scopeSceneTex_,SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(scopeSceneTex_,SDL_ScaleModeLinear);
+    }
+    scopeReturnTarget_ = SDL_GetRenderTarget(renderer_);
+    SDL_RenderGetViewport(renderer_,&scopeReturnViewport_);
+    SDL_RenderGetClipRect(renderer_,&scopeReturnClip_);
+    scopeReturnClipped_ = SDL_RenderIsClipEnabled(renderer_);
+    SDL_RenderGetScale(renderer_,&scopeReturnScale_.x,&scopeReturnScale_.y);
+    if (SDL_SetRenderTarget(renderer_,scopeSceneTex_) != 0) return false;
+    SDL_RenderSetViewport(renderer_,nullptr);
+    SDL_RenderSetClipRect(renderer_,nullptr);
+    scopeMainCamera_ = {cameraX_,cameraY_,zoom_};
+    scopeMainFogMs_ = lastFogMs_;
+    zoom_ *= magnification;
+    cameraX_ = aimX-centerX/zoom_;
+    cameraY_ = aimY-centerY/zoom_;
+    SDL_SetRenderDrawColor(renderer_,18,26,36,255);
+    SDL_RenderClear(renderer_);
+    return true;
+}
+
+void CS2DRenderer::EndScopeScene() {
+    SDL_SetRenderTarget(renderer_,scopeReturnTarget_);
+    SDL_RenderSetScale(renderer_,scopeReturnScale_.x,scopeReturnScale_.y);
+    SDL_RenderSetViewport(renderer_,&scopeReturnViewport_);
+    SDL_RenderSetClipRect(renderer_,scopeReturnClipped_ ? &scopeReturnClip_ : nullptr);
+    cameraX_ = scopeMainCamera_[0];
+    cameraY_ = scopeMainCamera_[1];
+    zoom_ = scopeMainCamera_[2];
+    lastFogMs_ += scopeMainFogMs_;
+}
+
+void CS2DRenderer::DrawScopeScene(float centerX, float centerY, float radius, float alpha) {
+    if (!scopeSceneTex_ || radius <= 0) return;
+    constexpr int segments = 128;
+    std::array<SDL_Vertex,segments+2> vertices{};
+    std::array<int,segments*3> indices{};
+    const SDL_Color color{255,255,255,static_cast<Uint8>(255*std::clamp(alpha,0.0f,1.0f))};
+    vertices[0] = {{centerX,centerY},color,{centerX/viewW_,centerY/viewH_}};
+    for (int i=0;i<=segments;++i) {
+        const float angle = i * Tuning::Pi * 2 / segments;
+        const float x = centerX+std::cos(angle)*radius, y = centerY+std::sin(angle)*radius;
+        vertices[i+1] = {{x,y},color,{x/viewW_,y/viewH_}};
+        if (i<segments) {
+            indices[i*3]=0;
+            indices[i*3+1]=i+1;
+            indices[i*3+2]=i+2;
+        }
+    }
+    SDL_RenderGeometry(renderer_,scopeSceneTex_,vertices.data(),vertices.size(),indices.data(),indices.size());
 }
 
 // ============================================================================
@@ -824,44 +927,28 @@ namespace {
 void DrawSoftSegment(SDL_Renderer* renderer, SDL_FPoint a, SDL_FPoint b,
                      float thickness, float blur, SDL_Color color) {
     const float length = std::hypot(b.x-a.x,b.y-a.y);
-    if (length < .001f) return;
-    static const std::array<float,33> profile = [] {
-        std::array<float,33> values{};
-        for (int i=0;i<33;++i) {
-            const float x=(i-16)/16.0f;
-            values[i]=std::exp(-4.5f*x*x);
-        }
-        values.front()=values.back()=0;
-        return values;
-    }();
-    const float nx=-(b.y-a.y)/length, ny=(b.x-a.x)/length;
-    color.a = static_cast<Uint8>(color.a * std::clamp(thickness, .5f, 1.0f));
-    thickness = std::max(1.0f, thickness);
-    const float half=thickness*.5f;
-    if (blur < .05f) {
-        const SDL_Vertex vertices[] = {{{a.x+nx*half,a.y+ny*half},color,{0,0}},
-            {{b.x+nx*half,b.y+ny*half},color,{0,0}}, {{b.x-nx*half,b.y-ny*half},color,{0,0}},
-            {{a.x-nx*half,a.y-ny*half},color,{0,0}}};
-        const int indices[]={0,1,2,0,2,3};
-        SDL_RenderGeometry(renderer,nullptr,vertices,4,indices,6);
-        return;
-    }
-    std::array<SDL_Vertex,66> vertices{};
-    std::array<int,192> indices{};
-    const float extent=half+blur;
-    for (int i=0;i<33;++i) {
-        const float offset=(i-16)/16.0f*extent;
-        SDL_Color sample=color;
-        sample.a=static_cast<Uint8>(color.a*profile[i]*thickness/(thickness+blur*.65f));
-        vertices[i*2]={{a.x+nx*offset,a.y+ny*offset},sample,{0,0}};
-        vertices[i*2+1]={{b.x+nx*offset,b.y+ny*offset},sample,{0,0}};
-        if (i<32) {
+    if (length < .001f || thickness <= 0 || color.a == 0) return;
+    const float nx = -(b.y-a.y)/length, ny = (b.x-a.x)/length;
+    const float coverage = std::min(1.0f, thickness);
+    const float half = std::max(1.0f, thickness)*.5f;
+    const float feather = .85f + std::max(0.0f,blur);
+    const float offsets[] = {-half-feather,-half,half,half+feather};
+    const Uint8 coreAlpha = static_cast<Uint8>(std::lround(color.a*coverage /
+        (1.0f+std::max(0.0f,blur)*.25f)));
+    std::array<SDL_Vertex,8> vertices{};
+    std::array<int,18> indices{};
+    for (int i=0;i<4;++i) {
+        SDL_Color sample = color;
+        sample.a = i == 0 || i == 3 ? 0 : coreAlpha;
+        vertices[i*2] = {{a.x+nx*offsets[i],a.y+ny*offsets[i]},sample,{0,0}};
+        vertices[i*2+1] = {{b.x+nx*offsets[i],b.y+ny*offsets[i]},sample,{0,0}};
+        if (i<3) {
             const int n=i*2;
             const int quad[]={n,n+1,n+3,n,n+3,n+2};
             std::copy(std::begin(quad),std::end(quad),indices.begin()+i*6);
         }
     }
-    SDL_RenderGeometry(renderer,nullptr,vertices.data(),66,indices.data(),192);
+    SDL_RenderGeometry(renderer,nullptr,vertices.data(),vertices.size(),indices.data(),indices.size());
 }
 }
 
@@ -1347,31 +1434,6 @@ int CS2DRenderer::EffectiveFogAlpha() const {
                       0, 255);
 }
 
-void CS2DRenderer::KeepActorInViewport(float x, float y, float radius, float aimX, float aimY,
-                                       float scopeRadius) {
-    const float safe = 12;
-    // Joint bounds include the entire body, attached equipment and lens.
-    const float availableX = std::max(1.0f, viewW_ - safe * 2 - scopeRadius);
-    const float availableY = std::max(1.0f, viewH_ - safe * 2 - scopeRadius);
-    zoom_ = std::min(
-        {zoom_, availableX / (std::abs(aimX - x) + radius), availableY / (std::abs(aimY - y) + radius)});
-    const float loX =
-        std::max(x + radius - (viewW_ - safe) / zoom_, aimX - (viewW_ - scopeRadius - safe) / zoom_);
-    const float hiX = std::min(x - radius - safe / zoom_, aimX - (scopeRadius + safe) / zoom_);
-    const float loY =
-        std::max(y + radius - (viewH_ - safe) / zoom_, aimY - (viewH_ - scopeRadius - safe) / zoom_);
-    const float hiY = std::min(y - radius - safe / zoom_, aimY - (scopeRadius + safe) / zoom_);
-    cameraX_ = std::clamp(cameraX_, std::min(loX, hiX), std::max(loX, hiX));
-    cameraY_ = std::clamp(cameraY_, std::min(loY, hiY), std::max(loY, hiY));
-}
-
-void CS2DRenderer::KeepScopeInViewport(float aimX, float aimY, float radiusPx, int width, int height) {
-    // Constrain the camera itself so world aim, cursor and scope center stay coincident.
-    const float margin = radiusPx + 5.0f;
-    cameraX_ = std::clamp(cameraX_, aimX - (width - margin) / zoom_, aimX - margin / zoom_);
-    cameraY_ = std::clamp(cameraY_, aimY - (height - margin) / zoom_, aimY - margin / zoom_);
-}
-
 void CS2DRenderer::DrawScopeOverlay(const Presentation::ScopeOverlayParams& p) {
     if (!renderer_) return;
     const float t = std::clamp(p.scope.transition, 0.0f, 1.0f);
@@ -1381,7 +1443,7 @@ void CS2DRenderer::DrawScopeOverlay(const Presentation::ScopeOverlayParams& p) {
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
     const float cx = p.centerX;
     const float cy = p.centerY;
-    const float r  = radiusPx * (0.62f + 0.38f * t);   // 开镜瞬间由小放大到镜筒尺寸
+    const float r  = radiusPx * t;   // 开镜瞬间由小放大到镜筒尺寸
 
     // Cover every pixel outside the lens, including the viewport corners.
     SDL_SetRenderDrawColor(renderer_, 6, 8, 10, static_cast<Uint8>(VISION_FOG_ALPHA * t));
@@ -1672,12 +1734,61 @@ void CS2DRenderer::DrawSmokeCloud(float worldX, float worldY, float worldRadius,
     SDL_SetTextureAlphaMod(smokeTex_, 255);
 }
 
+void CS2DRenderer::EnsureFireTiles() {
+    static const char* kFireTilePaths[3] = {
+        "assets/cs2d/sprites/fire_tile_1.png",
+        "assets/cs2d/sprites/fire_tile_2.png",
+        "assets/cs2d/sprites/fire_tile_3.png",
+    };
+    for (int i = 0; i < 3; ++i) {
+        if (!fireTileTex_[i]) fireTileTex_[i] = LoadTexture(kFireTilePaths[i]);
+    }
+}
+
 void CS2DRenderer::DrawFireCells(const std::vector<SDL_FPoint> &cells, float x, float y, float radius,
                                  float age, float life, float seed) {
     std::vector<SDL_Vertex> vertices;
     std::vector<int> indices;
     const float activeRadius = Tuning::FireEffectiveRadius(radius, age, life);
     const float fade = std::clamp(life / .6f, 0.0f, 1.0f);
+    // 地面火池：三张无缝火焰贴图按 32 世界单位拼贴（火区地面层，火焰舌之下）。
+    // 贴图加载失败时静默退回纯程序火焰舌，不影响现有表现。
+    EnsureFireTiles();
+    if (fireTileTex_[0] && fireTileTex_[1] && fireTileTex_[2]) {
+        constexpr float kFireTileWorld = 32.0f;
+        const float fadeIn = std::clamp(age / 0.30f, 0.0f, 1.0f);
+        // 先按 cell 收集有火的格子（只画 activeRadius 内且可见的格子，与火焰舌一致）
+        struct FireTileSlot { int tx = 0, ty = 0; bool visible = false; };
+        std::vector<FireTileSlot> tiles;
+        for (const auto cell : cells) {
+            if (std::hypot(cell.x - x, cell.y - y) > activeRadius) continue;
+            const int tx = static_cast<int>(std::floor(cell.x / kFireTileWorld));
+            const int ty = static_cast<int>(std::floor(cell.y / kFireTileWorld));
+            int slotIdx = -1;
+            for (int i = 0; i < static_cast<int>(tiles.size()); ++i) {
+                if (tiles[i].tx == tx && tiles[i].ty == ty) { slotIdx = i; break; }
+            }
+            if (slotIdx < 0) { tiles.push_back({tx, ty, false}); slotIdx = static_cast<int>(tiles.size()) - 1; }
+            if (!visibilityFilter_ || visibilityFilter_(cell.x, cell.y)) tiles[slotIdx].visible = true;
+        }
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        for (const auto& t : tiles) {
+            if (!t.visible) continue;
+            const float wx = t.tx * kFireTileWorld, wy = t.ty * kFireTileWorld;
+            const float sx = (wx - cameraX_) * zoom_, sy = (wy - cameraY_) * zoom_;
+            const float sw = kFireTileWorld * zoom_;
+            if (sx + sw < -8 * zoom_ || sx > viewW_ + 8 * zoom_ ||
+                sy + sw < -4 * zoom_ || sy > viewH_ + 26 * zoom_) continue;
+            const int variant = ((t.tx * 7 + t.ty * 13 + static_cast<int>(seed)) % 3 + 3) % 3;
+            const float flicker = 0.8f + 0.2f * std::sin(age * 9.0f + t.tx * 2.1f + t.ty * 1.7f + seed);
+            const Uint8 alpha = static_cast<Uint8>(std::clamp(fade * fadeIn * flicker, 0.0f, 1.0f) * 255.0f);
+            if (alpha == 0) continue;
+            SDL_Texture* tex = fireTileTex_[variant];
+            SDL_SetTextureAlphaMod(tex, alpha);
+            const SDL_FRect dst{sx, sy, sw, sw};
+            SDL_RenderCopyF(renderer_, tex, nullptr, &dst);
+        }
+    }
     for (const auto cell : cells) {
         if (std::hypot(cell.x - x, cell.y - y) > activeRadius ||
             (visibilityFilter_ && !visibilityFilter_(cell.x, cell.y)))

@@ -565,6 +565,13 @@ public:
         WeaponId weapon = WeaponId::None;
         bool personal = false;
     };
+    struct DeathPresentation {
+        KillFeedEntry event;
+        float remaining = 0.0f;
+    };
+    static constexpr float DeathFreezeSeconds = 1.8f;
+    bool IsDeathFreeze() const { return !player_.alive && deathPresentation_.remaining > 0.0f; }
+    const DeathPresentation& GetDeathPresentation() const { return deathPresentation_; }
 
     // 记分板行
     struct ScoreRow {
@@ -909,13 +916,15 @@ public:
     }
 
     // ---- 观察者（死亡后）----
-    enum class SpectateMode { None = 0, Follow, Free };
+    enum class SpectateMode { None = 0, Follow, Free, Bomb };
     bool          IsSpectating() const { return specMode_ != SpectateMode::None && !player_.alive; }
     SpectateMode  GetSpectateMode() const { return specMode_; }
     int           GetSpectateTarget() const { return specTarget_; }
     // 当前被观战的 BOT（自由视角下保留最后跟随目标）；无效返回 nullptr。
     const Player* GetSpectatedPlayer() const {
-        if (specTarget_ >= 0 && specTarget_ < static_cast<int>(bots_.size())) {
+        if (!IsDeathFreeze() && specMode_ != SpectateMode::Bomb &&
+            specTarget_ >= 0 && specTarget_ < static_cast<int>(bots_.size()) &&
+            bots_[static_cast<size_t>(specTarget_)].alive) {
             return &bots_[static_cast<size_t>(specTarget_)];
         }
         return nullptr;
@@ -953,6 +962,8 @@ public:
     DmLoadout dmLoadout_;   // 死斗重生装配用（Reset 时清空）
     float ListenerX() const;
     float ListenerY() const;
+    void SetObjectiveAudioPaused(bool paused);
+    void StopObjectiveAudio(AudioManager* audio);
     Team GetMatchWinner() const { return teams_.MatchWinner(); }
 #ifdef PIXEL_DEV_REPLAY
     // 开发期：直接把比分推到赛点，用于预览结算页（release 构建不存在）
@@ -979,7 +990,7 @@ public:
         return round_.Elapsed() <= Tuning::BuyWindowSeconds;
     }
     float GetRoundElapsed() const { return round_.Elapsed(); }
-    // 比赛结束后经过的时间（用于自动返回主菜单）
+    // 比赛结束后经过的时间（用于进入结算页）
     float GetMatchOverTimer() const { return matchOverTimer_; }
     // 玩家当前是否处于购买区内（地图未定义购买区时视为全图可买）
     bool IsPlayerInBuyZone() const;
@@ -1136,6 +1147,9 @@ private:
     int cameraDistanceTier_ = 0;
     float edgeZoom_ = 0.0f;
     float previousEdgeZoom_ = 0.0f;
+    float edgeZoomFrom_ = 0.0f, edgeZoomTo_ = 0.0f, edgeZoomTime_ = 1.0f;
+    void DrawWorldPass(bool lens = false);
+    SpriteDrawParams MakeActorDrawParams(const Player& actor, const Player* observer) const;
     float previousScopeZoom_ = 1.0f;
     float previousScopeEngagement_ = 0.0f;
     float aimMotionBlur_ = 0;
@@ -1322,10 +1336,11 @@ private:
     float bombIntelAge_ = 0.0f;
     int plantingChannel_ = -1;
     int activeDefuser_ = -2;
-    void StopObjectiveAudio(class AudioManager* audio);
     float plantProgress_ = 0.0f;
 
     SpectateMode specMode_ = SpectateMode::None;
+    DeathPresentation deathPresentation_;
+    void UpdateSpectatorState();
     int   specTarget_ = -1;
     float specFreeX_ = 0.0f, specFreeY_ = 0.0f;
     int   NextTeammateBot(int from, int dir) const;
@@ -1380,7 +1395,6 @@ private:
     float aimWorldX_ = 0.0f, aimWorldY_ = 0.0f;     // 最近一次 Update 传入的准星世界坐标
     void TickScope(float dt);                       // 每帧按 dt 推进过渡
     // 相机向准星偏移的比例（1.5x≈0.35，2x≈0.5，按当前倍率线性）
-    float ScopeCameraShift() const;
     int  PurchaseQuantityOf(const Presentation::BuyRequest& request) const;
     int  PurchasePriceOf(const Presentation::BuyRequest& request) const;
     bool IsBuyWindowOpen() const;                          // 只看时窗（模式/回合）

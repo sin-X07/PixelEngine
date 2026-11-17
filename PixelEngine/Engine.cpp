@@ -101,6 +101,11 @@ GameUI::Actions Engine::BuildActions() {
             audioManager->PlayMusic(AudioManager::MusicTrackPath(audioManager->GetMusicTrack()));
         }
         if (currentState == SETTINGS) saveManager->Save();
+        if (s == MAIN_MENU) {
+            cs2dGame->StopObjectiveAudio(audioManager.get());
+            audioManager->StopFootstepLoop();
+            ClearDeathSnapshot();
+        }
         currentState = s;
     };
     a.openSettings = [this](GameState ret) { settingsReturnState = ret; currentState = SETTINGS; };
@@ -220,9 +225,13 @@ GameUI::Actions Engine::BuildActions() {
         SDL_SetRelativeMouseMode(sideChoicePending_ ? SDL_FALSE : SDL_TRUE);
         SDL_ShowCursor(sideChoicePending_ ? SDL_ENABLE : SDL_DISABLE);
         audioManager->ResumeMusic();
+        cs2dGame->SetObjectiveAudioPaused(false);
     };
     a.confirmExit = [this](bool toDesktop) { exitReturnState_ = currentState; exitToDesktop = toDesktop; currentState = EXIT_CONFIRM; };
     a.quitApp = [this] {
+        cs2dGame->StopObjectiveAudio(audioManager.get());
+        audioManager->StopFootstepLoop();
+        ClearDeathSnapshot();
         SDL_SetRelativeMouseMode(SDL_FALSE);
         SDL_ShowCursor(SDL_ENABLE);
         if (exitToDesktop) {
@@ -268,9 +277,11 @@ GameUI::Actions Engine::BuildActions() {
         saveManager->MutableSettings().mouseSensitivity = v;
     };
     a.setTargetFPS = [this](int fps) {
-        targetFPS_ = fps;
-        saveManager->MutableSettings().targetFPS = fps;
+        targetFPS_ = std::max(0, fps);
+        saveManager->MutableSettings().targetFPS = targetFPS_;
     };
+    a.setVSync = [this](bool enabled) { SetVSync(enabled); };
+    a.resetSettingsSection = [this](GameUI::SettingsSection section) { ResetSettingsSection(section); };
 
     // 准星
     a.setCrosshairColor = [this](Uint8 r, Uint8 g, Uint8 b, Uint8 al) {
@@ -368,7 +379,7 @@ GameUI::Actions Engine::BuildActions() {
         currentResIdx_ = idx;
         saveManager->MutableSettings().resIdx = idx;
 
-        // 方案 B：分辨率 = 内部渲染分辨率，窗口/全屏都生效
+        // 分辨率选项记录窗口大小，桌面全屏使用渲染缩放控制精度。
         if (!isFullscreen && window) {
             SDL_Rect usable;
             SDL_GetDisplayUsableBounds(0, &usable);
@@ -381,7 +392,7 @@ GameUI::Actions Engine::BuildActions() {
         // 内部画布由「窗口实际尺寸 + 渲染缩放」推导（分辨率只决定窗口大小）
         if (isFullscreen) {
             int ow = w, oh = h;
-            if (renderer) SDL_GetRendererOutputSize(renderer, &ow, &oh);
+            if (window) SDL_GetWindowSize(window, &ow, &oh);
             ResizeLogicalViewport(ow, oh);
         } else if (window) {
             int ww = w, wh = h;
@@ -392,7 +403,7 @@ GameUI::Actions Engine::BuildActions() {
     a.setRenderScale = [this](int pct) {
         saveManager->MutableSettings().renderScalePct = pct;
         int ww = currentResW_, wh = currentResH_;
-        if (isFullscreen && renderer) SDL_GetRendererOutputSize(renderer, &ww, &wh);
+        if (isFullscreen && window) SDL_GetWindowSize(window, &ww, &wh);
         else if (window) SDL_GetWindowSize(window, &ww, &wh);
         ResizeLogicalViewport(ww, wh);
     };
@@ -466,6 +477,7 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
             std::cout << "[Renderer] " << info.name << std::endl;
         }
     }
+    SetVSync(saveManager->GetSettings().vsync);
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     {
@@ -598,6 +610,77 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
     return true;
 }
 
+void Engine::SetVSync(bool enabled) {
+    if (!renderer) return;
+    if (SDL_RenderSetVSync(renderer, enabled ? 1 : 0) != 0) {
+        displayError_ = "垂直同步设置失败，当前驱动未接受此设置";
+        std::cerr << "[Renderer] VSync: " << SDL_GetError() << std::endl;
+        saveManager->MutableSettings().vsync = vsync_;
+        return;
+    }
+    vsync_ = enabled;
+    saveManager->MutableSettings().vsync = enabled;
+    displayError_.clear();
+}
+
+void Engine::ResetSettingsSection(GameUI::SettingsSection section) {
+    const GameSettings defaults;
+    const auto actions = BuildActions();
+    switch (section) {
+    case GameUI::SettingsSection::InputDisplay:
+        actions.setMouseSensitivity(defaults.mouseSensitivity);
+        saveManager->MutableSettings().botDifficulty = defaults.botDifficulty;
+        actions.setTargetFPS(defaults.targetFPS);
+        actions.setVSync(defaults.vsync);
+        actions.setFullscreen(defaults.fullscreen);
+        actions.setResolution(kResolutions[defaults.resIdx].w, kResolutions[defaults.resIdx].h, defaults.resIdx);
+        actions.setRenderScale(defaults.renderScalePct);
+        break;
+    case GameUI::SettingsSection::VisionScope:
+        actions.setFogOpacity(defaults.fogOpacityPct);
+        actions.setSniperDelayedScopeClose(defaults.sniperDelayedScopeClose);
+        actions.setScopeSensitivity(defaults.scopeSensitivity);
+        actions.setScopeCrossThickness(defaults.scopeCrossThickness);
+        actions.setScopeCrossDynamic(defaults.scopeCrossDynamic);
+        break;
+    case GameUI::SettingsSection::Crosshair:
+        actions.setCrosshairColor(defaults.crossR, defaults.crossG, defaults.crossB, defaults.crossA);
+        actions.setCrosshairThickness(defaults.crossThickness);
+        actions.setCrosshairLength(defaults.crossLength);
+        actions.setCrosshairGap(defaults.crossGap);
+        actions.setCrosshairCenterDot(defaults.crossCenterDot);
+        actions.setCrosshairDynamic(defaults.crossDynamic);
+        break;
+    case GameUI::SettingsSection::AimLine:
+        actions.setAimLine(defaults.aimLine);
+        actions.setAimLineStyle(defaults.aimLineStyle);
+        break;
+    case GameUI::SettingsSection::Radar:
+        actions.setRadarPlayerCentered(defaults.radarPlayerCentered);
+        actions.setRadarRotateWithPlayer(defaults.radarRotateWithPlayer);
+        actions.setRadarBlendBg(defaults.radarBlendBg);
+        actions.setRadarBgAlpha(defaults.radarBgAlpha);
+        actions.setRadarHudSize(defaults.radarHudSize);
+        actions.setRadarMapZoom(defaults.radarMapZoom);
+        break;
+    case GameUI::SettingsSection::Audio:
+        audioManager->SetMasterVolume(AudioManager::DefaultMasterVolume);
+        audioManager->SetMusicVolume(AudioManager::DefaultMusicVolume);
+        audioManager->SetEffectsVolume(AudioManager::DefaultEffectsVolume);
+        audioManager->SetMuted(false);
+        actions.setMusicTrack(0);
+        actions.setClickSound(0);
+        SaveAudioConfig();
+        break;
+    case GameUI::SettingsSection::Bindings:
+        saveManager->MutableSettings().bindings = defaults.bindings;
+        inputManager->CancelCapture();
+        inputManager->SetBindings(defaults.bindings);
+        break;
+    }
+    saveManager->Save();
+}
+
 void Engine::ApplySavedSettings() {
     const auto& s = saveManager->GetSettings();
 
@@ -633,7 +716,7 @@ void Engine::ApplySavedSettings() {
     }
 
     // 显示
-    targetFPS_     = (s.targetFPS > 0) ? s.targetFPS : 60;
+    targetFPS_     = std::max(0, s.targetFPS);
     currentResIdx_ = std::clamp(s.resIdx, 0, kResCount - 1);
 }
 
@@ -641,6 +724,8 @@ void Engine::ApplySavedSettings() {
 // 效果：任何窗口比例都居中铺满、无黑边、无内容丢失；UI 按 1920x1080 基准等比缩放
 void Engine::ResizeLogicalViewport(int winW, int winH) {
     if (winW <= 0 || winH <= 0) return;
+    viewportWindowW_ = winW;
+    viewportWindowH_ = winH;
 
     const int pct = std::clamp(saveManager ? saveManager->GetSettings().renderScalePct : 100,
                                25, 100);
@@ -720,10 +805,11 @@ void Engine::Run() {
                 (renderEnd - updateEnd) * counterToMs, workMs, static_cast<double>(elapsedTime), cs2dRenderer ? cs2dRenderer->LastFogMilliseconds() : 0.0f);
             if (profileFrames > 0 && measuredFrames >= profileFrames) isRunning = false;
         }
-        const double remainingMs = 1000.0 / std::max(1, targetFPS_) - workMs;
-        if (remainingMs > 0.0) {
+        const double targetMs = targetFPS_ > 0 ? 1000.0 / targetFPS_ : 0.0;
+        const double remainingMs = targetMs - workMs;
+        if (targetFPS_ > 0 && remainingMs > 0.0) {
             SDL_Delay(static_cast<Uint32>(remainingMs));
-            while ((SDL_GetPerformanceCounter() - frameStart) * counterToMs < 1000.0 / std::max(1, targetFPS_))
+            while ((SDL_GetPerformanceCounter() - frameStart) * counterToMs < targetMs)
                 SDL_Delay(0);
         }
     }
@@ -750,6 +836,7 @@ void Engine::Clean() {
 
     if (llmController_) { llmController_->Shutdown(); llmController_.reset(); }
 
+    if (cs2dGame) cs2dGame->StopObjectiveAudio(audioManager.get());
     if (audioManager) audioManager->Clean();
     if (imGuiUI)      imGuiUI->Shutdown();
     if (cs2dRenderer) cs2dRenderer->Clean();
@@ -757,6 +844,7 @@ void Engine::Clean() {
 
     // 图标缓存必须先于 SDL_DestroyRenderer 释放（契约 v1 第 3 节）
     if (weaponIconCache_) { weaponIconCache_->Shutdown(); }
+    ClearDeathSnapshot();
 
     for (auto& t : sceneTex_) {
         if (t) { SDL_DestroyTexture(t); t = nullptr; }
@@ -790,12 +878,12 @@ void Engine::ToggleFullscreen() {
         isFullscreen = false;
     } else {
         // 进入全屏：桌面全屏（不切显示模式，避免闪屏/重排）
-        // 逻辑尺寸仍按所选分辨率，多余区域由 SDL 自动 letterbox
+        // 桌面全屏的逻辑画布按桌面比例及渲染缩放计算。
         if (SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP) != 0) {
             std::cerr << "[Window] Enter fullscreen failed: " << SDL_GetError() << std::endl;
             return;
         }
-        { int ow = 0, oh = 0; SDL_GetRendererOutputSize(renderer, &ow, &oh);
+        { int ow = 0, oh = 0; SDL_GetWindowSize(window, &ow, &oh);
           ResizeLogicalViewport(ow, oh); }
         isFullscreen = true;
     }
@@ -815,6 +903,10 @@ void Engine::HandleInput() {
     inputManager->gameplayContext = currentState == PLAYING && !buyMenuOpen_ && !sideChoicePending_ && !sidePopupOpen_ && !IsTransitionActive();
     inputManager->uiConsumesMouse = ImGui::IsAnyItemHovered();
     inputManager->ProcessEvents(renderer);
+    int windowWidth = 0, windowHeight = 0;
+    SDL_GetWindowSize(window, &windowWidth, &windowHeight);
+    if (windowWidth != viewportWindowW_ || windowHeight != viewportWindowH_)
+        ResizeLogicalViewport(windowWidth, windowHeight);
     if (inputManager->helpRequested) {
         auto& settings = saveManager->MutableSettings();
         settings.combatHintsVisible = !settings.combatHintsVisible;
@@ -839,6 +931,8 @@ void Engine::HandleInput() {
             SDL_SetRelativeMouseMode(SDL_FALSE);
             SDL_ShowCursor(SDL_ENABLE);
             audioManager->PauseMusic();
+            cs2dGame->SetObjectiveAudioPaused(true);
+            audioManager->StopFootstepLoop();
         } else if (currentState == PAUSED) {
             if (sidePauseStartMs_) {
                 sidePhaseStartMs_ += SDL_GetTicks64() - sidePauseStartMs_;
@@ -848,6 +942,7 @@ void Engine::HandleInput() {
             SDL_SetRelativeMouseMode(sideChoicePending_ ? SDL_FALSE : SDL_TRUE);
             SDL_ShowCursor(sideChoicePending_ ? SDL_ENABLE : SDL_DISABLE);
             audioManager->ResumeMusic();
+            cs2dGame->SetObjectiveAudioPaused(false);
         } else if (currentState == SETTINGS) {
             saveManager->Save();
             SaveAudioConfig();
@@ -897,7 +992,7 @@ void Engine::HandleInput() {
         SDL_SetRelativeMouseMode(SDL_FALSE);
         SDL_ShowCursor(SDL_ENABLE);
         cursorCaptured_ = false;
-    } else {
+    } else if (cs2dGame->GetPlayer().alive) {
         // 正常对局：相对鼠标瞄准
         SDL_SetRelativeMouseMode(SDL_TRUE);
         int relX = 0, relY = 0;
@@ -1470,15 +1565,14 @@ void Engine::PrepareGameplayCamera(float dt, float interpolation) {
 }
 
 void Engine::SyncAimCursor(float dt, bool commitAllowed) {
+    if (!cs2dGame->GetPlayer().alive) return;
     const auto scope = cs2dGame->GetScopeView();
     const auto& player = cs2dGame->GetPlayer();
     const auto playerView = cs2dGame->GetActorView(player);
-    const float shift = scope.level > 0
-        ? CS2DGame::ScopeCameraShiftForZoom(scope.targetZoomMultiplier) : Tuning::CameraLookShift;
     const auto& world = cs2dGame->GetWorld();
     cs2dOverlay.SetReferenceWorldBounds(std::max(world.GetMapPixelW(), world.GetImageW()),
         std::max(world.GetMapPixelH(), world.GetImageH()));
-    cs2dOverlay.SetReferenceMode(scope.targetZoomMultiplier, shift);
+    cs2dOverlay.SetReferenceMode(1.0f, Tuning::CameraLookShift);
     if (!cs2dOverlay.ScreenAnchorActive()) {
         cs2dOverlay.SetVisibleAimPoint(cs2dGame->GetRenderAimX(), cs2dGame->GetRenderAimY());
         cs2dOverlay.virtCursorX = (cs2dGame->GetRenderAimX() - cs2dRenderer->GetCameraX()) * cs2dRenderer->GetZoom();
@@ -1593,7 +1687,7 @@ void Engine::Update(float dt) {
         // 留 1.2s 给最后的击杀/拆包播报播完，再切结算页；
         // 切页本身走 Engine 的全局 0.9s 黑场软切（和其它页面一致）。
         constexpr float kSettleDelay = 1.2f;
-        if (cs2dGame->GetMatchOverTimer() >= kSettleDelay) {
+        if (cs2dGame->GetMatchOverTimer() >= kSettleDelay && !cs2dGame->IsDeathFreeze()) {
             RecordMatchHistory(false);
             std::cout << "[CS2D] 比赛结束，进入结算页" << std::endl;
             buyMenuOpen_ = false;
@@ -1604,6 +1698,7 @@ void Engine::Update(float dt) {
             cs2dMouseDown = false;
             SDL_SetRelativeMouseMode(SDL_FALSE);
             SDL_ShowCursor(SDL_ENABLE);
+            audioManager->StopFootstepLoop();
             currentState = MATCH_END;
             return;
         }
@@ -1886,6 +1981,41 @@ void Engine::RenderSettingsPreviews() {
     SDL_SetRenderDrawColor(renderer, red, green, blue, alpha);
 }
 
+void Engine::ClearDeathSnapshot() {
+    if (deathWorldTex_) SDL_DestroyTexture(deathWorldTex_);
+    deathWorldTex_ = nullptr;
+    deathWorldEvent_ = 0;
+}
+
+void Engine::DrawGameplayWorld() {
+    if (!cs2dGame->IsDeathFreeze()) {
+        ClearDeathSnapshot();
+        cs2dGame->Render(logicalW_, logicalH_);
+        return;
+    }
+    const auto eventId = cs2dGame->GetDeathPresentation().event.id;
+    if (deathWorldEvent_ != eventId || !deathWorldTex_) {
+        ClearDeathSnapshot();
+        deathWorldTex_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
+                                          SDL_TEXTUREACCESS_TARGET, logicalW_, logicalH_);
+        if (!deathWorldTex_) {
+            cs2dGame->Render(logicalW_, logicalH_);
+            return;
+        }
+        SDL_Texture* target = SDL_GetRenderTarget(renderer);
+        SDL_SetRenderTarget(renderer, deathWorldTex_);
+        SDL_SetRenderDrawColor(renderer, 18, 26, 36, 255);
+        SDL_RenderClear(renderer);
+        cs2dGame->Render(logicalW_, logicalH_);
+        SDL_SetRenderTarget(renderer, target);
+        SDL_SetTextureBlendMode(deathWorldTex_, SDL_BLENDMODE_NONE);
+        SDL_SetTextureScaleMode(deathWorldTex_, SDL_ScaleModeLinear);
+        deathWorldEvent_ = eventId;
+    }
+    const SDL_Rect destination{0, 0, logicalW_, logicalH_};
+    SDL_RenderCopy(renderer, deathWorldTex_, nullptr, &destination);
+}
+
 void Engine::Render() {
 
     const Uint64 nowTicks = SDL_GetTicks64();
@@ -2011,8 +2141,8 @@ void Engine::Render() {
             DrawSideMapPreview();
         } else {
             showcaseStarted_=0;
-            cs2dGame->Render(logicalW_, logicalH_);
-            if (!sideChoicePending_) {
+            DrawGameplayWorld();
+            if (!sideChoicePending_ && !cs2dGame->IsDeathFreeze()) {
                 cs2dOverlay.Render(cs2dRenderer.get(), cs2dGame.get(), logicalW_, logicalH_);
             }
         }
@@ -2067,6 +2197,8 @@ void Engine::Render() {
         }
         ctx.mouseSensitivity   = cs2dGame->GetMouseSensitivity();
         ctx.targetFPS          = targetFPS_;
+        ctx.vsync              = vsync_;
+        ctx.displayError       = displayError_;
 
         ctx.crosshairR         = cs2dOverlay.crosshair.r;
         ctx.crosshairG         = cs2dOverlay.crosshair.g;
@@ -2379,6 +2511,16 @@ void Engine::Render() {
         GameUI::InGameCtx ictx;
         ictx.bindings = &saveManager->GetSettings().bindings;
         ictx.state    = currentState;
+        const auto& death = cs2dGame->GetDeathPresentation();
+        ictx.death.active = cs2dGame->IsDeathFreeze();
+        ictx.death.remaining = death.remaining;
+        ictx.death.killer = death.event.killer.empty() ? "环境" : death.event.killer;
+        if (death.event.killer == "你") ictx.death.killer = "你（自伤）";
+        ictx.death.killerTeam = death.event.killerTeam;
+        const auto& deathWeapon = WeaponDB::Get(death.event.weapon);
+        ictx.death.weapon = death.event.weapon == WeaponId::None ? "环境伤害" : deathWeapon.name;
+        ictx.death.icon = death.event.weapon == WeaponId::None ? "" : deathWeapon.iconPath;
+        ictx.bombSpectating = cs2dGame->GetSpectateMode() == CS2DGame::SpectateMode::Bomb;
 
         // 观战跟随 BOT 时，右下武器栏与左下血量/护甲显示被观战者的实时状态。
         const CS2DGame::Player* view = cs2dGame->GetSpectatedPlayer();
@@ -2449,7 +2591,6 @@ void Engine::Render() {
         ictx.hasDefuseKit = status.team == Team::CT && status.hasDefuseKit;
         ictx.matchOver        = cs2dGame->IsMatchOver();
         ictx.matchWinnerIsCT  = (cs2dGame->GetMatchWinner() == Team::CT);
-        ictx.matchOverReturn  = 8.0f - cs2dGame->GetMatchOverTimer();
         ictx.coachReason      = cs2dGame->GetCoachReason(status.team);
         ictx.coachFlash       = cs2dGame->GetCoachPlanAge() < 1.5f;
 
@@ -2564,7 +2705,7 @@ void Engine::Render() {
     }
     }   // !holdOldPage
 
-    if (currentState == PLAYING && !sideChoicePending_ && !sidePopupOpen_) {
+    if (currentState == PLAYING && cs2dGame->GetPlayer().alive && !sideChoicePending_ && !sidePopupOpen_) {
         gameUI->DrawDamageDirections(cs2dGame->GetDamageDirections());
     }
     if (saveManager->GetSettings().combatHintsVisible && currentState == PLAYING &&
@@ -2653,9 +2794,9 @@ void Engine::LoadAudioConfig() {
         return hasAudioSection ? ini.GetBool("audio", key, def) : ini.GetBool("", key, def);
     };
 
-    audioManager->SetMasterVolume (readInt("master",  100));
-    audioManager->SetMusicVolume  (readInt("music",    25));
-    audioManager->SetEffectsVolume(readInt("effects", 100));
+    audioManager->SetMasterVolume (readInt("master",  AudioManager::DefaultMasterVolume));
+    audioManager->SetMusicVolume  (readInt("music",    AudioManager::DefaultMusicVolume));
+    audioManager->SetEffectsVolume(readInt("effects", AudioManager::DefaultEffectsVolume));
     audioManager->SetMuted        (readBool("muted", false));
     audioManager->SetMusicTrack   (readInt("music_track", 0));
     audioManager->SetClickSound   (readInt("click_sound", 0));
@@ -2756,6 +2897,7 @@ void Engine::RenderBuyMenu() {
         k.availability = cs2dGame->EvaluatePurchase(k.request);
         k.owned = (k.availability == Presentation::BuyCode::AlreadyEquipped);
         k.categoryLabel = "护甲";
+        k.iconPath = (tier == 2) ? "cs2d/sprites/armor_helmet_d.png" : "cs2d/sprites/armor_d.png";
         bctx.items.push_back(k);
     }
 

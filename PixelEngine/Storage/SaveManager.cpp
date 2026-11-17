@@ -51,7 +51,8 @@ void SaveManager::Load() {
         if (settings_.resIdx > 11) --settings_.resIdx;
     }
     settings_.fullscreen       = ini.GetBool ("settings", "fullscreen", false);
-    settings_.targetFPS        = ini.GetInt  ("settings", "target_fps", 60);
+    settings_.targetFPS        = std::max(0, ini.GetInt("settings", "target_fps", 60));
+    settings_.vsync            = ini.GetBool("settings", "vsync", false);
     settings_.renderScalePct   = ini.GetInt  ("settings", "render_scale", 100);
     settings_.fogOpacityPct    = ini.GetInt  ("settings", "fog_opacity", 100);
     settings_.sniperDelayedScopeClose =
@@ -139,6 +140,7 @@ void SaveManager::Save() {
     ini.SetInt("settings", "resolution_list_version", 2);
     ini.SetBool ("settings", "fullscreen",  settings_.fullscreen);
     ini.SetInt  ("settings", "target_fps",  settings_.targetFPS);
+    ini.SetBool ("settings", "vsync",       settings_.vsync);
     ini.SetInt  ("settings", "render_scale", settings_.renderScalePct);
     ini.SetInt  ("settings", "fog_opacity", settings_.fogOpacityPct);
     ini.SetBool ("settings", "sniper_delayed_scope_close", settings_.sniperDelayedScopeClose);
