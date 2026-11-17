@@ -32,6 +32,7 @@ public:
 
     void  SetVisionRadius(float r) { radius_ = std::clamp(r, 1.0f, kMaxRadius); }
     float VisionRadius() const { return radius_; }
+    float ConeAngleDeg() const { return coneDeg_; }
     void SetDistanceLimited(bool limited) { distanceLimited_ = limited; }
     void SetConeAngleDeg(float angle) { coneDeg_ = std::clamp(angle, 1.0f, 360.0f); }
 

@@ -40,6 +40,5 @@ enum class RoundPhase {
     Warmup,     // 热身 / 等待
     Freeze,     // 冻结（不可移动）
     Buy,        // 购买期
-    Live,       // 交战期
-    RoundEnd    // 回合结算
+    Live        // 交战期，含已决展示窗口
 };

@@ -255,13 +255,61 @@ CS2DGame::BodyVisibility CS2DGame::QueryBodyVisibility(const Player &observer, c
             return entry.result;
     BodyVisibility result;
     result.aim = {target.x, target.y};
+    const float targetAim = target.EffectiveAim();
+    const float observerAim = observer.EffectiveAim();
+    const auto center = BodyGeometry::Transform({0,0},target.x,target.y,target.size,targetAim,
+                                                static_cast<int>(target.animState),target.animTimer);
+    const float bound = target.size * .707107f + .01f;
+    const float dx=center.x-observer.x, dy=center.y-observer.y;
+    const float distance=std::hypot(dx,dy);
+    float cone = visibility_.ConeAngleDeg();
+    bool blind = !observer.alive;
+    if (&observer == &player_) blind |= flashTimer_ > 0;
+    else {
+        const auto& ai=AiAt(AiIndexOf(observer));
+        blind |= ai.blindTimer > 0;
+        cone = Tuning::VisionConeDeg * tactics_.perception[std::clamp(ai.difficulty,0,3)].angle;
+    }
+    cone = std::clamp(cone,1.0f,360.0f);
+    const float halfCone=(cone+VisibilityQuery::kAngleSoftDeg)*Tuning::Pi/360;
+    const float delta=std::abs(std::remainder(std::atan2(dy,dx)-observerAim,2*Tuning::Pi));
+    bool hidden = blind || (distance > bound && delta > halfCone + std::asin(bound/distance));
+    // A single blocking tile covering all four bounds also covers every body pixel.
+    if (!hidden && world_ && distance > bound * 2) {
+        const float hit=visibility_.FirstBulletWallFraction(observer.x,observer.y,center.x,center.y);
+        if (hit < 1) {
+            const int col=static_cast<int>(std::floor((observer.x+dx*(hit+.00001f))/world_->GetTileWidth()));
+            const int row=static_cast<int>(std::floor((observer.y+dy*(hit+.00001f))/world_->GetTileHeight()));
+            const float left=col*world_->GetTileWidth(), top=row*world_->GetTileHeight();
+            const float right=left+world_->GetTileWidth(), bottom=top+world_->GetTileHeight();
+            auto blocked = [&](float x,float y) {
+                float enter=0, leave=1;
+                auto slab = [&](float origin,float direction,float lo,float hi) {
+                    if (std::abs(direction)<.000001f) return origin>lo && origin<hi;
+                    float a=(lo-origin)/direction, b=(hi-origin)/direction;
+                    if (a>b) std::swap(a,b);
+                    enter=std::max(enter,a); leave=std::min(leave,b);
+                    return enter+.00001f<leave;
+                };
+                return slab(observer.x,x-observer.x,left,right) &&
+                       slab(observer.y,y-observer.y,top,bottom) && enter>0 && leave<1;
+            };
+            hidden = world_->IsBlockingBullet(row,col) &&
+                     blocked(center.x-bound,center.y-bound) && blocked(center.x+bound,center.y-bound) &&
+                     blocked(center.x-bound,center.y+bound) && blocked(center.x+bound,center.y+bound);
+        }
+    }
+    if (hidden) {
+        bodyVisibilityCache_.push_back({&observer,&target,signature,result});
+        return result;
+    }
     const auto &pose = BodyGeometry::Get(target.spriteKey, ActorPoseSlot(target));
     std::array<bool, BodyGeometry::Resolution * BodyGeometry::Resolution> visible{};
     int count = 0;
+    const float cosine=std::cos(targetAim+Tuning::Pi*.5f), sine=std::sin(targetAim+Tuning::Pi*.5f);
     for (const auto local : pose.samples) {
-        const auto point =
-            BodyGeometry::Transform(local, target.x, target.y, target.size, target.EffectiveAim(),
-                                    static_cast<int>(target.animState), target.animTimer);
+        const SDL_FPoint point{center.x+target.size*(local.x*cosine-local.y*sine),
+                               center.y+target.size*(local.x*sine+local.y*cosine)};
         if (!CanSeePoint(observer, point.x, point.y))
             continue;
         const int x = static_cast<int>((local.x + .5f) * BodyGeometry::Resolution);

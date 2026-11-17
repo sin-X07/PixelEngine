@@ -54,9 +54,7 @@ SOUNDS = [
     ("assets/audio/bomb_plant.wav", 520, 0.20),
     ("assets/audio/bomb_defuse.wav", 440, 0.20),
     ("assets/audio/bomb_beep.wav", 900, 0.06),
-    ("assets/audio/round_start.wav", 600, 0.25),
     ("assets/audio/round_win.wav", 780, 0.40),
-    ("assets/audio/round_lose.wav", 260, 0.40),
     ("assets/audio/sfx_footstep.mp3", 200, 0.05),
     ("assets/audio/sfx_armor_hit.wav", 500, 0.08),
 ]

@@ -29,7 +29,7 @@ int main() {
         EconomySystem e;
         const int expect[6] = { 1400, 1900, 2400, 2900, 3400, 3400 };
         for (int i = 0; i < 6; ++i) {
-            const int got = e.GrantRoundEnd(Team::CT, Team::T);  // T 连败
+            const int got = e.GrantRoundResult(Team::CT, Team::T);  // T 连败
             char buf[96];
             std::snprintf(buf, sizeof(buf), "T 第 %d 次连败补偿 = $%d (期望 $%d)",
                           i + 1, got, expect[i]);
@@ -39,17 +39,17 @@ int main() {
     // 胜利后连败清零
     {
         EconomySystem e;
-        e.GrantRoundEnd(Team::CT, Team::T);   // 败 1
-        e.GrantRoundEnd(Team::CT, Team::T);   // 败 2
+        e.GrantRoundResult(Team::CT, Team::T);   // 败 1
+        e.GrantRoundResult(Team::CT, Team::T);   // 败 2
         check(e.LossStreak(Team::T) == 2, "T 连败计数 = 2");
-        e.GrantRoundEnd(Team::T, Team::T);    // 胜
+        e.GrantRoundResult(Team::T, Team::T);    // 胜
         check(e.LossStreak(Team::T) == 0, "胜利后连败计数清零");
-        check(e.GrantRoundEnd(Team::CT, Team::T) == 1400, "清零后再败回到 $1400");
+        check(e.GrantRoundResult(Team::CT, Team::T) == 1400, "清零后再败回到 $1400");
     }
     // T / CT 连败独立
     {
         EconomySystem e;
-        e.GrantRoundEnd(Team::CT, Team::T);   // T 败 1
+        e.GrantRoundResult(Team::CT, Team::T);   // T 败 1
         check(e.LossStreak(Team::T) == 1 && e.LossStreak(Team::CT) == 0,
               "T/CT 连败计数互相独立");
     }

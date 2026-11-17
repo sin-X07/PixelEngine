@@ -217,9 +217,7 @@
 | `bomb_plant.wav` | C4 下包 |
 | `bomb_defuse.wav` | C4 拆包 |
 | `bomb_beep.wav` | C4 滴答 |
-| `round_start.mp3` | 回合开始 |
 | `round_win.wav` | 回合胜利 |
-| `round_lose.wav` | 回合失败 |
 | `sfx_hit.wav` | 命中 |
 | `sfx_kill.mp3` | 击杀 |
 | `sfx_armor_hit.wav` | 护甲受击 |

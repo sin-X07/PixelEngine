@@ -58,7 +58,7 @@ public:
     // ---- 回合结束奖励 ----
     // winner: 胜方；myTeam: 本队阵营
     // 返回应发放的金额，并维护连败计数（T / CT 各自独立）
-    int GrantRoundEnd(Team winner, Team myTeam) {
+    int GrantRoundResult(Team winner, Team myTeam) {
         if (myTeam == Team::None) return 0;
 
         int& streak = (myTeam == Team::T) ? lossStreakT_ : lossStreakCT_;

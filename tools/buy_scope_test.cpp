@@ -41,6 +41,7 @@
 #include "Graphics/WeaponIconCache.hpp"
 #include "Graphics/ImGuiUI.hpp"
 #include "Graphics/UiScale.hpp"
+#include "Graphics/Palette.hpp"
 #include "ThirdParty/imgui/imgui_internal.h"
 
 struct Menu3DTestAccess {
@@ -2024,6 +2025,108 @@ static void TestHdMapNavigation() {
 }
 
 struct CS2DGameTestAccess {
+    static void TestPerformanceInterpolation() {
+        CS2DGame game;
+        game.player_.alive=true;
+        game.player_.SetSlotWeapon(0,WeaponId::AWP);
+        game.player_.weaponSlot=0;
+        game.scope_.weapon=WeaponId::AWP;
+        game.scopeLevel_=1;
+        game.scopeZoom_=1.5f;
+        game.previousScopeZoom_=1;
+        game.scopeEngagement_=1;
+        game.previousScopeEngagement_=0;
+        game.viewHistoryValid_=true;
+        game.renderInterpolation_=.5f;
+        const auto view=game.GetRenderScopeView();
+        check(std::abs(view.zoomMultiplier-1.25f)<.0001f && std::abs(view.transition-.5f)<.0001f,
+              "performance scope zoom and engagement interpolate between fixed ticks");
+        check(game.GetScopeView().zoomMultiplier==1.5f,"performance render interpolation preserves gameplay zoom");
+        game.ResetScope(Presentation::ScopeResetReason::WeaponChanged);
+        check(game.GetRenderScopeView().zoomMultiplier==1,"performance scope reset clears interpolation history");
+    }
+
+    static void TestFrostGpu() {
+        SDL_InitSubSystem(SDL_INIT_VIDEO);
+        SDL_Window* window = SDL_CreateWindow("Frost GPU regression",0,0,1280,720,SDL_WINDOW_HIDDEN);
+        SDL_Renderer* output = window ? SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE) : nullptr;
+        check(output != nullptr, "frost accelerated renderer initializes");
+        if (!output) { SDL_DestroyWindow(window); return; }
+        {
+            ImGuiUI ui;
+            ui.Initialize(window,output);
+            ImGui::GetIO().IniFilename = nullptr;
+            SDL_Texture* scene = SDL_CreateTexture(output,SDL_PIXELFORMAT_RGBA8888,SDL_TEXTUREACCESS_TARGET,1280,720);
+            check(scene != nullptr, "frost GPU world render target initializes");
+            SDL_SetRenderTarget(output,scene);
+            SDL_SetTextureScaleMode(scene,SDL_ScaleModeLinear);
+            SDL_SetRenderDrawBlendMode(output,SDL_BLENDMODE_NONE);
+            for(int y=0;y<720;y+=8) for(int x=0;x<1280;x+=8) {
+                const Uint8 value = (x/8+y/8)%2 ? 220 : 20;
+                SDL_SetRenderDrawColor(output,value,value,value,255);
+                const SDL_Rect cell{x,y,8,8};
+                SDL_RenderFillRect(output,&cell);
+            }
+            ui.BeginFrame();
+            SDL_Texture* originalTarget = SDL_GetRenderTarget(output);
+            const auto before = SDL_GetPerformanceCounter();
+            ui.PrepareFrostedGlass();
+            const double ms = (SDL_GetPerformanceCounter()-before)*1000.0/SDL_GetPerformanceFrequency();
+            check(originalTarget != nullptr && Palette::frostTexture != 0 && SDL_GetRenderTarget(output) == originalTarget,
+                  "frost GPU capture restores the active world target");
+            Palette::DrawGlassPanel(ImGui::GetForegroundDrawList(),{80,80},{600,600},Palette::GlassTint(IM_COL32(15,19,25,200)),8);
+            ui.EndFrame();
+            SDL_Surface* pixels=SDL_CreateRGBSurfaceWithFormat(0,1280,720,32,SDL_PIXELFORMAT_RGBA32);
+            const bool read = SDL_RenderReadPixels(output,nullptr,SDL_PIXELFORMAT_RGBA32,pixels->pixels,pixels->pitch)==0;
+            const auto* bytes=static_cast<const Uint8*>(pixels->pixels);
+            const int inside=bytes[200*pixels->pitch+200*4], outside=bytes[200*pixels->pitch+1200*4];
+            check(read && inside>30 && inside<180 && outside==220,
+                  "frost blurs inside panels while outside world pixels remain sharp");
+            std::printf("Frost GPU capture %.3f ms, inside=%d outside=%d\n",ms,inside,outside);
+            IMG_SavePNG(pixels,"build-evidence/pix35/frost-gpu.png");
+            SDL_FreeSurface(pixels);
+            SDL_SetRenderTarget(output,nullptr);
+            SDL_DestroyTexture(scene);
+        }
+        SDL_DestroyRenderer(output);
+        SDL_DestroyWindow(window);
+    }
+
+    static void TestPix35Match() {
+        CS2DGame game;
+        game.SetMatchMode(MatchMode::BombDefusal);
+        game.SetCoachLlmEnabled(false);
+        game.SetRngSeed(35);
+        if (!game.LoadMap(MapPath(), nullptr, true)) {
+            check(false, "PIX35 full match loads real bomb map");
+            return;
+        }
+        int previousRound = game.GetRoundNumber();
+        for (int frame = 0; frame < 30 * 1800 && !game.IsMatchOver(); ++frame) {
+            const auto& player = game.GetPlayer();
+            game.Update(1.0f/30, false, player.x + 100, player.y,
+                        false, false, false, false, false, false, false, nullptr);
+            if (game.GetRoundNumber() != previousRound) {
+                previousRound = game.GetRoundNumber();
+                check(game.GetRoundPhase() == RoundPhase::Freeze && !game.IsRoundDecided(),
+                      "PIX35 full match starts each new round in fresh Freeze");
+            }
+        }
+        check(game.IsMatchOver() && game.IsRoundDecided() && game.GetRoundPhase() == RoundPhase::Live &&
+                  std::max(game.GetScoreT(),game.GetScoreCT()) == 8,
+              "PIX35 real bomb match reaches eight wins through normal gameplay updates");
+        const int lastRound = game.GetRoundNumber();
+        for (int frame=0; frame<30*10; ++frame) {
+            const auto& player = game.GetPlayer();
+            game.Update(1.0f/30, false, player.x + 100, player.y,
+                        false, false, false, false, false, false, false, nullptr);
+        }
+        check(game.GetRoundNumber() == lastRound && game.IsRoundDecided(),
+              "PIX35 complete match preserves final round after presentation delay");
+        std::printf("PIX35 full match score %d:%d after %d rounds\n",
+                    game.GetScoreT(),game.GetScoreCT(),lastRound);
+    }
+
     static int BenchmarkRound3Visibility() {
         SDL_InitSubSystem(SDL_INIT_VIDEO);
         SDL_Window *window =
@@ -2111,6 +2214,334 @@ struct CS2DGameTestAccess {
         SDL_DestroyRenderer(output);
         SDL_DestroyWindow(window);
         return csv ? 0 : 1;
+    }
+
+    static void TestPix35Visuals() {
+        const std::filesystem::path directory = "build-evidence/pix35";
+        std::filesystem::create_directories(directory);
+        SDL_InitSubSystem(SDL_INIT_VIDEO);
+        for (const auto dimensions : {SDL_Point{1280,720}, SDL_Point{1920,1080}, SDL_Point{1024,768}}) {
+            const int width = dimensions.x, height = dimensions.y;
+            SDL_Window* window = SDL_CreateWindow("PIX35 HUD review",0,0,width,height,SDL_WINDOW_HIDDEN);
+            SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0,width,height,32,SDL_PIXELFORMAT_RGBA32);
+            SDL_Renderer* output = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+            check(window && output, "PIX35 visual review initializes");
+            if (window && output) {
+                ImGuiUI ui;
+                ui.Initialize(window,output);
+                ImGui::GetIO().IniFilename = nullptr;
+                ui.SetUiScale(std::min(width/1920.f,height/1080.f));
+                WeaponIconCache icons;
+                icons.Initialize(output);
+                GameUI gameUI;
+                gameUI.SetImGuiUI(&ui);
+                gameUI.SetWeaponIconCache(&icons);
+                CS2DRenderer renderer;
+                renderer.Initialize(output,"assets/cs2d/maps",width,height);
+                CS2DGame game;
+                game.SetMatchMode(MatchMode::BombDefusal);
+                check(game.LoadMap(MapPath(),&renderer,true), "PIX35 visual map loads");
+                CS2DOverlay overlay;
+                GameUI::InGameCtx hud;
+                hud.playerTeam = Team::CT;
+                hud.mapName = "古代遗迹";
+                hud.scoreT = 3; hud.scoreCT = 4; hud.aliveT = 4; hud.aliveCT = 5;
+                hud.roundNumber = 8; hud.roundRemainingSec = 83;
+                hud.money = 4200; hud.ammo = 7; hud.magazineSize = 30; hud.reserveAmmo = 90;
+                hud.health = 83; hud.armor = 100; hud.helmet = true; hud.hasDefuseKit = true;
+                for (const auto id : {WeaponId::M4A4,WeaponId::USP_S,WeaponId::Knife,WeaponId::GrenadeHE,WeaponId::GrenadeFlash,WeaponId::GrenadeSmoke}) {
+                    const auto& def = WeaponDB::Get(id);
+                    const int slot = def.cls == WeaponClass::Grenade ? 3 : static_cast<int>(hud.equipment.size());
+                    hud.equipment.push_back({def.name,def.iconPath,std::to_string(slot+1),
+                        id == WeaponId::GrenadeFlash ? 2 : 1,id==WeaponId::M4A4,slot});
+                }
+                hud.killFeed.push_back({1,"你","目标玩家",WeaponDB::Get(WeaponId::M4A4).iconPath,Team::CT,Team::T,3,true});
+                for (int i=0;i<10;++i) hud.scoreRows.push_back({i==0 ? "你" : "BOT " + std::to_string(i),i<5?1:2,12-i,i,4200,true,i==0});
+                GameUI::BuyMenuCtx buy;
+                buy.money = 2500; buy.canBuy = true; buy.roundNumber = 8; buy.buyRemaining = 8;
+                for (int i=1;i<static_cast<int>(WeaponId::Count);++i) {
+                    const auto& def=WeaponDB::Get(static_cast<WeaponId>(i));
+                    if (def.price<=0 || !WeaponDB::TeamAllowed(def.id,false)) continue;
+                    GameUI::BuyItem item;
+                    item.request=WeaponReq(def.id);item.name=def.name;item.price=def.price;
+                    item.iconPath=def.iconPath;item.scopeSupported=def.scoped;
+                    item.group=def.slot==WeaponSlotKind::Primary?0:def.slot==WeaponSlotKind::Secondary?1:def.slot==WeaponSlotKind::Melee?2:3;
+                    item.categoryLabel=item.group==0?"主武器":item.group==1?"副武器":"投掷物";
+                    item.availability=def.price>buy.money?Presentation::BuyCode::InsufficientFunds:Presentation::BuyCode::Ok;
+                    if(def.id==WeaponId::USP_S)item.availability=Presentation::BuyCode::AlreadyEquipped;
+                    if(def.id==WeaponId::M4A4)item.availability=Presentation::BuyCode::AlreadyEquipped;
+                    buy.items.push_back(item);
+                }
+                GameSettings settings;
+                InputManager input;
+                GameUI::MenuCtx menu;
+                menu.settings = &settings;
+                menu.input = &input;
+                check(ImGui::GetStyle().Colors[ImGuiCol_WindowBg].w > .9f &&
+                      Palette::BgPanel().w == 1 && Palette::Text().w == 1,
+                      "PIX35 non-game menus retain their original opaque material");
+                for (const std::string scene : {"buy","reload","dryfire","tab","feedback","grenades","unarmored","armor","pause","settings","history","map-select","side-select","match-end","carrier","dropped"}) {
+                    hud.armor = scene == "unarmored" ? 0 : 100;
+                    hud.helmet = scene != "armor" && scene != "unarmored";
+                    for (auto& item : hud.equipment)
+                        item.selected = scene == "grenades" ? item.name == WeaponDB::Get(WeaponId::GrenadeFlash).name :
+                            item.name == WeaponDB::Get(WeaponId::M4A4).name;
+                    hud.showScoreboard = scene=="tab";
+                    overlay.showScoreboard = hud.showScoreboard;
+                    hud.reloading = scene=="reload";
+                    hud.reloadProgress = .62f;
+                    hud.dryFireHint = scene=="dryfire";
+                    hud.hasNoWeaponHint = hud.reloading || hud.dryFireHint;
+                    hud.hintText = hud.dryFireHint?"没有备弹":"换弹中...";
+                    hud.ammo = hud.dryFireHint?0:7;
+                    hud.reserveAmmo = hud.dryFireHint?0:90;
+                    hud.roundPhase = scene=="buy"?2:3;
+                    hud.money = scene=="buy"?buy.money:4200;
+                    if (scene=="carrier" || scene=="dropped") {
+                        game.player_.team=Team::T;
+                        game.bots_.clear();game.bots_.resize(1);
+                        auto& carrier=game.bots_[0];
+                        carrier.alive=true;carrier.team=Team::T;carrier.spriteKey=1;
+                        carrier.x=game.player_.x+20;carrier.y=game.player_.y;
+                        game.bombCarrier_=scene=="carrier"?0:-2;
+                        game.bombDropped_=scene=="dropped";
+                        game.bombDropX_=carrier.x;game.bombDropY_=carrier.y;
+                    }
+                    for(int frame=0;frame<8;++frame) {
+                        SDL_SetRenderDrawColor(output,28,35,40,255);SDL_RenderClear(output);
+                        game.Render(width,height);
+                        overlay.Render(&renderer,&game,width,height);
+                        if(scene=="feedback") {
+                            renderer.DrawHitMarker(width*.40f,height*.5f,g_uiScale,255);
+                            renderer.DrawHitMarker(width*.50f,height*.5f,g_uiScale,255,{110,193,255,255});
+                            renderer.DrawHitMarker(width*.60f,height*.5f,g_uiScale*1.5f,255,{244,83,72,255});
+                            renderer.DrawDamageVignette(70);
+                        }
+                        ui.BeginFrame();ImGui::GetIO().DeltaTime=.1f;
+                        gameUI.DrawInGame(hud,&ui);
+                        if(scene=="buy")gameUI.DrawBuyMenu(buy,{});
+                        if (scene == "pause" || scene == "settings") {
+                            menu.state = scene == "pause" ? PAUSED : SETTINGS;
+                            gameUI.DrawMenu(menu, {});
+                        }
+                        if (scene == "history") gameUI.DrawHistory({}, {});
+                        if (scene == "map-select") gameUI.DrawMapSelect({}, {});
+                        if (scene == "side-select") {
+                            GameUI::SideSelectCtx side;
+                            side.mapName = "古代遗迹";
+                            side.bombMode = true;
+                            gameUI.DrawSidePopup(side, {});
+                        }
+                        if (scene == "match-end") gameUI.DrawMatchEnd({}, {});
+                        if(scene=="feedback")gameUI.DrawDamageDirections({{{0,.5f},{3.14159265f,.5f},{},{}}});
+                        ui.EndFrame();SDL_RenderPresent(output);
+                    }
+                    const auto path=directory/(scene+"-"+std::to_string(width)+"x"+std::to_string(height)+".png");
+                    check(IMG_SavePNG(surface,path.string().c_str())==0,"PIX35 visual state evidence saved");
+                    const auto* scoreboard=ImGui::FindWindowByName("##Scoreboard");
+                    if (scene == "grenades") {
+                        std::vector<ImVec2> centers;
+                        const auto* drawData = ImGui::GetDrawData();
+                        for (const auto& item : hud.equipment) {
+                            if (item.slot != 3) continue;
+                            const auto texture = reinterpret_cast<ImTextureID>(icons.GetHud(item.icon));
+                            ImVec2 low(FLT_MAX, FLT_MAX), high(-FLT_MAX, -FLT_MAX);
+                            for (int list = 0; list < drawData->CmdListsCount; ++list) {
+                                const auto* draw = drawData->CmdLists[list];
+                                for (const auto& command : draw->CmdBuffer) {
+                                    if (command.TextureId != texture) continue;
+                                    for (unsigned index = command.IdxOffset; index < command.IdxOffset + command.ElemCount; ++index) {
+                                        const auto point = draw->VtxBuffer[command.VtxOffset + draw->IdxBuffer[index]].pos;
+                                        low.x = std::min(low.x, point.x);
+                                        low.y = std::min(low.y, point.y);
+                                        high.x = std::max(high.x, point.x);
+                                        high.y = std::max(high.y, point.y);
+                                    }
+                                }
+                            }
+                            if (low.x < high.x) centers.push_back({(low.x + high.x) * .5f, (low.y + high.y) * .5f});
+                        }
+                        check(centers.size() == 3 && std::abs(centers[0].y - centers[1].y) < 1 &&
+                              std::abs(centers[1].y - centers[2].y) < 1 && centers[0].x < centers[1].x &&
+                              centers[1].x < centers[2].x, "PIX35 grenade HUD icons share one horizontal row");
+                    }
+                    if(hud.showScoreboard && scoreboard)
+                        check(scoreboard->Pos.x > ScoreboardMapSize(width,height) + 16.0f*height/1080,
+                              "PIX35 full map and title stay left of centered scoreboard at every aspect ratio");
+                }
+            }
+            SDL_DestroyRenderer(output);SDL_FreeSurface(surface);SDL_DestroyWindow(window);
+        }
+    }
+
+    static void TestPix35() {
+        RoundManager rounds;
+        rounds.Reset(RoundConfig{});
+        rounds.Update(2.0f);
+        rounds.Update(6.0f);
+        rounds.EndRound(Team::CT);
+        const float decidedAt = rounds.DecidedAt();
+        rounds.EndRound(Team::T);
+        check(rounds.Phase() == RoundPhase::Live && rounds.IsDecided() && rounds.LastWinner() == Team::CT,
+              "PIX35 decided result stays Live and duplicate decision preserves winner");
+        rounds.Update(3.99f);
+        check(rounds.Phase() == RoundPhase::Live && rounds.DecidedAt() == decidedAt && rounds.ResultRemaining() > 0,
+              "PIX35 decision timestamp persists through four-second live window");
+        rounds.Update(.02f);
+        check(rounds.Phase() == RoundPhase::Freeze && rounds.RoundNumber() == 2 && !rounds.IsDecided() &&
+              rounds.LastWinner() == Team::None && !rounds.IsTimeUp(), "PIX35 next round clears result exactly once");
+
+        CS2DGame game;
+        if (!LoadDeathMatch(game)) return;
+        game.bots_.clear();
+        auto& player = game.player_;
+        player.SetSlotWeapon(0, WeaponId::M4A4);
+        player.weaponSlot = 0;
+        player.LoadAmmoFromSlot();
+        player.ammo = 0;
+        player.reserve = 0;
+        game.UpdatePlayerShooting(.01f, true, player.x + 100, player.y, nullptr);
+        check(game.GetDryFireHintTimer() == 1 && game.dryFireCooldown_ == .3f && !player.reloading,
+              "PIX35 0/0 trigger produces throttled dry-fire hint");
+        game.dryFireHintTimer_ = .8f;
+        game.UpdatePlayerShooting(.01f, true, player.x + 100, player.y, nullptr);
+        check(game.GetDryFireHintTimer() == .8f, "PIX35 held trigger respects dry-fire cooldown");
+        player.reserve = 90;
+        game.StartReload(player, nullptr);
+        check(game.GetReloadProgress() == 0, "PIX35 reload begins empty");
+        game.UpdateReload(player, player.CurrentWeapon().reloadTime * .5f);
+        check(std::abs(game.GetReloadProgress() - .5f) < .001f, "PIX35 reload progress uses weapon duration");
+        game.SwitchWeaponSlot(2);
+        check(game.GetReloadProgress() == 0 && !player.reloading, "PIX35 switching clears reload progress");
+        game.SwitchWeaponSlot(0);
+        game.StartReload(player, nullptr);
+        game.UpdateReload(player, player.CurrentWeapon().reloadTime);
+        check(!player.reloading && player.ammo == player.maxAmmo && game.GetReloadProgress() == 0,
+              "PIX35 completed reload transfers reserve and clears progress");
+
+        game.mode_ = MatchMode::BombDefusal;
+        player.team = Team::T;
+        game.bombCarrier_ = -1;
+        game.bombPlanted_ = game.bombDropped_ = false;
+        auto dots = CS2DOverlay::CollectRadarDots(game);
+        using Shape = CS2DRenderer::RadarDot::Shape;
+        check(game.GetBombCarrierPos() && dots.size() == 1 && dots[0].shape == Shape::Carrier,
+              "PIX35 self T carrier has orange radar marker");
+        game.bots_.resize(1);
+        auto& bot = game.bots_[0];
+        bot.alive = true;
+        bot.team = Team::T;
+        bot.x = player.x + 80;
+        bot.y = player.y;
+        game.bombCarrier_ = 0;
+        player.team = Team::CT;
+        check(CS2DOverlay::CollectRadarDots(game).empty(), "PIX35 CT cannot discover unknown carrier through radar");
+        game.contactsCT_ = {{0, bot.x - 30, bot.y - 20, 5}};
+        dots = CS2DOverlay::CollectRadarDots(game);
+        check(dots.size() == 1 && dots[0].shape == Shape::Carrier && dots[0].x == bot.x - 30 && dots[0].alpha < 255,
+              "PIX35 CT carrier uses fading last-known contact position");
+        game.contactsCT_[0].age = 7;
+        check(CS2DOverlay::CollectRadarDots(game).empty(), "PIX35 expired carrier contact disappears");
+        player.team = Team::T;
+        dots = CS2DOverlay::CollectRadarDots(game);
+        check(dots.size() == 1 && dots[0].x == bot.x && dots[0].shape == Shape::Carrier,
+              "PIX35 T teammate carrier remains known");
+        game.bombDropped_ = true;
+        game.bombCarrier_ = -2;
+        dots = CS2DOverlay::CollectRadarDots(game);
+        check(!game.GetBombCarrierPos() && dots.back().shape == Shape::DroppedBomb,
+              "PIX35 dropped C4 changes to square marker");
+        player.team = Team::CT;
+        game.bombIntel_ = false;
+        check(CS2DOverlay::CollectRadarDots(game).empty(), "PIX35 unknown dropped C4 stays hidden from CT");
+        game.bombIntel_ = true;
+        check(CS2DOverlay::CollectRadarDots(game).back().shape == Shape::DroppedBomb,
+              "PIX35 known dropped C4 appears for CT");
+        game.mode_ = MatchMode::DeathMatch;
+        check(CS2DOverlay::CollectRadarDots(game).empty(), "PIX35 deathmatch radar remains empty");
+
+        // Exercise real bullet collision on an open spawn, including armor depletion.
+        game.bombDropped_ = false;
+        CS2DMapData openMap;
+        openMap.mapWidth = openMap.mapHeight = 100;
+        openMap.tileWidth = openMap.tileHeight = 8;
+        game.world_->Build(openMap);
+        game.visibility_.SetWorld(game.world_.get());
+        player.x = player.y = 300;
+        bot.x = player.x + 14;
+        bot.y = player.y;
+        bot.size = 16;
+        bot.spriteKey = 1;
+        bot.aimAngle = 0;
+        bot.animState = CS2DGame::AnimState::Idle;
+        auto hit = [&](int hp, int armor) {
+            bot.alive = true;
+            bot.health = hp;
+            bot.armor = armor;
+            bot.helmet = false;
+            game.hitMarkerTimer_ = 0;
+            game.bullets_.clear();
+            const auto& samples = BodyGeometry::Get(bot.spriteKey, game.ActorPoseSlot(bot)).samples;
+            const auto point = BodyGeometry::Transform(samples[samples.size()/2], bot.x, bot.y, bot.size,
+                bot.EffectiveAim(), static_cast<int>(bot.animState), bot.animTimer);
+            game.FireBullet(point.x, point.y, 0, WeaponDB::Get(WeaponId::M4A4), -1, Team::CT);
+            game.UpdateBullets(.001f, nullptr);
+        };
+        hit(100, 0);
+        check(game.GetHitMarkerTimer() > 0 && game.GetHitMarkerKind() == CS2DGame::HitMarkerKind::Normal,
+              "PIX35 real unarmored bullet hit selects white marker");
+        hit(100, 1);
+        check(game.GetHitMarkerKind() == CS2DGame::HitMarkerKind::Armor && bot.armor == 0,
+              "PIX35 armor marker samples armor before depletion");
+        hit(1, 100);
+        check(game.GetHitMarkerKind() == CS2DGame::HitMarkerKind::Kill && game.GetHitMarkerTimer() == .3f,
+              "PIX35 lethal hit selects extended red marker");
+        check(!game.killFeed_.empty() && game.killFeed_.front().weapon == WeaponId::M4A4 && game.killFeed_.front().life == 4,
+              "PIX35 existing weapon kill feed retains four-second lifetime");
+
+        player.health = 100;
+        player.armor = 0;
+        game.bullets_.clear();
+        game.FireBullet(player.x, player.y, 0, WeaponDB::Get(WeaponId::Glock18), 0, Team::T);
+        game.UpdateBullets(.001f, nullptr);
+        check(game.GetDamageFlashTimer() == .3f && std::any_of(game.damageDirections_.begin(),game.damageDirections_.end(),
+              [](const auto& d) { return d.remaining == .5f; }), "PIX35 damage vignette and existing direction arc trigger together");
+
+        game.mode_ = MatchMode::TeamElimination;
+        game.round_.Reset(RoundConfig{});
+        game.round_.Update(2);
+        game.round_.Update(6);
+        game.ApplyRoundResult(Team::CT, nullptr);
+        game.round_.EndRound(Team::CT);
+        const int score = game.GetScoreCT(), money = player.money;
+        game.ApplyRoundResult(Team::T, nullptr);
+        game.CheckWinConditions(nullptr);
+        check(game.GetScoreCT() == score && player.money == money, "PIX35 repeated result cannot duplicate score or money");
+        player.ammo = 1;
+        player.reserve = 30;
+        player.reloading = false;
+        game.Update(.05f, false, player.x + 100, player.y, false,false,false,false,true,true,false,nullptr);
+        check(player.reloading && player.stealth && game.GetRoundPhase() == RoundPhase::Live,
+              "PIX35 decided Live permits reload and stealth through normal Update entry");
+        game.SwitchWeaponSlot(0);
+        player.reloading = false;
+        player.shootCooldown = 0;
+        player.ammo = 5;
+        game.prevMouseDown_ = false;
+        game.Update(.05f, true, player.x + 100, player.y, false,false,false,false,false,false,false,nullptr);
+        check(player.ammo == 4, "PIX35 decided Live permits shooting through normal Update entry");
+        for (int i=0;i<8;++i) game.teams_.AddScore(Team::CT);
+        const int roundNumber = game.GetRoundNumber();
+        game.UpdateRoundFlow(10, nullptr);
+        check(game.GetRoundNumber() == roundNumber && game.IsRoundDecided() && game.GetMatchOverTimer() >= 10,
+              "PIX35 match end freezes round transition and advances presentation timer");
+
+        SDL_InitSubSystem(SDL_INIT_AUDIO);
+        AudioManager audio;
+        check(audio.Initialize(), "PIX35 feedback audio initializes");
+        const int channel = audio.PlaySoundTracked(SoundEffect::DRYFIRE);
+        check(channel >= 0 && Mix_Playing(channel), "PIX35 dedicated dry-fire asset loads and plays");
+        audio.Clean();
     }
 
     static void TestPix34Round3() {
@@ -2343,6 +2774,32 @@ struct CS2DGameTestAccess {
         recovered.Recover(10);
         check(recovered.weapon == WeaponId::None,
               "round3 dropped instance uses the same complete recoil recovery");
+        const auto savedObserver = game.player_;
+        const float savedCone = game.visibility_.ConeAngleDeg();
+        bool visibilityMatches = true;
+        for (int sample=0; sample<48; ++sample) {
+            game.visibility_.SetConeAngleDeg(80+(sample%3)*100);
+            game.player_.x=120+sample%6*20;
+            game.player_.y=350+sample/6*12;
+            game.player_.aimAngle=sample*.31f;
+            CS2DGame::Player target;
+            target.alive=true;
+            target.x=160+sample%9*9;
+            target.y=390+sample%5*8;
+            target.aimAngle=sample*.17f;
+            const auto& pose=BodyGeometry::Get(target.spriteKey,game.ActorPoseSlot(target));
+            int visible=0;
+            for (const auto local:pose.samples) {
+                const auto point=BodyGeometry::Transform(local,target.x,target.y,target.size,target.EffectiveAim(),
+                    static_cast<int>(target.animState),target.animTimer);
+                visible+=game.CanSeePoint(game.player_,point.x,point.y);
+            }
+            const float expected=pose.samples.empty()?0:float(visible)/pose.samples.size();
+            visibilityMatches &= std::abs(game.QueryBodyVisibility(game.player_,target).fraction-expected)<.00001f;
+        }
+        game.player_=savedObserver;
+        game.visibility_.SetConeAngleDeg(savedCone);
+        check(visibilityMatches,"performance visibility bounds preserve exhaustive body pixel results");
         CS2DGame::FireZone fire;
         fire.x = 180;
         fire.y = 400;
@@ -2350,6 +2807,18 @@ struct CS2DGameTestAccess {
         game.RebuildFireCells(fire);
         check(!fire.cells.empty() && !game.FireContains(fire, 220, 400) && game.FireContains(fire, 180, 400),
               "round3 shared fire region stops at wall and contains visible flame cells");
+        bool fireMatches=true;
+        for (int y=350; y<=450; y+=2) {
+            for (int x=120; x<=240; x+=2) {
+                bool reference=false;
+                const float active=Tuning::FireEffectiveRadius(fire.radius,fire.age,fire.life);
+                for (const auto cell:fire.cells)
+                    reference |= std::hypot(cell.x-fire.x,cell.y-fire.y)<=active &&
+                                 std::abs(cell.x-x)<=2 && std::abs(cell.y-y)<=2;
+                fireMatches &= reference==game.FireContains(fire,float(x),float(y));
+            }
+        }
+        check(fireMatches,"performance fire grid lookup preserves exhaustive region membership");
         bool legal = true;
         for (const auto cell : fire.cells)
             legal &= !game.world_->CheckRectCollision(cell.x - 2, cell.y - 2, 4, 4);
@@ -3322,6 +3791,48 @@ static void TestRound2RadarRendering() {
               "round2 center dot is circular and shares the reticle center");
         check(pixel(309,239).r == pixel(330,239).r && pixel(319,229).r == pixel(319,250).r,
               "round2 reticle arms are symmetric around a common floating point center");
+        for (float width : {.5f, .8f, 1.0f, 1.19f}) {
+            SDL_SetRenderDrawColor(software,0,0,0,255);
+            SDL_RenderClear(software);
+            renderer.DrawCrosshair(320,240,255,255,255,255,width,false,12,5);
+            SDL_RenderPresent(software);
+            int visible = 0;
+            for (int y=220; y<260; ++y)
+                for (int x=300; x<340; ++x) visible += pixel(x,y).r > 30;
+            check(visible >= 32,"thin crosshair remains visible below 1.2 pixels");
+        }
+        SDL_SetRenderDrawColor(software,18,22,28,255);
+        SDL_RenderClear(software);
+        renderer.SetZoom(1);
+        std::vector<SDL_FPoint> fireCells;
+        for (int y=200; y<=280; y+=4)
+            for (int x=280; x<=360; x+=4) fireCells.push_back({float(x),float(y)});
+        renderer.DrawFireCells(fireCells,320,240,45,2,5,.3f);
+        SDL_RenderPresent(software);
+        std::filesystem::create_directories("build-evidence/pix35");
+        IMG_SavePNG(surface,"build-evidence/pix35/fire-revised.png");
+        check(pixel(320,235).r > 100,"revised fire renders luminous rising tongues");
+        for (float width : {.5f, .8f, 1.0f, 1.19f}) {
+            SDL_SetRenderDrawColor(software,0,0,0,255);
+            SDL_RenderClear(software);
+            AimLineStyle style;
+            style.solid = style.hidden = {255,255,255,255};
+            style.solidThickness = style.hiddenThickness = width;
+            renderer.DrawAimLinePreview(style,640,480);
+            SDL_RenderPresent(software);
+            check(pixel(100,239).r > 30 || pixel(100,240).r > 30,
+                  "thin aim line remains visible below 1.2 pixels");
+        }
+        SDL_Surface* fallback = SDL_CreateRGBSurfaceWithFormat(0,32,32,32,SDL_PIXELFORMAT_RGBA32);
+        SDL_FillRect(fallback,nullptr,SDL_MapRGBA(fallback->format,80,180,70,255));
+        SDL_Texture* fallbackMap = SDL_CreateTextureFromSurface(software,fallback);
+        SDL_SetRenderDrawColor(software,0,0,0,255);
+        SDL_RenderClear(software);
+        renderer.DrawRadarHUD(400,400,0,{},800,800,false,false,false,255,200,1,true,640,480,false,fallbackMap);
+        SDL_RenderPresent(software);
+        check(pixel(280,220).g > 100,"settings radar accepts a map before a match loads");
+        SDL_DestroyTexture(fallbackMap);
+        SDL_FreeSurface(fallback);
         Presentation::ScopeOverlayParams scope;
         scope.scope.active = scope.scope.supported = true;
         scope.scope.transition = 1;
@@ -3495,7 +4006,7 @@ static void TestRound3HudLayouts() {
                             {definition.name, definition.iconPath,
                              bindings[static_cast<GameAction>(static_cast<int>(GameAction::Slot1) + slot)]
                                  .Label(),
-                             id == WeaponId::GrenadeFlash ? 2 : 1, id == WeaponId::M4A1S});
+                             id == WeaponId::GrenadeFlash ? 2 : 1, id == WeaponId::M4A1S, slot});
                     }
                     for (int index = 0; index < 6; ++index) {
                         const auto &definition = WeaponDB::Get(index % 2 ? WeaponId::AWP : WeaponId::AK47);
@@ -3591,6 +4102,58 @@ int main(int argc,char** argv) {
         CS2DGameTestAccess::TestPix34Round3();
         TestRound3PartialRendering();
         std::printf("Round3 focused: %d passed, %d failed\n",g_pass,g_fail);
+        return g_fail ? 1 : 0;
+    }
+    if (argc > 1 && std::string(argv[1]) == "--audio-balance") {
+        SDL_setenv("SDL_AUDIODRIVER","dummy",1);
+        AudioManager audio;
+        check(audio.Initialize(),"balanced audio mixer initializes");
+        for (int id=2; id<=static_cast<int>(WeaponId::Negev); ++id) {
+            const auto weapon = static_cast<WeaponId>(id);
+            Mix_HaltChannel(-1);
+            audio.PlayWeaponFire(weapon);
+            Mix_Chunk* chunk = nullptr;
+            for (int ch=0; ch<44; ++ch)
+                if (Mix_Playing(ch)) { chunk=Mix_GetChunk(ch); break; }
+            check(chunk != nullptr,"weapon fire decodes and plays after normalization");
+            if (!chunk) continue;
+            double peak=0, rms=0;
+            const size_t count=chunk->alen/2;
+            for (size_t start=0; start<count; start+=4410) {
+                double energy=0;
+                const size_t end=std::min(count,start+4410);
+                for (size_t i=start; i<end; ++i) {
+                    Sint16 sample;
+                    std::memcpy(&sample,chunk->abuf+i*2,2);
+                    const double value=sample/32768.0;
+                    peak=std::max(peak,std::abs(value)); energy+=value*value;
+                }
+                rms=std::max(rms,std::sqrt(energy/(end-start)));
+            }
+            std::printf("AUDIO %d short_rms=%.4f peak=%.4f\n",id,rms,peak);
+            check(peak <= .851 && rms <= .161 && rms > .045,"weapon loudness calibrated with peak headroom");
+        }
+        std::printf("Audio balance: %d passed, %d failed\n",g_pass,g_fail);
+        return g_fail ? 1 : 0;
+    }
+    if (argc > 1 && std::string(argv[1]) == "--frost-gpu") {
+        CS2DGameTestAccess::TestFrostGpu();
+        return g_fail ? 1 : 0;
+    }
+    if (argc > 1 && std::string(argv[1]) == "--pix35-match") {
+        CS2DGameTestAccess::TestPix35Match();
+        std::printf("PIX35 match: %d passed, %d failed\n",g_pass,g_fail);
+        return g_fail ? 1 : 0;
+    }
+    if (argc > 1 && std::string(argv[1]) == "--pix35-visuals") {
+        CS2DGameTestAccess::TestPix35Visuals();
+        std::printf("PIX35 visuals: %d passed, %d failed\n",g_pass,g_fail);
+        return g_fail ? 1 : 0;
+    }
+    CS2DGameTestAccess::TestPerformanceInterpolation();
+    CS2DGameTestAccess::TestPix35();
+    if (argc > 1 && std::string(argv[1]) == "--pix35") {
+        std::printf("PIX35 focused: %d passed, %d failed\n", g_pass, g_fail);
         return g_fail ? 1 : 0;
     }
     std::printf("===== 合并契约 v1 玩法回归测试 =====\n");

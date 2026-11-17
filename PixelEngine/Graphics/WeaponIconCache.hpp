@@ -25,6 +25,7 @@ public:
     // 项目相对路径（WeaponDB.iconPath）。命中缓存直接返回（可能为 nullptr）。
     SDL_Texture* Get(const std::string& relativePath);
     SDL_Texture* GetHud(const std::string& relativePath);
+    SDL_Texture* GetBuy(const std::string& relativePath);
 
     // Destroy 全部缓存纹理并把状态复位为未初始化。
     void Shutdown();
@@ -32,6 +33,7 @@ public:
     bool IsInitialized() const { return renderer_ != nullptr; }
 
 private:
+    SDL_Texture* GetCropped(const std::string& relativePath, bool hudTint);
     SDL_Renderer* renderer_ = nullptr;
     std::unordered_map<std::string, SDL_Texture*> textures_;
 };

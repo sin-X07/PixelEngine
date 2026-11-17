@@ -8,9 +8,7 @@
 //     ↓
 //   Buy     (购买, 不可移动, 可购买)
 //     ↓
-//   Live    (交战, 可移动)
-//     ↓
-//   RoundEnd(结算展示)
+//   Live    (交战, 决出胜负后继续展示 4 秒)
 //     ↓ 下一回合
 //   Freeze ...
 //
@@ -28,7 +26,7 @@ class RoundManager {
 public:
     void Reset(const RoundConfig& cfg);
 
-    // 推进计时；内部自动做阶段迁移（Live 超时只进入 RoundEnd，胜负由外部判定）
+    // 推进阶段及已决展示计时，胜负由外部判定。
     void Update(float dt);
 
     RoundPhase Phase() const        { return phase_; }
@@ -42,7 +40,9 @@ public:
         return phase_ == RoundPhase::Freeze || phase_ == RoundPhase::Buy;
     }
     bool IsLive() const { return phase_ == RoundPhase::Live; }
-    bool IsRoundEnd() const { return phase_ == RoundPhase::RoundEnd; }
+    bool IsDecided() const { return decided_; }
+    float DecidedAt() const { return decidedAt_; }
+    float ResultRemaining() const { return resultTimer_; }
 
     // 立即结束当前回合（外部判定出胜负后调用）
     void EndRound(Team winner);
@@ -63,4 +63,7 @@ private:
     float       elapsed_     = 0.0f;   // 本回合累计时间
     Team        lastWinner_  = Team::None;
     bool        timeUp_      = false;
+    bool        decided_     = false;
+    float       decidedAt_   = 0.0f;
+    float       resultTimer_ = 0.0f;
 };

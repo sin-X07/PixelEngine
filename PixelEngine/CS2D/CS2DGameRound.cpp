@@ -13,7 +13,7 @@ void CS2DGame::UpdateRoundFlow(float dt, AudioManager* audio) {
     if (mode_ == MatchMode::DeathMatch) return;   // 死斗无回合
 
     // 比赛已结束：冻结回合状态机，停在最后一回合的结算画面上。
-    // 之前这里仍会 round_.Update()，导致 RoundEnd→Freeze→…→Live 无限循环，
+    // 之前这里仍会 round_.Update()，导致 已决→Freeze→…→Live 无限循环，
     // 而 BeginNewRound 因 MatchOver 提前返回，场上没人复活，比赛永远不结束。
     if (teams_.MatchOver()) {
         matchOverTimer_ += dt;
@@ -25,7 +25,7 @@ void CS2DGame::UpdateRoundFlow(float dt, AudioManager* audio) {
     const RoundPhase after = round_.Phase();
 
     // 结算结束 → 开新回合
-    if (before == RoundPhase::RoundEnd && after == RoundPhase::Freeze) {
+    if (before == RoundPhase::Live && after == RoundPhase::Freeze) {
         BeginNewRound(audio);
     }
     // 时间不足提醒（每回合只发一次）
@@ -77,7 +77,6 @@ void CS2DGame::BeginNewRound(AudioManager* audio) {
     CoachOnEvent(Team::T,  CoachEventType::RoundStart);
     CoachOnEvent(Team::CT, CoachEventType::RoundStart);
     bombBeepTimer_ = 0.0f;
-    if (audio) audio->PlaySound(SoundEffect::ROUND_START);
     announcement_ = "第 " + std::to_string(round_.RoundNumber()) + " 回合";
     announcementTimer_ = 2.2f;
     std::cout << "[CS2D] 第 " << round_.RoundNumber() << " 回合开始 ("
@@ -460,7 +459,7 @@ void CS2DGame::UpdateBotBuy(float dt) {
 void CS2DGame::CheckWinConditions(AudioManager* audio) {
     if (mode_ == MatchMode::DeathMatch) return;
     if (!round_.IsLive()) return;
-    if (round_.IsRoundEnd()) return;
+    if (round_.IsDecided()) return;
     if (teams_.MatchOver()) return;
 
     const int aliveT  = AliveCount(Team::T);
@@ -502,7 +501,7 @@ void CS2DGame::CheckWinConditions(AudioManager* audio) {
 
 void CS2DGame::ApplyRoundResult(Team winner, AudioManager* audio) {
     StopObjectiveAudio(audio);
-    if (round_.IsRoundEnd()) return;   // 防重复结算（目标物与歼灭可能同帧触发）
+    if (round_.IsDecided()) return;   // 防重复结算（目标物与歼灭可能同帧触发）
 
     if (winner != Team::None) {
         teams_.AddScore(winner);
@@ -511,16 +510,15 @@ void CS2DGame::ApplyRoundResult(Team winner, AudioManager* audio) {
     }
 
     // 回合胜负音效（以玩家阵营视角）
-    if (audio && winner != Team::None) {
-        audio->PlaySound(winner == player_.team ? SoundEffect::ROUND_WIN
-                                                : SoundEffect::ROUND_LOSE);
+    if (audio && winner != Team::None && winner == player_.team) {
+        audio->PlaySound(SoundEffect::ROUND_WIN);
     }
     if (winner != Team::None) {
         announcement_ = (winner == player_.team) ? "回合胜利" : "回合失败";
         announcementTimer_ = 2.4f;
     }
 
-    GrantRoundEndMoney(winner);
+    GrantRoundMoney(winner);
 
     if (teams_.MatchOver() && !matchOverAnnounced_) {
         matchOverAnnounced_ = true;
@@ -530,14 +528,14 @@ void CS2DGame::ApplyRoundResult(Team winner, AudioManager* audio) {
 }
 
 // 回合结算：发放金钱，并重置为下一回合的初始装备
-void CS2DGame::GrantRoundEndMoney(Team winner) {
+void CS2DGame::GrantRoundMoney(Team winner) {
     // 玩家（CT）
-    player_.money += economy_.GrantRoundEnd(winner, player_.team);
+    player_.money += economy_.GrantRoundResult(winner, player_.team);
     economy_.Clamp(player_.money);
 
     // BOT 同样参与经济（否则永远只有初始余额）
     for (auto& bot : bots_) {
-        bot.money += economy_.GrantRoundEnd(winner, bot.team);
+        bot.money += economy_.GrantRoundResult(winner, bot.team);
         economy_.Clamp(bot.money);
     }
 

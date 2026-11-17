@@ -179,6 +179,9 @@ public:
         int         reserveAmmo = 0;      // 备弹（弹匣之外的存量）
         bool        hasNoWeaponHint = false;
         std::string hintText;
+        float reloadProgress = 0;
+        bool reloading = false;
+        bool dryFireHint = false;
         int         totalPlayers = 0;
         int         kills = 0;
         int         deaths = 0;
@@ -188,7 +191,7 @@ public:
         int   scoreCT = 0;
         int   roundNumber = 0;
         int   roundRemainingSec = 0;
-        int   roundPhase = 3;         // 0=热身 1=冻结 2=购买 3=交战 4=结算（PIX-8）
+        int   roundPhase = 3;         // 0=热身 1=冻结 2=购买 3=交战（含已决展示）
         int   aliveT = 0;
         int   aliveCT = 0;
         int   money = 0;
@@ -225,6 +228,7 @@ public:
             std::string name, icon, binding;
             int count = 1;
             bool selected = false;
+            int slot = -1;
         };
         std::vector<EquipmentView> equipment;
         struct ScoreRowView {
@@ -238,6 +242,7 @@ public:
         };
         std::vector<ScoreRowView> scoreRows;
         bool showScoreboard = false;
+        std::string mapName;
 
         // 屏幕中央提示（回合开始 / 胜负）
         std::string announcement;
@@ -332,6 +337,8 @@ public:
         std::string closeBinding = "B";
         std::vector<BuyItem> items;
         int         money = 0;
+        int         roundNumber = 1;
+        float       buyRemaining = 0;
         bool        canBuy = false;   // 是否在购买期 + 购买区内（兼容字段）
         std::string hint;
         Team        playerTeam = Team::None;   // 契约 v1 第 5 节
@@ -353,6 +360,10 @@ private:
     };
     std::vector<EquipmentAnimation> equipmentAnimations_;
     float equipmentPanelHeight_=0;
+    bool previousReloading_ = false;
+    int previousAmmo_ = 0;
+    std::string previousWeaponIcon_;
+    float reloadCompleteFlash_ = 0;
     ImGuiUI* imGuiUI_ = nullptr;
     WeaponIconCache* weaponIconCache_ = nullptr;
 };

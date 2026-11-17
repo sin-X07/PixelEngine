@@ -34,9 +34,17 @@ SDL_Texture* WeaponIconCache::Get(const std::string& relativePath) {
 }
 
 SDL_Texture *WeaponIconCache::GetHud(const std::string &relativePath) {
+    return GetCropped(relativePath, true);
+}
+
+SDL_Texture *WeaponIconCache::GetBuy(const std::string &relativePath) {
+    return GetCropped(relativePath, false);
+}
+
+SDL_Texture *WeaponIconCache::GetCropped(const std::string &relativePath, bool hudTint) {
     if (!renderer_ || relativePath.empty())
         return nullptr;
-    const std::string key = "hud/" + relativePath;
+    const std::string key = (hudTint ? "hud/" : "buy/") + relativePath;
     const auto cached = textures_.find(key);
     if (cached != textures_.end())
         return cached->second;
@@ -54,10 +62,12 @@ SDL_Texture *WeaponIconCache::GetHud(const std::string &relativePath) {
                 auto *pixel = static_cast<Uint8 *>(image->pixels) + y * image->pitch + x * 4;
                 if (!pixel[3])
                     continue;
-                const float luminance = pixel[0] * .2126f + pixel[1] * .7152f + pixel[2] * .0722f;
-                pixel[0] = static_cast<Uint8>(145 + luminance * .38f);
-                pixel[1] = static_cast<Uint8>(157 + luminance * .36f);
-                pixel[2] = static_cast<Uint8>(168 + luminance * .34f);
+                if (hudTint) {
+                    const float luminance = pixel[0] * .2126f + pixel[1] * .7152f + pixel[2] * .0722f;
+                    pixel[0] = static_cast<Uint8>(145 + luminance * .38f);
+                    pixel[1] = static_cast<Uint8>(157 + luminance * .36f);
+                    pixel[2] = static_cast<Uint8>(168 + luminance * .34f);
+                }
                 if (pixel[3] >= 8) {
                     left = std::min(left, x);
                     top = std::min(top, y);

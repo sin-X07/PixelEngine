@@ -1679,20 +1679,34 @@ static const char* BuyCodeText(Presentation::BuyCode code) {
 
 void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
     const std::function<Presentation::BuyResult(const Presentation::BuyRequest&)>& onBuy) {
+    if (imGuiUI_) imGuiUI_->PrepareFrostedGlass();
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    const float w = UI(680.0f);
+    const float w = std::min(UI(1120.0f), viewport->WorkSize.x - UI(48));
     // 高度跟着视口走，小窗口也不会被裁掉；内容超出时右侧出现滚动条
-    const float h = std::min(UI(560.0f), viewport->WorkSize.y - UI(48.0f));
+    const float h = std::min(UI(900.0f), viewport->WorkSize.y - UI(48.0f));
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (viewport->WorkSize.x - w) * 0.5f,
                                   viewport->WorkPos.y + (viewport->WorkSize.y - h) * 0.5f),
                             ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.043f, 0.059f, 0.078f, 0.97f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.043f, 0.059f, 0.078f, 0.30f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0,0,0,0));
     ImGui::Begin("##BuyMenu", nullptr,
                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
                  ImGuiWindowFlags_NoScrollWithMouse);
+
+    Palette::DrawGlassPanel(ImGui::GetBackgroundDrawList(), ImGui::GetWindowPos(),
+        ImVec2(ImGui::GetWindowPos().x + w, ImGui::GetWindowPos().y + h),
+        Palette::GlassTint(IM_COL32(15,19,25,190)), UI(6));
+
+    // 卡片字阶使用精确字号，避免 13/16 被 GetFont 的就近档位合成同一大小。
+    auto drawBuyText = [this](const char* text, float x, float y,
+                             Uint8 r, Uint8 g, Uint8 b, Uint8 alpha, int size) {
+        ImFont* font = imGuiUI_ ? imGuiUI_->GetFont(size) : ImGui::GetFont();
+        ImGui::GetWindowDrawList()->AddText(font, UI(size), ImVec2(x + UI(1),y + UI(1)), IM_COL32(0,0,0,alpha*3/4), text);
+        ImGui::GetWindowDrawList()->AddText(font, UI(size), ImVec2(x,y), IM_COL32(r,g,b,alpha), text);
+    };
 
     // 一帧最多提交一次购买请求：提交后本帧其余条目只显示旧快照
     bool submittedThisFrame = false;
@@ -1701,23 +1715,15 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
     static std::string flashText;
     static float       flashUntil = -1.0f;
     static bool        flashOk = false;
+    static float       flashStarted = -1.0f;
 
-    ImGui::TextColored(ImVec4(0.95f, 0.82f, 0.35f, 1.0f), "购买菜单");
-    ImGui::SameLine(0.0f, UI(24.0f));
-    ImGui::Text("余额: $%d", displayMoney);
-    ImGui::SameLine(0.0f, UI(24.0f));
-    ImGui::TextDisabled("[%s] 关闭", ctx.closeBinding.c_str());
-
-    // 提示行始终占一行：文字出现或消失时卡片不能移动，否则下一次点击会落到别的武器上
-    if (!flashText.empty() && ImGui::GetTime() < flashUntil) {
-        ImGui::TextColored(flashOk ? ImVec4(0.47f, 0.82f, 0.59f, 1.0f)
-                                   : ImVec4(0.95f, 0.45f, 0.45f, 1.0f),
-                           "%s", flashText.c_str());
-    } else if (!ctx.canBuy && !ctx.hint.empty()) {
-        ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "%s", ctx.hint.c_str());
-    } else {
-        ImGui::TextUnformatted(" ");
-    }
+    const ImVec2 header = ImGui::GetCursorScreenPos();
+    ImDrawList* headerDraw = ImGui::GetWindowDrawList();
+    const float headerWidth = ImGui::GetContentRegionAvail().x;
+    bool hoveredUnaffordable = false;
+    ImGui::Dummy(ImVec2(headerWidth, UI(112)));
+    const ImVec2 feedback = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(headerWidth, UI(22)));
     ImGui::Separator();
 
     // 只滚动卡片区：余额和购买结果提示始终可见
@@ -1732,8 +1738,11 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
             if (it.group != g) continue;
 
             if (!headerDrawn) {
-                ImGui::Spacing();
-                ImGui::TextColored(ImVec4(0.45f, 0.78f, 0.95f, 1.0f), "%s", kGroupNames[g]);
+                ImGui::Dummy(ImVec2(0, UI(g == 0 ? 5 : 14)));
+                const ImVec2 groupPos = ImGui::GetCursorScreenPos();
+                drawBuyText(kGroupNames[g], groupPos.x, groupPos.y, 155, 200, 226, 255, 18);
+                drawBuyText(kGroupNames[g], groupPos.x + UI(.35f), groupPos.y, 155, 200, 226, 255, 18);
+                ImGui::Dummy(ImVec2(0, UI(27)));
                 headerDrawn = true;
                 col = 0;
             }
@@ -1743,9 +1752,9 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
                                  it.availability == Presentation::BuyCode::Ok;
             const char* reason = BuyCodeText(it.availability);
 
-            // ---- 卡片式条目：图标 / 名称 / 类别 / 价格 + 状态色（PIX-9）----
-            const float cardW = UI(208.0f);
-            const float cardH = UI(70.0f);
+            // 大幅武器主视图，底部名称与价格，状态由配色表达。
+            const float cardW = (ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x - ImGui::GetStyle().ItemSpacing.x * 2) / 3;
+            const float cardH = UI(154.0f);
             // Stable across per-frame BuyMenuCtx allocations and mouse press/release.
             ImGui::PushID(static_cast<int>(it.request.kind));
             ImGui::PushID(it.request.kind == Presentation::BuyKind::Armor
@@ -1754,6 +1763,7 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
             const bool released = ImGui::InvisibleButton("##card", ImVec2(cardW, cardH));
             const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
             const bool held    = ImGui::IsItemActive();
+            hoveredUnaffordable |= hovered && it.price > displayMoney;
             const bool clicked = enabled && released;
             if (hovered && !enabled) ImGui::SetMouseCursor(ImGuiMouseCursor_NotAllowed);
 
@@ -1762,41 +1772,30 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
             const ImVec2 p1 = ImGui::GetItemRectMax();
 
             // 状态底色：禁用 / 常态 / 悬停 / 按下
-            ImU32 bg = enabled ? IM_COL32(20, 27, 36, 235) : IM_COL32(16, 19, 24, 210);
-            if (enabled && hovered) bg = held ? IM_COL32(52, 66, 84, 245) : IM_COL32(38, 50, 66, 240);
-            ImU32 border = enabled ? IM_COL32(52, 68, 86, 190) : IM_COL32(38, 44, 52, 160);
+            ImU32 bg = enabled ? Palette::GlassTint(IM_COL32(20, 27, 36, 235)) : Palette::GlassTint(IM_COL32(16, 19, 24, 210));
+            if (enabled && hovered) bg = held ? Palette::GlassTint(IM_COL32(52, 66, 84, 245)) : Palette::GlassTint(IM_COL32(38, 50, 66, 240));
+            ImU32 border = enabled ? Palette::GlassTint(IM_COL32(52, 68, 86, 190)) : Palette::GlassTint(IM_COL32(38, 44, 52, 160));
             if (enabled && hovered) border = Palette::U32(Palette::Accent());
             else if (hovered) border = IM_COL32(104, 116, 132, 220);   // 禁用项也回应悬停
             dl->AddRectFilled(p0, p1, bg, UI(5.0f));
             dl->AddRect(p0, p1, border, UI(5.0f), 0, UI(enabled && hovered ? 2.0f : 1.0f));
 
-            // 左侧色条：类别色（主武器=金 / 副武器=蓝 / 投掷物=绿 / 护甲=灰）
-            ImU32 strip = IM_COL32(120, 132, 148, enabled ? 190 : 90);
-            switch (it.group) {
-                case 0: strip = IM_COL32(214, 172, 96, enabled ? 220 : 100); break;
-                case 1: strip = IM_COL32(96, 160, 214, enabled ? 220 : 100); break;
-                case 2: strip = IM_COL32(180, 140, 110, enabled ? 200 : 90); break;
-                case 3: strip = IM_COL32(110, 190, 130, enabled ? 220 : 100); break;
-                case 4: strip = IM_COL32(150, 160, 176, enabled ? 200 : 90); break;
-                default: break;
-            }
-            dl->AddRectFilled(p0, ImVec2(p0.x + UI(3.0f), p1.y), strip, UI(5.0f));
-
             // 图标：借用 WeaponIconCache（cache owning，UI 借用，不 Destroy）
-            const float iconBox = UI(40.0f);
-            const ImVec2 iconPos(p0.x + UI(9.0f), p0.y + (cardH - iconBox) * 0.5f);
+            const float iconWidth = cardW - UI(40);
+            const float iconBox = UI(102);
+            const ImVec2 iconPos(p0.x + UI(20), p0.y + UI(10));
             SDL_Texture* iconTex = nullptr;
             if (weaponIconCache_ && !it.iconPath.empty()) {
-                iconTex = weaponIconCache_->Get(it.iconPath);
+                iconTex = weaponIconCache_->GetBuy(it.iconPath);
             }
             const ImU32 iconTintMod = enabled ? IM_COL32(255, 255, 255, 235)
-                                             : IM_COL32(255, 255, 255, 110);
+                                             : IM_COL32(255, 255, 255, 175);
             if (iconTex) {
                 int width = 0, height = 0;
                 if (SDL_QueryTexture(iconTex, nullptr, nullptr, &width, &height) == 0 && width > 0 && height > 0) {
-                    const float fit = iconBox / static_cast<float>(std::max(width, height));
+                    const float fit = std::min(iconWidth / width, iconBox / height);
                     const ImVec2 size(width * fit, height * fit);
-                    const ImVec2 pos(iconPos.x + (iconBox - size.x) * 0.5f,
+                    const ImVec2 pos(iconPos.x + (iconWidth - size.x) * 0.5f,
                                      iconPos.y + (iconBox - size.y) * 0.5f);
                     dl->AddImage(reinterpret_cast<ImTextureID>(iconTex), pos,
                                  ImVec2(pos.x + size.x, pos.y + size.y),
@@ -1804,66 +1803,41 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
                 }
             } else {
                 // 降级：轮廓占位（护甲画盾牌轮廓，其它画武器剪影框）
+                const float fallbackX = p0.x + (cardW - iconBox) * .5f;
                 const ImU32 oc = enabled ? IM_COL32(170, 182, 198, 200)
                                          : IM_COL32(110, 118, 128, 140);
                 if (it.group == 4) {
-                    dl->AddRectFilled(ImVec2(iconPos.x + iconBox * 0.25f, iconPos.y + iconBox * 0.15f),
-                                      ImVec2(iconPos.x + iconBox * 0.75f, iconPos.y + iconBox * 0.85f),
+                    dl->AddRectFilled(ImVec2(fallbackX + iconBox * 0.25f, iconPos.y + iconBox * 0.15f),
+                                      ImVec2(fallbackX + iconBox * 0.75f, iconPos.y + iconBox * 0.85f),
                                       oc, UI(4.0f));
                 } else {
-                    dl->AddRect(iconPos, ImVec2(iconPos.x + iconBox, iconPos.y + iconBox), oc,
+                    dl->AddRect(ImVec2(fallbackX, iconPos.y), ImVec2(fallbackX + iconBox, iconPos.y + iconBox), oc,
                                 UI(3.0f), 0, UI(1.0f));
-                    dl->AddLine(ImVec2(iconPos.x + iconBox * 0.15f, iconPos.y + iconBox * 0.72f),
-                                ImVec2(iconPos.x + iconBox * 0.85f, iconPos.y + iconBox * 0.30f),
+                    dl->AddLine(ImVec2(fallbackX + iconBox * 0.15f, iconPos.y + iconBox * 0.72f),
+                                ImVec2(fallbackX + iconBox * 0.85f, iconPos.y + iconBox * 0.30f),
                                 oc, UI(2.0f));
                 }
             }
 
-            // 文本：名称（上）/ 类别 · 弹匣 · 开镜（下）/ 价格（右）
-            const float textX = p0.x + UI(9.0f) + iconBox + UI(8.0f);
-            const ImU32 nameCol = enabled ? IM_COL32(236, 242, 248, 255)
-                                          : IM_COL32(150, 158, 168, 255);
-            dl->AddText(ImVec2(textX, p0.y + UI(11.0f)), nameCol, it.name.c_str());
-            char sub[64];
-            snprintf(sub, sizeof(sub), "%s%s", it.categoryLabel.c_str(),
-                     it.scopeSupported ? " · 可开镜" : "");
-            dl->AddText(ImVec2(textX, p0.y + UI(32.0f)),
-                        enabled ? IM_COL32(140, 160, 180, 255) : IM_COL32(104, 112, 124, 255), sub);
-            char price[32];
-            snprintf(price, sizeof(price), "$%d", it.price);
-            const ImVec2 priceSz = ImGui::CalcTextSize(price);
-            dl->AddText(ImVec2(p1.x - UI(9.0f) - priceSz.x, p0.y + UI(11.0f)),
-                        enabled ? IM_COL32(240, 200, 120, 255) : IM_COL32(130, 122, 108, 255), price);
-            // 状态角标：不用悬停也能看出为什么买不了
-            const char* badge = nullptr;
-            ImU32 badgeCol = 0;
-            switch (it.availability) {
-                case Presentation::BuyCode::AlreadyEquipped:
-                    badge = "已装备";   badgeCol = IM_COL32(120, 210, 150, 220); break;
-                case Presentation::BuyCode::ItemLimitReached:
-                case Presentation::BuyCode::InventoryFull:
-                    badge = "已带满";   badgeCol = IM_COL32(210, 170, 110, 220); break;
-                case Presentation::BuyCode::InsufficientFunds:
-                    badge = "钱不够";   badgeCol = IM_COL32(230, 120, 110, 230); break;
-                case Presentation::BuyCode::TeamRestricted:
-                    badge = "阵营不符"; badgeCol = IM_COL32(150, 160, 176, 220); break;
-                default: break;
-            }
-            std::string refundLabel;
-            if (it.refundAmount>0) {
-                refundLabel="右键退 $"+std::to_string(it.refundAmount);
-                if (it.refundQuantity>1) refundLabel+=" ×"+std::to_string(it.refundQuantity);
-                badge=refundLabel.c_str();
-                badgeCol=IM_COL32(133,198,173,255);
-            }
-            if (badge) {
-                dl->AddText(ImVec2(p1.x - UI(9.0f) - ImGui::CalcTextSize(badge).x,
-                                   p1.y - UI(20.0f)), badgeCol, badge);
-            }
+            // 武器占据卡片主体，底行只保留名称与价格。
+            const float textY = p1.y - UI(30);
+            const bool equipped = it.availability == Presentation::BuyCode::AlreadyEquipped;
+            const bool poor = it.price > displayMoney;
+            const std::string price = equipped ? "已装备" : "$" + std::to_string(it.price);
+            ImFont* priceFont = imGuiUI_ ? imGuiUI_->GetFont(18) : ImGui::GetFont();
+            if (!priceFont) priceFont = ImGui::GetFont();
+            const float priceWidth = priceFont->CalcTextSizeA(UI(18), FLT_MAX, 0, price.c_str()).x;
+            drawBuyText(FitHudText(imGuiUI_, it.name, cardW - priceWidth - UI(44), 18).c_str(),
+                        p0.x + UI(16), textY, 222, 231, 238, 255, 18);
+            drawBuyText(price.c_str(), p1.x - UI(16) - priceWidth, textY,
+                        equipped ? 124 : poor ? 225 : 239,
+                        equipped ? 209 : poor ? 124 : 199,
+                        equipped ? 157 : poor ? 111 : 120, 255, 18);
 
             if (clicked && onBuy) {
                 const Presentation::BuyResult res = onBuy(it.request);
                 submittedThisFrame = true;
+                flashStarted = static_cast<float>(ImGui::GetTime());
                 flashOk = (res.code == Presentation::BuyCode::Ok);
                 if (flashOk) {
                     displayMoney = res.moneyAfter;
@@ -1878,6 +1852,7 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
                 ctx.refund) {
                 flashOk = ctx.refund(it.request);
                 submittedThisFrame = true;
+                flashStarted = static_cast<float>(ImGui::GetTime());
                 flashText = flashOk ? std::string(it.name) + " 已退款 $" + std::to_string(it.refundAmount)
                                     : it.refundReason;
                 if (flashOk)
@@ -1901,8 +1876,46 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
     }
 
     ImGui::EndChild();
+    ImFont* titleFont = imGuiUI_ ? imGuiUI_->GetFont(34) : ImGui::GetFont();
+    if (!titleFont) titleFont = ImGui::GetFont();
+    const float titleWidth = titleFont->CalcTextSizeA(UI(34), FLT_MAX, 0, "购买装备").x;
+    drawBuyText("购买装备", header.x + (headerWidth - titleWidth) * .5f,
+                header.y + UI(8), 236, 243, 249, 255, 34);
+    const int seconds = static_cast<int>(std::ceil(ctx.buyRemaining));
+    if (ctx.buyRemaining >= 0) {
+        const std::string remaining = std::to_string(seconds) + " 秒";
+        drawBuyText(remaining.c_str(), header.x + UI(12), header.y + UI(76),
+                    seconds <= 10 ? 239 : 147, seconds <= 10 ? 119 : 166,
+                    seconds <= 10 ? 102 : 181, 255, 16);
+    }
+    const float balanceX = header.x + headerWidth - UI(195);
+    headerDraw->AddRectFilled(ImVec2(balanceX, header.y + UI(58)), ImVec2(header.x + headerWidth, header.y + UI(106)),
+        hoveredUnaffordable ? Palette::GlassTint(IM_COL32(78,32,30,210)) : Palette::GlassTint(IM_COL32(60,49,29,210)), UI(6));
+    headerDraw->AddRect(ImVec2(balanceX, header.y + UI(58)), ImVec2(header.x + headerWidth, header.y + UI(106)),
+        hoveredUnaffordable ? IM_COL32(226,108,95,130) : IM_COL32(228,188,102,100), UI(6));
+    const std::string balance = "$" + std::to_string(displayMoney);
+    drawBuyText(balance.c_str(), balanceX + UI(15), header.y + UI(68),
+        245, hoveredUnaffordable ? 121 : 207, hoveredUnaffordable ? 105 : 121, 255, 28);
+    const std::string close = "[" + ctx.closeBinding + "] 关闭";
+    ImFont* hintFont = imGuiUI_ ? imGuiUI_->GetFont(13) : ImGui::GetFont();
+    if (!hintFont) hintFont = ImGui::GetFont();
+    const float closeWidth = hintFont->CalcTextSizeA(UI(13), FLT_MAX, 0, close.c_str()).x;
+    drawBuyText(close.c_str(), header.x + headerWidth - closeWidth - UI(8), header.y + UI(16),
+                130,151,167,255,13);
+    const bool flashing = !flashText.empty() && ImGui::GetTime() < flashUntil;
+    const std::string message = flashing ? flashText : !ctx.canBuy ? ctx.hint : "";
+    if (!message.empty()) {
+        const bool ok = flashing && flashOk;
+        const float remaining = flashing ? flashUntil - static_cast<float>(ImGui::GetTime()) : 1;
+        const float fadeIn = flashing ? std::clamp((static_cast<float>(ImGui::GetTime()) - flashStarted) / .12f, 0.0f, 1.0f) : 1;
+        const float fade = std::min(fadeIn, remaining / .25f);
+        headerDraw->AddRectFilled(feedback, ImVec2(feedback.x + headerWidth, feedback.y + UI(24)),
+            ok ? Palette::GlassTint(IM_COL32(36,82,60,static_cast<int>(150*fade))) : IM_COL32(113,40,36,static_cast<int>(170*fade)), UI(4));
+        drawBuyText(message.c_str(), feedback.x + UI(8), feedback.y + UI(4),
+            ok ? 145 : 245, ok ? 222 : 145, ok ? 175 : 132, static_cast<Uint8>(255*fade), 14);
+    }
     ImGui::End();
-    ImGui::PopStyleColor();
+    ImGui::PopStyleColor(2);
 }
 
 // ============================================================================
@@ -2364,6 +2377,8 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
     if (ctx.state != PLAYING)
         return;
 
+    if (imGuiUI) imGuiUI->PrepareFrostedGlass();
+
     const HudScale hudScale;
     const auto *viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -2383,7 +2398,7 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
         const float w = std::min(UI(560), vpW * .56f), x = (vpW - w) * .5f, y = UI(12), h = UI(76);
         fg->AddRectFilled(ImVec2(x - UI(3), y + UI(3)), ImVec2(x + w + UI(3), y + h + UI(5)),
                           IM_COL32(0, 0, 0, 50), UI(10));
-        fg->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), IM_COL32(15, 19, 25, 225), UI(8));
+        Palette::DrawGlassPanel(fg, ImVec2(x, y), ImVec2(x + w, y + h), Palette::GlassTint(IM_COL32(15, 19, 25, 225)), UI(8));
         fg->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), IM_COL32(255, 255, 255, 27), UI(8));
         const bool deathmatch = ctx.playerTeam == Team::None;
         if (deathmatch) {
@@ -2421,10 +2436,10 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
             DrawImGuiTextCentered(imGuiUI, timer, y + UI(8), urgent ? 242 : 232, urgent ? 123 : 239,
                                   urgent ? 105 : 245, 255, 28);
         }
-        const char *phases[] = {"热身", "冻结", "购买", "交战", "回合结束"};
+        const char *phases[] = {"热身", "冻结", "购买", "交战"};
         const std::string subtitle = deathmatch ? "自由交战"
                                                 : "第 " + std::to_string(ctx.roundNumber) + " 回合 · " +
-                                                      phases[std::clamp(ctx.roundPhase, 0, 4)];
+                                                      phases[std::clamp(ctx.roundPhase, 0, 3)];
         DrawImGuiTextCentered(imGuiUI, subtitle.c_str(), y + UI(49), 145, 164, 179, 255, 13);
     }
 
@@ -2433,57 +2448,62 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
         char buf[256];
         snprintf(buf, sizeof(buf), "教练: %s", ctx.coachReason.c_str());
         if (ctx.coachFlash) {
-            DrawImGuiText(imGuiUI, buf, UI(12.0f), ImGui::GetIO().DisplaySize.y - UI(118.0f), 255, 245, 170,
+            DrawImGuiText(imGuiUI, buf, UI(12.0f), ImGui::GetIO().DisplaySize.y - UI(134.0f), 255, 245, 170,
                           255, 17); // 刚变更：更亮更大
         } else {
-            DrawImGuiText(imGuiUI, buf, UI(12.0f), ImGui::GetIO().DisplaySize.y - UI(118.0f), 255, 225, 140,
+            DrawImGuiText(imGuiUI, buf, UI(12.0f), ImGui::GetIO().DisplaySize.y - UI(134.0f), 255, 225, 140,
                           235, 15);
         }
     }
 
-    // ---- 左下角血量条 ----
+    // 血量与护甲共用数值列、进度条列及图标尺寸。
     {
-        const float barX = UI(16.0f);
-        const float barY = ImGui::GetIO().DisplaySize.y - UI(52.0f);
-        const float barW = UI(200.0f);
-        const float barH = UI(18.0f);
-
-        const float frac =
-            (ctx.maxHealth > 0)
-                ? std::clamp(static_cast<float>(ctx.health) / static_cast<float>(ctx.maxHealth), 0.0f, 1.0f)
-                : 0.0f;
-
-        ImDrawList *dl = ImGui::GetForegroundDrawList();
-        // 底框
-        dl->AddRectFilled(ImVec2(barX - 2, barY - 2), ImVec2(barX + barW + 2, barY + barH + 2),
-                          IM_COL32(10, 14, 18, 210), 4.0f);
-        dl->AddRect(ImVec2(barX - 2, barY - 2), ImVec2(barX + barW + 2, barY + barH + 2),
-                    IM_COL32(200, 155, 60, 200), 4.0f);
-
-        // 血量填充：高血量绿、中黄、低红
-        ImU32 fill = (frac > 0.6f)   ? IM_COL32(70, 190, 90, 235)
-                     : (frac > 0.3f) ? IM_COL32(225, 180, 60, 235)
-                                     : IM_COL32(215, 65, 60, 235);
-        dl->AddRectFilled(ImVec2(barX, barY), ImVec2(barX + barW * frac, barY + barH), fill, 3.0f);
-
-        char hp[32];
-        snprintf(hp, sizeof(hp), "HP %d / %d", ctx.health, ctx.maxHealth);
-        DrawImGuiText(imGuiUI, hp, barX + UI(6.0f), barY - UI(20.0f), 235, 240, 235, 255, 18);
-
-        // 护甲条（与血条同样式，紧贴其下）
-        const float armorY = barY + barH + UI(6.0f);
-        const float armorFrac = std::clamp(static_cast<float>(ctx.armor) / 100.0f, 0.0f, 1.0f);
-
-        dl->AddRectFilled(ImVec2(barX - 2, armorY - 2), ImVec2(barX + barW + 2, armorY + barH + 2),
-                          IM_COL32(10, 14, 18, 210), 4.0f);
-        dl->AddRect(ImVec2(barX - 2, armorY - 2), ImVec2(barX + barW + 2, armorY + barH + 2),
-                    IM_COL32(110, 170, 220, 200), 4.0f);
-        dl->AddRectFilled(ImVec2(barX, armorY), ImVec2(barX + barW * armorFrac, armorY + barH),
-                          IM_COL32(90, 160, 225, 235), 3.0f);
-
-        char ar[48];
-        snprintf(ar, sizeof(ar), "护甲 %d%s", ctx.armor, ctx.helmet ? " (盔)" : "");
-        DrawImGuiText(imGuiUI, ar, barX + barW + UI(12.0f), armorY + 1.0f, 190, 215, 240, 255, 16);
+        const bool armored = ctx.armor > 0;
+        const float x = UI(24), width = UI(286);
+        const float height = UI(armored ? 82 : 46);
+        const float y = vpH - UI(24) - height;
+        Palette::DrawGlassPanel(fg, ImVec2(x, y), ImVec2(x + width, y + height), Palette::GlassTint(IM_COL32(15,19,25,215)), UI(7));
+        fg->AddRect(ImVec2(x, y), ImVec2(x + width, y + height), IM_COL32(255,255,255,25), UI(7));
+        const float healthFraction = ctx.maxHealth > 0 ?
+            std::clamp(static_cast<float>(ctx.health) / ctx.maxHealth, 0.0f, 1.0f) : 0;
+        const ImU32 healthColor = healthFraction > .6f ? IM_COL32(105,204,132,255) :
+            healthFraction > .3f ? IM_COL32(233,192,94,255) : IM_COL32(238,110,99,255);
+        auto vitalRow = [&](float top, int value, float fraction, ImU32 color) {
+            const std::string number = std::to_string(std::max(0, value));
+            DrawImGuiText(imGuiUI, number.c_str(), x + UI(47), top + UI(1), 231,238,243,255,22);
+            const float left = x + UI(103), right = x + UI(229), barY = top + UI(10);
+            fg->AddRectFilled(ImVec2(left, barY), ImVec2(right, barY + UI(5)), IM_COL32(255,255,255,28), UI(2));
+            fg->AddRectFilled(ImVec2(left, barY), ImVec2(left + (right-left)*fraction, barY + UI(5)), color, UI(2));
+        };
+        const float healthY = y + UI(11);
+        vitalRow(healthY, ctx.health, healthFraction, healthColor);
+        // 医疗十字。
+        const float iconX = x + UI(16), iconY = healthY + UI(4);
+        fg->AddRectFilled(ImVec2(iconX + UI(6), iconY), ImVec2(iconX + UI(12), iconY + UI(18)), healthColor, UI(1));
+        fg->AddRectFilled(ImVec2(iconX, iconY + UI(6)), ImVec2(iconX + UI(18), iconY + UI(12)), healthColor, UI(1));
+        if (armored) {
+            const float armorY = y + UI(47);
+            const ImU32 armorColor = IM_COL32(139,193,230,255);
+            vitalRow(armorY, ctx.armor, std::clamp(ctx.armor / 100.0f, 0.0f, 1.0f), armorColor);
+            // 护甲背心轮廓，肩带、领口及下摆均保持可辨。
+            const float ax = x + UI(15), ay = armorY + UI(3);
+            const ImVec2 vest[] = {
+                {ax,ay},{ax+UI(5),ay},{ax+UI(7),ay+UI(4)},
+                {ax+UI(13),ay+UI(4)},{ax+UI(15),ay},{ax+UI(20),ay},
+                {ax+UI(18),ay+UI(8)},{ax+UI(18),ay+UI(20)},
+                {ax+UI(2),ay+UI(20)},{ax+UI(2),ay+UI(8)}
+            };
+            fg->AddPolyline(vest, IM_ARRAYSIZE(vest), armorColor, ImDrawFlags_Closed, UI(1.8f));
+            fg->AddLine(ImVec2(ax+UI(6),ay+UI(13)), ImVec2(ax+UI(14),ay+UI(13)), armorColor, UI(1.5f));
+            if (ctx.helmet) {
+                const float hx = x + UI(258), hy = armorY + UI(13);
+                fg->PathArcTo(ImVec2(hx,hy), UI(9), 3.14159265f, 6.2831853f, 16);
+                fg->PathLineTo(ImVec2(hx+UI(12),hy+UI(3)));
+                fg->PathLineTo(ImVec2(hx-UI(10),hy+UI(3)));
+                fg->PathFillConvex(armorColor);
+                fg->AddLine(ImVec2(hx-UI(6),hy+UI(4)), ImVec2(hx-UI(4),hy+UI(9)), armorColor, UI(2));
+            }
+        }
     }
 
     // 屏幕中央提示：回合开始 / 回合胜负（带淡出）
@@ -2512,7 +2532,7 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
         const float ph = UI(48.0f);
         const float px = (vpW - pw) * 0.5f;
         const float py = UI(98.0f);
-        fg->AddRectFilled(ImVec2(px, py), ImVec2(px + pw, py + ph), IM_COL32(15, 19, 25, 220), UI(8.0f));
+        Palette::DrawGlassPanel(fg, ImVec2(px, py), ImVec2(px + pw, py + ph), Palette::GlassTint(IM_COL32(15, 19, 25, 220)), UI(8.0f));
         fg->AddRect(ImVec2(px, py), ImVec2(px + pw, py + ph), IM_COL32(220, 80, 70, 140), UI(8.0f), 0,
                     std::max(1.0f, UI(1.5f)));
     }
@@ -2559,8 +2579,8 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
             const int alpha =
                 static_cast<int>(255 * std::min(std::clamp(entry.life / .65f, 0.0f, 1.0f),
                                                 std::clamp((4 - entry.life) / .12f, 0.0f, 1.0f)));
-            fg->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + UI(34)), IM_COL32(15, 19, 25, alpha * 3 / 4),
-                              UI(5));
+            Palette::DrawGlassPanel(fg, ImVec2(x, y), ImVec2(x + w, y + UI(34)), Palette::GlassTint(IM_COL32(15, 19, 25, alpha * 3 / 4)),
+                              UI(5), alpha / 255.0f);
             fg->AddRect(ImVec2(x, y), ImVec2(x + w, y + UI(34)),
                         entry.personal ? IM_COL32(177, 199, 213, alpha * 2 / 3)
                                        : IM_COL32(255, 255, 255, alpha / 12),
@@ -2579,6 +2599,17 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
         }
     }
 
+    if (ctx.showScoreboard) {
+        const std::string title = "地图 · " + ctx.mapName;
+        // 标题放在雷达底部，保持左上角整图与居中记分板各自完整。
+        const float w = ScoreboardMapSize(vpW, vpH);
+        const float x = UI(8), y = w + UI(16);
+        Palette::DrawGlassPanel(fg, ImVec2(x, y), ImVec2(x + w, y + UI(34)), Palette::GlassTint(IM_COL32(15, 19, 25, 225)), UI(6));
+        fg->AddRect(ImVec2(x, y), ImVec2(x + w, y + UI(34)), IM_COL32(133, 162, 185, 65), UI(6));
+        DrawImGuiText(imGuiUI, FitHudText(imGuiUI, title, w - UI(24), 16).c_str(),
+                      x + UI(12), y + UI(8), 210, 224, 235, 255, 16);
+    }
+
     // ---- 记分板（Tab 按住）----
     if (ctx.showScoreboard) {
         const ImGuiViewport *vp = ImGui::GetMainViewport();
@@ -2588,11 +2619,15 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
             ImVec2(vp->WorkPos.x + (vp->WorkSize.x - w) * 0.5f, vp->WorkPos.y + (vp->WorkSize.y - h) * 0.5f),
             ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.043f, 0.059f, 0.078f, 0.97f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.043f, 0.059f, 0.078f, 0.30f));
         ImGui::Begin("##Scoreboard", nullptr,
                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
                          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar |
                          ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+        Palette::DrawGlassPanel(ImGui::GetBackgroundDrawList(), ImGui::GetWindowPos(),
+            ImVec2(ImGui::GetWindowPos().x + w, ImGui::GetWindowPos().y + h),
+            Palette::GlassTint(IM_COL32(15,19,25,220)), UI(6));
 
         // 顶部分数
         char title[64];
@@ -2672,9 +2707,32 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
     {
         const float w = UI(260), x = vpW - w - UI(24);
         const float rowH = UI(42), selectedH = UI(68);
-        float height = ctx.hasDefuseKit ? UI(40) : 0;
-        for (const auto &item : ctx.equipment)
-            height += item.selected ? selectedH : rowH;
+        const auto selected = std::find_if(ctx.equipment.begin(), ctx.equipment.end(),
+            [](const InGameCtx::EquipmentView& item) { return item.selected; });
+        const std::string selectedIcon = selected != ctx.equipment.end() ? selected->icon : "";
+        reloadCompleteFlash_ = std::max(0.0f, reloadCompleteFlash_ - ImGui::GetIO().DeltaTime);
+        if (previousReloading_ && !ctx.reloading && ctx.health > 0 && ctx.ammo > previousAmmo_ &&
+            selectedIcon == previousWeaponIcon_) reloadCompleteFlash_ = .22f;
+        if (ctx.health <= 0 || selectedIcon != previousWeaponIcon_) reloadCompleteFlash_ = 0;
+        previousReloading_ = ctx.reloading;
+        previousAmmo_ = ctx.ammo;
+        previousWeaponIcon_ = selectedIcon;
+        std::vector<const InGameCtx::EquipmentView*> grenades;
+        std::vector<InGameCtx::EquipmentView> rows;
+        for (const auto& item : ctx.equipment) {
+            if (item.slot != 3) {
+                rows.push_back(item);
+                continue;
+            }
+            if (grenades.empty()) rows.push_back({"", "grenade-row", item.binding, 1, false, 3});
+            grenades.push_back(&item);
+        }
+        auto rowHeight = [&](const InGameCtx::EquipmentView& item) {
+            if (item.slot == 3) return UI(56);
+            return item.selected ? selectedH : rowH;
+        };
+        float height = UI(44) + (ctx.hasDefuseKit ? UI(40) : 0);
+        for (const auto& item : rows) height += rowHeight(item);
         const float blend = 1 - std::exp(-ImGui::GetIO().DeltaTime * 18);
         if (equipmentPanelHeight_ <= 0)
             equipmentPanelHeight_ = height;
@@ -2682,7 +2740,7 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
         for (auto &row : equipmentAnimations_)
             row.present = false;
         float targetY = vpH - UI(24) - height;
-        for (const auto &item : ctx.equipment) {
+        for (const auto &item : rows) {
             auto found =
                 std::find_if(equipmentAnimations_.begin(), equipmentAnimations_.end(),
                              [&](const EquipmentAnimation &row) { return row.item.icon == item.icon; });
@@ -2693,7 +2751,7 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
             found->item = item;
             found->present = true;
             found->y += (targetY - found->y) * blend;
-            targetY += item.selected ? selectedH : rowH;
+            targetY += rowHeight(item);
         }
         for (auto &row : equipmentAnimations_) {
             if (!row.present) row.item.selected=false;
@@ -2706,13 +2764,35 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
         float y = vpH - UI(24) - equipmentPanelHeight_;
         fg->AddRectFilled(ImVec2(x - UI(1), y - UI(1)), ImVec2(x + w + UI(1), vpH - UI(23)),
                           IM_COL32(0, 0, 0, 55), UI(8));
-        fg->AddRectFilled(ImVec2(x, y), ImVec2(x + w, vpH - UI(24)), IM_COL32(15, 19, 25, 205), UI(8));
+        Palette::DrawGlassPanel(fg, ImVec2(x, y), ImVec2(x + w, vpH - UI(24)), Palette::GlassTint(IM_COL32(15, 19, 25, 205)), UI(8));
         fg->AddRect(ImVec2(x, y), ImVec2(x + w, vpH - UI(24)), IM_COL32(255, 255, 255, 22), UI(8));
         for (const auto &row : equipmentAnimations_) {
             const auto &item = row.item;
             const float y = row.y;
             const int alpha = static_cast<int>(255 * row.alpha);
-            const float h = item.selected ? selectedH : rowH;
+            const float h = rowHeight(item);
+            if (item.slot == 3) {
+                DrawImGuiText(imGuiUI, item.binding.c_str(), x + UI(10), y + UI(20), 119, 139, 154, alpha, 12);
+                const float cellW = (w - UI(44)) / std::max(4, static_cast<int>(grenades.size()));
+                for (size_t i = 0; i < grenades.size(); ++i) {
+                    const auto& grenade = *grenades[i];
+                    const float left = x + UI(32) + cellW * i;
+                    if (grenade.selected) {
+                        fg->AddRectFilled(ImVec2(left, y + UI(5)), ImVec2(left + cellW - UI(3), y + h - UI(5)),
+                                          IM_COL32(102,134,153,55), UI(4));
+                        fg->AddLine(ImVec2(left + UI(6), y + h - UI(5)),
+                                    ImVec2(left + cellW - UI(9), y + h - UI(5)), IM_COL32(166,210,232,alpha), UI(2));
+                    }
+                    weaponImage(grenade.icon, left + UI(5), y + UI(8), cellW - UI(13), UI(35),
+                                static_cast<int>((grenade.selected ? 255 : 190) * row.alpha));
+                    if (grenade.count > 1) {
+                        const std::string count = std::to_string(grenade.count);
+                        DrawImGuiText(imGuiUI, count.c_str(), left + cellW - UI(15), y + UI(32),
+                                      220,230,238,alpha,12);
+                    }
+                }
+                continue;
+            }
             if (item.selected) {
                 fg->AddRectFilled(ImVec2(x + UI(4), y + UI(3)), ImVec2(x + w - UI(4), y + h - UI(3)),
                                   IM_COL32(102, 134, 153, static_cast<int>(42 * row.alpha)), UI(5));
@@ -2736,22 +2816,35 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
                 const std::string ammo = std::to_string(ctx.ammo) + " / " + std::to_string(ctx.reserveAmmo);
                 DrawImGuiText(imGuiUI, ammo.c_str(), x + UI(125), y + UI(32), ctx.ammo ? 231 : 239,
                               ctx.ammo ? 237 : 116, ctx.ammo ? 243 : 100, alpha, 22);
-                if (ctx.hasNoWeaponHint)
-                    DrawImGuiText(imGuiUI, ctx.hintText.c_str(), x + UI(12), y + UI(43), 159, 195, 216, alpha,
-                                  12);
+                if (ctx.reloading || reloadCompleteFlash_ > 0) {
+                    const float left = x + UI(125), right = x + w - UI(12), top = y + UI(59);
+                    const float progress = ctx.reloading ? ctx.reloadProgress : 1.0f;
+                    fg->AddRectFilled(ImVec2(left, top), ImVec2(right, top + UI(3)), IM_COL32(255,255,255,35), UI(2));
+                    fg->AddRectFilled(ImVec2(left, top), ImVec2(left + (right-left)*progress, top + UI(3)),
+                        IM_COL32(242, 201, 111, ctx.reloading ? alpha : static_cast<int>(255*reloadCompleteFlash_/.22f)), UI(2));
+                }
             }
         }
-        y = vpH - UI(24) - UI(40);
+        y = vpH - UI(24) - UI(44) - UI(40);
         if (ctx.hasDefuseKit) {
             fg->AddLine(ImVec2(x + UI(12), y), ImVec2(x + w - UI(12), y), IM_COL32(255, 255, 255, 22));
             weaponImage("cs2d/sprites/defuse_kit_d.png", x + UI(35), y + UI(7), UI(70), UI(26), 220);
-            DrawImGuiText(imGuiUI, "拆包钳 · 4 秒", x + UI(125), y + UI(12), 160, 194, 214, 255, 14);
+            DrawImGuiText(imGuiUI, "拆包钳", x + UI(125), y + UI(12), 160, 194, 214, 255, 14);
         }
+        const float moneyY = vpH - UI(24) - UI(44);
+        const bool buying = ctx.roundPhase == 1 || ctx.roundPhase == 2;
+        const float pulse = buying ? .75f + .25f * std::sin(static_cast<float>(ImGui::GetTime()) * 3) : .55f;
+        fg->AddLine(ImVec2(x + UI(12), moneyY), ImVec2(x + w - UI(12), moneyY), IM_COL32(235,192,106,static_cast<int>(70*pulse)));
+        const std::string money = "$" + std::to_string(ctx.money);
+        DrawImGuiText(imGuiUI, money.c_str(), x + UI(125), moneyY + UI(10),
+            244, buying ? 210 : 191, buying ? 126 : 103, static_cast<Uint8>(190 + 65*pulse), 24);
     }
 
     // 提示（换弹等）
     if (ctx.hasNoWeaponHint && !ctx.hintText.empty()) {
-        DrawImGuiTextCentered(imGuiUI, ctx.hintText.c_str(), 512.0f, 245, 200, 90, 255, 22);
+        DrawImGuiTextCentered(imGuiUI, ctx.hintText.c_str(), vpH * .70f,
+                              ctx.dryFireHint ? 244 : 245, ctx.dryFireHint ? 112 : 200,
+                              ctx.dryFireHint ? 99 : 90, 255, 22);
     }
 
     // 死斗：阵亡后是「原地死亡镜头」，不是观战——给一个明确的等待重生提示
@@ -2922,13 +3015,17 @@ void GameUI::DrawCombatHints(const KeyBindings &bindings) {
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x / 2,
                                    viewport->WorkPos.y + viewport->WorkSize.y - UI(8)),
                             ImGuiCond_Always, ImVec2(.5f, 1));
-    ImGui::SetNextWindowBgAlpha(.72f);
+    ImGui::SetNextWindowBgAlpha(.28f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, UI(6));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UI(12), UI(7)));
     ImGui::Begin("##combatHints", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                      ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoFocusOnAppearing);
+    Palette::DrawGlassPanel(ImGui::GetBackgroundDrawList(), ImGui::GetWindowPos(),
+        ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowSize().x,
+               ImGui::GetWindowPos().y + ImGui::GetWindowSize().y),
+        Palette::GlassTint(IM_COL32(15,19,25,170)), UI(6));
     const float maxWidth = std::max(UI(260), viewport->WorkSize.x - UI(640));
     float rowWidth = 0;
     for (const std::string &label : labels) {

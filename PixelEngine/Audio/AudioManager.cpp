@@ -2,6 +2,8 @@
 #include "../Core/PathUtils.hpp"
 #include <algorithm>
 #include <iostream>
+#include <cmath>
+#include <cstring>
 
 namespace {
 
@@ -109,6 +111,33 @@ bool AudioManager::Initialize() {
             ++failedAudio;
             std::cerr << "  [Audio] 缺失: " << relPath << " (" << name << ")" << std::endl;
         }
+        if (chunk) {
+            // SDL_mixer decodes to the device's signed 16-bit PCM format.
+            const size_t count = chunk->alen / sizeof(Sint16);
+            double peak = 0.0, strongestWindow = 0.0;
+            constexpr size_t window = 4410; // 50 ms, stereo at 44.1 kHz.
+            for (size_t start = 0; start < count; start += window) {
+                double energy = 0.0;
+                const size_t end = std::min(count, start + window);
+                for (size_t i = start; i < end; ++i) {
+                    Sint16 sample;
+                    std::memcpy(&sample, chunk->abuf + i * sizeof(sample), sizeof(sample));
+                    const double value = sample / 32768.0;
+                    energy += value * value;
+                    peak = std::max(peak, std::abs(value));
+                }
+                strongestWindow = std::max(strongestWindow, std::sqrt(energy / (end - start)));
+            }
+            if (strongestWindow > 0.0001 && peak > 0.0) {
+                const double gain = std::min({0.16 / strongestWindow, 0.85 / peak, 8.0});
+                for (size_t i = 0; i < count; ++i) {
+                    Sint16 sample;
+                    std::memcpy(&sample, chunk->abuf + i * sizeof(sample), sizeof(sample));
+                    sample = static_cast<Sint16>(std::lround(sample * gain));
+                    std::memcpy(chunk->abuf + i * sizeof(sample), &sample, sizeof(sample));
+                }
+            }
+        }
         return chunk;
     };
 
@@ -168,6 +197,7 @@ bool AudioManager::Initialize() {
     hitSound = loadChunk("assets/audio/sfx_hit.wav", "命中");
     killSound = loadChunk("assets/audio/sfx_kill.mp3", "击杀");
     armorHitSound = loadChunk("assets/audio/sfx_armor_hit.wav", "护甲受击");
+    dryFireSound = loadChunk("assets/audio/sfx_dryfire.wav", "空仓");
     footstepSound = loadChunk("assets/audio/sfx_footstep.mp3", "脚步");
     equipSound = loadChunk("assets/audio/sfx_equip.mp3", "购买装备");
 
@@ -188,9 +218,7 @@ bool AudioManager::Initialize() {
     bombPlantSound      = loadChunk("assets/audio/bomb_planted.mp3", "下包");
     bombDefuseSound     = loadChunk("assets/audio/bomb_defused.mp3", "拆包");
     bombBeepSound       = loadChunk("assets/audio/bomb_beep.wav", "C4 滴答");
-    roundStartSound     = loadChunk("assets/audio/round_start.mp3", "回合开始");
     roundWinSound       = loadChunk("assets/audio/round_win.wav", "回合胜利");
-    roundLoseSound      = loadChunk("assets/audio/round_lose.wav", "回合失败");
     daggerSound         = loadChunk("assets/audio/melee_knife.wav", "匕首攻击");
 
     // ---- 换弹音效 ----
@@ -258,11 +286,10 @@ void AudioManager::Clean() {
     if (bombPlantSound)      { Mix_FreeChunk(bombPlantSound);      bombPlantSound = nullptr; }
     if (bombDefuseSound)     { Mix_FreeChunk(bombDefuseSound);     bombDefuseSound = nullptr; }
     if (bombBeepSound)       { Mix_FreeChunk(bombBeepSound);       bombBeepSound = nullptr; }
-    if (roundStartSound)     { Mix_FreeChunk(roundStartSound);     roundStartSound = nullptr; }
     if (roundWinSound)       { Mix_FreeChunk(roundWinSound);       roundWinSound = nullptr; }
-    if (roundLoseSound)      { Mix_FreeChunk(roundLoseSound);      roundLoseSound = nullptr; }
     if (footstepSound)       { Mix_FreeChunk(footstepSound);       footstepSound = nullptr; }
     if (armorHitSound)       { Mix_FreeChunk(armorHitSound);       armorHitSound = nullptr; }
+    if (dryFireSound) { Mix_FreeChunk(dryFireSound); dryFireSound = nullptr; }
 
     // 换弹音效
     if (reloadGlockSound)   { Mix_FreeChunk(reloadGlockSound);   reloadGlockSound = nullptr; }
@@ -370,6 +397,7 @@ Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
     const int additional = static_cast<int>(effect) - static_cast<int>(SoundEffect::DEATH);
     if (additional >= 0 && additional < 31) return additionalSounds_[additional];
     if (effect == SoundEffect::PICKUP) return additionalSounds_.back();
+    if (effect == SoundEffect::DRYFIRE) return dryFireSound;
     switch (effect) {
         case SoundEffect::BUTTON_HOVER:     return buttonHoverSound;
         case SoundEffect::CLICK:
@@ -393,9 +421,7 @@ Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
         case SoundEffect::BOMB_PLANT:       return bombPlantSound;
         case SoundEffect::BOMB_DEFUSE:      return bombDefuseSound;
         case SoundEffect::BOMB_BEEP:        return bombBeepSound;
-        case SoundEffect::ROUND_START:      return roundStartSound;
         case SoundEffect::ROUND_WIN:        return roundWinSound;
-        case SoundEffect::ROUND_LOSE:       return roundLoseSound;
         case SoundEffect::FOOTSTEP:         return footstepSound;
         case SoundEffect::ARMOR_HIT:        return armorHitSound;
 
@@ -424,8 +450,9 @@ Mix_Chunk* AudioManager::WeaponSwitchChunk(WeaponId id) const {
     return weaponSwitch_[idx];
 }
 
-void AudioManager::PlaySound(SoundEffect effect) {
-    PlaySoundTracked(effect);
+void AudioManager::PlaySound(SoundEffect effect, float volume) {
+    const int channel = PlaySoundTracked(effect);
+    if (channel >= 0) Mix_Volume(channel, static_cast<int>(effectsLevel_ * std::clamp(volume, 0.0f, 1.0f)));
 }
 
 void AudioManager::PlayWeaponFire(WeaponId id) {

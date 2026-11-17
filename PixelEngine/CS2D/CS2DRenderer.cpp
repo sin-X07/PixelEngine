@@ -483,12 +483,8 @@ void CS2DRenderer::DrawImageBackground() {
     }
     const float viewW = world_->GetImageW();
     const float viewH = world_->GetImageH();
-    SDL_Rect dst;
-    dst.x = static_cast<int>(std::lround(-cameraX_ * zoom_));
-    dst.y = static_cast<int>(std::lround(-cameraY_ * zoom_));
-    dst.w = static_cast<int>(std::lround(viewW * zoom_));
-    dst.h = static_cast<int>(std::lround(viewH * zoom_));
-    SDL_RenderCopy(renderer_, backgroundTex_, nullptr, &dst);
+    const SDL_FRect dst{-cameraX_ * zoom_, -cameraY_ * zoom_, viewW * zoom_, viewH * zoom_};
+    SDL_RenderCopyF(renderer_, backgroundTex_, nullptr, &dst);
 }
 
 void CS2DRenderer::DrawPerimeterDust() {
@@ -635,7 +631,7 @@ void CS2DRenderer::MaskedCopy(SDL_Texture *texture, const SDL_Rect *source, cons
             point.x >= static_cast<float>(src.x + src.w) / tw ||
             point.y >= static_cast<float>(src.y + src.h) / th)
             return false;
-        auto &cached = visibilityPixels_[static_cast<size_t>(y) * viewW_ + x];
+        auto &cached = (visibilityObserver_ ? observerVisibilityPixels_ : visibilityPixels_)[static_cast<size_t>(y) * viewW_ + x];
         if (cached < 0)
             cached = visibilityFilter_(cameraX_ + (x + .5f) / zoom_, cameraY_ + (y + .5f) / zoom_) ? 1 : 0;
         return cached != 0;
@@ -839,6 +835,8 @@ void DrawSoftSegment(SDL_Renderer* renderer, SDL_FPoint a, SDL_FPoint b,
         return values;
     }();
     const float nx=-(b.y-a.y)/length, ny=(b.x-a.x)/length;
+    color.a = static_cast<Uint8>(color.a * std::clamp(thickness, .5f, 1.0f));
+    thickness = std::max(1.0f, thickness);
     const float half=thickness*.5f;
     if (blur < .05f) {
         const SDL_Vertex vertices[] = {{{a.x+nx*half,a.y+ny*half},color,{0,0}},
@@ -1685,20 +1683,43 @@ void CS2DRenderer::DrawFireCells(const std::vector<SDL_FPoint> &cells, float x, 
             (visibilityFilter_ && !visibilityFilter_(cell.x, cell.y)))
             continue;
         const float cx = (cell.x - cameraX_) * zoom_, cy = (cell.y - cameraY_) * zoom_;
-        const float flicker = .5f + .5f * std::sin(age * 12 + cell.x * .7f + cell.y * .9f + seed);
-        const float half = 2 * zoom_;
+        if (cx < -8*zoom_ || cx > viewW_+8*zoom_ || cy < -4*zoom_ || cy > viewH_+26*zoom_) continue;
+        const float phase = cell.x * 1.37f + cell.y * 2.19f + seed * 7.0f;
+        const float cycle = age * (1.7f + .3f * std::sin(phase)) + phase;
+        const float pulse = .65f + .35f * std::sin(cycle * 6.2831853f);
+        const float height = (7.0f + 7.0f * pulse) * zoom_;
+        // Nested tapered ribbons bend independently as hot gas rises.
+        for (int layer = 0; layer < 3; ++layer) {
+            const float width = (3.7f - layer * .9f) * zoom_;
+            const float tall = height * (1.0f - layer * .24f);
+            const int base = static_cast<int>(vertices.size());
+            for (int step = 0; step <= 4; ++step) {
+                const float t = step / 4.0f;
+                const float bend = std::sin(cycle * 5.0f - t * 5.5f) * t * 3.2f * zoom_;
+                const float half = width * std::pow(1.0f - t, .8f);
+                const float py = cy + 2 * zoom_ - t * tall;
+                const float opacity = fade * (1.0f - t) * (.65f + .25f * pulse);
+                const SDL_Color color{255, static_cast<Uint8>(layer == 0 ? 65 + 70 * (1-t) : layer == 1 ? 145 + 65 * (1-t) : 220 + 30 * (1-t)),
+                    static_cast<Uint8>(layer == 2 ? 130 : 15), static_cast<Uint8>(210 * opacity)};
+                vertices.push_back({{cx + bend - half, py}, color, {0,0}});
+                vertices.push_back({{cx + bend + half, py}, color, {0,0}});
+                if (step < 4) {
+                    const int n = base + step * 2;
+                    const int quad[] = {n,n+1,n+3,n,n+3,n+2};
+                    indices.insert(indices.end(), std::begin(quad), std::end(quad));
+                }
+            }
+        }
+        const float ember = cycle - std::floor(cycle);
+        const float ex = cx + std::sin(phase + ember * 4) * 4 * zoom_;
+        const float ey = cy - ember * 24 * zoom_;
+        const float size = .7f * zoom_;
         const int base = static_cast<int>(vertices.size());
-        const SDL_Color edge{240, 65, 12, static_cast<Uint8>(110 * fade)};
-        const SDL_Color core{255, static_cast<Uint8>(165 + 65 * flicker), 68,
-                             static_cast<Uint8>((200 + 45 * flicker) * fade)};
-        vertices.push_back({{cx - half, cy - half}, edge, {0, 0}});
-        vertices.push_back({{cx + half, cy - half}, edge, {0, 0}});
-        vertices.push_back({{cx + half, cy + half}, edge, {0, 0}});
-        vertices.push_back({{cx - half, cy + half}, edge, {0, 0}});
-        vertices.push_back({{cx, cy - half * .4f * flicker}, core, {0, 0}});
-        const int fan[] = {base,     base + 1, base + 4, base + 1, base + 2, base + 4,
-                           base + 2, base + 3, base + 4, base + 3, base,     base + 4};
-        indices.insert(indices.end(), std::begin(fan), std::end(fan));
+        const SDL_Color spark{255,210,105,static_cast<Uint8>(150 * fade * (1-ember))};
+        vertices.push_back({{ex-size,ey},spark,{}});
+        vertices.push_back({{ex+size,ey},spark,{}});
+        vertices.push_back({{ex,ey-2*size},spark,{}});
+        indices.insert(indices.end(), {base,base+1,base+2});
     }
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
     if (!vertices.empty())
@@ -1775,14 +1796,31 @@ void CS2DRenderer::DrawFlashOverlay(Uint8 alpha) {
     SDL_RenderFillRect(renderer_, &full);
 }
 
+void CS2DRenderer::DrawBombCarrierMarker(float worldX, float worldY, float size, float timeSec) {
+    if (!renderer_ || (visibilityFilter_ && !visibilityFilter_(worldX, worldY))) return;
+    const float x = (worldX - cameraX_) * zoom_;
+    const float y = (worldY - cameraY_) * zoom_ - size * zoom_ * .7f -
+        (8.0f + 2.0f * std::sin(timeSec * 3.0f)) * g_uiScale;
+    const float radius = 6 * g_uiScale;
+    const SDL_Color color{255, 181, 72, 245};
+    const SDL_Vertex vertices[] = {{{x, y-radius}, color, {}}, {{x+radius, y}, color, {}},
+        {{x, y+radius}, color, {}}, {{x-radius, y}, color, {}}};
+    const int indices[] = {0, 1, 2, 0, 2, 3};
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_RenderGeometry(renderer_, nullptr, vertices, 4, indices, 6);
+    SDL_SetRenderDrawColor(renderer_, 48, 33, 18, 245);
+    const SDL_FPoint border[] = {{x,y-radius},{x+radius,y},{x,y+radius},{x-radius,y},{x,y-radius}};
+    SDL_RenderDrawLinesF(renderer_, border, 5);
+}
+
 // 命中反馈：准星处画一个 X（四条短斜线）
-void CS2DRenderer::DrawHitMarker(float screenX, float screenY, float scale, Uint8 alpha) {
+void CS2DRenderer::DrawHitMarker(float screenX, float screenY, float scale, Uint8 alpha, SDL_Color color) {
     if (!renderer_ || alpha == 0) return;
 
     const float inner = 4.0f * scale;
     const float outer = 9.0f * scale;
 
-    SDL_SetRenderDrawColor(renderer_, 255, 255, 255, alpha);
+    SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, alpha);
     for (float t = 0.0f; t < 2.0f; t += 1.0f) {
         const float off = t * 0.5f;
         // 左上 → 右下
@@ -1881,14 +1919,15 @@ void CS2DRenderer::DrawScoreboard(int total, int kills, int deaths, int viewW, i
 void CS2DRenderer::DrawRadarHUD(float playerX, float playerY, float playerAngle,
     const std::vector<RadarDot>& dots, float mapW, float mapH,
     bool playerCentered, bool rotateWithPlayer, bool blendBg, int bgAlpha,
-    int hudSize, float mapZoom, bool showCenterRadar, int viewW, int viewH) {
+    int hudSize, float mapZoom, bool showCenterRadar, int viewW, int viewH, bool fullMap, SDL_Texture* previewMap) {
     if (!renderer_ || mapW <= 0 || mapH <= 0) return;
     const int size = std::clamp(hudSize, 24, std::max(24, std::min(viewW, viewH) - 16));
-    const int margin = std::max(4, static_cast<int>(std::lround(8 * g_uiScale)));
+    const float hudScale = fullMap ? viewH / kDesignH : g_uiScale;
+    const int margin = std::max(4, static_cast<int>(std::lround(8 * hudScale)));
     const float x = showCenterRadar ? (viewW-size)*.5f : static_cast<float>(margin);
     const float y = showCenterRadar ? (viewH-size)*.5f : static_cast<float>(margin);
     const float half = size*.5f;
-    const int frameIndex = showCenterRadar ? 1 : 0;
+    const int frameIndex = showCenterRadar || fullMap ? 1 : 0;
     auto*& frameTexture = radarFrameTex_[frameIndex];
     if (!frameTexture || radarFrameSize_[frameIndex] != size) {
         if (frameTexture) SDL_DestroyTexture(frameTexture);
@@ -1913,7 +1952,7 @@ void CS2DRenderer::DrawRadarHUD(float playerX, float playerY, float playerAngle,
     SDL_RenderSetClipRect(renderer_, nullptr);
     SDL_RenderSetScale(renderer_, 1, 1);
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
-    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
+    SDL_SetRenderDrawColor(renderer_, fullMap ? 15 : 0, fullMap ? 19 : 0, fullMap ? 25 : 0, fullMap ? 225 : 0);
     SDL_RenderClear(renderer_);
     const float zoom = mapZoom >= .5f && mapZoom <= 8 ? mapZoom : 1;
     const float scale = size * zoom / std::max(mapW, mapH);
@@ -1926,27 +1965,28 @@ void CS2DRenderer::DrawRadarHUD(float playerX, float playerY, float playerAngle,
         return SDL_FPoint{half + dx*cs-dy*sn, half + dx*sn+dy*cs};
     };
     // Draw the whole map with one affine transform, including map-edge blank space.
-    if (radarMapTex_ && radarImgW_ > 0 && radarImgH_ > 0) {
+    SDL_Texture* mapTexture = previewMap ? previewMap : radarMapTex_;
+    if (mapTexture) {
         int tw = 0, th = 0;
-        SDL_QueryTexture(radarMapTex_, nullptr, nullptr, &tw, &th);
+        SDL_QueryTexture(mapTexture, nullptr, nullptr, &tw, &th);
         const SDL_Color color{255,255,255,static_cast<Uint8>(blendBg ? std::clamp(bgAlpha,0,255) : 255)};
-        const float u0 = radarImgX_/tw, v0 = radarImgY_/th;
-        const float u1 = (radarImgX_+radarImgW_)/tw, v1 = (radarImgY_+radarImgH_)/th;
+        const float u0 = previewMap ? 0 : radarImgX_/tw, v0 = previewMap ? 0 : radarImgY_/th;
+        const float u1 = previewMap ? 1 : (radarImgX_+radarImgW_)/tw, v1 = previewMap ? 1 : (radarImgY_+radarImgH_)/th;
         const SDL_Vertex vertices[] = {{point(0,0),color,{u0,v0}}, {point(mapW,0),color,{u1,v0}},
             {point(mapW,mapH),color,{u1,v1}}, {point(0,mapH),color,{u0,v1}}};
         const int indices[] = {0,1,2,0,2,3};
         SDL_BlendMode textureBlend;
         Uint8 tr,tg,tb,ta;
-        SDL_GetTextureBlendMode(radarMapTex_, &textureBlend);
-        SDL_GetTextureColorMod(radarMapTex_, &tr,&tg,&tb);
-        SDL_GetTextureAlphaMod(radarMapTex_, &ta);
-        SDL_SetTextureBlendMode(radarMapTex_, SDL_BLENDMODE_NONE);
-        SDL_SetTextureColorMod(radarMapTex_,255,255,255);
-        SDL_SetTextureAlphaMod(radarMapTex_,255);
-        SDL_RenderGeometry(renderer_,radarMapTex_,vertices,4,indices,6);
-        SDL_SetTextureBlendMode(radarMapTex_, textureBlend);
-        SDL_SetTextureColorMod(radarMapTex_,tr,tg,tb);
-        SDL_SetTextureAlphaMod(radarMapTex_,ta);
+        SDL_GetTextureBlendMode(mapTexture, &textureBlend);
+        SDL_GetTextureColorMod(mapTexture, &tr,&tg,&tb);
+        SDL_GetTextureAlphaMod(mapTexture, &ta);
+        SDL_SetTextureBlendMode(mapTexture, SDL_BLENDMODE_NONE);
+        SDL_SetTextureColorMod(mapTexture,255,255,255);
+        SDL_SetTextureAlphaMod(mapTexture,255);
+        SDL_RenderGeometry(renderer_,mapTexture,vertices,4,indices,6);
+        SDL_SetTextureBlendMode(mapTexture, textureBlend);
+        SDL_SetTextureColorMod(mapTexture,tr,tg,tb);
+        SDL_SetTextureAlphaMod(mapTexture,ta);
     }
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
     auto dot = [&](SDL_FPoint p, float radius, SDL_Color color) {
@@ -1956,16 +1996,40 @@ void CS2DRenderer::DrawRadarHUD(float playerX, float playerY, float playerAngle,
             SDL_RenderDrawLineF(renderer_,p.x-extent,p.y+row,p.x+extent,p.y+row);
         }
     };
-    const float dotRadius = std::clamp(1.5f+.5f*(zoom-1),1.5f,4.5f) * std::max(.7f,g_uiScale);
-    for (const auto& d : dots) {
-        const auto p = point(d.x,d.y);
-        dot(p,dotRadius+1,{8,12,16,d.alpha});
-        dot(p,dotRadius,{d.r,d.g,d.b,d.alpha});
-    }
+    const float dotRadius = std::clamp(1.5f+.5f*(zoom-1),1.5f,4.5f) * std::max(.7f,hudScale);
     const auto self = point(playerX,playerY);
     dot(self,dotRadius+2,{220,240,255,255});
     dot(self,dotRadius+1,{8,12,16,255});
     dot(self,dotRadius,{110,215,255,255});
+    for (const auto& d : dots) {
+        const auto p = point(d.x,d.y);
+        if (d.shape == RadarDot::Shape::Circle) {
+            dot(p,dotRadius+1,{8,12,16,d.alpha});
+            dot(p,dotRadius,{d.r,d.g,d.b,d.alpha});
+            continue;
+        }
+        const float radius = std::max(3.5f, 5.0f*hudScale);
+        SDL_SetRenderDrawColor(renderer_,d.r,d.g,d.b,d.alpha);
+        if (d.shape == RadarDot::Shape::Carrier) {
+            const SDL_Color color{d.r,d.g,d.b,d.alpha};
+            const SDL_Vertex vertices[] = {{{p.x,p.y-radius},color,{}},{{p.x+radius,p.y},color,{}},
+                {{p.x,p.y+radius},color,{}},{{p.x-radius,p.y},color,{}}};
+            const int indices[] = {0,1,2,0,2,3};
+            SDL_RenderGeometry(renderer_,nullptr,vertices,4,indices,6);
+        } else {
+            const SDL_FRect rect{p.x-radius*.8f,p.y-radius*.8f,radius*1.6f,radius*1.6f};
+            SDL_RenderFillRectF(renderer_,&rect);
+        }
+        const float pulse = d.shape == RadarDot::Shape::DroppedBomb ?
+            1.5f + 2.0f*(.5f+.5f*std::sin(SDL_GetTicks()*0.005f)) : 2.0f;
+        const float ring = radius+pulse;
+        SDL_SetRenderDrawColor(renderer_,d.r,d.g,d.b,static_cast<Uint8>(d.alpha*.7f));
+        for (int i=0;i<40;++i) {
+            const float a=i*6.2831853f/40, b=(i+1)*6.2831853f/40;
+            SDL_RenderDrawLineF(renderer_,p.x+std::cos(a)*ring,p.y+std::sin(a)*ring,
+                p.x+std::cos(b)*ring,p.y+std::sin(b)*ring);
+        }
+    }
     SDL_SetRenderTarget(renderer_,oldTarget);
     SDL_RenderSetScale(renderer_,oldScaleX,oldScaleY);
     SDL_RenderSetViewport(renderer_,&oldViewport);

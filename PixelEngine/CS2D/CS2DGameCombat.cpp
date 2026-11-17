@@ -176,10 +176,10 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
 
     // ---- 枪械 ----
     if (player_.ammo <= 0) {
-        // 弹匣打空：先给一声空仓咔哒（被动反馈），再开始换弹
-        // 注意 StartReload 内部还会播换弹音，两者叠加就是"咔哒 + 拉栓"
-        if (!player_.reloading && player_.reserve > 0 && player_.maxAmmo > 0 && audio) {
-            audio->PlaySound(SoundEffect::CLICK);
+        if (dryFireCooldown_ <= 0.0f) {
+            dryFireCooldown_ = 0.30f;
+            if (audio) audio->PlaySound(SoundEffect::DRYFIRE);
+            if (player_.reserve <= 0) dryFireHintTimer_ = 1.0f;
         }
         StartReload(player_, audio);
         return;
@@ -374,11 +374,17 @@ void CS2DGame::UpdateBullets(float dt, AudioManager *audio) {
                 }
             }
 
-            // 玩家命中反馈（无论是否致死）
-            if (bullet.ownerIdx == -1)
-                hitMarkerTimer_ = 0.18f;
+            const bool armored = bot.armor > 0;
+            const bool killed = ApplyDamage(bot, bullet.damage, WeaponDB::ArmorPen(bullet.weapon));
+            if (bullet.ownerIdx == -1) {
+                // 同一帧多弹丸命中时保留击杀确认，避免被后续普通命中覆盖。
+                if (killed || hitMarkerKind_ != HitMarkerKind::Kill || hitMarkerTimer_ <= 0) {
+                    hitMarkerKind_ = killed ? HitMarkerKind::Kill : armored ? HitMarkerKind::Armor : HitMarkerKind::Normal;
+                    hitMarkerTimer_ = killed ? 0.30f : 0.18f;
+                }
+            }
 
-            if (ApplyDamage(bot, bullet.damage, WeaponDB::ArmorPen(bullet.weapon))) {
+            if (killed) {
                 Player *bulletKiller =
                     (bullet.ownerIdx == -1)
                         ? &player_
@@ -387,10 +393,13 @@ void CS2DGame::UpdateBullets(float dt, AudioManager *audio) {
                                : nullptr);
                 OnCombatantKilled(bot, audio, bulletKiller, bullet.weapon,bullet.equipmentId,bullet.sourcePosition);
 
-                if (audio)
+                if (audio) {
                     audio->PlaySoundAt(SoundEffect::KILL, bot.x, bot.y, ListenerX(), ListenerY());
+                    if (bullet.ownerIdx == -1) audio->PlaySound(SoundEffect::KILL, 0.65f);
+                }
             } else if (audio) {
-                audio->PlaySoundAt(SoundEffect::HIT, bot.x, bot.y, ListenerX(), ListenerY());
+                audio->PlaySoundAt(bullet.ownerIdx == -1 && armored ? SoundEffect::ARMOR_HIT : SoundEffect::HIT,
+                                   bot.x, bot.y, ListenerX(), ListenerY());
             }
 
             // 受击反应：血量低且当前未在撤退 → 记录威胁来源并撤退一次
@@ -732,6 +741,8 @@ void CS2DGame::RebuildFireCells(FireZone &fire) const {
     fire.terrainRevision = world_->Revision();
     constexpr float step = 4;
     const int extent = static_cast<int>(std::ceil(fire.radius / step)), width = extent * 2 + 1;
+    fire.cellExtent = extent;
+    fire.cellCoverage.assign(width * width, 0);
     std::vector<bool> visited(width * width, false);
     std::vector<SDL_Point> queue;
     fire.cells.clear();
@@ -759,6 +770,7 @@ void CS2DGame::RebuildFireCells(FireZone &fire) const {
     for (size_t i = 0; i < queue.size(); ++i) {
         const auto p = queue[i];
         fire.cells.push_back({fire.x + p.x * step, fire.y + p.y * step});
+        fire.cellCoverage[(p.y + extent) * width + p.x + extent] = 1;
         const SDL_Point next[] = {{p.x - 1, p.y}, {p.x + 1, p.y}, {p.x, p.y - 1}, {p.x, p.y + 1}};
         for (auto n : next) {
             if (std::abs(n.x) > extent || std::abs(n.y) > extent)
@@ -775,6 +787,19 @@ void CS2DGame::RebuildFireCells(FireZone &fire) const {
 
 bool CS2DGame::FireContains(const FireZone &fire, float x, float y) const {
     const float radius = Tuning::FireEffectiveRadius(fire.radius, fire.age, fire.life);
+    if (!fire.cellCoverage.empty()) {
+        const int gx = static_cast<int>(std::floor((x-fire.x)/4)), gy = static_cast<int>(std::floor((y-fire.y)/4));
+        const int extent = fire.cellExtent, width = extent*2+1;
+        for (int cy=gy; cy<=gy+1; ++cy) {
+            for (int cx=gx; cx<=gx+1; ++cx) {
+                if (std::abs(cx)>extent || std::abs(cy)>extent) continue;
+                if (fire.cellCoverage[(cy+extent)*width+cx+extent] &&
+                    std::hypot(cx*4.0f,cy*4.0f)<=radius &&
+                    std::abs(fire.x+cx*4-x)<=2 && std::abs(fire.y+cy*4-y)<=2) return true;
+            }
+        }
+        return false;
+    }
     for (const auto cell : fire.cells)
         if (std::hypot(cell.x - fire.x, cell.y - fire.y) <= radius && std::abs(cell.x - x) <= 2 &&
             std::abs(cell.y - y) <= 2)

@@ -2,6 +2,7 @@
 #include <SDL2/SDL.h>
 #include "Tuning.hpp"
 #include "AimLineStyle.hpp"
+#include "CS2DRenderer.hpp"
 #include <vector>
 #include <functional>
 
@@ -37,15 +38,11 @@ public:
     CrosshairCfg crosshair;
     AimLineStyle aimLineStyle;
     RadarCfg     radar;
-    bool         centerRadarOn = false;
+    bool         showScoreboard = false;
 
     // 虚拟准星（屏幕坐标，相对鼠标模式）
     float virtCursorX = 400.0f;
     float virtCursorY = 300.0f;
-
-    // Tab 边沿检测（由外部设置原始状态）
-    bool keyTab  = false;
-    bool prevTab = false;
 
     // ---- 输入处理 ----
     void InitializeCursor(float angle);
@@ -63,7 +60,7 @@ public:
                       float camX, float camY, int viewW, int viewH, float playerX, float playerY,
                       float& outWorldX, float& outWorldY, float recoilAngle = 0.0f,
                       SDL_FPoint renderOffset = {0.0f, 0.0f}, SDL_FPoint ballisticKick = {});
-    void UpdateTabToggle();
+    static std::vector<CS2DRenderer::RadarDot> CollectRadarDots(const CS2DGame& game);
 
     // ---- 渲染 ----
     void Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int viewH);

@@ -15,6 +15,11 @@ private:
     ImGuiStyle baseStyle_{};     // 基准样式（缩放前）
     float      uiScaleApplied_ = 0.0f;
     bool       styleReady_ = false;   // ImGui 上下文创建后才允许改样式
+    SDL_Texture* frostCapture_ = nullptr;
+    SDL_Texture* frostTexture_ = nullptr;
+    int frostWidth_ = 0, frostHeight_ = 0;
+    bool frostPrepared_ = false;
+    std::vector<Uint8> frostPixels_, frostScratch_, frostReadback_;
 public:
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
@@ -39,6 +44,7 @@ public:
     void SetFontPath(const std::string& path) { fontPathOverride = path; }
 
     void BeginFrame();   // ImGui_ImplSDL2_NewFrame + ImGui_ImplSDLRenderer2_NewFrame + ImGui::NewFrame
+    void PrepareFrostedGlass();
     // 设置全局 UI 缩放（字体 + 控件尺寸）
     void SetUiScale(float scale);
     void EndFrame();     // ImGui::Render + ImGui_ImplSDLRenderer2_RenderDrawData

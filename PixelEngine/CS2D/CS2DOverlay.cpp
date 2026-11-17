@@ -144,8 +144,37 @@ void CS2DOverlay::UpdateCursor(int relX, int relY, float sensitivity, float zoom
     virtCursorY = (outWorldY - camY) * zoom;
 }
 
-void CS2DOverlay::UpdateTabToggle() {
-    if (keyTab && !prevTab) centerRadarOn = !centerRadarOn;
+std::vector<CS2DRenderer::RadarDot> CS2DOverlay::CollectRadarDots(const CS2DGame& game) {
+    using Shape = CS2DRenderer::RadarDot::Shape;
+    std::vector<CS2DRenderer::RadarDot> dots;
+    if (game.IsDeathMatch()) return dots;
+    const Team myTeam = game.GetPlayer().team;
+    const auto& bots = game.GetBOTs();
+    const int carrier = game.GetBombCarrierId();
+    for (size_t i = 0; i < bots.size(); ++i) {
+        const auto& bot = bots[i];
+        if (!bot.alive || bot.team != myTeam) continue;
+        if (static_cast<int>(i) != carrier)
+            dots.push_back({bot.x, bot.y, 90, 220, 130});
+    }
+    for (const auto& contact : game.GetContactsOfTeam(myTeam)) {
+        if (contact.age > Tuning::RadarFadeEnd) continue;
+        const auto alpha = static_cast<Uint8>(255.0f * std::clamp(
+            (Tuning::RadarFadeEnd - contact.age) / (Tuning::RadarFadeEnd - Tuning::RadarFadeStart), 0.0f, 1.0f));
+        if (carrier != -2 && contact.id == carrier) {
+            // 使用上次目击坐标和同一衰减，不通过持包标记跟踪失去视野的敌人。
+            dots.push_back({contact.x, contact.y, 255, 170, 60, alpha, Shape::Carrier});
+        } else {
+            dots.push_back({contact.x, contact.y, 235, 75, 70, alpha});
+        }
+    }
+    if (myTeam == Team::T) {
+        if (const auto pos = game.GetBombCarrierPos())
+            dots.push_back({pos->x, pos->y, 255, 170, 60, 255, Shape::Carrier});
+    }
+    if (game.IsBombDropped() && (myTeam == Team::T || (myTeam == Team::CT && game.HasBombIntel())))
+        dots.push_back({game.BombDropX(), game.BombDropY(), 255, 170, 60, 255, Shape::DroppedBomb});
+    return dots;
 }
 
 // ============================================================================
@@ -156,7 +185,7 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
 
     // 准星
     // 契约 v1.3：开镜期间不画普通准星，改用镜筒里的大十字（四象限）
-    const Presentation::ScopeView scope = game->GetScopeView();
+    const Presentation::ScopeView scope = game->GetRenderScopeView();
     const bool scoped = scope.active && scope.supported;
     const float reticleX = (game->GetRenderAimX() - renderer->GetCameraX()) * renderer->GetZoom();
     const float reticleY = (game->GetRenderAimY() - renderer->GetCameraY()) * renderer->GetZoom();
@@ -190,68 +219,39 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
     {
         const float hm = game->GetHitMarkerTimer();
         if (hm > 0.0f) {
-            const float k = std::min(1.0f, hm / 0.18f);
-            renderer->DrawHitMarker(reticleX, reticleY, g_uiScale,
-                                    static_cast<Uint8>(220.0f * k));
+            const auto kind = game->GetHitMarkerKind();
+            const bool kill = kind == CS2DGame::HitMarkerKind::Kill;
+            const SDL_Color color = kill ? SDL_Color{244, 83, 72, 255} :
+                kind == CS2DGame::HitMarkerKind::Armor ? SDL_Color{110, 193, 255, 255} : SDL_Color{255, 255, 255, 255};
+            const float k = std::min(1.0f, hm / (kill ? 0.30f : 0.18f));
+            renderer->DrawHitMarker(reticleX, reticleY, g_uiScale * (kill ? 1.5f : 1.0f),
+                                    static_cast<Uint8>(220.0f * k), color);
         }
     }
 
-    // 收集雷达点位：友军（绿） + 出现在友军视野里的敌人（红）
-    std::vector<CS2DRenderer::RadarDot> dots;
-    const auto& bots = game->GetBOTs();
-    const Team myTeam = game->GetPlayer().team;
+    renderer->DrawDamageVignette(static_cast<Uint8>(85.0f *
+        std::clamp(game->GetDamageFlashTimer() / 0.30f, 0.0f, 1.0f)));
 
-    // 死斗 = 一人成军：雷达不显示任何 BOT 位置——
-    // 既没有"队友常驻绿点"，也不显示情报红点（FFA 里 9 个 BOT 一直在互相开火，
-    // 情报点会持续铺满全图，等于全图透视）。
-    const bool dmMode = game->IsDeathMatch();
-    if (!dmMode) {
-        for (const auto& b : bots) {
-            if (!b.alive || b.team != myTeam) continue;  // 只显示同队存活者
-            dots.push_back({b.x, b.y, 90, 220, 130});    // 友军：绿色
-        }
-        for (const auto& c : game->GetContactsOfTeam(myTeam)) {
-            if (c.age > 6.0f) continue;                  // 情报超过 6 秒不再显示
-            dots.push_back({c.x, c.y, 235, 75, 70, static_cast<Uint8>(255.0f * std::clamp((Tuning::RadarFadeEnd - c.age) / (Tuning::RadarFadeEnd - Tuning::RadarFadeStart), 0.0f, 1.0f))});     // 可见敌人：红色
-        }
-    }
-
-    // 掉落 C4：T 方始终可见；CT 只在情报期内可见（橙色小点）
-    if (game->IsBombDropped()) {
-        const bool show = (myTeam == Team::T) ||
-                          (myTeam == Team::CT && game->HasBombIntel());
-        if (show) {
-            dots.push_back({game->BombDropX(), game->BombDropY(), 255, 170, 60});
-        }
-    }
+    const auto dots = CollectRadarDots(*game);
 
     const auto& w = game->GetWorld();
     const float mapPixelW = static_cast<float>(w.GetMapWidth()  * w.GetTileWidth());
     const float mapPixelH = static_cast<float>(w.GetMapHeight() * w.GetTileHeight());
 
-    // 左上角雷达 HUD
+    // Tab 期间以全图替换小雷达。整图缩入圆形内接区域，避免裁掉地图角落。
+    const float fullMapZoom = 0.90f * std::max(mapPixelW, mapPixelH) /
+        std::max(1.0f, std::hypot(mapPixelW, mapPixelH));
     renderer->DrawRadarHUD(
-        game->GetPlayer().x, game->GetPlayer().y,
-        game->GetAimAngle(),
-        dots,
+        game->GetPlayer().x, game->GetPlayer().y, game->GetAimAngle(), dots,
         mapPixelW, mapPixelH,
-        radar.playerCentered, radar.rotateWithPlayer,
-        radar.blendBg, radar.bgAlpha,
-        static_cast<int>(std::lround(radar.hudSize * g_uiScale)), radar.mapZoom,
-        false, viewW, viewH);
+        showScoreboard ? false : radar.playerCentered,
+        showScoreboard ? false : radar.rotateWithPlayer,
+        showScoreboard ? true : radar.blendBg,
+        showScoreboard ? 225 : radar.bgAlpha,
+        static_cast<int>(std::lround(showScoreboard ? ScoreboardMapSize(viewW, viewH) : radar.hudSize * g_uiScale)),
+        showScoreboard ? fullMapZoom : radar.mapZoom,
+        false, viewW, viewH, showScoreboard);
 
-    // 中心雷达（Tab 切换）
-    if (centerRadarOn) {
-        renderer->DrawRadarHUD(
-            game->GetPlayer().x, game->GetPlayer().y,
-            game->GetAimAngle(),
-            dots,
-            mapPixelW, mapPixelH,
-            radar.playerCentered, radar.rotateWithPlayer,
-            false, 200,
-            static_cast<int>(std::lround(320.0f * g_uiScale)), radar.mapZoom * 1.5f,
-            true, viewW, viewH);
-    }
 }
 
 // ============================================================================

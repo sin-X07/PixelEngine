@@ -533,6 +533,8 @@ public:
         int owner = -2;
         WeaponId weapon = WeaponId::GrenadeMolotov;
         std::vector<SDL_FPoint> cells;
+        std::vector<uint8_t> cellCoverage;
+        int cellExtent = 0;
         std::uint64_t terrainRevision = 0;
         float radius = Tuning::FireRadius;
         float life = 7.0f;
@@ -679,7 +681,16 @@ public:
     void RequestSpectateToggle() { spectateTogglePending_ = true; }
     void QuickSwitchWeapon();
     float GetAimMotionBlur() const { return aimMotionBlur_; }
+    enum class HitMarkerKind { Normal, Armor, Kill };
+    HitMarkerKind GetHitMarkerKind() const { return hitMarkerKind_; }
     float GetHitMarkerTimer()   const { return hitMarkerTimer_; }
+    float GetDryFireHintTimer() const { return dryFireHintTimer_; }
+    float GetReloadProgress() const {
+        const auto* observed = GetSpectatedPlayer();
+        const auto& actor = observed ? *observed : player_;
+        if (!actor.alive || !actor.reloading || actor.CurrentWeapon().reloadTime <= 0) return 0;
+        return std::clamp(1.0f - actor.reloadTimer / actor.CurrentWeapon().reloadTime, 0.0f, 1.0f);
+    }
     using DamageDirection = Presentation::DamageDirection;
     const std::array<DamageDirection, 4>& GetDamageDirections() const { return damageDirections_; }
     float GetDamageFlashTimer() const { return damageFlashTimer_; }
@@ -781,6 +792,7 @@ public:
     int  GetScoreCT()     const { return teams_.ScoreCT(); }
     int  GetScoreToWin()  const { return teams_.ScoreToWin(); }
 
+    bool IsRoundDecided() const { return round_.IsDecided(); }
     RoundPhase GetRoundPhase()      const { return round_.Phase(); }
     float      GetRoundRemaining()  const { return round_.PhaseRemaining(); }
     int        GetRoundNumber()     const { return round_.RoundNumber(); }
@@ -819,6 +831,15 @@ public:
     }
     bool PlayerHoldingC4() const { return playerHoldingC4_; }
     bool IsBombDropped() const { return bombDropped_; }
+    int GetBombCarrierId() const { return GetBombCarrierPos() ? bombCarrier_ : -2; }
+    std::optional<SDL_FPoint> GetBombCarrierPos() const {
+        if (ActorHasC4(player_)) return SDL_FPoint{player_.x, player_.y};
+        if (bombCarrier_ >= 0 && bombCarrier_ < static_cast<int>(bots_.size())) {
+            const auto& carrier = bots_[bombCarrier_];
+            if (ActorHasC4(carrier)) return SDL_FPoint{carrier.x, carrier.y};
+        }
+        return std::nullopt;
+    }
     float BombDropX() const { return bombDropX_; }
     float BombDropY() const { return bombDropY_; }
     bool  HasBombIntel() const { return bombIntel_; }
@@ -982,6 +1003,7 @@ public:
     void UpdateScopeInput(bool rightClicked, bool gameplayInputAllowed);
     // 只读快照，无消费副作用。
     Presentation::ScopeView GetScopeView() const;
+    Presentation::ScopeView GetRenderScopeView() const;
     // 立即归零（幂等）：不动伤害/散布/移速。
     void ResetScope(Presentation::ScopeResetReason reason);
     static bool IsScopeSupported(WeaponId id);
@@ -1113,6 +1135,9 @@ private:
     bool edgeZoomRequested_ = false;
     int cameraDistanceTier_ = 0;
     float edgeZoom_ = 0.0f;
+    float previousEdgeZoom_ = 0.0f;
+    float previousScopeZoom_ = 1.0f;
+    float previousScopeEngagement_ = 0.0f;
     float aimMotionBlur_ = 0;
     float crosshairBloom_ = 0.0f;  // 平滑后的移动扩散（0=静止，1=全速跑动）
     std::vector<Player> bots_;
@@ -1244,6 +1269,9 @@ private:
     bool spectateTogglePending_ = false;
     int previousEquipSlot_ = 2;
     WeaponId previousEquipWeapon_ = WeaponId::Knife;
+    HitMarkerKind hitMarkerKind_ = HitMarkerKind::Normal;
+    float dryFireHintTimer_ = 0.0f;
+    float dryFireCooldown_ = 0.0f;
     float hitMarkerTimer_ = 0.0f;   // 命中敌人反馈
     std::array<DamageDirection, 4> damageDirections_{};
     float damageFlashTimer_ = 0.0f; // 玩家受伤反馈
@@ -1488,7 +1516,7 @@ private:
     void ApplyRoundResult(Team winner, class AudioManager* audio = nullptr);
     // 统一伤害入口：先扣护甲再扣血。返回 true 表示本次伤害致死。
     bool ApplyDamage(Player& victim, int amount, float armorPen = 1.0f);
-    void GrantRoundEndMoney(Team winner);   // 发放回合金钱并重置本回合装备
+    void GrantRoundMoney(Team winner);   // 发放回合金钱并重置本回合装备
 
     // 目标物
     void SetupObjective();                  // 按模式初始化包点 / C4

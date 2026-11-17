@@ -42,9 +42,7 @@ enum class SoundEffect {
     BOMB_PLANT,
     BOMB_DEFUSE,
     BOMB_BEEP,
-    ROUND_START,
     ROUND_WIN,
-    ROUND_LOSE,
     FOOTSTEP,
     ARMOR_HIT,
 
@@ -88,6 +86,7 @@ enum class SoundEffect {
     RELOAD_MAG7,
     RELOAD_M249,
     RELOAD_NEGEV,
+    DRYFIRE,
 };
 
 // 自动武器专用通道：新枪声覆盖上一发，避免通道耗尽后失声
@@ -122,11 +121,10 @@ private:
     Mix_Chunk* bombPlantSound = nullptr;
     Mix_Chunk* bombDefuseSound = nullptr;
     Mix_Chunk* bombBeepSound = nullptr;
-    Mix_Chunk* roundStartSound = nullptr;
     Mix_Chunk* roundWinSound = nullptr;
-    Mix_Chunk* roundLoseSound = nullptr;
     Mix_Chunk* footstepSound = nullptr;
     Mix_Chunk* armorHitSound = nullptr;
+    Mix_Chunk* dryFireSound = nullptr;
 
     // 换弹音效
     Mix_Chunk* reloadGlockSound   = nullptr;
@@ -187,7 +185,7 @@ public:
     void SetClickSound(int index);
     int  GetClickSound() const { return clickSoundIndex_; }
 
-    void PlaySound(SoundEffect effect);
+    void PlaySound(SoundEffect effect, float volume = 1.0f);
     int PlaySoundTracked(SoundEffect effect, int channel = -1);
     void StopChannel(int& channel);
     int PlaySoundTrackedAt(SoundEffect effect, float x, float y, float listenerX, float listenerY, int channel = -1);

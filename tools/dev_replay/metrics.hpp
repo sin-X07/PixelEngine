@@ -144,7 +144,7 @@ public:
         }
 
         // 结算阶段记录存活（回合切换会立刻重生，必须取切换前的值）
-        if (game.GetRoundPhase() == RoundPhase::RoundEnd) {
+        if (game.IsRoundDecided()) {
             lastAliveT_  = AliveOf(game, Team::T);
             lastAliveCT_ = AliveOf(game, Team::CT);
         }

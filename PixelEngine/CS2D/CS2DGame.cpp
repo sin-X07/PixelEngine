@@ -122,6 +122,8 @@ void CS2DGame::ResetToNewMatch() {
     StopObjectiveAudio(nullptr);
     damageDirections_ = {};
     damageFlashTimer_ = hitMarkerTimer_ = 0.0f;
+    dryFireHintTimer_ = dryFireCooldown_ = 0.0f;
+    hitMarkerKind_ = HitMarkerKind::Normal;
     bots_.clear();
     bullets_.clear();
     bulletVisuals_.clear();
@@ -531,7 +533,7 @@ void CS2DGame::SpawnPlayer() {
     recoilShake_ = recoilShakeAge_ = 0.0f;
     aimFollowsPlayer_ = false;
     viewHistoryValid_ = false;
-    edgeZoom_ = 0.0f;
+    edgeZoom_ = previousEdgeZoom_ = 0.0f;
     edgeZoomRequested_ = false;
     cameraDistanceTier_ = 0;
     cameraPrepared_ = cameraScopeSettled_ = false;
@@ -825,6 +827,8 @@ void CS2DGame::ResetScope(Presentation::ScopeResetReason reason) {
     scopeEngFrom_    = scopeEngTo_ = 0.0f;
     scopeEngT_       = 1.0f;
     scopeZoom_       = 1.0f;
+    previousScopeZoom_ = 1.0f;
+    previousScopeEngagement_ = 0.0f;
     scopeZoomFrom_   = scopeZoomTo_ = 1.0f;
     scopeZoomT_      = 1.0f;
 
@@ -856,6 +860,15 @@ Presentation::ScopeView CS2DGame::GetScopeView() const {
         view.transition     = 0.0f;
         view.zoomMultiplier = 1.0f;
         view.targetZoomMultiplier = 1.0f;
+    }
+    return view;
+}
+
+Presentation::ScopeView CS2DGame::GetRenderScopeView() const {
+    auto view = GetScopeView();
+    if (viewHistoryValid_ && view.supported && player_.alive) {
+        view.zoomMultiplier = previousScopeZoom_ + (view.zoomMultiplier - previousScopeZoom_) * renderInterpolation_;
+        view.transition = previousScopeEngagement_ + (view.transition - previousScopeEngagement_) * renderInterpolation_;
     }
     return view;
 }
@@ -962,6 +975,8 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
                       bool shiftPressed, bool rPressed, bool interactHeld,
                       AudioManager* audio) {
     ++traceTick_;
+    dryFireHintTimer_ = std::max(0.0f, dryFireHintTimer_ - dt);
+    dryFireCooldown_ = std::max(0.0f, dryFireCooldown_ - dt);
     // ---- 观察者输入：空格切换视角，左右键切换队友，自由视角用 WASD ----
     if (IsSpectating()) {
         if (spectateTogglePending_) SpectatorToggle();
@@ -976,6 +991,9 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     spectateTogglePending_ = false;
     if (!world_) return;
 
+    previousEdgeZoom_ = edgeZoom_;
+    previousScopeZoom_ = scopeZoom_;
+    previousScopeEngagement_ = scopeEngagement_;
     previousPlayerView_ = {player_.x, player_.y, player_.alive, player_.EffectiveAim(), player_.animTimer, player_.animState};
     previousBotViews_.clear();
     previousBotViews_.reserve(bots_.size());
@@ -1019,9 +1037,8 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     intel_.Update(dt);
 
     const bool frozen  = (mode_ != MatchMode::DeathMatch) && round_.IsFrozen();
-    const bool ending  = (mode_ != MatchMode::DeathMatch) && round_.IsRoundEnd();
-    const bool canAct  = !frozen && !ending;
-    const bool canMove = !frozen;   // 结算展示期仍可移动/拾取，只是不能开火
+    const bool canAct  = !frozen;
+    const bool canMove = !frozen;   // 已决展示窗口沿用交战行为
 
     player_.stealth = shiftPressed && canAct;
 
@@ -1257,8 +1274,10 @@ void CS2DGame::PrepareCamera(int viewW, int viewH, float interpolation) {
     if (!renderer_ || !world_) return;
     renderInterpolation_ = std::clamp(interpolation, 0.0f, 1.0f);
     const auto playerView = GetActorView(player_);
-    const Presentation::ScopeView scope = GetScopeView();
-    const float edgeFactor = edgeZoom_ <= 1 ? 1.12f + (.70f-1.12f)*edgeZoom_ : .70f + (.50f-.70f)*(edgeZoom_-1);
+    Presentation::ScopeView scope = GetRenderScopeView();
+    const float blend = viewHistoryValid_ ? renderInterpolation_ : 1.0f;
+    const float renderEdge = previousEdgeZoom_ + (edgeZoom_ - previousEdgeZoom_) * blend;
+    const float edgeFactor = renderEdge <= 1 ? 1.12f + (.70f-1.12f)*renderEdge : .70f + (.50f-.70f)*(renderEdge-1);
     // 观察者：镜头跟随队友或自由移动
     float camX = playerView.x, camY = playerView.y;
     if (IsSpectating()) {
@@ -1274,7 +1293,7 @@ void CS2DGame::PrepareCamera(int viewW, int viewH, float interpolation) {
     } else {
         renderer_->SetCameraAnchor(playerView.x, playerView.y);
         const float dx = GetRenderAimX() - playerView.x, dy = GetRenderAimY() - playerView.y;
-        const float scopedShift = ScopeCameraShift();
+        const float scopedShift = ScopeCameraShiftForZoom(scope.zoomMultiplier);
         const float shift = scopedShift;
         camX += dx * shift;
         camY += dy * shift;
@@ -1286,7 +1305,7 @@ void CS2DGame::PrepareCamera(int viewW, int viewH, float interpolation) {
         camX = std::clamp(camX, GetRenderAimX() - halfW, GetRenderAimX() + halfW);
         camY = std::clamp(camY, GetRenderAimY() - halfH, GetRenderAimY() + halfH);
     }
-    const float cone = Tuning::VisionConeDeg * (1.0f + (Tuning::EdgeZoomFovAngleMul - 1.0f) * std::min(edgeZoom_,1.0f));
+    const float cone = Tuning::VisionConeDeg * (1.0f + (Tuning::EdgeZoomFovAngleMul - 1.0f) * std::min(renderEdge,1.0f));
     renderer_->SetConeAngleDeg(cone);
     visibility_.SetConeAngleDeg(cone);
     renderer_->UpdateCamera(camX, camY, viewW, viewH, scope.zoomMultiplier * edgeFactor);
@@ -1314,7 +1333,7 @@ void CS2DGame::Render(int viewW, int viewH) {
     if (!cameraPrepared_)
         PrepareCamera(viewW, viewH);
     cameraPrepared_ = false;
-    const Presentation::ScopeView scope = GetScopeView();
+    const Presentation::ScopeView scope = GetRenderScopeView();
 
     // 镜内沿用扇形视野，镜外叠加雾遮罩。
     const float scopeRadiusPx =
@@ -1373,18 +1392,20 @@ void CS2DGame::Render(int viewW, int viewH) {
         SpriteDrawParams sp;
         fillParams(bot, sp);
         if (&bot == observer)
-            renderer_->SetVisibilityFilter(ownBodyVisible);
+            renderer_->SetVisibilityFilter(ownBodyVisible, true);
         renderer_->DrawCharacter(sp);
+        if (ActorHasC4(bot))
+            renderer_->DrawBombCarrierMarker(sp.x, sp.y, sp.size, clockSec_);
         if (&bot == observer)
-            renderer_->SetVisibilityFilter(worldVisible);
+            renderer_->SetVisibilityFilter(worldVisible, false, true);
     }
 
     if (!IsSpectating() && (player_.alive || player_.deathTimer <= 2.0f)) {
         SpriteDrawParams sp;
         fillParams(player_, sp);
-        renderer_->SetVisibilityFilter(ownBodyVisible);
+        renderer_->SetVisibilityFilter(ownBodyVisible, true);
         renderer_->DrawCharacter(sp);
-        renderer_->SetVisibilityFilter(worldVisible);
+        renderer_->SetVisibilityFilter(worldVisible, false, true);
     }
 
     // 枪弹视觉段：玩法层已生成的唯一数据源，UI 只绘制（契约 v1 第 6 节）
@@ -1423,9 +1444,10 @@ void CS2DGame::Render(int viewW, int viewH) {
         }
         if (visible) {
             const float pulse = 0.5f + 0.5f * std::sin(clockSec_ * 5.0f);
-            renderer_->DrawCircleOutline(bombDropX_, bombDropY_, 20.0f + 8.0f * pulse, 255, 170, 60,
+            renderer_->DrawCircleOutline(bombDropX_, bombDropY_, 20.0f + 14.0f * pulse, 255, 170, 60,
                                          static_cast<Uint8>(150 + 90 * pulse));
             renderer_->DrawCircleOutline(bombDropX_, bombDropY_, 8.0f, 255, 220, 140, 230);
+            renderer_->DrawDroppedWeapon(static_cast<int>(WeaponId::C4), bombDropX_, bombDropY_, 0);
         }
     }
 

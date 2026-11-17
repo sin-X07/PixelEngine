@@ -2,6 +2,7 @@
 #include "UiScale.hpp"
 #include "Palette.hpp"
 #include <cmath>
+#include <algorithm>
 #include "../Core/UiTextChars.hpp"
 #include "../Core/PathUtils.hpp"
 #include "../ThirdParty/imgui/imgui.h"
@@ -186,6 +187,8 @@ bool ImGuiUI::Initialize(SDL_Window* win, SDL_Renderer* ren) {
     if (pendingScale > 0.0f) SetUiScale(pendingScale);
 
 
+    // Build and upload the font atlas during loading, before the first gameplay frame.
+    if (!ImGui_ImplSDLRenderer2_CreateFontsTexture()) return false;
     initialized = true;
     return true;
 }
@@ -193,6 +196,10 @@ bool ImGuiUI::Initialize(SDL_Window* win, SDL_Renderer* ren) {
 void ImGuiUI::Shutdown() {
     if (!initialized) return;
     initialized = false;
+    if (frostCapture_) SDL_DestroyTexture(frostCapture_);
+    if (frostTexture_) SDL_DestroyTexture(frostTexture_);
+    frostCapture_ = frostTexture_ = nullptr;
+    Palette::frostTexture = 0;
 
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
@@ -219,6 +226,8 @@ ImFont* ImGuiUI::GetFont(int size) const {
 
 void ImGuiUI::BeginFrame() {
     if (!initialized) return;
+    frostPrepared_ = false;
+    Palette::frostTexture = 0;
     // Input is in window coordinates even while the engine renders a scene
     // texture. SDL_RenderWindowToLogical reads the CURRENT render target's
     // viewport/scale, so poll the platform backend with the window selected.
@@ -240,6 +249,106 @@ void ImGuiUI::BeginFrame() {
     }
 
     ImGui::NewFrame();
+}
+
+void ImGuiUI::PrepareFrostedGlass() {
+    if (!initialized || frostPrepared_) return;
+    frostPrepared_ = true;
+    SDL_Texture* target = SDL_GetRenderTarget(renderer);
+    int width = 0, height = 0;
+    if (target) SDL_QueryTexture(target, nullptr, nullptr, &width, &height);
+    else SDL_GetRendererOutputSize(renderer, &width, &height);
+    if (width <= 0 || height <= 0) return;
+    const int smallW = std::max(1, width / 8), smallH = std::max(1, height / 8);
+    if (!frostTexture_ || frostWidth_ != smallW || frostHeight_ != smallH) {
+        if (frostCapture_) SDL_DestroyTexture(frostCapture_);
+        if (frostTexture_) SDL_DestroyTexture(frostTexture_);
+        frostWidth_ = smallW;
+        frostHeight_ = smallH;
+        frostCapture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, smallW, smallH);
+        frostTexture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, smallW, smallH);
+        frostPixels_.resize(smallW * smallH * 4);
+        frostScratch_.resize(frostPixels_.size());
+        if (frostTexture_) {
+            SDL_SetTextureScaleMode(frostTexture_, SDL_ScaleModeLinear);
+            SDL_SetTextureBlendMode(frostTexture_, SDL_BLENDMODE_BLEND);
+        }
+    }
+    if (!frostTexture_) return;
+    SDL_BlendMode savedBlend;
+    SDL_GetRenderDrawBlendMode(renderer, &savedBlend);
+    Uint8 savedR, savedG, savedB, savedA;
+    SDL_GetRenderDrawColor(renderer, &savedR, &savedG, &savedB, &savedA);
+    int result = -1;
+    if (target && frostCapture_) {
+        SDL_Rect viewport, clip;
+        SDL_RenderGetViewport(renderer, &viewport);
+        SDL_RenderGetClipRect(renderer, &clip);
+        const bool clipped = SDL_RenderIsClipEnabled(renderer) == SDL_TRUE;
+        float scaleX, scaleY;
+        SDL_RenderGetScale(renderer, &scaleX, &scaleY);
+        SDL_SetRenderTarget(renderer, frostCapture_);
+        SDL_RenderSetViewport(renderer, nullptr);
+        SDL_RenderSetClipRect(renderer, nullptr);
+        SDL_RenderSetScale(renderer, 1, 1);
+        const SDL_Rect destination{0,0,smallW,smallH};
+        result = SDL_RenderCopy(renderer, target, nullptr, &destination);
+        SDL_SetRenderTarget(renderer, frostTexture_);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        SDL_SetTextureBlendMode(frostCapture_, SDL_BLENDMODE_ADD);
+        SDL_SetTextureColorMod(frostCapture_, 10, 10, 10);
+        for (int y=-2; y<=2; ++y) {
+            for (int x=-2; x<=2; ++x) {
+                const SDL_Rect shifted{x,y,smallW,smallH};
+                if (SDL_RenderCopy(renderer, frostCapture_, nullptr, &shifted) != 0) result = -1;
+            }
+        }
+        SDL_SetTextureColorMod(frostCapture_,255,255,255);
+        SDL_SetTextureBlendMode(frostCapture_,SDL_BLENDMODE_NONE);
+        SDL_SetRenderTarget(renderer, target);
+        SDL_RenderSetViewport(renderer, &viewport);
+        SDL_RenderSetScale(renderer, scaleX, scaleY);
+        SDL_RenderSetClipRect(renderer, clipped ? &clip : nullptr);
+    } else {
+        frostReadback_.resize(width * height * 4);
+        result = SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_RGBA32, frostReadback_.data(), width * 4);
+        if (result == 0) {
+            for (int y = 0; y < smallH; ++y)
+                for (int x = 0; x < smallW; ++x)
+                    std::copy_n(&frostReadback_[((y * height / smallH) * width + x * width / smallW) * 4],
+                                4, &frostPixels_[(y * smallW + x) * 4]);
+        }
+    }
+    SDL_SetRenderDrawBlendMode(renderer, savedBlend);
+    SDL_SetRenderDrawColor(renderer, savedR, savedG, savedB, savedA);
+    if (result != 0) return;
+    if (target && frostCapture_) {
+        Palette::frostTexture = reinterpret_cast<ImTextureID>(frostTexture_);
+        Palette::frostCanvas = ImGui::GetIO().DisplaySize;
+        return;
+    }
+    // Two separable box passes blur only the sampled backdrop, never UI text or icons.
+    for (int axis = 0; axis < 2; ++axis) {
+        for (int y = 0; y < smallH; ++y) {
+            for (int x = 0; x < smallW; ++x) {
+                for (int channel = 0; channel < 3; ++channel) {
+                    int sum = 0;
+                    for (int offset = -2; offset <= 2; ++offset) {
+                        const int sx = std::clamp(x + (axis == 0 ? offset : 0), 0, smallW - 1);
+                        const int sy = std::clamp(y + (axis == 1 ? offset : 0), 0, smallH - 1);
+                        sum += frostPixels_[(sy * smallW + sx) * 4 + channel];
+                    }
+                    frostScratch_[(y * smallW + x) * 4 + channel] = static_cast<Uint8>(sum / 5);
+                }
+                frostScratch_[(y * smallW + x) * 4 + 3] = 255;
+            }
+        }
+        frostPixels_.swap(frostScratch_);
+    }
+    if (SDL_UpdateTexture(frostTexture_, nullptr, frostPixels_.data(), smallW * 4) != 0) return;
+    Palette::frostTexture = reinterpret_cast<ImTextureID>(frostTexture_);
+    Palette::frostCanvas = ImGui::GetIO().DisplaySize;
 }
 
 void ImGuiUI::EndFrame() {

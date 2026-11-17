@@ -37,4 +37,27 @@ inline ImVec4 Info()        { return ImVec4(0.420f, 0.720f, 0.950f, 1.00f); }
 // 供 SDL / ImU32 使用
 inline ImU32 U32(ImVec4 c)  { return ImGui::ColorConvertFloat4ToU32(c); }
 
+inline ImTextureID frostTexture = 0;
+inline ImVec2 frostCanvas{};
+
+inline ImU32 GlassTint(ImU32 color) {
+    ImVec4 tint = ImGui::ColorConvertU32ToFloat4(color);
+    tint.w *= .40f;
+    return U32(tint);
+}
+
+inline void DrawGlassPanel(ImDrawList* draw, ImVec2 start, ImVec2 end, ImU32 color,
+                           float rounding = 0, float opacity = 1) {
+    if (opacity <= 0) return;
+    if (frostTexture && frostCanvas.x > 0 && frostCanvas.y > 0) {
+        draw->AddImageRounded(frostTexture, start, end,
+            ImVec2(start.x / frostCanvas.x, start.y / frostCanvas.y),
+            ImVec2(end.x / frostCanvas.x, end.y / frostCanvas.y), U32(ImVec4(1,1,1,opacity)), rounding);
+    }
+    draw->AddRectFilled(start, end, color, rounding);
+    draw->AddRect(start, end, U32(ImVec4(.76f,.85f,.93f,.25f*opacity)), rounding);
+    draw->AddLine(ImVec2(start.x + rounding + 1, start.y + 1),
+                  ImVec2(end.x - rounding - 1, start.y + 1), U32(ImVec4(.88f,.95f,1,.23f*opacity)));
+}
+
 } // namespace Palette

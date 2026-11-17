@@ -50,9 +50,13 @@ struct SpriteSheetDef {
 class CS2DRenderer {
 public:
     void DrawDroppedKit(float x, float y);
-    void SetVisibilityFilter(std::function<bool(float,float)> filter) {
+    void SetVisibilityFilter(std::function<bool(float,float)> filter, bool observer = false, bool reuse = false) {
         visibilityFilter_=std::move(filter);
-        if (visibilityFilter_) visibilityPixels_.assign(static_cast<size_t>(viewW_)*viewH_,-1);
+        visibilityObserver_ = observer;
+        if (visibilityFilter_ && !reuse) {
+            auto& pixels = observer ? observerVisibilityPixels_ : visibilityPixels_;
+            pixels.assign(static_cast<size_t>(viewW_)*viewH_,-1);
+        }
     }
     void MaskedCopy(SDL_Texture* texture, const SDL_Rect* source, const SDL_FRect& destination, float angle);
 
@@ -107,9 +111,12 @@ public:
     // 雷达（左上角 HUD + 中心全屏覆盖 — Tab）
     // 雷达上的一个标记（世界坐标 + 颜色）
     struct RadarDot {
+        enum class Shape { Circle, Carrier, DroppedBomb };
         float x = 0.0f, y = 0.0f;
         Uint8 r = 255, g = 255, b = 255, alpha = 255;
+        Shape shape = Shape::Circle;
     };
+    void DrawBombCarrierMarker(float worldX, float worldY, float size, float timeSec);
 
     void SetConeAngleDeg(float angle) { vis_.SetConeAngleDeg(angle); }
     void ApplyCameraShake(float x, float y) { cameraX_ += x; cameraY_ += y; }
@@ -123,7 +130,7 @@ public:
                       bool blendBg, int bgAlpha,
                       int hudSize, float mapZoom,
                       bool showCenterRadar,
-                      int viewW, int viewH);
+                      int viewW, int viewH, bool fullMap = false, SDL_Texture* previewMap = nullptr);
 
     // 计分板（屏幕顶端正中）
     void DrawScoreboard(int total, int kills, int deaths, int viewW = 800, int viewH = 600);
@@ -145,7 +152,7 @@ public:
     void DrawFlashOverlay(Uint8 alpha);
 
     // 命中反馈（屏幕坐标，X 形准星）与受伤红色边缘
-    void DrawHitMarker(float screenX, float screenY, float scale, Uint8 alpha);
+    void DrawHitMarker(float screenX, float screenY, float scale, Uint8 alpha, SDL_Color color = {255, 255, 255, 255});
     void DrawDamageVignette(Uint8 alpha);
 
     // 契约 v1.2：迷雾透明度（0..100%）。只改视觉 alpha，不改可见性判定，
@@ -209,6 +216,8 @@ private:
     friend struct MapPerimeterReview;
     friend struct SpriteAssetReview;
     SDL_Renderer* renderer_ = nullptr;
+    std::vector<std::int8_t> observerVisibilityPixels_;
+    bool visibilityObserver_ = false;
     const CS2DWorld* world_ = nullptr;
     std::string mapDir_;
 

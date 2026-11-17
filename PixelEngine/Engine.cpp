@@ -701,6 +701,8 @@ void Engine::Run() {
         HandleInput();
         const Uint64 inputEnd = SDL_GetPerformanceCounter();
 
+        // Bound catch-up work so a delayed frame cannot cause an update spiral.
+        lag = std::min(lag, MS_PER_UPDATE * 2.0f);
         while (lag >= MS_PER_UPDATE) {
             Update(MS_PER_UPDATE / 1000.0f);
             lag -= MS_PER_UPDATE;
@@ -928,9 +930,8 @@ void Engine::HandleInput() {
     cs2dKeyD = inputManager->IsDown(GameAction::Right);
     cs2dKeyShift = inputManager->IsDown(GameAction::Stealth);
     cs2dKeyR = inputManager->IsDown(GameAction::Reload);
-    cs2dOverlay.prevTab = cs2dOverlay.keyTab;
-    cs2dOverlay.keyTab = inputManager->IsDown(GameAction::Scoreboard);
-    showScoreboard_ = cs2dOverlay.keyTab;
+    showScoreboard_ = inputManager->IsDown(GameAction::Scoreboard);
+    cs2dOverlay.showScoreboard = showScoreboard_;
     if (!buyMenuOpen_ && cs2dGame->IsSpectating()) {
         if (inputManager->WasPressed(GameAction::Fire)) cs2dGame->SpectatorCycle(-1);
         if (inputManager->WasPressed(GameAction::Scope)) cs2dGame->SpectatorCycle(1);
@@ -1297,6 +1298,13 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
     if (!cs2dGame->LoadMap(mapPath, cs2dRenderer.get(), !deferMatchStart)) {
         std::cerr << "CS2D 地图加载失败: " << mapPath << std::endl;
         return;
+    }
+    if (weaponIconCache_) {
+        for (int id=1; id<WeaponDB::kWeaponCount; ++id) {
+            const auto& weapon=WeaponDB::Get(static_cast<WeaponId>(id));
+            weaponIconCache_->GetHud(weapon.iconPath);
+            weaponIconCache_->GetBuy(weapon.iconPath);
+        }
     }
     if (deferMatchStart) {
         BeginSideMapPreview();
@@ -1859,13 +1867,15 @@ void Engine::RenderSettingsPreviews() {
         if (i==1 && settings.aimLine) cs2dRenderer->DrawAimLinePreview(settings.aimLineStyle,640,240);
         if (i==2) {
             const auto& world=cs2dGame->GetWorld();
+            if (world.GetMapPixelW() <= 0) LoadMapPreviews(renderer, mapPreviewTex_, kMapCatalogCount);
             const float width=std::max(800.0f,static_cast<float>(world.GetMapPixelW()));
             const float height=std::max(800.0f,static_cast<float>(world.GetMapPixelH()));
             const std::vector<CS2DRenderer::RadarDot> dots={{width*.45f,height*.4f,80,180,240,255},
                 {width*.65f,height*.6f,230,80,70,255}};
             cs2dRenderer->DrawRadarHUD(width*.35f,height*.5f,-.6f,dots,width,height,
                 settings.radarPlayerCentered,settings.radarRotateWithPlayer,settings.radarBlendBg,settings.radarBgAlpha,
-                220,settings.radarMapZoom,true,640,240);
+                220,settings.radarMapZoom,true,640,240,false,
+                world.GetMapPixelW() <= 0 ? static_cast<SDL_Texture*>(mapPreviewTex_[0]) : nullptr);
         }
     }
     SDL_SetRenderTarget(renderer,target);
@@ -2383,7 +2393,7 @@ void Engine::Render() {
                 slot == 4 ? GameAction::C4
                           : static_cast<GameAction>(static_cast<int>(GameAction::Slot1) + slot);
             ictx.equipment.push_back({def.name, def.iconPath,
-                                      saveManager->GetSettings().bindings[action].Label(), count, selected});
+                                      saveManager->GetSettings().bindings[action].Label(), count, selected, slot});
         };
         for (int slot = 0; slot < 3; ++slot)
             addEquipment(status.weapons[slot], slot, 1, status.weaponSlot == slot);
@@ -2405,12 +2415,20 @@ void Engine::Render() {
         addEquipment(cs2dGame->ActorHasC4(status) ? WeaponId::C4 : WeaponId::None, 4, 1,
                      status.weaponSlot == 4);
 
+        ictx.mapName = currentMapRel_;
+        for (const auto& map : kMapCatalog)
+            if (currentMapRel_ == map.tmj) ictx.mapName = map.name;
+        if (cs2dGame->IsDeathMatch()) ictx.mapName = "办公室";
         ictx.ammo     = status.ammo;
         const auto heldClass=status.CurrentWeapon().cls;
         ictx.magazineSize = heldClass==WeaponClass::Melee || heldClass==WeaponClass::Grenade || heldClass==WeaponClass::Bomb ? 0 : status.maxAmmo;
         ictx.reserveAmmo = status.reserve;
-        ictx.hasNoWeaponHint = status.reloading;
-        ictx.hintText        = "换弹中...";
+        ictx.reloading = status.alive && status.reloading;
+        ictx.reloadProgress = cs2dGame->GetReloadProgress();
+        ictx.dryFireHint = !view && status.alive && ictx.magazineSize > 0 && status.ammo == 0 &&
+            status.reserve == 0 && cs2dGame->GetDryFireHintTimer() > 0;
+        ictx.hasNoWeaponHint = ictx.reloading || ictx.dryFireHint;
+        ictx.hintText = ictx.dryFireHint ? "没有备弹" : "换弹中...";
         ictx.totalPlayers    = cs2dGame->GetBotCount() + 1;
         ictx.kills           = view ? status.kills : cs2dGame->GetPlayerKills();
         ictx.deaths          = view ? status.deaths : cs2dGame->GetPlayerDeaths();
@@ -2680,6 +2698,9 @@ void Engine::RenderBuyMenu() {
     GameUI::BuyMenuCtx bctx;
     bctx.closeBinding = saveManager->GetSettings().bindings[GameAction::Buy].Label();
     bctx.money  = cs2dGame->GetPlayerMoney();
+    bctx.roundNumber = cs2dGame->GetRoundNumber();
+    bctx.buyRemaining = std::max(0.0f, Tuning::BuyWindowSeconds - cs2dGame->GetRoundElapsed());
+    if (cs2dGame->IsDeathMatch()) bctx.buyRemaining = -1;
     bctx.canBuy = true;
 
     const CS2DGame::Player& p = cs2dGame->GetPlayer();

@@ -284,7 +284,7 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
 
     ai.repathTimer -= dt;
     const bool exhausted = (ai.pathIdx >= static_cast<int>(ai.path.size()));
-    if (goalMoved || exhausted || ai.repathTimer <= 0.0f) {
+    if (goalMoved || ai.repathTimer <= 0.0f || (exhausted && !ai.path.empty())) {
         ai.goalX = destX;
         ai.goalY = destY;
         ai.repathTimer = Tuning::RepathInterval;
