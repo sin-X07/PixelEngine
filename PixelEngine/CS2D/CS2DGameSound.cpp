@@ -36,51 +36,62 @@ bool AlertsListener(SoundEventType t) {
 }
 } // namespace
 
-void CS2DGame::EmitSound(SoundEventType type, float x, float y, Team team,
-                         int sourceIdx, float radius) {
-    if (radius <= 0.0f) radius = SoundRadius(type);
-    if (radius <= 0.0f) return;
+void CS2DGame::EmitSound(SoundEventType type, float x, float y, Team team, int sourceIdx, float radius,
+                         WeaponId hazardWeapon, float dangerDelay) {
+    if (radius <= 0.0f)
+        radius = SoundRadius(type);
+    if (radius <= 0.0f)
+        return;
 
+    const bool hazard = type == SoundEventType::GrenadeBounce &&
+                        (hazardWeapon == WeaponId::GrenadeHE || hazardWeapon == WeaponId::GrenadeMolotov ||
+                         hazardWeapon == WeaponId::GrenadeIncendiary);
     const float r2 = radius * radius;
     for (size_t i = 0; i < bots_.size(); ++i) {
-        Player& listener = bots_[i];
-        if (!listener.alive) continue;
+        Player &listener = bots_[i];
+        if (!listener.alive)
+            continue;
         // 不听自己发出的声音
-        if (sourceIdx >= 0 && static_cast<int>(i) == sourceIdx) continue;
+        if (sourceIdx >= 0 && static_cast<int>(i) == sourceIdx && !hazard)
+            continue;
 
         const float dx = x - listener.x;
         const float dy = y - listener.y;
         const float d2 = dx * dx + dy * dy;
-        if (d2 > r2) continue;
+        if (d2 > r2)
+            continue;
 
         const float dist = std::sqrt(d2);
         const bool hostile = (team != Team::None) && (team != listener.team);
 
         // 只记录敌对声音：友军的声音不含威胁信息，而且会把同类型的
         // 「敌人位置」记忆冲掉（例如队友开枪盖掉刚才听到的敌方枪声）。
-        if (!hostile) continue;
+        if (!hostile && !hazard)
+            continue;
 
-        auto& ai = AiAt(i);
+        auto &ai = AiAt(i);
         // 同类型覆盖：脚步/枪声这类高频声音只保留最新一条
         ai.heard.erase(std::remove_if(ai.heard.begin(), ai.heard.end(),
-                                      [type](const HeardSound& h) {
-                                          return h.type == type;
-                                      }),
+                                      [type](const HeardSound &h) { return h.type == type; }),
                        ai.heard.end());
         HeardSound h;
-        h.type      = type;
-        h.x         = x;
-        h.y         = y;
-        h.age       = 0.0f;
-        h.strength  = 1.0f - dist / radius;
-        h.team      = team;
+        h.type = type;
+        h.hazardWeapon = hazardWeapon;
+        h.dangerDelay = dangerDelay;
+        h.x = x;
+        h.y = y;
+        h.age = 0.0f;
+        h.strength = 1.0f - dist / radius;
+        h.team = team;
         h.sourceIdx = sourceIdx;
-        h.hostile   = hostile;
+        h.hostile = hostile;
         ai.heard.push_back(h);
-        if (ai.heard.size() > kMaxHeard) ai.heard.erase(ai.heard.begin());
+        if (ai.heard.size() > kMaxHeard)
+            ai.heard.erase(ai.heard.begin());
 
-        if (AlertsListener(type)) {
-            ai.Perceive(sourceIdx >= -1 ? sourceIdx : -3, clockSec_, tactics_.perception[std::clamp(ai.difficulty, 0, 3)].reaction);
+        if (hostile && AlertsListener(type)) {
+            ai.Perceive(sourceIdx >= -1 ? sourceIdx : -3, clockSec_,
+                        tactics_.perception[std::clamp(ai.difficulty, 0, 3)].reaction);
             ai.alertX = x;
             ai.alertY = y;
             ai.alertTimer = Tuning::SoundAlertMemory;
@@ -89,8 +100,7 @@ void CS2DGame::EmitSound(SoundEventType type, float x, float y, Team team,
         // 调试日志：只记敌对声音，每只 BOT 每 2 秒最多一行
         if (ai.heardLogCooldown <= 0.0f) {
             ai.heardLogCooldown = 2.0f;
-            std::cout << "[Hear] #" << i << " " << SoundEventName(type)
-                      << " 距离 " << static_cast<int>(dist)
+            std::cout << "[Hear] #" << i << " " << SoundEventName(type) << " 距离 " << static_cast<int>(dist)
                       << " 半径 " << static_cast<int>(radius) << std::endl;
         }
     }

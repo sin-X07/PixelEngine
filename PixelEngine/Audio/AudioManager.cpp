@@ -89,15 +89,16 @@ bool AudioManager::Initialize() {
         return false;
     }
 
-    // 默认只有 8 个混音通道，多人混战（10 人 + 脚步 + 命中音）容易抢不到而丢音
-    Mix_AllocateChannels(32);
-
     if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
         std::cerr << "SDL_mixer 音频设备打开失败，游戏将静音运行: " << Mix_GetError() << std::endl;
         SDL_QuitSubSystem(SDL_INIT_AUDIO);
         return false;
     }
 
+    Mix_AllocateChannels(44);
+    // 0 为自动开火，1 为下包，2 为玩家拆包，3–11 为九名 BOT 拆包。
+    // 过程音结束后保留通道归属，取消操作时不会停止其他新播放的声音。
+    Mix_ReserveChannels(12);
     audioInitialized = true;
 
     int failedAudio = 0;
@@ -110,6 +111,43 @@ bool AudioManager::Initialize() {
         }
         return chunk;
     };
+
+    const char* additionalPaths[] = {
+        "assets/audio/sfx_death.wav",
+        "assets/audio/pull_pin.wav",
+        "assets/audio/bomb_explosion.wav",
+        "assets/audio/bomb_planting.wav",
+        "assets/audio/bomb_defusing_pliers.wav",
+        "assets/audio/bomb_defusing_nopliers.wav",
+        "assets/audio/reload_p2000.mp3",
+        "assets/audio/reload_dualberettas.mp3",
+        "assets/audio/reload_p250.mp3",
+        "assets/audio/reload_fn57.mp3",
+        "assets/audio/reload_tec9.mp3",
+        "assets/audio/reload_cz75.mp3",
+        "assets/audio/reload_r8.mp3",
+        "assets/audio/reload_mac10.mp3",
+        "assets/audio/reload_mp9.mp3",
+        "assets/audio/reload_mp7.mp3",
+        "assets/audio/reload_mp5sd.mp3",
+        "assets/audio/reload_ump45.mp3",
+        "assets/audio/reload_p90.mp3",
+        "assets/audio/reload_famas.mp3",
+        "assets/audio/reload_m4a4.mp3",
+        "assets/audio/reload_sg553.mp3",
+        "assets/audio/reload_aug.mp3",
+        "assets/audio/reload_ssg08.mp3",
+        "assets/audio/reload_scar20.mp3",
+        "assets/audio/reload_g3sg1.mp3",
+        "assets/audio/reload_xm1014.mp3",
+        "assets/audio/reload_sawedoff.mp3",
+        "assets/audio/reload_mag7.mp3",
+        "assets/audio/reload_m249.mp3",
+        "assets/audio/reload_negev.mp3",
+    };
+    for (size_t i = 0; i < std::size(additionalPaths); ++i)
+        additionalSounds_[i] = loadChunk(additionalPaths[i], additionalPaths[i]);
+    additionalSounds_.back() = loadChunk("assets/audio/sfx_pickup.wav", "拾取");
 
     // ---- 界面 / 音乐 ----
     buttonHoverSound = loadChunk("assets/audio/ui_hover.ogg", "按钮悬停");
@@ -147,10 +185,10 @@ bool AudioManager::Initialize() {
     smokeSound          = loadChunk("assets/audio/fx_smoke.mp3", "烟雾弹");
     fireIgniteSound     = loadChunk("assets/audio/fx_ignite.wav", "燃烧弹点燃");
     decoyExplodeSound   = loadChunk("assets/audio/fx_decoy.wav", "诱饵弹爆炸");
-    bombPlantSound      = loadChunk("assets/audio/bomb_plant.wav", "下包");
-    bombDefuseSound     = loadChunk("assets/audio/bomb_defuse.wav", "拆包");
+    bombPlantSound      = loadChunk("assets/audio/bomb_planted.mp3", "下包");
+    bombDefuseSound     = loadChunk("assets/audio/bomb_defused.mp3", "拆包");
     bombBeepSound       = loadChunk("assets/audio/bomb_beep.wav", "C4 滴答");
-    roundStartSound     = loadChunk("assets/audio/round_start.wav", "回合开始");
+    roundStartSound     = loadChunk("assets/audio/round_start.mp3", "回合开始");
     roundWinSound       = loadChunk("assets/audio/round_win.wav", "回合胜利");
     roundLoseSound      = loadChunk("assets/audio/round_lose.wav", "回合失败");
     daggerSound         = loadChunk("assets/audio/melee_knife.wav", "匕首攻击");
@@ -192,6 +230,10 @@ void AudioManager::Clean() {
 
     Mix_HaltMusic();
     Mix_HaltChannel(-1);
+    for (auto*& chunk : additionalSounds_) {
+        if (chunk) Mix_FreeChunk(chunk);
+        chunk = nullptr;
+    }
 
     if (backgroundMusic) { Mix_FreeMusic(backgroundMusic); backgroundMusic = nullptr; }
     if (buttonHoverSound) { Mix_FreeChunk(buttonHoverSound); buttonHoverSound = nullptr; }
@@ -325,6 +367,9 @@ void AudioManager::SetClickSound(int index) {
 
 // 效果 → 音频块（播放入口共用，避免 switch 重复）
 Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
+    const int additional = static_cast<int>(effect) - static_cast<int>(SoundEffect::DEATH);
+    if (additional >= 0 && additional < 31) return additionalSounds_[additional];
+    if (effect == SoundEffect::PICKUP) return additionalSounds_.back();
     switch (effect) {
         case SoundEffect::BUTTON_HOVER:     return buttonHoverSound;
         case SoundEffect::CLICK:
@@ -380,17 +425,7 @@ Mix_Chunk* AudioManager::WeaponSwitchChunk(WeaponId id) const {
 }
 
 void AudioManager::PlaySound(SoundEffect effect) {
-    if (!audioInitialized) return;
-
-    Mix_Chunk* targetChunk = ChunkFor(effect);
-    if (!targetChunk) return;
-
-    const int chan = Mix_PlayChannel(-1, targetChunk, 0);
-    if (chan < 0) return;
-    // 关键修复：通道是复用的，上一个音可能是远处 3D 音效（音量 0、声像偏一侧）。
-    // 不重置的话，玩家自己的枪声会继承那个 0 音量，表现为「时有时无」。
-    Mix_Volume(chan, effectsLevel_);
-    Mix_SetPanning(chan, 255, 255);
+    PlaySoundTracked(effect);
 }
 
 void AudioManager::PlayWeaponFire(WeaponId id) {
@@ -513,4 +548,27 @@ void AudioManager::ToggleMute() {
 void AudioManager::SetMuted(bool mute) {
     masterMuted = mute;
     UpdateVolumes();
+}
+
+void AudioManager::StopChannel(int& channel) {
+    if (channel < 0) return;
+    Mix_HaltChannel(channel);
+    channel = -1;
+}
+
+int AudioManager::PlaySoundTracked(SoundEffect effect, int channel) {
+    if (!audioInitialized) return -1;
+    Mix_Chunk* chunk = ChunkFor(effect);
+    if (!chunk) return -1;
+    const int playingChannel = Mix_PlayChannel(channel, chunk, 0);
+    if (playingChannel >= 0) {
+        Mix_Volume(playingChannel, effectsLevel_);
+        Mix_SetPanning(playingChannel, 255, 255);
+    }
+    return playingChannel;
+}
+
+int AudioManager::PlaySoundTrackedAt(SoundEffect effect, float x, float y,
+                                     float listenerX, float listenerY, int channel) {
+    return PlayChunkAt(ChunkFor(effect), x, y, listenerX, listenerY, channel);
 }

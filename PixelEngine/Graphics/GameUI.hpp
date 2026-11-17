@@ -4,6 +4,8 @@
 #include "../Core/PresentationContract.hpp"
 #include "../Storage/MatchHistory.hpp"
 #include <array>
+#include "../Storage/SaveManager.hpp"
+#include "../Input/InputManager.hpp"
 #include <functional>
 #include <string>
 #include <vector>
@@ -18,6 +20,8 @@ class WeaponIconCache;
 // ============================================================================
 class GameUI {
 public:
+    void DrawDamageDirections(const std::array<Presentation::DamageDirection, 4>& hits);
+    void DrawCombatHints(const KeyBindings& bindings);
     struct Actions {
         std::function<void()>              playClick;         // 点击音效
         std::function<void(GameState)>     goState;           // 状态切换
@@ -76,6 +80,10 @@ public:
     };
 
     struct MenuCtx {
+        std::array<void*,3> settingsPreviews{};
+        GameSettings* settings = nullptr;
+        InputManager* input = nullptr;
+        GameState exitReturnState = MAIN_MENU;
         GameState state = MAIN_MENU;
         GameState settingsReturnState = MAIN_MENU;
         bool      exitToDesktop = false;
@@ -110,7 +118,7 @@ public:
         bool  radarBlendBg          = false;
         int   radarBgAlpha          = 160;
         int   radarHudSize          = 120;
-        float radarMapZoom          = 0.005f;
+        float radarMapZoom          = 1.0f;
 
         // 显示
         int   resW = 800, resH = 600;
@@ -163,6 +171,7 @@ public:
     };
 
     struct InGameCtx {
+        const KeyBindings* bindings = nullptr;
         GameState   state = PLAYING;
         std::string weaponName;
         int         ammo = 0;
@@ -199,10 +208,25 @@ public:
         int   objective = 0;          // 0=无 1=爆破
         bool  bombPlanted = false;
         float bombTimer = 0.0f;
+        float defuseRemaining = 0;
+        std::string defuserName;
         float defuseProgress = 0.0f;
 
         // 击杀播报 / 记分板
-        std::vector<std::string> killFeed;
+        struct KillView {
+            std::uint64_t id=0;
+            std::string killer, victim, icon;
+            Team killerTeam = Team::None, victimTeam = Team::None;
+            float life = 4;
+            bool personal = false;
+        };
+        std::vector<KillView> killFeed;
+        struct EquipmentView {
+            std::string name, icon, binding;
+            int count = 1;
+            bool selected = false;
+        };
+        std::vector<EquipmentView> equipment;
         struct ScoreRowView {
             std::string name;
             int  team = 0;
@@ -281,6 +305,9 @@ public:
 
     // ---- 买枪菜单 ----
     struct BuyItem {
+        int refundAmount = 0;
+        int refundQuantity = 0;
+        std::string refundReason;
         int         weaponId = 0;   // kind==0 时有效（护甲的负数编码只作兼容）
         int         kind = 0;       // 0=武器 1=护甲
         int         armorTier = 0;  // kind==1 时有效: 1=护甲 2=护甲+头盔
@@ -300,6 +327,9 @@ public:
         bool        scopeSupported = false;
     };
     struct BuyMenuCtx {
+        std::function<bool(const Presentation::BuyRequest&)> refund;
+
+        std::string closeBinding = "B";
         std::vector<BuyItem> items;
         int         money = 0;
         bool        canBuy = false;   // 是否在购买期 + 购买区内（兼容字段）
@@ -315,6 +345,14 @@ public:
     void SetImGuiUI(ImGuiUI* ui) { imGuiUI_ = ui; }
 
 private:
+    struct EquipmentAnimation {
+        InGameCtx::EquipmentView item;
+        float y=0;
+        float alpha=0;
+        bool present=false;
+    };
+    std::vector<EquipmentAnimation> equipmentAnimations_;
+    float equipmentPanelHeight_=0;
     ImGuiUI* imGuiUI_ = nullptr;
     WeaponIconCache* weaponIconCache_ = nullptr;
 };

@@ -119,6 +119,9 @@ bool CS2DGame::LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* rendere
 
 // 开始一场全新比赛（清空比分与统计）
 void CS2DGame::ResetToNewMatch() {
+    StopObjectiveAudio(nullptr);
+    damageDirections_ = {};
+    damageFlashTimer_ = hitMarkerTimer_ = 0.0f;
     bots_.clear();
     bullets_.clear();
     bulletVisuals_.clear();
@@ -128,6 +131,7 @@ void CS2DGame::ResetToNewMatch() {
     grenades_.clear();
     smokes_.clear();
     fires_.clear();
+    decoys_.clear();
     fireTickTimer_ = 0.0f;
     playerKills_ = 0;
     playerDeaths_ = 0;
@@ -350,10 +354,20 @@ Presentation::BuyResult CS2DGame::ExecutePurchase(
         return result;                            // 失败：金额 / 装备 / 音效都不动
     }
 
+    Player::EquipmentRecord receipt;
+    receipt.id = nextEquipmentId_++;
+    receipt.epoch = purchaseEpoch_;
+    receipt.buyer = 0;
+    receipt.paid = PurchasePriceOf(request);
+    receipt.armorTier=request.kind==Presentation::BuyKind::Armor ? request.armorTier : 0;
+    receipt.previousArmor = player_.armor;
+    receipt.previousHelmet = player_.helmet;
     if (request.kind == Presentation::BuyKind::DefuseKit) {
+        player_.kitEquipment = receipt;
         player_.money -= 400;
         player_.hasDefuseKit = true;
     } else if (request.kind == Presentation::BuyKind::Armor) {
+        player_.armorEquipment.push_back(receipt);
         const int tier  = request.armorTier;
         const int price = PurchasePriceOf(request);
         player_.money -= price;
@@ -363,10 +377,15 @@ Presentation::BuyResult CS2DGame::ExecutePurchase(
         std::cout << "[Buy] " << (tier == 2 ? "护甲+头盔" : "护甲")
                   << " ($" << price << ") 余额 $" << player_.money << std::endl;
     } else {
+        const int oldSlot = player_.weaponSlot;
+        const WeaponId oldWeapon = player_.CurrentWeapon().id;
         const WeaponDef& def = WeaponDB::Get(request.weapon);
         switch (def.slot) {
             case WeaponSlotKind::Primary:
+                DropWeaponToGround(0,player_.x,player_.y);
                 player_.SetSlotWeapon(0, request.weapon);
+                player_.equipment[0] = receipt;
+                player_.fireStates[0] = {};
                 player_.weaponSlot = 0;
                 player_.LoadAmmoFromSlot();
                 player_.reloading = false;
@@ -374,7 +393,10 @@ Presentation::BuyResult CS2DGame::ExecutePurchase(
                 playerHoldingC4_ = false;
                 break;
             case WeaponSlotKind::Secondary:
+                DropWeaponToGround(1,player_.x,player_.y);
                 player_.SetSlotWeapon(1, request.weapon);
+                player_.equipment[1] = receipt;
+                player_.fireStates[1] = {};
                 player_.weaponSlot = 1;
                 player_.LoadAmmoFromSlot();
                 player_.reloading = false;
@@ -385,9 +407,16 @@ Presentation::BuyResult CS2DGame::ExecutePurchase(
                 player_.weapons[2] = request.weapon;
                 break;
             case WeaponSlotKind::Grenade:
+                player_.grenadeEquipment[player_.grenadeCount] = receipt;
                 player_.grenades[player_.grenadeCount++] = request.weapon;
                 player_.SyncActiveGrenade();
                 break;
+        }
+        if (def.slot == WeaponSlotKind::Primary || def.slot == WeaponSlotKind::Secondary) {
+            previousEquipSlot_ = oldSlot;
+            previousEquipWeapon_ = oldWeapon;
+            switchSoundWeapon_ = request.weapon;
+            switchSoundPending_ = true;
         }
         player_.money -= def.price;
         economy_.Clamp(player_.money);
@@ -488,53 +517,69 @@ bool CS2DGame::PickSpawnForTeam(Team team, float& outX, float& outY) {
 }
 
 void CS2DGame::SpawnPlayer() {
+    if (mode_ == MatchMode::DeathMatch)
+        ++purchaseEpoch_;
     ++playerSpawnVersion_;
     player_.aimKick = 0.0f;
+    player_.fireStates = {};
+    player_.equipment = {};
+    player_.grenadeEquipment = {};
+    player_.armorEquipment.clear();
+    player_.kitEquipment = {};
+    player_.hasDefuseKit = false;
     player_.recoilRecoveryTimer = 0.0f;
     recoilShake_ = recoilShakeAge_ = 0.0f;
     aimFollowsPlayer_ = false;
     viewHistoryValid_ = false;
     edgeZoom_ = 0.0f;
     edgeZoomRequested_ = false;
+    cameraDistanceTier_ = 0;
     cameraPrepared_ = cameraScopeSettled_ = false;
     SpectatorEnd();
-    deathCam_ = false;   // 死斗重生：退出死亡镜头
+    deathCam_ = false; // 死斗重生：退出死亡镜头
 
-    player_.alive      = true;
-    player_.health     = 100;
-    player_.maxHealth  = 100;
+    player_.alive = true;
+    player_.health = 100;
+    player_.maxHealth = 100;
     player_.vx = player_.vy = 0.0f;
     crosshairBloom_ = 0.0f;
+    aimMotionBlur_ = 0;
     player_.shootCooldown = 0.0f;
-    player_.team       = desiredPlayerTeam_;
-    if (mode_ == MatchMode::DeathMatch) player_.money = 16000;
-    player_.animState  = AnimState::Idle;
-    player_.animTimer  = 0.0f;
+    player_.team = desiredPlayerTeam_;
+    if (mode_ == MatchMode::DeathMatch)
+        player_.money = 16000;
+    player_.animState = AnimState::Idle;
+    player_.animTimer = 0.0f;
     player_.deathTimer = 0.0f;
     player_.shootAnimTimer = 0.0f;
-    player_.spriteKey  = (desiredPlayerTeam_ == Team::CT) ? 0 : 1;
+    player_.spriteKey = (desiredPlayerTeam_ == Team::CT) ? 0 : 1;
     // 开局只有起始手枪（照抄 CS2）：
     //   CT = USP-S，T = Glock-18。无护甲无投掷物，其余靠购买。
     player_.weapons[0] = WeaponId::None;
-    player_.weapons[1] = (desiredPlayerTeam_ == Team::CT) ? WeaponId::USP_S
-                                                          : WeaponId::Glock18;
+    player_.weapons[1] = (desiredPlayerTeam_ == Team::CT) ? WeaponId::USP_S : WeaponId::Glock18;
     player_.weapons[2] = WeaponId::Knife;
     player_.weapons[3] = WeaponId::None;
+    player_.weapons[4] = WeaponId::None;
     player_.grenadeCount = 0;
-    player_.grenadeSlot  = 0;
-    for (int gi = 0; gi < Player::MAX_GRENADES; ++gi) player_.grenades[gi] = WeaponId::None;
-    player_.weaponSlot = 1;            // 默认持手枪
-    player_.armor  = 0;
+    player_.grenadeSlot = 0;
+    for (int gi = 0; gi < Player::MAX_GRENADES; ++gi)
+        player_.grenades[gi] = WeaponId::None;
+    player_.weaponSlot = 1; // 默认持手枪
+    previousEquipSlot_ = 2;
+    previousEquipWeapon_ = WeaponId::Knife;
+    player_.armor = 0;
     player_.helmet = false;
 
-    const WeaponDef& w = WeaponDB::Get(player_.weapons[1]);
-    player_.ammo    = w.magazine;
+    const WeaponDef &w = WeaponDB::Get(player_.weapons[1]);
+    player_.ammo = w.magazine;
     player_.maxAmmo = w.magazine;
     player_.reserve = Player::ReserveCapacity(w);
     // 各槽位弹药同步（避免旧局残留）
     for (int sl = 0; sl < 5; ++sl) {
-        if (player_.weapons[sl] == WeaponId::None) player_.ClearSlotWeapon(sl);
-        else                                       player_.SetSlotWeapon(sl, player_.weapons[sl]);
+        if (player_.weapons[sl] == WeaponId::None)
+            player_.ClearSlotWeapon(sl);
+        else
+            player_.SetSlotWeapon(sl, player_.weapons[sl]);
     }
     player_.SaveAmmoToSlot();
 
@@ -550,43 +595,55 @@ void CS2DGame::SpawnPlayer() {
         player_.LoadAmmoFromSlot();
     }
 
-    player_.reloading  = false;
+    player_.lastGun = player_.CurrentWeapon().id;
+    for (int slot = 0; slot < 5; ++slot)
+        if (player_.weapons[slot] != WeaponId::None) {
+            player_.equipment[slot].id = nextEquipmentId_++;
+            player_.equipment[slot].epoch = purchaseEpoch_;
+        }
+    player_.reloading = false;
     player_.reloadTimer = 0.0f;
-    player_.stealth    = false;
+    player_.stealth = false;
 
     for (int attempt = 0; attempt < 20; ++attempt) {
         PickSpawnForTeam(player_.team, player_.x, player_.y);
-        if (!IsEnemyNearby(player_.x, player_.y, 120.0f, Team::CT)) break;
+        if (!IsEnemyNearby(player_.x, player_.y, 120.0f, Team::CT))
+            break;
     }
     player_.aimDistance = Tuning::InitialAimDistance;
     aimWorldX_ = player_.x + std::cos(player_.aimAngle) * player_.aimDistance;
     aimWorldY_ = player_.y + std::sin(player_.aimAngle) * player_.aimDistance;
-
 }
 
-void CS2DGame::SpawnBOT(Player& bot, Team team) {
+void CS2DGame::SpawnBOT(Player &bot, Team team) {
     bot.aimKick = 0.0f;
+    bot.fireStates = {};
+    bot.equipment = {};
+    bot.grenadeEquipment = {};
+    bot.armorEquipment.clear();
+    bot.kitEquipment = {};
+    bot.hasDefuseKit = false;
     bot.recoilRecoveryTimer = 0.0f;
-    bot.alive      = true;
-    bot.health     = 100;
-    bot.maxHealth  = 100;
+    bot.alive = true;
+    bot.health = 100;
+    bot.maxHealth = 100;
     bot.vx = bot.vy = 0.0f;
     bot.shootCooldown = 0.0f;
-    bot.team       = team;
+    bot.team = team;
     // 首次创建时分配昵称；重生时保留原昵称。
     if (bot.name.empty()) {
         bot.name = kBotNicknames[nextBotNameIndex_ % kBotNicknameCount];
         ++nextBotNameIndex_;
     }
-    bot.animState  = AnimState::Idle;
-    bot.animTimer  = 0.0f;
+    bot.animState = AnimState::Idle;
+    bot.animTimer = 0.0f;
     bot.deathTimer = 0.0f;
     bot.shootAnimTimer = 0.0f;
-    bot.ammo       = 30;
-    bot.maxAmmo    = 30;
-    bot.reloading  = false;
+    bot.ammo = 30;
+    bot.maxAmmo = 30;
+    bot.reloading = false;
     bot.reloadTimer = 0.0f;
-    bot.stealth    = false;
+    bot.stealth = false;
 
     // 外观与武器：开局只有起始手枪（照抄 CS2：CT = USP-S，T = Glock-18）
     if (team == Team::CT) {
@@ -596,45 +653,55 @@ void CS2DGame::SpawnBOT(Player& bot, Team team) {
         bot.spriteKey = 1 + static_cast<int>(rng_() % 2);
         bot.weapons[1] = WeaponId::Glock18;
     }
-    bot.weapons[0] = WeaponId::None;      // 主武器需购买
+    bot.weapons[0] = WeaponId::None; // 主武器需购买
     bot.weapons[2] = WeaponId::Knife;
 
     // 投掷物类型：T 偏进攻（闪光），CT 偏防守（烟雾）
     {
         const int r = static_cast<int>(rng_() % 100);
         if (team == Team::T) {
-            bot.weapons[3] = (r < 50) ? WeaponId::GrenadeHE
-                           : (r < 80) ? WeaponId::GrenadeFlash
-                                      : WeaponId::GrenadeSmoke;
+            bot.weapons[3] = (r < 50)   ? WeaponId::GrenadeHE
+                             : (r < 80) ? WeaponId::GrenadeFlash
+                                        : WeaponId::GrenadeSmoke;
         } else {
-            bot.weapons[3] = (r < 40) ? WeaponId::GrenadeHE
-                           : (r < 80) ? WeaponId::GrenadeSmoke
-                                      : WeaponId::GrenadeFlash;
+            bot.weapons[3] = (r < 40)   ? WeaponId::GrenadeHE
+                             : (r < 80) ? WeaponId::GrenadeSmoke
+                                        : WeaponId::GrenadeFlash;
         }
     }
-    bot.grenadeCount = 0;                 // 需购买
-    bot.grenadeSlot  = 0;
-    for (int gi = 0; gi < Player::MAX_GRENADES; ++gi) bot.grenades[gi] = WeaponId::None;
+    bot.grenadeCount = 0; // 需购买
+    bot.grenadeSlot = 0;
+    for (int gi = 0; gi < Player::MAX_GRENADES; ++gi)
+        bot.grenades[gi] = WeaponId::None;
     bot.weapons[3] = WeaponId::None;
-    bot.weaponSlot = 1;                   // 默认持手枪
-    bot.armor  = 0;
+    bot.weaponSlot = 1; // 默认持手枪
+    bot.armor = 0;
     bot.helmet = false;
 
-    const WeaponDef& bw = WeaponDB::Get(bot.weapons[1]);
-    bot.ammo    = bw.magazine;
+    const WeaponDef &bw = WeaponDB::Get(bot.weapons[1]);
+    bot.ammo = bw.magazine;
     bot.maxAmmo = bw.magazine;
     bot.reserve = Player::ReserveCapacity(bw);
     // 各槽位弹药初始化（BOT 的副武器/近战槽）
     for (int sl = 0; sl < 5; ++sl) {
-        if (bot.weapons[sl] == WeaponId::None) bot.ClearSlotWeapon(sl);
-        else                                   bot.SetSlotWeapon(sl, bot.weapons[sl]);
+        if (bot.weapons[sl] == WeaponId::None)
+            bot.ClearSlotWeapon(sl);
+        else
+            bot.SetSlotWeapon(sl, bot.weapons[sl]);
     }
     bot.SaveAmmoToSlot();
+    bot.lastGun = bot.CurrentWeapon().id;
+    for (int slot = 0; slot < 5; ++slot)
+        if (bot.weapons[slot] != WeaponId::None) {
+            bot.equipment[slot].id = nextEquipmentId_++;
+            bot.equipment[slot].epoch = purchaseEpoch_;
+        }
     bot.aimAngle = angleDist_(rng_);
 
     for (int attempt = 0; attempt < 20; ++attempt) {
         PickSpawnForTeam(team, bot.x, bot.y);
-        if (!IsEnemyNearby(bot.x, bot.y, 120.0f, team)) break;
+        if (!IsEnemyNearby(bot.x, bot.y, 120.0f, team))
+            break;
     }
 }
 
@@ -646,30 +713,42 @@ void CS2DGame::RespawnBOT(Player& bot) {
 // 武器
 // ============================================================================
 
-void CS2DGame::SwitchWeaponSlot(int slot) {
-    if (slot < 0 || slot > 4) return;
-
-    // 同一槽位重复按：投掷物在多个道具间轮换
-    if (slot == player_.weaponSlot) {
-        if (slot == 3 && player_.grenadeCount > 1) {
-            player_.grenadeSlot = (player_.grenadeSlot + 1) % player_.grenadeCount;
-            player_.SyncActiveGrenade();
-            // 换了一颗手雷也算「切到新装备」，补一声
-            switchSoundWeapon_ = player_.ActiveGrenade();
-            switchSoundPending_ = true;
+void CS2DGame::QuickSwitchWeapon() {
+    int slot = previousEquipSlot_;
+    const WeaponId weapon = previousEquipWeapon_;
+    if (slot == 3) {
+        int grenade = -1;
+        for (int i = 0; i < player_.grenadeCount; ++i) if (player_.grenades[i] == weapon) grenade = i;
+        if (grenade < 0) slot = 2;
+        else {
+            SwitchWeaponSlot(3, grenade);
+            return;
         }
-        return;
-    }
+    } else if (slot == 4) {
+        if (!PlayerHasC4()) slot = 2;
+    } else if (slot < 0 || slot > 2 || player_.weapons[slot] != weapon) slot = 2;
+    SwitchWeaponSlot(slot);
+}
+
+void CS2DGame::SwitchWeaponSlot(int slot, int grenadeIndex) {
+    if (slot < 0 || slot > 4) return;
 
     // 目标槽校验
     if (slot == 4) {
         if (!PlayerHasC4()) return;
         player_.weapons[4] = WeaponId::C4;
+        player_.equipment[4]={};
+        player_.equipment[4].id=c4EquipmentId_;
+        player_.equipment[4].epoch=purchaseEpoch_;
     } else if (slot == 3) {
         if (player_.grenadeCount <= 0) return;
+        if (grenadeIndex < 0) grenadeIndex = slot == player_.weaponSlot ?
+            (player_.grenadeSlot + 1) % player_.grenadeCount : player_.grenadeSlot;
+        if (grenadeIndex >= player_.grenadeCount) return;
     } else if (player_.weapons[slot] == WeaponId::None) {
         return;
     }
+    if (slot == player_.weaponSlot && (slot != 3 || grenadeIndex == player_.grenadeSlot)) return;
 
     // 记录「切到投掷物之前」的槽位：最后一颗雷扔完后自动切回这里
     if (slot == 3 && player_.weaponSlot != 3) {
@@ -679,6 +758,9 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
     // 切走前把当前武器的弹药写回它自己的槽位
     player_.SaveAmmoToSlot();
 
+    previousEquipSlot_ = player_.weaponSlot;
+    previousEquipWeapon_ = player_.CurrentWeapon().id;
+    if (slot == 3) player_.grenadeSlot = grenadeIndex;
     player_.weaponSlot = slot;
     player_.reloading   = false;
     player_.reloadTimer = 0.0f;
@@ -698,7 +780,6 @@ void CS2DGame::SwitchWeaponSlot(int slot) {
         return;
     }
     if (slot == 3) {
-        player_.grenadeSlot = 0;
         player_.SyncActiveGrenade();
         player_.ammo = 1;
         player_.maxAmmo = 1;
@@ -883,20 +964,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     ++traceTick_;
     // ---- 观察者输入：空格切换视角，左右键切换队友，自由视角用 WASD ----
     if (IsSpectating()) {
-        static bool prevSpace = false, prevLmb = false, prevRmb = false;
-        const Uint8* ks = SDL_GetKeyboardState(nullptr);
-        const bool spaceNow = ks && ks[SDL_SCANCODE_SPACE];
-        if (spaceNow && !prevSpace) SpectatorToggle();
-        prevSpace = spaceNow;
-
-        int mx = 0, my = 0;
-        const Uint32 mbtn = SDL_GetMouseState(&mx, &my);
-        const bool lmb = (mbtn & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
-        const bool rmb = (mbtn & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0;
-        if (lmb && !prevLmb) SpectatorCycle(-1);
-        if (rmb && !prevRmb) SpectatorCycle(+1);
-        prevLmb = lmb;
-        prevRmb = rmb;
+        if (spectateTogglePending_) SpectatorToggle();
 
         if (specMode_ == SpectateMode::Free) {
             const float fx = (dPressed ? 1.0f : 0.0f) - (aPressed ? 1.0f : 0.0f);
@@ -905,6 +973,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
         }
     }
 
+    spectateTogglePending_ = false;
     if (!world_) return;
 
     previousPlayerView_ = {player_.x, player_.y, player_.alive, player_.EffectiveAim(), player_.animTimer, player_.animState};
@@ -922,18 +991,14 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 
     // 开镜过渡：每帧按 dt 逼近目标档位（0.12s 线性），与输入边沿解耦
     TickScope(dt);
+    player_.RecoverBallistics(dt);
     player_.recoilRecoveryTimer = std::max(0.0f, player_.recoilRecoveryTimer - dt);
     if (player_.recoilRecoveryTimer <= 0.0f)
         player_.aimKick *= std::exp(-player_.CurrentWeapon().recoilRecoverPerSec * dt);
-    const float edgeTarget = edgeZoomRequested_ && !IsSpectating() ? 1.0f : 0.0f;
+    const float edgeTarget = !IsSpectating() ? static_cast<float>(cameraDistanceTier_) : 0.0f;
     const float edgeStep = dt / Tuning::EdgeZoomSeconds;
     edgeZoom_ += std::clamp(edgeTarget - edgeZoom_, -edgeStep, edgeStep);
-    if (renderer_ && !IsSpectating()) {
-        const Uint8* keys = SDL_GetKeyboardState(nullptr);
-        const bool held = keys && keys[SDL_SCANCODE_F6];
-        if (held && !cameraKeyHeld_) ToggleCameraMode();
-        cameraKeyHeld_ = held;
-    }
+
 
     // 契约 v1.2：开枪后「松手再关镜」的收尾（延迟关镜设置开启时才可能置位）
     if (scopeCloseOnRelease_ && !mouseLeftDown) {
@@ -1023,7 +1088,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     // E 键：边沿触发主动拾取（拆包/救人时不抢键）
     if (interactHeld && !prevInteract_ && player_.alive) {
         const bool busyDefusing = (mode_ == MatchMode::BombDefusal && bombPlanted_ &&
-                                   defuseProgress_ > 0.0f);
+                                   player_.defuseProgress > 0.0f);
         if (!busyDefusing) TryPickupDrops(true, audio);
     }
     prevInteract_ = interactHeld;
@@ -1075,9 +1140,10 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
 
     // 掉落物：保留到回合结束（不再按时间消失），已拾取的移除
     drops_.erase(std::remove_if(drops_.begin(), drops_.end(),
-                                [](const DroppedItem& d) { return d.id == WeaponId::None; }),
+                                [](const DroppedItem& d) { return d.id == WeaponId::None && !d.defuseKit; }),
                  drops_.end());
     for (auto& d : drops_) {
+        d.fireState.Recover(dt);
         if (d.pickupDelay > 0.0f) d.pickupDelay -= dt;
     }
     TryPickupDrops(false, audio);
@@ -1095,6 +1161,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
                     killFeed_.end());
 
     // 命中 / 受伤反馈衰减
+    for (auto& direction : damageDirections_) direction.remaining = std::max(0.0f, direction.remaining - dt);
     if (hitMarkerTimer_ > 0.0f)   hitMarkerTimer_   = std::max(0.0f, hitMarkerTimer_ - dt);
     if (damageFlashTimer_ > 0.0f) damageFlashTimer_ = std::max(0.0f, damageFlashTimer_ - dt);
     if (lastDeathTimer_ > 0.0f)   lastDeathTimer_   = std::max(0.0f, lastDeathTimer_ - dt);
@@ -1178,11 +1245,11 @@ float CS2DGame::GetRenderAimAngle() const {
     return std::atan2(GetRenderAimY() - view.y, GetRenderAimX() - view.x);
 }
 float CS2DGame::GetRenderAimX() const {
-    return aimFollowsPlayer_ ? GetActorView(player_).x + std::cos(player_.EffectiveAim()) * player_.aimDistance
+    return aimFollowsPlayer_ ? GetActorView(player_).x + std::cos(player_.aimAngle) * player_.aimDistance + player_.RecoilOffsetX()
                              : aimWorldX_ + player_.RecoilOffsetX();
 }
 float CS2DGame::GetRenderAimY() const {
-    return aimFollowsPlayer_ ? GetActorView(player_).y + std::sin(player_.EffectiveAim()) * player_.aimDistance
+    return aimFollowsPlayer_ ? GetActorView(player_).y + std::sin(player_.aimAngle) * player_.aimDistance + player_.RecoilOffsetY()
                              : aimWorldY_ + player_.RecoilOffsetY();
 }
 
@@ -1191,7 +1258,7 @@ void CS2DGame::PrepareCamera(int viewW, int viewH, float interpolation) {
     renderInterpolation_ = std::clamp(interpolation, 0.0f, 1.0f);
     const auto playerView = GetActorView(player_);
     const Presentation::ScopeView scope = GetScopeView();
-    const float edgeFactor = 1.0f + (Tuning::EdgeZoomOutMin - 1.0f) * edgeZoom_;
+    const float edgeFactor = edgeZoom_ <= 1 ? 1.12f + (.70f-1.12f)*edgeZoom_ : .70f + (.50f-.70f)*(edgeZoom_-1);
     // 观察者：镜头跟随队友或自由移动
     float camX = playerView.x, camY = playerView.y;
     if (IsSpectating()) {
@@ -1207,12 +1274,8 @@ void CS2DGame::PrepareCamera(int viewW, int viewH, float interpolation) {
     } else {
         renderer_->SetCameraAnchor(playerView.x, playerView.y);
         const float dx = GetRenderAimX() - playerView.x, dy = GetRenderAimY() - playerView.y;
-        const float distance = std::max(std::hypot(dx, dy), 0.001f);
         const float scopedShift = ScopeCameraShift();
-        const float scopeWeight = std::clamp(scope.transition, 0.0f, 1.0f);
-        const float angledShift = Tuning::CameraAngledLength / distance;
-        const float shift = angledCamera_
-            ? angledShift + (scopedShift - angledShift) * scopeWeight : scopedShift;
+        const float shift = scopedShift;
         camX += dx * shift;
         camY += dy * shift;
         // Scope magnification and recoil rotation retain the same input radius.
@@ -1223,7 +1286,7 @@ void CS2DGame::PrepareCamera(int viewW, int viewH, float interpolation) {
         camX = std::clamp(camX, GetRenderAimX() - halfW, GetRenderAimX() + halfW);
         camY = std::clamp(camY, GetRenderAimY() - halfH, GetRenderAimY() + halfH);
     }
-    const float cone = Tuning::VisionConeDeg * (1.0f + (Tuning::EdgeZoomFovAngleMul - 1.0f) * edgeZoom_);
+    const float cone = Tuning::VisionConeDeg * (1.0f + (Tuning::EdgeZoomFovAngleMul - 1.0f) * std::min(edgeZoom_,1.0f));
     renderer_->SetConeAngleDeg(cone);
     visibility_.SetConeAngleDeg(cone);
     renderer_->UpdateCamera(camX, camY, viewW, viewH, scope.zoomMultiplier * edgeFactor);
@@ -1236,6 +1299,7 @@ void CS2DGame::PrepareCamera(int viewW, int viewH, float interpolation) {
         const float radius = Presentation::kScopeCircleRadiusFrac * std::min(viewW, viewH);
         renderer_->KeepScopeInViewport(GetRenderAimX(), GetRenderAimY(), radius, viewW, viewH);
     }
+    if (!IsSpectating()) renderer_->KeepActorInViewport(playerView.x,playerView.y,player_.size,GetRenderAimX(),GetRenderAimY(),scope.active ? Presentation::kScopeCircleRadiusFrac*std::min(viewW,viewH) : 8);
     visibility_.SetVisionRadius(renderer_->GetVisionRadius());
 
     cameraPrepared_ = true;
@@ -1245,8 +1309,10 @@ void CS2DGame::PrepareCamera(int viewW, int viewH, float interpolation) {
 }
 
 void CS2DGame::Render(int viewW, int viewH) {
-    if (!renderer_ || !world_) return;
-    if (!cameraPrepared_) PrepareCamera(viewW, viewH);
+    if (!renderer_ || !world_)
+        return;
+    if (!cameraPrepared_)
+        PrepareCamera(viewW, viewH);
     cameraPrepared_ = false;
     const Presentation::ScopeView scope = GetScopeView();
 
@@ -1256,76 +1322,93 @@ void CS2DGame::Render(int viewW, int viewH) {
 
     renderer_->DrawWorld();
 
-    // 烟雾画在地面层（视野雾之下）：角色、掉落物、目标标记都在它之上
-    for (const auto& s : smokes_) {
-        renderer_->DrawSmokeCloud(s.x, s.y, s.radius, s.age, s.expandTime,
-                                  s.life, s.maxLife, s.seed);
-    }
+    const Player *observer = GetSpectatedPlayer();
+    if (!observer)
+        observer = &player_;
+    const auto observerView = GetActorView(*observer);
+    const float observerX = IsSpectating() && specMode_ == SpectateMode::Free ? specFreeX_ : observerView.x;
+    const float observerY = IsSpectating() && specMode_ == SpectateMode::Free ? specFreeY_ : observerView.y;
+    const float observerAngle = observer == &player_ ? GetRenderAimAngle() : observerView.aimAngle;
+    const auto worldVisible = [this, observerX, observerY, observerAngle](float x, float y) {
+        return visibility_.ComputeVisibility(observerX, observerY, observerAngle, x, y) > 0 &&
+               !SegmentBlockedBySmoke(observerX, observerY, x, y);
+    };
+    const auto ownBodyVisible = [this, observerX, observerY](float x, float y) {
+        return visibility_.HasLineOfSight(observerX, observerY, x, y) &&
+               !SegmentBlockedBySmoke(observerX, observerY, x, y);
+    };
+    renderer_->SetVisibilityFilter(worldVisible);
 
     // 燃烧弹留下的火区（在地面层、角色之下）
-    for (const auto& f : fires_) {
-        renderer_->DrawFireZone(f.x, f.y, f.radius, f.age, f.life, f.maxLife, f.seed);
+    for (const auto &f : fires_) {
+        renderer_->DrawFireCells(f.cells, f.x, f.y, f.radius, f.age, f.life, f.seed);
     }
 
-    auto fillParams = [this](const Player& p, SpriteDrawParams& sp) {
+    auto fillParams = [this, observer](const Player &p, SpriteDrawParams &sp) {
         const auto view = GetActorView(p);
-        sp.x          = view.x;
-        sp.y          = view.y;
-        sp.size       = p.size;
-        sp.aimAngle   = &p == &player_ ? GetRenderAimAngle() : view.aimAngle;
-        sp.spriteKey  = p.spriteKey;
-        sp.weaponId   = static_cast<int>(p.CurrentWeapon().id);
-        sp.weaponSlot = p.weaponSlot;
-        sp.animState  = static_cast<int>(p.animState);
-        sp.animTimer  = view.animTimer;
+        sp.x = view.x;
+        sp.y = view.y;
+        sp.size = p.size;
+        sp.aimAngle = &p == &player_ ? GetRenderAimAngle() : view.aimAngle;
+        sp.spriteKey = p.spriteKey;
+        sp.weaponSlot = ActorPoseSlot(p);
+        sp.weaponId = static_cast<int>(sp.weaponSlot == 4 ? WeaponId::C4 : p.CurrentWeapon().id);
+        sp.meleeSwing = p.shootAnimTimer / .12f;
+        sp.animState = static_cast<int>(p.animState);
+        sp.animTimer = view.animTimer;
         sp.deathTimer = p.deathTimer;
-        sp.alpha      = 255;
+        sp.alpha = 255;
         // 契约 v1 第 5 节：沿用 Team，不建立第二份阵营状态。
         // 修复：死斗是一人成军——不区分队伍，所有人对观察者都是"非友军"（画红环），
         // team 传 None，避免 UI/渲染再按 T/CT 着色。
         const bool deathmatch = (mode_ == MatchMode::DeathMatch);
-        sp.team        = deathmatch ? Team::None : p.team;
-        sp.friendly    = deathmatch ? false : (p.team == player_.team);
-        sp.localPlayer = (&p == &player_);
+        sp.team = deathmatch ? Team::None : p.team;
+        sp.friendly = deathmatch ? false : (p.team == player_.team);
+        sp.localPlayer = (&p == observer);
     };
 
-    // 队友始终可见，敌人统一按前方扇形、墙体与烟雾遮挡剔除。
-    const bool applyVisionCull = player_.alive || IsSpectating() || deathCam_;
-    const bool dmMode = IsDeathMatch();
-    for (const auto& bot : bots_) {
-        if (!bot.alive && bot.deathTimer > 2.0f) continue;
-        const bool friendly = !dmMode && (bot.team == player_.team);
-        if (!friendly && applyVisionCull) {
-            if (IsSpectating()) {
-                if (!SpectatorCanSeeEnemy(bot)) continue;
-            } else if (!PlayerCanSeeBot(bot)) {
-                continue;
-            }
-        }
+    for (const auto &bot : bots_) {
+        if (!bot.alive && bot.deathTimer > 2.0f)
+            continue;
         SpriteDrawParams sp;
         fillParams(bot, sp);
+        if (&bot == observer)
+            renderer_->SetVisibilityFilter(ownBodyVisible);
         renderer_->DrawCharacter(sp);
+        if (&bot == observer)
+            renderer_->SetVisibilityFilter(worldVisible);
     }
 
     if (!IsSpectating() && (player_.alive || player_.deathTimer <= 2.0f)) {
         SpriteDrawParams sp;
         fillParams(player_, sp);
+        renderer_->SetVisibilityFilter(ownBodyVisible);
         renderer_->DrawCharacter(sp);
+        renderer_->SetVisibilityFilter(worldVisible);
     }
 
     // 枪弹视觉段：玩法层已生成的唯一数据源，UI 只绘制（契约 v1 第 6 节）
     renderer_->DrawBulletVisuals(GetBulletVisuals());
 
     // 投掷物
-    for (const auto& g : grenades_) {
-        if (!g.active) continue;
+    for (const auto &g : grenades_) {
+        if (!g.active)
+            continue;
         renderer_->DrawThrownGrenade(static_cast<int>(g.type), g.x, g.y, g.spin);
     }
 
+    for (const auto &decoy : decoys_)
+        renderer_->DrawThrownGrenade(static_cast<int>(WeaponId::GrenadeDecoy), decoy.x, decoy.y, 0);
+
     // 目标物标记（包点范围）：画在角色之下、遮罩之上，保证始终可辨
     // 地面掉落物（用 _d 图标）
-    for (const auto& d : drops_) {
-        if (d.id == WeaponId::None) continue;
+    for (const auto &d : drops_) {
+        if (d.defuseKit) {
+            renderer_->DrawDroppedKit(d.x, d.y);
+            continue;
+        }
+        if (d.id == WeaponId::None)
+            continue;
         renderer_->DrawDroppedWeapon(static_cast<int>(d.id), d.x, d.y, d.rot);
     }
 
@@ -1334,71 +1417,61 @@ void CS2DGame::Render(int viewW, int viewH) {
     if (bombDropped_) {
         bool visible = (player_.team == Team::T) || bombIntel_ || IsSpectating();
         if (!visible && player_.alive && renderer_) {
-            visible = visibility_.IsVisibleToPlayer(player_.x, player_.y, player_.EffectiveAim(),
-                                                    bombDropX_, bombDropY_) &&
+            visible = visibility_.IsVisibleToPlayer(player_.x, player_.y, player_.EffectiveAim(), bombDropX_,
+                                                    bombDropY_) &&
                       !SegmentBlockedBySmoke(player_.x, player_.y, bombDropX_, bombDropY_);
         }
         if (visible) {
             const float pulse = 0.5f + 0.5f * std::sin(clockSec_ * 5.0f);
-            renderer_->DrawCircleOutline(bombDropX_, bombDropY_,
-                                         20.0f + 8.0f * pulse,
-                                         255, 170, 60, static_cast<Uint8>(150 + 90 * pulse));
-            renderer_->DrawCircleOutline(bombDropX_, bombDropY_, 8.0f,
-                                         255, 220, 140, 230);
+            renderer_->DrawCircleOutline(bombDropX_, bombDropY_, 20.0f + 8.0f * pulse, 255, 170, 60,
+                                         static_cast<Uint8>(150 + 90 * pulse));
+            renderer_->DrawCircleOutline(bombDropX_, bombDropY_, 8.0f, 255, 220, 140, 230);
         }
     }
 
     if (bombPlanted_) {
         const float pulse = 0.5f + 0.5f * std::sin(clockSec_ * 6.0f);
-        renderer_->DrawCircleOutline(bombX_, bombY_, 36.0f + 8.0f * pulse,
-                                     255, 70, 60, static_cast<Uint8>(170 + 70 * pulse));
-        renderer_->DrawCircleFilled(bombX_, bombY_, 10.0f + 3.0f * pulse,
-                                    255, 90, 70, 220);
+        renderer_->DrawCircleOutline(bombX_, bombY_, 36.0f + 8.0f * pulse, 255, 70, 60,
+                                     static_cast<Uint8>(170 + 70 * pulse));
+        renderer_->DrawCircleFilled(bombX_, bombY_, 10.0f + 3.0f * pulse, 255, 90, 70, 220);
         // 拆包有效范围（很小）
-        renderer_->DrawCircleOutline(bombX_, bombY_, Tuning::DefuseRadius,
-                                     255, 170, 90, 130);
+        renderer_->DrawCircleOutline(bombX_, bombY_, Tuning::DefuseRadius, 255, 170, 90, 130);
     }
 
-    // 手雷：飞行中显示爆炸范围，爆炸后播放扩散圆环
-    for (const auto& g : grenades_) {
-        if (!g.active || g.type != WeaponId::GrenadeHE) continue;
-        const float pulse = 0.5f + 0.5f * std::sin(clockSec_ * 12.0f);
-        renderer_->DrawCircleFilled(g.x, g.y, Tuning::NadeBlastRadius,
-                                    210, 90, 40, static_cast<Uint8>(18 + 16 * pulse));
-        renderer_->DrawCircleOutline(g.x, g.y, Tuning::NadeBlastRadius,
-                                     240, 130, 60, static_cast<Uint8>(120 + 80 * pulse));
+    for (const auto &fx : blasts_) {
+        const float t = 1 - fx.life / std::max(.001f, fx.total);
+        for (int i = 0; i < 18; ++i) {
+            const float angle = i * 2.399963f;
+            const float d = (3 + t * 16) * (1 + (i % 3) * .2f);
+            const float x = fx.x + std::cos(angle) * d, y = fx.y + std::sin(angle) * d;
+            if (!worldVisible(x, y))
+                continue;
+            renderer_->DrawCircleFilled(x, y, (1 - t) * (2 + i % 3), 255, 185 - i * 4, 90,
+                                        static_cast<Uint8>((1 - t) * 170));
+        }
     }
-    for (const auto& fx : blasts_) {
-        const float t = 1.0f - (fx.total > 0.0f ? fx.life / fx.total : 0.0f);  // 0→1
-        const float r = Tuning::NadeBlastRadius * (0.35f + 0.65f * t);
-        const Uint8 a = static_cast<Uint8>(200.0f * (1.0f - t));
-        renderer_->DrawCircleFilled(fx.x, fx.y, r, 255, 190, 90, static_cast<Uint8>(a / 3));
-        renderer_->DrawCircleOutline(fx.x, fx.y, r, 255, 220, 150, a);
-    }
-
     renderer_->DrawObjectiveMarkers(clockSec_);
-
-    if (player_.alive) {
-        const auto view = GetActorView(player_);
-        renderer_->DrawVisionFog(view.x, view.y, GetRenderAimAngle());
-    }
+    renderer_->DrawOverlay();
+    renderer_->SetVisibilityFilter({});
+    for (const auto &smoke : smokes_)
+        renderer_->DrawSmokeCloud(smoke.x, smoke.y, smoke.radius, smoke.age, smoke.expandTime, smoke.life,
+                                  smoke.maxLife, smoke.seed);
+    renderer_->DrawVisionFog(observerX, observerY, observerAngle);
 
     // 开镜覆盖层：世界雾之后、闪光覆盖之前（契约 v1.3）
     // 圆心用「准星世界点投影到屏幕」而不是虚拟光标，避免相机被地图边界钳制时镜筒错位。
     // 大十字线宽来自设置；中心缺口在「移动扩散」开启时随移动量张开。
     if (scope.active) {
         Presentation::ScopeOverlayParams op;
-        op.scope          = scope;
-        op.centerX        = (GetRenderAimX() - renderer_->GetCameraX()) * renderer_->GetZoom();
-        op.centerY        = (GetRenderAimY() - renderer_->GetCameraY()) * renderer_->GetZoom();
-        op.radiusPx       = scopeRadiusPx;
+        op.scope = scope;
+        op.motionBlur = aimMotionBlur_;
+        op.centerX = (GetRenderAimX() - renderer_->GetCameraX()) * renderer_->GetZoom();
+        op.centerY = (GetRenderAimY() - renderer_->GetCameraY()) * renderer_->GetZoom();
+        op.radiusPx = scopeRadiusPx;
         op.crossThickness = scopeCrossThickness_;
-        op.crossGap       = Presentation::ComputeScopeCrossGap(GetCrosshairBloom(),
-                                                               scopeCrossDynamic_);
+        op.crossGap = Presentation::ComputeScopeCrossGap(GetCrosshairBloom(), scopeCrossDynamic_);
         renderer_->DrawScopeOverlay(op);
     }
-
-    renderer_->DrawOverlay();
 
     // 闪光致盲（最上层）：致盲期间完全丧失视野，最后 0.4s 快速淡出
     if (flashTimer_ > 0.0f) {
@@ -1407,10 +1480,102 @@ void CS2DGame::Render(int viewW, int viewH) {
         const float peak = std::clamp(flashPeak_ > 0.0f ? flashPeak_ : 1.0f, 0.0f, 1.0f);
         renderer_->DrawFlashOverlay(static_cast<Uint8>(255.0f * fade * peak));
     }
+}
 
-    const WeaponDef& pw = player_.CurrentWeapon();
-    renderer_->DrawWeaponStatus(static_cast<int>(pw.id), player_.ammo,
-                                (pw.cls == WeaponClass::Grenade || pw.cls == WeaponClass::Melee)
-                                    ? 0 : pw.magazine,
-                                viewW, viewH);
+CS2DGame::RefundQuote CS2DGame::EvaluateRefund(const Presentation::BuyRequest &request) const {
+    RefundQuote quote;
+    if (!player_.alive) {
+        quote.reason = "阵亡后无法退款";
+        return quote;
+    }
+    if (!IsBuyWindowOpen()) {
+        quote.reason = "购买时限已结束";
+        return quote;
+    }
+    bool inZone = IsPlayerInBuyZone();
+    if (world_ && world_->GetBuyZones().empty()) {
+        inZone = false;
+        for (const auto *spawn : world_->SpawnsForTeam(player_.team == Team::CT))
+            inZone = inZone || std::hypot(player_.x - spawn->x, player_.y - spawn->y) <= 80;
+    }
+    if (!inZone) {
+        quote.reason = "返回本方出生点退款";
+        return quote;
+    }
+    auto consider = [&](const Player::EquipmentRecord &record) {
+        if (record.id && record.epoch == purchaseEpoch_ && record.buyer == 0 && !record.used) {
+            ++quote.quantity;
+            quote.amount = record.paid;
+        }
+    };
+    if (request.kind == Presentation::BuyKind::DefuseKit && player_.hasDefuseKit)
+        consider(player_.kitEquipment);
+    if (request.kind == Presentation::BuyKind::Armor && !player_.armorEquipment.empty()) {
+        const auto &record = player_.armorEquipment.back();
+        if (record.armorTier == request.armorTier)
+            consider(record);
+    }
+    if (request.kind == Presentation::BuyKind::Weapon) {
+        for (int slot = 0; slot < 3; ++slot)
+            if (player_.weapons[slot] == request.weapon)
+                consider(player_.equipment[slot]);
+        for (int i = 0; i < player_.grenadeCount; ++i)
+            if (player_.grenades[i] == request.weapon)
+                consider(player_.grenadeEquipment[i]);
+    }
+    if (!quote.amount)
+        quote.reason = "需为本轮本人购买且尚未使用的装备";
+    else if (player_.money + quote.amount > 16000) {
+        quote.amount = quote.quantity = 0;
+        quote.reason = "余额无法容纳全额退款";
+    }
+    return quote;
+}
+
+bool CS2DGame::ExecuteRefund(const Presentation::BuyRequest &request) {
+    const auto quote = EvaluateRefund(request);
+    if (quote.amount <= 0)
+        return false;
+    if (request.kind == Presentation::BuyKind::DefuseKit) {
+        player_.hasDefuseKit = false;
+        player_.kitEquipment = {};
+    } else if (request.kind == Presentation::BuyKind::Armor) {
+        const auto receipt = player_.armorEquipment.back();
+        player_.armor = receipt.previousArmor;
+        player_.helmet = receipt.previousHelmet;
+        player_.armorEquipment.pop_back();
+    } else {
+        if (WeaponDB::Get(request.weapon).cls == WeaponClass::Grenade) {
+            int selected = -1;
+            std::uint64_t newest = 0;
+            for (int i = 0; i < player_.grenadeCount; ++i) {
+                const auto &record = player_.grenadeEquipment[i];
+                if (player_.grenades[i] == request.weapon && record.buyer == 0 &&
+                    record.epoch == purchaseEpoch_ && !record.used && record.id > newest) {
+                    selected = i;
+                    newest = record.id;
+                }
+            }
+            const int previousIndex = player_.grenadeSlot;
+            player_.grenadeSlot = selected;
+            player_.ConsumeActiveGrenade();
+            player_.grenadeSlot = std::min(previousIndex, std::max(0, player_.grenadeCount - 1));
+            player_.SyncActiveGrenade();
+        } else
+            for (int slot = 0; slot < 3; ++slot)
+                if (player_.weapons[slot] == request.weapon) {
+                    player_.ClearSlotWeapon(slot);
+                    player_.equipment[slot] = {};
+                    player_.fireStates[slot] = {};
+                }
+        if (player_.weapons[player_.weaponSlot] == WeaponId::None)
+            EquipFallbackWeapon();
+        previousEquipSlot_ = 2;
+        previousEquipWeapon_ = WeaponId::Knife;
+        player_.reloading = false;
+        player_.reloadTimer = 0;
+        ResetScope(Presentation::ScopeResetReason::WeaponChanged);
+    }
+    player_.money += quote.amount;
+    return true;
 }

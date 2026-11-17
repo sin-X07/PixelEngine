@@ -1,5 +1,6 @@
 #include "CS2DGame.hpp"
 #include "Tuning.hpp"
+#include "Visibility/BodyGeometry.hpp"
 #include "../Audio/AudioManager.hpp"
 #include <iostream>
 #include <cmath>
@@ -226,8 +227,102 @@ void CS2DGame::UpdateTeamContacts(float dt) {
 
 // 真实可见敌人（交火距离 + 烟雾 + LOS）
 
+CS2DGame::BodyVisibility CS2DGame::QueryBodyVisibility(const Player &observer, const Player &target) const {
+    const auto revision = world_ ? world_->Revision() : 0;
+    if (bodyVisibilityClock_ != clockSec_ || bodyVisibilityTerrain_ != revision) {
+        bodyVisibilityCache_.clear();
+        bodyVisibilityClock_ = clockSec_;
+        bodyVisibilityTerrain_ = revision;
+    }
+    const std::array<float, 15> signature = {
+        observer.x,
+        observer.y,
+        observer.EffectiveAim(),
+        target.x,
+        target.y,
+        target.EffectiveAim(),
+        target.size,
+        static_cast<float>(target.spriteKey),
+        static_cast<float>(ActorPoseSlot(target)),
+        static_cast<float>(target.animState),
+        target.animTimer,
+        flashTimer_,
+        static_cast<float>(smokes_.size()),
+        observer.alive ? 1.f : 0.f,
+        &observer == &player_ ? 0.f : static_cast<float>(AiAt(AiIndexOf(observer)).difficulty)};
+    for (const auto &entry : bodyVisibilityCache_)
+        if (entry.observer == &observer && entry.target == &target && entry.signature == signature)
+            return entry.result;
+    BodyVisibility result;
+    result.aim = {target.x, target.y};
+    const auto &pose = BodyGeometry::Get(target.spriteKey, ActorPoseSlot(target));
+    std::array<bool, BodyGeometry::Resolution * BodyGeometry::Resolution> visible{};
+    int count = 0;
+    for (const auto local : pose.samples) {
+        const auto point =
+            BodyGeometry::Transform(local, target.x, target.y, target.size, target.EffectiveAim(),
+                                    static_cast<int>(target.animState), target.animTimer);
+        if (!CanSeePoint(observer, point.x, point.y))
+            continue;
+        const int x = static_cast<int>((local.x + .5f) * BodyGeometry::Resolution);
+        const int y = static_cast<int>((local.y + .5f) * BodyGeometry::Resolution);
+        visible[y * BodyGeometry::Resolution + x] = true;
+        ++count;
+    }
+    result.fraction = pose.samples.empty() ? 0 : static_cast<float>(count) / pose.samples.size();
+    // Select an actual pixel in the largest connected exposed body region.
+    int largest = 0;
+    std::vector<int> queue;
+    for (int start = 0; start < static_cast<int>(visible.size()); ++start) {
+        if (!visible[start])
+            continue;
+        queue.clear();
+        queue.push_back(start);
+        visible[start] = false;
+        float sx = 0, sy = 0;
+        for (size_t i = 0; i < queue.size(); ++i) {
+            const int at = queue[i], x = at % BodyGeometry::Resolution, y = at / BodyGeometry::Resolution;
+            sx += x;
+            sy += y;
+            const int neighbors[] = {at - 1, at + 1, at - BodyGeometry::Resolution,
+                                     at + BodyGeometry::Resolution};
+            for (int n : neighbors) {
+                if (n < 0 || n >= static_cast<int>(visible.size()) ||
+                    std::abs(n % BodyGeometry::Resolution - x) + std::abs(n / BodyGeometry::Resolution - y) !=
+                        1 ||
+                    !visible[n])
+                    continue;
+                visible[n] = false;
+                queue.push_back(n);
+            }
+        }
+        if (static_cast<int>(queue.size()) <= largest)
+            continue;
+        largest = static_cast<int>(queue.size());
+        sx /= largest;
+        sy /= largest;
+        int best = queue.front();
+        float bestDistance = 1e9f;
+        for (int at : queue) {
+            const float d =
+                std::hypot(at % BodyGeometry::Resolution - sx, at / BodyGeometry::Resolution - sy);
+            if (d < bestDistance) {
+                bestDistance = d;
+                best = at;
+            }
+        }
+        result.aim = BodyGeometry::Transform(
+            {(best % BodyGeometry::Resolution + .5f) / BodyGeometry::Resolution - .5f,
+             (best / BodyGeometry::Resolution + .5f) / BodyGeometry::Resolution - .5f},
+            target.x, target.y, target.size, target.EffectiveAim(), static_cast<int>(target.animState),
+            target.animTimer);
+    }
+    bodyVisibilityCache_.push_back({&observer, &target, signature, result});
+    return result;
+}
+
 bool CS2DGame::CanSeeActor(const Player& observer, const Player& target) const {
-    return target.alive && CanSeePoint(observer, target.x, target.y);
+    return target.alive && QueryBodyVisibility(observer,target).fraction > 0;
 }
 
 bool CS2DGame::CanSeePoint(const Player& observer, float x, float y) const {

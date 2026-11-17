@@ -386,7 +386,7 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     // 朝向：只在真正移动时朝「速度方向」，并限制转向速率。
     // 之前朝航点算，航点落在身后时会让 BOT 一直转圈找方向。
     const float speed2 = bot.vx * bot.vx + bot.vy * bot.vy;
-    if (speed2 > 100.0f) {
+    if (speed2 > 100.0f && !(Tuning::BotTurnOnHit > 0.0f && ai.lastHitTimer > 0.0f)) {
         const float moveAng = std::atan2(bot.vy, bot.vx);
         float desired = moveAng
                       + std::sin(ai.scanPhase * 2.2f) * Tuning::BotScanAmplitudeRad;
@@ -482,9 +482,10 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         auto& ai = AiAt(i);
         ai.scoped = false;
         const auto& perception = tactics_.perception[std::clamp(ai.difficulty, 0, 3)];
+        bot.RecoverBallistics(dt);
         bot.recoilRecoveryTimer = std::max(0.0f, bot.recoilRecoveryTimer - dt);
         if (bot.recoilRecoveryTimer <= 0.0f)
-            bot.aimKick *= std::exp(-bot.CurrentWeapon().recoilRecoverPerSec * Tuning::BotFovRadiusMul[std::clamp(ai.difficulty, 0, 3)] * dt);
+            bot.aimKick *= std::exp(-bot.CurrentWeapon().recoilRecoverPerSec * Tuning::BotRecoilRecoverMul[std::clamp(ai.difficulty, 0, 3)] * dt);
         ai.settleTimer += dt;
         for (auto& alert : ai.alerts)
             if (alert.enemyId != -2 && clockSec_ > alert.lastPerceivedAt + Tuning::AlertMemory) alert = {};
@@ -541,25 +542,22 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         }
 
         // 最近挨打：先把朝向转回威胁来源，否则拆包时被背后打到只会继续贴包。
-        if (ai.lastHitTimer > 0.0f || ai.alertTimer > 0.0f) {
-            bool reacted = false;
-            for (const auto& alert : ai.alerts)
-                reacted = reacted || (alert.enemyId != -2 && alert.enemyId != -4 && clockSec_ >= alert.expireAt);
-            if (!reacted) continue;
-        } else {
+        if (ai.lastHitTimer <= 0.0f && ai.alertTimer <= 0.0f) {
             for (auto& alert : ai.alerts) if (alert.enemyId == -3) alert = {};
         }
-        if (!ai.defusing && ai.lastHitTimer > 0.0f) {
+        if (Tuning::BotTurnOnHit > 0.0f && !ai.defusing && ai.lastHitTimer > 0.0f) {
             const float tdx = ai.threatX - bot.x;
             const float tdy = ai.threatY - bot.y;
             if (tdx * tdx + tdy * tdy > 1.0f) {
-                bot.aimAngle = std::atan2(tdy, tdx);
+                const float delta = std::remainder(std::atan2(tdy, tdx) - bot.aimAngle, 6.28318531f);
+                const float maxTurn = Tuning::BotMaxTurnRate * dt;
+                bot.aimAngle += std::clamp(delta, -maxTurn, maxTurn);
             }
         }
 
         // ---- 原地扫描：没有目标时缓慢转身 ----
         // 视野是 120° 扇形，若不扫描，背对着敌人的 BOT 会永远发现不了对方
-        if (!ai.hadTarget && bot.vx == 0.0f && bot.vy == 0.0f) {
+        if (ai.lastHitTimer <= 0.0f && !ai.hadTarget && bot.vx == 0.0f && bot.vy == 0.0f) {
             if (ai.alertTimer > 0.0f) {
                 // 刚听到敌对声音：朝声源方向小幅扫视（±16°），而不是回到原扫描中心
                 const float ang = std::atan2(ai.alertY - bot.y, ai.alertX - bot.x);
@@ -617,7 +615,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             if (ai.perceivedTarget != id) ai.settleTimer = 0.0f;
             ai.perceivedTarget = id;
             ai.Perceive(id, clockSec_, perception.reaction);
-            if (!ai.Ready(id, clockSec_)) continue;
+
             if (!ai.hadTarget) ai.settleTimer = 0.0f;
         }
 
@@ -643,7 +641,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 if (sdist <= hearR) {
                     const int id = sm.who == &player_ ? -1 : static_cast<int>(sm.who - bots_.data());
                     ai.Perceive(id, clockSec_, perception.reaction);
-                    if (!ai.Ready(id, clockSec_)) continue;
+
                     heardSound = true;
                     target      = sm.who;
                     targetDist  = sdist;
@@ -663,7 +661,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // 只取敌对声音；同类型只保留最新一条，超过记忆时长自动失效。
         auto heardCopy = [&](SoundEventType type, float maxAge, HeardSound& out) -> bool {
             const HeardSound* h = NewestHeard(i, type, maxAge);
-            if (!h || !h->hostile) return false;
+            if (!h || (!h->hostile && !(type==SoundEventType::GrenadeBounce && h->hazardWeapon!=WeaponId::None))) return false;
             out = *h;
             return true;
         };
@@ -688,28 +686,103 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                                order.role != BotRole::Anchor &&
                                (pushShot || pushReload);
 
-        // ---- 听到手雷落地：先躲开落点（活下来比守点重要）----
-        if (bNade && !ai.defusing) {
-            const float ndx = bot.x - hearNade.x;
-            const float ndy = bot.y - hearNade.y;
-            const float nd  = std::sqrt(ndx * ndx + ndy * ndy);
-            if (nd > 1.0f && nd < Tuning::GrenadeDangerRadius) {
-                float ex = bot.x + (ndx / nd) * Tuning::GrenadeDodgeDist;
-                float ey = bot.y + (ndy / nd) * Tuning::GrenadeDodgeDist;
-                if (world_) {
-                    ex = std::clamp(ex, 1.0f, world_->GetMapPixelW() - 1.0f);
-                    ey = std::clamp(ey, 1.0f, world_->GetMapPixelH() - 1.0f);
-                }
-                if (FollowPathTo(bot, ai, ex, ey, dt, 1.0f)) {
-                    if (ai.reactionLogCooldown <= 0.0f) {
-                        ai.reactionLogCooldown = 2.0f;
-                        std::cout << "[Bot] #" << i << " 听到手雷落地 距离 "
-                                  << static_cast<int>(nd) << " → 躲开落点" << std::endl;
-                    }
+        // A known live hazard is evaluated through the same exposure rules as damage.
+        if (bNade) {
+            const Grenade *hazard = nullptr;
+            for (const auto &grenade : grenades_) {
+                if (!grenade.active || std::hypot(grenade.x - hearNade.x, grenade.y - hearNade.y) > 40)
                     continue;
+                if (grenade.type == WeaponId::GrenadeHE || grenade.type == WeaponId::GrenadeMolotov ||
+                    grenade.type == WeaponId::GrenadeIncendiary)
+                    hazard = &grenade;
+            }
+            if (hazard) {
+                const float remaining = (1 - bot.defuseProgress) * (bot.hasDefuseKit ? 4 : 10);
+                const bool finishFirst = ai.defusing && remaining < hazard->fuse;
+                const float currentRisk =
+                    hazard->type == WeaponId::GrenadeHE
+                        ? ExpectedBlastDamage(hazard->x, hazard->y, bot)
+                        : (visibility_.HasLineOfSight(hazard->x, hazard->y, bot.x, bot.y) &&
+                                   std::hypot(bot.x - hazard->x, bot.y - hazard->y) < Tuning::FireRadius
+                               ? 80.f
+                               : 0.f);
+                if (!finishFirst && currentRisk > 3) {
+                    float best = currentRisk, escapeX = bot.x, escapeY = bot.y;
+                    for (int direction = 0; direction < 16; ++direction) {
+                        const float angle = direction * 6.2831853f / 16;
+                        Player probe = bot;
+                        probe.x += std::cos(angle) * Tuning::GrenadeDodgeDist;
+                        probe.y += std::sin(angle) * Tuning::GrenadeDodgeDist;
+                        if (!pathFinder_.IsWalkableWorld(probe.x, probe.y))
+                            continue;
+                        float risk =
+                            hazard->type == WeaponId::GrenadeHE
+                                ? ExpectedBlastDamage(hazard->x, hazard->y, probe)
+                                : (visibility_.HasLineOfSight(hazard->x, hazard->y, probe.x, probe.y) &&
+                                           std::hypot(probe.x - hazard->x, probe.y - hazard->y) <
+                                               Tuning::FireRadius
+                                       ? 80.f
+                                       : 0.f);
+                        std::vector<PathFinder::Point> route;
+                        if (pathFinder_.HasLineOfSight(bot.x, bot.y, probe.x, probe.y))
+                            route.push_back({probe.x, probe.y});
+                        else if (!pathFinder_.FindPath(bot.x, bot.y, probe.x, probe.y, route))
+                            continue;
+                        Player atExplosion = bot;
+                        float remainingTravel = std::max(0.0f, hazard->fuse) * Tuning::BotMoveSpeed;
+                        float routeLength = 0, pathX = bot.x, pathY = bot.y;
+                        for (const auto waypoint : route) {
+                            const float dx = waypoint.first - pathX, dy = waypoint.second - pathY;
+                            const float length = std::hypot(dx, dy);
+                            routeLength += length;
+                            if (remainingTravel > 0) {
+                                const float advance =
+                                    std::min(1.0f, remainingTravel / std::max(.001f, length));
+                                atExplosion.x = pathX + dx * advance;
+                                atExplosion.y = pathY + dy * advance;
+                                remainingTravel -= length;
+                            }
+                            pathX = waypoint.first;
+                            pathY = waypoint.second;
+                        }
+                        const float pathRisk = ExpectedBlastDamage(hazard->x, hazard->y, atExplosion);
+                        risk = std::max(risk, pathRisk) + routeLength * .005f;
+                        if (risk < best) {
+                            best = risk;
+                            escapeX = probe.x;
+                            escapeY = probe.y;
+                        }
+                    }
+                    if (best < currentRisk && FollowPathTo(bot, ai, escapeX, escapeY, dt, 1))
+                        continue;
                 }
             }
         }
+        bool escapingFire = false;
+        for (const auto &fire : fires_) {
+            if (!FireContains(fire, bot.x, bot.y))
+                continue;
+            float bestDistance = 1e9f, escapeX = bot.x, escapeY = bot.y;
+            for (int direction = 0; direction < 16; ++direction) {
+                const float angle = direction * 6.2831853f / 16;
+                for (float distance = 8; distance <= fire.radius * 2; distance += 8) {
+                    const float x = bot.x + std::cos(angle) * distance,
+                                y = bot.y + std::sin(angle) * distance;
+                    if (!pathFinder_.IsWalkableWorld(x, y))
+                        break;
+                    if (!FireContains(fire, x, y) && distance < bestDistance) {
+                        bestDistance = distance;
+                        escapeX = x;
+                        escapeY = y;
+                        break;
+                    }
+                }
+            }
+            if (bestDistance < 1e9f)
+                escapingFire = FollowPathTo(bot, ai, escapeX, escapeY, dt, 1);
+        }
+        if (escapingFire)
+            continue;
 
         // ---- 支援前压：队友正在交火且处于劣势 → 靠近支援（不是"尸体补枪"）----
         // 比死后补枪更主动：队友要顶不住了才去，避免全员排队送；Anchor 与无补枪许可者不去。
@@ -869,8 +942,9 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         float aimX = 0.0f, aimY = 0.0f;
         float engageDist = 0.0f;
         if (target) {
-            aimX = target->x;
-            aimY = target->y;
+            const auto exposed = QueryBodyVisibility(bot,*target);
+            aimX = canSee ? exposed.aim.x : target->x;
+            aimY = canSee ? exposed.aim.y : target->y;
             engageDist = targetDist;
         } else if (intel) {
             aimX = intel->x;
@@ -1401,12 +1475,19 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         }
 
         // 交战朝向：可见时直接瞄准目标（带短促摆头，避免完美锁头）
-        if (canSee) {
-            const float desired = std::atan2(aimY - bot.y, aimX - bot.x)
-                                + std::sin(ai.scanPhase * 2.2f) * Tuning::BotScanAmplitudeRad * 0.5f;
+        if (canSee && (ai.lastHitTimer <= 0.0f || Tuning::BotTurnOnHit <= 0.0f)) {
+            const float compensation[] = {.25f, .45f, .70f, .90f};
+            const auto kick = bot.BallisticKick();
+            const float amount = compensation[std::clamp(ai.difficulty, 0, 3)];
+            const float wobble = (1 - amount) * Tuning::BotScanAmplitudeRad;
+            const float desired = std::atan2(aimY - bot.y - kick.y * engageDist * amount,
+                                             aimX - bot.x - kick.x * engageDist * amount) +
+                                  std::sin(ai.scanPhase * 2.2f) * wobble;
             float delta = desired - bot.aimAngle;
-            while (delta >  3.14159265f) delta -= 6.28318531f;
-            while (delta < -3.14159265f) delta += 6.28318531f;
+            while (delta > 3.14159265f)
+                delta -= 6.28318531f;
+            while (delta < -3.14159265f)
+                delta += 6.28318531f;
             const float maxTurn = Tuning::BotMaxTurnRate * dt;
             bot.aimAngle += std::clamp(delta, -maxTurn, maxTurn);
         }
@@ -1417,23 +1498,27 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             MoveWithCollision(bot, dt);
         }
 
-        // ---- 射击纪律（决策树直接给出射速/散布乘数）----
+        // ---- 射击纪律（射击间隔控制逐枪误差的恢复）----
         // HoldFire 换弹中/无弹；Burst 远距离点射（更准更慢）；Auto 近距离连发
         float shootCooldownMul = 1.0f;
-        float spreadMul        = 1.0f;
-        bool  shouldShoot      = canSee && !bot.reloading && bot.ammo > 0;
+        const int targetId = target == &player_ ? -1 :
+            target ? static_cast<int>(target - bots_.data()) : -2;
+        const float exposureDelay = target ? tactics_.perception[std::clamp(ai.difficulty, 0, 3)].reaction *
+                                                 .5f * (1 - QueryBodyVisibility(bot, *target).fraction)
+                                           : 0;
+        const bool reactionReady = target && ai.Ready(targetId, clockSec_ - exposureDelay);
+        bool shouldShoot = reactionReady && canSee && !bot.reloading && bot.ammo > 0;
 
         if (bot.reloading || bot.ammo <= 0) {
             shouldShoot = false;
         } else if (engageDist > def.range * 0.8f) {
-            // 点射：射速降到 1/2.5，散布减到 40%（准度显著提升）
+            // 远距离延长射击间隔，让逐枪误差恢复。
             shootCooldownMul = 2.5f;
-            spreadMul        = 0.4f;
         } else {
             // 连发：按距离分档，近距离更快更准
-            if (engageDist < 120.0f)      { shootCooldownMul = 0.8f; spreadMul = 0.7f; }
-            else if (engageDist < 300.0f){ shootCooldownMul = 1.0f; spreadMul = 1.0f; }
-            else                          { shootCooldownMul = 1.5f; spreadMul = 1.3f; }
+            if (engageDist < 120.0f)      { shootCooldownMul = 0.8f; }
+            else if (engageDist < 300.0f){ shootCooldownMul = 1.0f; }
+            else                          { shootCooldownMul = 1.5f; }
         }
 
         // 撤退/借掩体途中，除非目标贴脸（<50px）否则不开火
@@ -1463,21 +1548,15 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                         continue;
                     }
 
-                    // 命中倾向：30% 精确（小抖动），70% 打偏（大散布）
-                    std::uniform_real_distribution<float> hitRoll(0.0f, 1.0f);
-                    const bool precise = hitRoll(rng_) < 0.30f;
-                    const float base = precise ? 0.08f : 0.8f;
-                    // 听到下包/拆包声而锁定目标时略微提高命中率（散布更小）
-                    if (heardSound) {
-                        spreadMul *= sm.isPlant ? Tuning::PlantHearSpreadMul
-                                                : Tuning::DefuseHearSpreadMul;
-                    }
-                    spreadMul *= 1.0f + Tuning::AimSettleMul * std::exp(-ai.settleTimer / perception.settle);
-                    std::uniform_real_distribution<float> spreadDist(
-                        -base * spreadMul, base * spreadMul);
-
-                    bot.ApplyRecoil(def.recoilKickDeg);
-                    const float aimBase = std::atan2(target->y - bot.y, target->x - bot.x) + bot.aimKick;
+                    const float speedFraction = std::hypot(bot.vx, bot.vy) /
+                                                std::max(1.0f, Tuning::PlayerBaseSpeed * def.moveSpeedMul);
+                    const float scope = ai.scoped ? 1.0f : 0.0f;
+                    const float spread =
+                        Ballistics::Spread(def.id, speedFraction, scope, bot.BallisticInaccuracy(),
+                                           bot.fireStates[bot.weaponSlot].shot);
+                    std::uniform_real_distribution<float> spreadDist(-spread, spread);
+                    bot.ApplyWeaponRecoil(scope);
+                    const float aimBase = bot.EffectiveAim();
                     const int pellets = std::max(1, def.pellets);
                     for (int p = 0; p < pellets; ++p) {
                         FireBullet(bot.x, bot.y, aimBase + spreadDist(rng_), def,
@@ -1499,15 +1578,15 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         }
         // 近战
         else if (target && def.cls == WeaponClass::Melee && target->alive &&
-                 engageDist < meleeReachNow &&
+                 reactionReady && engageDist < meleeReachNow &&
+                 std::cos(std::atan2(target->y - bot.y, target->x - bot.x) - bot.aimAngle) >=
+                     std::cos(Tuning::MeleeConeHalfAngleDeg * 3.14159265f / 180.0f) &&
                  visibility_.HasLineOfSight(bot.x, bot.y, target->x, target->y)) {
             if (bot.shootCooldown > 0.0f) bot.shootCooldown -= dt;
             if (bot.shootCooldown <= 0.0f) {
-                if (target == &player_) {
-                    if (ApplyDamage(player_, static_cast<int>(def.damage * 0.33f), WeaponDB::ArmorPen(def.id))) {
-                        OnCombatantKilled(player_, audio, &bot);
-                    }
-                }
+                Player* struck=target==&player_ ? &player_ : DamageOwner(static_cast<int>(target-bots_.data()));
+                if (struck && ApplyDamage(*struck,static_cast<int>(def.damage*.33f),WeaponDB::ArmorPen(def.id)))
+                    OnCombatantKilled(*struck,audio,&bot,def.id);
                 bot.shootCooldown = def.cooldown * 1.5f * shootCooldownMul;
                 bot.shootAnimTimer = 0.12f;
                 EmitSound(SoundEventType::KnifeSwing, bot.x, bot.y, bot.team,

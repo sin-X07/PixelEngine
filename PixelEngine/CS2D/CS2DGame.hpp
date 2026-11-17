@@ -2,6 +2,7 @@
 #include "CS2DWorld.hpp"
 #include "Visibility/VisibilityQuery.hpp"
 #include "CS2DRenderer.hpp"
+#include "Weapons/Ballistics.hpp"
 #include "Teams/TeamManager.hpp"
 #include "Coach/CoachTypes.hpp"
 #include "Coach/TacticsTable.hpp"
@@ -22,6 +23,7 @@
 #include <vector>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <functional>
 #include <random>
 #include <memory>
@@ -82,13 +84,95 @@ public:
         float vx      = 0.0f;
         float vy      = 0.0f;
         float size    = Tuning::PlayerSize;
+        float defuseProgress = 0.0f;
+        int defuseChannel = -1;
         float aimAngle = 0.0f;
         float aimKick = 0.0f;
         float aimDistance = Tuning::RecoilReferenceDistance;
         float recoilRecoveryTimer = 0.0f;
-        float EffectiveAim() const { return aimAngle + aimKick; }
-        float RecoilOffsetX() const { return (std::cos(EffectiveAim()) - std::cos(aimAngle)) * aimDistance; }
-        float RecoilOffsetY() const { return (std::sin(EffectiveAim()) - std::sin(aimAngle)) * aimDistance; }
+        struct WeaponFireState {
+            WeaponId weapon = WeaponId::None;
+            unsigned shot = 0;
+            float inaccuracy = 0;
+            SDL_FPoint kick{};
+            void Recover(float dt) {
+                if (weapon == WeaponId::None)
+                    return;
+                const float decay =
+                    std::exp(-2.302585093f * dt / std::max(.02f, Ballistics::Get(weapon).recovery));
+                kick.x *= decay;
+                kick.y *= decay;
+                inaccuracy *= decay;
+                if (std::hypot(kick.x, kick.y) < .0001f && inaccuracy < .0001f)
+                    *this = {};
+            }
+        };
+        std::array<WeaponFireState, 5> fireStates{};
+        struct EquipmentRecord {
+            std::uint64_t id = 0;
+            unsigned epoch = 0;
+            int buyer = -1;
+            int paid = 0;
+            int armorTier = 0;
+            bool used = false;
+            int previousArmor = 0;
+            bool previousHelmet = false;
+        };
+        std::array<EquipmentRecord, 5> equipment{};
+        std::array<EquipmentRecord, 4> grenadeEquipment{};
+        EquipmentRecord kitEquipment{};
+        std::vector<EquipmentRecord> armorEquipment;
+
+        SDL_FPoint BallisticKick() const {
+            const auto &state = fireStates[weaponSlot];
+            return state.weapon == CurrentWeapon().id ? state.kick : SDL_FPoint{};
+        }
+        float BallisticInaccuracy() const {
+            const auto &state = fireStates[weaponSlot];
+            return state.weapon == CurrentWeapon().id ? state.inaccuracy : 0;
+        }
+        void ApplyWeaponRecoil(float scope) {
+            equipment[weaponSlot].used = true;
+            const auto id = CurrentWeapon().id;
+            auto &state = fireStates[weaponSlot];
+            if (state.weapon != id) {
+                state = {};
+                state.weapon = id;
+            }
+            const auto step = Ballistics::Recoil(id, state.shot++, scope);
+            state.kick.x += step.x;
+            state.kick.y += step.y;
+            const float length = std::hypot(state.kick.x, state.kick.y);
+            if (length > .45f) {
+                state.kick.x *= .45f / length;
+                state.kick.y *= .45f / length;
+            }
+            const auto &p = Ballistics::Get(id);
+            state.inaccuracy += p.fire[id == WeaponId::Negev && state.shot >= 8 ? 1 : scope >= .5f ? 1 : 0];
+        }
+        void RecoverBallistics(float dt) {
+            for (auto &state : fireStates)
+                state.Recover(dt);
+        }
+        SDL_FPoint EffectiveAimVector() const {
+            const auto kick = BallisticKick();
+            const float x = std::cos(aimAngle) + kick.x, y = std::sin(aimAngle) + kick.y;
+            return {x * std::cos(aimKick) - y * std::sin(aimKick),
+                    x * std::sin(aimKick) + y * std::cos(aimKick)};
+        }
+        float EffectiveAim() const {
+            const auto direction = EffectiveAimVector();
+            return std::atan2(direction.y, direction.x);
+        }
+        float RecoilAngle() const {
+            return std::remainder(EffectiveAim() - aimAngle, Tuning::Pi * 2);
+        }
+        float RecoilOffsetX() const {
+            return (EffectiveAimVector().x - std::cos(aimAngle)) * aimDistance;
+        }
+        float RecoilOffsetY() const {
+            return (EffectiveAimVector().y - std::sin(aimAngle)) * aimDistance;
+        }
         void ApplyRecoil(float degrees) {
             const float remaining = std::remainder(-Tuning::Pi * 0.5f - EffectiveAim(), Tuning::Pi * 2.0f);
             const float step = std::min(std::max(degrees, 0.0f) * Tuning::DegreesToRadians, std::abs(remaining));
@@ -120,6 +204,7 @@ public:
         WeaponId  grenades[MAX_GRENADES] = { WeaponId::None, WeaponId::None,
                                              WeaponId::None, WeaponId::None };
         int       grenadeCount = 0;        // 已装备数量（0..MAX_GRENADES）
+        WeaponId lastGun = WeaponId::None;
         int       grenadeSlot  = 0;        // 当前选中的投掷物下标
 
         // ---- 投掷物背包操作 ----
@@ -153,8 +238,10 @@ public:
             if (grenadeCount <= 0) { SyncActiveGrenade(); return; }
             for (int i = grenadeSlot; i < grenadeCount - 1; ++i) {
                 grenades[i] = grenades[i + 1];
+                grenadeEquipment[i] = grenadeEquipment[i + 1];
             }
             grenades[grenadeCount - 1] = WeaponId::None;
+            grenadeEquipment[grenadeCount - 1] = {};
             --grenadeCount;
             SyncActiveGrenade();
         }
@@ -216,6 +303,8 @@ public:
         void ClearSlotWeapon(int slot) {
             if (slot < 0 || slot > 4) return;
             weapons[slot] = WeaponId::None;
+            equipment[slot] = {};
+            fireStates[slot] = {};
             ammoSlot[slot] = 0;
             maxAmmoSlot[slot] = 0;
             reserveSlot[slot] = 0;
@@ -239,6 +328,8 @@ public:
                 reserve = 0;
                 return;
             }
+            const auto weaponClass=WeaponDB::Get(weapons[weaponSlot]).cls;
+            if (weaponClass!=WeaponClass::Melee && weaponClass!=WeaponClass::Grenade && weaponClass!=WeaponClass::Bomb) lastGun=weapons[weaponSlot];
             ammo = ammoSlot[weaponSlot];
             maxAmmo = maxAmmoSlot[weaponSlot];
             reserve = reserveSlot[weaponSlot];
@@ -394,6 +485,8 @@ public:
     };
 
     struct Bullet {
+        std::uint64_t equipmentId=0;
+        SDL_FPoint sourcePosition{};
         float x  = 0.0f;
         float y  = 0.0f;
         float vx = 0.0f;
@@ -410,12 +503,15 @@ public:
 
     // 投掷物
     struct Grenade {
+        std::uint64_t equipmentId=0;
         float    x = 0.0f, y = 0.0f;
         float    vx = 0.0f, vy = 0.0f;
         float    fuse = 1.5f;
         WeaponId type = WeaponId::GrenadeHE;
         Team     team = Team::None;
         bool     active = true;
+        int owner = -2;
+        WeaponId imitate = WeaponId::None;
         bool     landingWarned = false;   // 落点预警已广播（只发一次）
         int      wallBounces = 0;         // 撞墙反弹次数
         float    spin = 0.0f;             // 飞行旋转角（度）
@@ -424,8 +520,20 @@ public:
 
     // 烟雾云（遮挡视线）
     // 燃烧弹 / 燃烧瓶留下的火区
+    struct Decoy {
+        float x=0,y=0,life=15,nextShot=0;
+        int shot=0;
+        int owner=-2;
+        Team team=Team::None;
+        WeaponId weapon=WeaponId::Glock18;
+    };
     struct FireZone {
+        std::uint64_t equipmentId=0;
         float x = 0.0f, y = 0.0f;
+        int owner = -2;
+        WeaponId weapon = WeaponId::GrenadeMolotov;
+        std::vector<SDL_FPoint> cells;
+        std::uint64_t terrainRevision = 0;
         float radius = Tuning::FireRadius;
         float life = 7.0f;
         float maxLife = 7.0f;
@@ -444,8 +552,16 @@ public:
 
     // 击杀播报条目
     struct KillFeedEntry {
+        std::uint64_t equipmentId=0;
+        SDL_FPoint sourcePosition{};
+        std::uint64_t id=0;
+        float timestamp=0;
         std::string text;
         float life = 4.0f;
+        std::string killer, victim;
+        Team killerTeam = Team::None, victimTeam = Team::None;
+        WeaponId weapon = WeaponId::None;
+        bool personal = false;
     };
 
     // 记分板行
@@ -560,7 +676,12 @@ public:
     float GetFlashAmount() const { return (flashTimer_ > 0.0f) ? 1.0f : 0.0f; }
 
     // 命中 / 受伤反馈计时（秒，>0 表示需要绘制）
+    void RequestSpectateToggle() { spectateTogglePending_ = true; }
+    void QuickSwitchWeapon();
+    float GetAimMotionBlur() const { return aimMotionBlur_; }
     float GetHitMarkerTimer()   const { return hitMarkerTimer_; }
+    using DamageDirection = Presentation::DamageDirection;
+    const std::array<DamageDirection, 4>& GetDamageDirections() const { return damageDirections_; }
     float GetDamageFlashTimer() const { return damageFlashTimer_; }
 
     // 敌人情报（团队共享；id: -1=玩家, >=0=BOT 索引）
@@ -613,10 +734,17 @@ public:
     float GetBombX()        const { return bombX_; }
     float GetBombY()        const { return bombY_; }
     float GetDefuseProgress() const { return defuseProgress_; }
+    float GetDefuseRemaining() const { return defuseRemaining_; }
+    std::string GetDefuserName() const {
+        if (activeDefuser_ == -1) return "你";
+        if (activeDefuser_ >= 0 && activeDefuser_ < static_cast<int>(bots_.size())) return bots_[activeDefuser_].name;
+        return {};
+    }
 
     int GetPlayerKills()  const { return playerKills_; }
     int GetPlayerDeaths() const { return playerDeaths_; }
     int GetBotCount()     const { return static_cast<int>(bots_.size()); }
+    void SetBotDifficulty(int difficulty) { for (auto& ai : botAi_) ai.difficulty = std::clamp(difficulty, 0, 3); }
     void SetBotProfile(size_t bot, int profile) { AiAt(bot).difficulty = std::clamp(profile, 0, 7) / 2; }
     unsigned PlayerSpawnVersion() const { return playerSpawnVersion_; }
     void SetAimTarget(float x, float y, bool followsPlayer = false);
@@ -633,12 +761,11 @@ public:
     float GetRenderAimAngle() const;
     bool CameraPrepared() const { return cameraPrepared_; }
     bool CameraScopeTransitionComplete() const { return cameraScopeSettled_; }
-    void ToggleCameraMode() { angledCamera_ = !angledCamera_; }
-    bool AngledCameraEnabled() const { return angledCamera_; }
     static float ScopeCameraShiftForZoom(float zoom);
     bool EdgeZoomRequested() const { return edgeZoomRequested_; }
     float EdgeZoomAmount() const { return edgeZoom_; }
-    void SetEdgeZoomRequested(bool requested) { edgeZoomRequested_ = requested; }
+    void SetEdgeZoomRequested(bool requested) { edgeZoomRequested_ = requested; cameraDistanceTier_ = requested ? 1 : 0; }
+    void SetCameraDistanceTier(int tier) { cameraDistanceTier_=std::clamp(tier,0,2);edgeZoomRequested_=tier>0; }
     bool AimFollowsPlayer() const { return aimFollowsPlayer_; }
     float GetAimAngle()   const { return player_.EffectiveAim(); }
     // 0=静止，~0.42=静步，1=全速跑动。准星与弹道共用这一份移动扩散。
@@ -672,6 +799,10 @@ public:
     // 选阵营后重建首回合（地图保持已加载，不重新 LoadMap）
     void RestartMatchWithTeam(Team t);
     Team GetPlayerTeam() const { return desiredPlayerTeam_; }
+    bool ActorHasC4(const Player& actor) const {
+        return mode_==MatchMode::BombDefusal && !bombPlanted_ && !bombDropped_ && actor.alive &&
+            ((bombCarrier_==-1 && &actor==&player_) || (bombCarrier_>=0 && bombCarrier_<static_cast<int>(bots_.size()) && &actor==&bots_[bombCarrier_]));
+    }
     bool PlayerHasC4() const {
         return bombCarrier_ == -1 && player_.team == Team::T &&
                !bombPlanted_ && !bombDropped_;
@@ -718,30 +849,20 @@ public:
             out.x = bombX_;
             out.y = bombY_;
             out.isPlant = false;
-            // 找正在拆包的实体：玩家按住 E 或某 BOT 贴近炸弹
-            if (player_.alive && player_.team == Team::CT) {
-                const float dx = player_.x - bombX_;
-                const float dy = player_.y - bombY_;
-                if (std::sqrt(dx * dx + dy * dy) <= Tuning::DefuseRadius * 2.0f) {
-                    out.who = &player_;
-                    return true;
-                }
+            if (activeDefuser_ == -1 && player_.alive && player_.defuseProgress > 0) {
+                out.who = &player_;
+                return true;
             }
-            for (const auto& b : bots_) {
-                if (!b.alive || b.team != Team::CT) continue;
-                const float dx = b.x - bombX_;
-                const float dy = b.y - bombY_;
-                if (std::sqrt(dx * dx + dy * dy) <= Tuning::DefuseRadius * 2.0f) {
-                    out.who = &b;
-                    return true;
-                }
+            if (activeDefuser_ >= 0 && activeDefuser_ < static_cast<int>(bots_.size()) &&
+                bots_[activeDefuser_].alive && bots_[activeDefuser_].defuseProgress > 0) {
+                out.who = &bots_[activeDefuser_];
+                return true;
             }
             return false;
         }
 
         // 下包：T 携带者站在包点内且已开始累积安装进度
-        // 注意：玩家下包用 plantProgress_，BOT 下包复用了 defuseProgress_，两者都要检查
-        const float plantProg = std::max(plantProgress_, bombPlanted_ ? 0.0f : defuseProgress_);
+        const float plantProg = std::max(plantProgress_, botPlantProgress_);
         if (!bombPlanted_ && !bombDropped_ && plantProg > 0.0f &&
             bombCarrier_ >= -1) {
             if (bombCarrier_ == -1 && player_.alive && player_.team == Team::T) {
@@ -848,6 +969,9 @@ public:
 
     // ---- 购买契约 v1（第 3 节）----
     // EvaluatePurchase：纯判定，无扣款/装备/音效副作用，供 UI 逐项显示可用性。
+    struct RefundQuote { int amount = 0; int quantity = 0; std::string reason; };
+    RefundQuote EvaluateRefund(const Presentation::BuyRequest& request) const;
+    bool ExecuteRefund(const Presentation::BuyRequest& request);
     Presentation::BuyCode EvaluatePurchase(const Presentation::BuyRequest& request) const;
     // ExecutePurchase：点击时重新判定，Ok 才执行一次原装备/扣款与 EQUIP 音效。
     Presentation::BuyResult ExecutePurchase(const Presentation::BuyRequest& request,
@@ -938,10 +1062,11 @@ public:
     void DropCurrentWeapon();
     // 把指定槽位的武器丢到地面（换枪 / 被替换时用）
     void DropWeaponToGround(int slot, float x, float y);
+    void DropWeaponToGround(Player& actor,int slot,float x,float y);
     bool GetPlayerHelmet() const { return player_.helmet; }
 
     // ---- 武器 ----
-    void SwitchWeaponSlot(int slot);
+    void SwitchWeaponSlot(int slot, int grenadeIndex = -1);
     std::string GetWeaponName() const;
     std::string GetWeaponNameFor(const Player& p) const;   // 观战/记分板用
 
@@ -986,8 +1111,9 @@ private:
     unsigned playerSpawnVersion_ = 0;
     bool cameraPrepared_ = false, cameraScopeSettled_ = false;
     bool edgeZoomRequested_ = false;
+    int cameraDistanceTier_ = 0;
     float edgeZoom_ = 0.0f;
-    bool angledCamera_ = false, cameraKeyHeld_ = false;
+    float aimMotionBlur_ = 0;
     float crosshairBloom_ = 0.0f;  // 平滑后的移动扩散（0=静止，1=全速跑动）
     std::vector<Player> bots_;
     int nextBotNameIndex_ = 0;      // 新 BOT 分配昵称的游标（每场重置）
@@ -995,6 +1121,7 @@ private:
     std::vector<Grenade> grenades_;
     std::vector<SmokeCloud> smokes_;
     std::vector<FireZone>    fires_;
+    std::vector<Decoy> decoys_;
     float fireTickTimer_ = 0.0f;
 
     // 手雷爆炸特效（仅用于渲染扩散圆环）
@@ -1007,6 +1134,9 @@ private:
 
     // 阵亡掉落的武器/投掷物
     struct DroppedItem {
+        Player::EquipmentRecord equipment;
+        Player::WeaponFireState fireState;
+        bool defuseKit = false;
         WeaponId id = WeaponId::None;
         float x = 0.0f, y = 0.0f;
         float life = 30.0f;      // 30 秒后消失
@@ -1103,13 +1233,19 @@ private:
     void SnapshotRoundEconomy();   // 买枪前经济快照（save/eco 依据）
     bool AreaCenterByName(const std::string& name, float& ox, float& oy) const;
     std::string AreaHint(const std::string& intentTarget) const;
+    unsigned purchaseEpoch_ = 1;
+    std::uint64_t nextEquipmentId_ = 1;
     bool prevInteract_ = false;   // E 键边沿检测
 
-    void DropEquipmentOnDeath(const Player& victim);
+    void DropEquipmentOnDeath(Player& victim);
     float flashTimer_ = 0.0f;      // 玩家闪光致盲剩余秒数
     float flashPeak_  = 0.0f;      // 本次致盲的峰值强度 0~1（越近越白）
     float footstepTimer_ = 0.0f;   // 玩家脚步声节奏
+    bool spectateTogglePending_ = false;
+    int previousEquipSlot_ = 2;
+    WeaponId previousEquipWeapon_ = WeaponId::Knife;
     float hitMarkerTimer_ = 0.0f;   // 命中敌人反馈
+    std::array<DamageDirection, 4> damageDirections_{};
     float damageFlashTimer_ = 0.0f; // 玩家受伤反馈
 
     // 目标物状态
@@ -1128,15 +1264,19 @@ private:
     float lastDeathX_ = 0.0f, lastDeathY_ = 0.0f;
     Team  lastDeathTeam_ = Team::None;
     float lastDeathTimer_ = 0.0f;
+    float botPlantProgress_ = 0.0f;
+    float defuseRemaining_ = 0.0f;
     float defuseProgress_ = 0.0f;  // 0..1
 
     std::vector<KillFeedEntry> killFeed_;
+    std::uint64_t nextKillEventId_=1;
 
     PathFinder pathFinder_;   // 载入地图后烘焙
 
-    void PushKillFeed(const std::string& text);
 
     Team  desiredPlayerTeam_ = Team::CT;
+    int bombPlanter_ = -2;
+    std::uint64_t c4EquipmentId_=0;
     int   bombCarrier_ = -2;      // -2 无人, -1 玩家, >=0 BOT 索引
     bool  bombDropped_ = false;    // C4 掉在地上
     float bombDropDelay_ = 0.0f;   // 丢下后 1 秒内不能被捡回（否则原地立刻捡起，像「丢不掉」）
@@ -1153,7 +1293,6 @@ private:
     float bombIntelX_ = 0.0f, bombIntelY_ = 0.0f;
     float bombIntelAge_ = 0.0f;
     int plantingChannel_ = -1;
-    int defusingChannel_ = -1;
     int activeDefuser_ = -2;
     void StopObjectiveAudio(class AudioManager* audio);
     float plantProgress_ = 0.0f;
@@ -1263,7 +1402,7 @@ private:
     // 在声源位置发一次声：半径内的所有存活 BOT 都会收到一条 HeardSound；
     // 敌对声音同时把听者的警戒朝向指向声源。radius 为 0 时用 SoundRadius(type)。
     void EmitSound(SoundEventType type, float x, float y, Team team,
-                   int sourceIdx = -2, float radius = 0.0f);
+                   int sourceIdx = -2, float radius = 0.0f, WeaponId hazardWeapon = WeaponId::None, float dangerDelay = 0);
     // 某个 BOT 最近听到的指定类型声音（只按 age 过滤）；没有返回 nullptr
     const HeardSound* NewestHeard(size_t botIdx, SoundEventType type,
                                   float maxAge = Tuning::SoundMemory) const;
@@ -1281,6 +1420,24 @@ private:
     int  PickDefuseBot() const;
     // 目标是否落在以 self 朝向为中心的视野扇形内（玩家/BOT 共用几何）
     bool CanSeePoint(const Player& observer, float x, float y) const;
+    int ActorPoseSlot(const Player &actor) const {
+        const bool planting = &actor == &player_ ? plantProgress_ > 0
+                                                 : botPlantProgress_ > 0 && bombCarrier_ >= 0 &&
+                                                       bombCarrier_ < static_cast<int>(bots_.size()) &&
+                                                       &actor == &bots_[bombCarrier_];
+        return planting ? 4 : actor.weaponSlot;
+    }
+    struct BodyVisibility { float fraction = 0; SDL_FPoint aim{}; };
+    struct BodyVisibilityCache {
+        const Player* observer=nullptr;
+        const Player* target=nullptr;
+        std::array<float,15> signature{};
+        BodyVisibility result;
+    };
+    mutable std::vector<BodyVisibilityCache> bodyVisibilityCache_;
+    mutable float bodyVisibilityClock_=-1;
+    mutable std::uint64_t bodyVisibilityTerrain_=0;
+    BodyVisibility QueryBodyVisibility(const Player& observer, const Player& target) const;
     bool CanSeeActor(const Player& observer, const Player& target) const;
     // 沿 A* 路径移动；返回 true 表示本帧移动已由寻路接管
     bool FollowPathTo(Player& bot, BotRuntime& ai,
@@ -1294,6 +1451,10 @@ private:
     void ThrowGrenade(Player& thrower, float aimAngle, class AudioManager* audio = nullptr, float targetDistance = -1.0f);
     // 投掷前校验：落点可行走 + 有视线 + 距离合理；失败则尝试偏移角度，全失败就不扔。
     bool PlanGrenadeThrow(const Player& bot, float tx, float ty, float& outAngle) const;
+    float ExpectedBlastDamage(float x,float y,const Player& target) const;
+    void RebuildFireCells(FireZone& fire) const;
+    bool FireContains(const FireZone& fire,float x,float y) const;
+    Player* DamageOwner(int index) { return index == -1 ? &player_ : index >= 0 && index < static_cast<int>(bots_.size()) ? &bots_[index] : nullptr; }
     void ExplodeGrenade(const Grenade& g, class AudioManager* audio);
     bool SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) const;
     void RespawnBOT(Player& bot);
@@ -1335,5 +1496,6 @@ private:
     void PlantBomb(float x, float y, class AudioManager* audio);
     void DetonateBomb(class AudioManager* audio);
     void OnCombatantKilled(Player& victim, class AudioManager* audio,
-                           Player* killer = nullptr);
+                           Player* killer = nullptr, WeaponId weapon = WeaponId::None,
+                           std::uint64_t equipmentId=0, std::optional<SDL_FPoint> sourcePosition=std::nullopt);
 };

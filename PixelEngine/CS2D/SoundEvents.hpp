@@ -59,6 +59,8 @@ struct HeardSound {
     Team  team = Team::None; // 发声方阵营
     int   sourceIdx = -2;
     bool  hostile = false;   // 发声方是否是听者的敌人
+    WeaponId hazardWeapon = WeaponId::None;
+    float dangerDelay = 0;
 };
 
 // 武器是否带消音器（枪声传播半径显著更小）

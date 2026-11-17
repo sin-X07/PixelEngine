@@ -1,6 +1,7 @@
 #pragma once
 #include "../CS2D/AimLineStyle.hpp"
 #include <string>
+#include "../Input/KeyBindings.hpp"
 
 // ============================================================================
 // SaveManager — CS2D 单机版存档
@@ -14,6 +15,9 @@
 // ============================================================================
 
 struct GameSettings {
+    KeyBindings bindings;
+    bool combatHintsVisible = true;
+    int botDifficulty = 2;
     float mouseSensitivity = 1.0f;
     int   resIdx           = 0;
     bool  fullscreen       = false;
@@ -43,7 +47,7 @@ struct GameSettings {
     bool  radarBlendBg          = false;
     int   radarBgAlpha          = 160;
     int   radarHudSize          = 120;
-    float radarMapZoom          = 0.005f;
+    float radarMapZoom          = 1.0f;
 
     // 主菜单 3D 自定义（索引 0=T, 1=CT, 2..4=三只小鸡）
     int   menuColor[5]     = { 0, 0, 0, 0, 0 };

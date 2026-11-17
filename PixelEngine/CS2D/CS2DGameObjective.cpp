@@ -3,6 +3,7 @@
 #include <iostream>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 
 // ============================================================================
 // 目标物：爆破（下包/拆包）
@@ -10,14 +11,9 @@
 
 namespace {
 constexpr float BOMB_FUSE        = 40.0f;   // 下包后倒计时
-constexpr float PLANT_TIME       = 2.0f;    // T 在包点停留多久完成下包
+constexpr float PLANT_TIME       = 3.0f;    // T 在包点停留多久完成下包
 constexpr float DEFUSE_TIME      = 10.0f;    // CT 拆包耗时
 } // namespace
-
-void CS2DGame::PushKillFeed(const std::string& text) {
-    killFeed_.insert(killFeed_.begin(), KillFeedEntry{ text, 4.0f });
-    if (killFeed_.size() > 6) killFeed_.resize(6);
-}
 
 // 记分板数据（玩家 + 全部 BOT，按阵营排序）
 std::vector<CS2DGame::ScoreRow> CS2DGame::BuildScoreboard() const {
@@ -54,9 +50,11 @@ std::vector<CS2DGame::ScoreRow> CS2DGame::BuildScoreboard() const {
 
 // 按模式初始化目标物
 void CS2DGame::SetupObjective() {
+    c4EquipmentId_=mode_==MatchMode::BombDefusal ? nextEquipmentId_++ : 0;
     AssignBombCarrier();
     bombPlanted_   = false;
     bombTimer_     = 0.0f;
+    StopObjectiveAudio(nullptr);
     defuseProgress_ = 0.0f;
 
     // 每回合必须清掉上一局遗留的 C4 掉落 / 情报 / 拾取冷却，
@@ -69,6 +67,7 @@ void CS2DGame::SetupObjective() {
     bombIntelX_ = bombIntelY_ = 0.0f;
     playerHoldingC4_ = false;
     player_.weapons[4] = WeaponId::None;
+    player_.equipment[4]={};
     if (player_.weaponSlot == 4) player_.weaponSlot = 1;
     bombX_ = bombY_ = 0.0f;
 }
@@ -83,9 +82,9 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
         && interactHeld && world_ && world_->FindBombSiteAt(player_.x, player_.y);
     if (planting) {
         if (plantProgress_ == 0.0f && audio)
-            plantingChannel_ = audio->PlaySoundTracked(SoundEffect::BOMB_PLANTING);
+            plantingChannel_ = audio->PlaySoundTracked(SoundEffect::BOMB_PLANTING, 1);
         plantProgress_ += dt;
-        if (plantProgress_ >= 3.0f) {
+        if (plantProgress_ >= PLANT_TIME) {
             PlantBomb(player_.x, player_.y, audio);
             plantProgress_ = 0.0f;
         }
@@ -116,19 +115,19 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
             }
 
             if (carrierInSite) {
-                defuseProgress_ += dt;      // 复用为「下包进度」
-                if (defuseProgress_ >= PLANT_TIME) {
+                botPlantProgress_ += dt;
+                if (botPlantProgress_ >= PLANT_TIME) {
                     PlantBomb(bombX_, bombY_, audio);
-                    defuseProgress_ = 0.0f;
+                    botPlantProgress_ = 0.0f;
                     CoachOnEvent(Team::T,  CoachEventType::DefuseAborted);
                     CoachOnEvent(Team::CT, CoachEventType::DefuseAborted);
                 }
             } else {
-                defuseProgress_ = 0.0f;
+                botPlantProgress_ = 0.0f;
             }
         } else {
             // 倒计时
-            bombTimer_ -= dt;
+            const float stepTime = std::min(std::max(0.0f,dt),std::max(0.0f,bombTimer_));
 
             // C4 滴答：越接近爆炸越急促（2s → 0.25s）
             // 滴答声是 CT 定位炸弹的听觉线索，因此即使没有音频也要发事件。
@@ -147,117 +146,73 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
                 }
             }
 
-            if (bombTimer_ <= 0.0f) {
-                DetonateBomb(audio);
-                return;
-            }
-
-            // CT 拆包：玩家需按住 E；BOT 只派一个「当前安全」的人拆，
-            // 其余人保持战斗/掩护，不会全部贴在炸弹上站桩。
-            bool defusing = false;
-            // 记录拆包者（-1=玩家, >=0=BOT索引, -2=无），拆包成功时给其个人发奖励
-            int defuserIdx = -2;
-
-            bool playerDefusing = false;
-            if (player_.alive && player_.team == Team::CT && interactHeld) {
-                const float dx = player_.x - bombX_;
-                const float dy = player_.y - bombY_;
-                if (std::sqrt(dx * dx + dy * dy) <= Tuning::DefuseRadius) {
-                    defusing = true;
-                    defuserIdx = -1;
-                    playerDefusing = true;
+            const int previousLeader = activeDefuser_;
+            activeDefuser_ = -2;
+            defuseProgress_ = defuseRemaining_ = 0;
+            int winner = -2;
+            float firstFinish = std::numeric_limits<float>::infinity();
+            float bestRemaining = std::numeric_limits<float>::infinity();
+            auto updateDefuser = [&](Player& actor, int id, bool eligible) {
+                if (!eligible) {
+                    if (audio) audio->StopChannel(actor.defuseChannel);
+                    else if (actor.defuseChannel >= 0 && Mix_QuerySpec(nullptr,nullptr,nullptr)) Mix_HaltChannel(actor.defuseChannel);
+                    actor.defuseChannel = -1;
+                    actor.defuseProgress = 0;
+                    return;
                 }
-            }
-
-            // BOT：只选一个安全候选（无可见敌人/最近没挨打；最后 6 秒强制拆）
-            int bestBot = -2;
-            float bestD2 = 1e36f;
-            for (size_t bi = 0; bi < bots_.size(); ++bi) {
-                auto& b = bots_[bi];
-                if (!b.alive || b.team != Team::CT) {
-                    AiAt(bi).defusing = false;
-                    continue;
+                if (actor.hasDefuseKit && dt>0) actor.kitEquipment.used = true;
+                const float duration = actor.hasDefuseKit ? 4.0f : DEFUSE_TIME;
+                const float finishIn = (1-actor.defuseProgress)*duration;
+                const bool starting = actor.defuseProgress <= 0;
+                if (starting) {
+                    const std::string area = world_ ? world_->FindAreaAt(bombX_,bombY_) : std::string();
+                    CoachOnEvent(Team::T,CoachEventType::DefuseStarted,area);
+                    CoachOnEvent(Team::CT,CoachEventType::DefuseStarted,area);
                 }
-                const float dx = b.x - bombX_;
-                const float dy = b.y - bombY_;
-                const float d2 = dx * dx + dy * dy;
-                if (d2 > Tuning::DefuseRadius * Tuning::DefuseRadius) {
-                    AiAt(bi).defusing = false;
-                    continue;
+                if (actor.defuseChannel < 0 && audio) {
+                    const auto sound = actor.hasDefuseKit ? SoundEffect::BOMB_DEFUSING_KIT : SoundEffect::BOMB_DEFUSING;
+                    actor.defuseChannel = id == -1 ? audio->PlaySoundTracked(sound, 2) :
+                        audio->PlaySoundTrackedAt(sound,actor.x,actor.y,ListenerX(),ListenerY(),id+3);
                 }
-                if (!BotCanDefuse(bi, b)) continue;
-                if (d2 < bestD2) { bestD2 = d2; bestBot = static_cast<int>(bi); }
-            }
-
-            if (!playerDefusing && bestBot >= 0) {
-                if (!AiAt(static_cast<size_t>(bestBot)).defusing) {
-                    std::cout << "[Defuse] #" << bestBot << " start" << std::endl;
+                actor.defuseProgress = std::min(1.0f,actor.defuseProgress+stepTime/duration);
+                if (finishIn <= stepTime && finishIn < firstFinish) {
+                    winner = id;
+                    firstFinish = finishIn;
                 }
-                defusing = true;
-                defuserIdx = bestBot;
-            }
-            for (size_t bi = 0; bi < bots_.size(); ++bi) {
-                if (bots_[bi].team != Team::CT) continue;
-                AiAt(bi).defusing = (!playerDefusing && static_cast<int>(bi) == bestBot);
-                if (AiAt(bi).defusing) bots_[bi].vx = bots_[bi].vy = 0.0f;
-            }
-
-            if (defuserIdx != activeDefuser_) {
-                defuseProgress_ = 0.0f;
-                if (audio) audio->StopChannel(defusingChannel_);
-                activeDefuser_ = defuserIdx;
-            }
-            if (playerDefusing) {
-                if (defusingChannel_ < 0 && audio)
-                    defusingChannel_ = audio->PlaySoundTracked(player_.hasDefuseKit
-                        ? SoundEffect::BOMB_DEFUSING_KIT : SoundEffect::BOMB_DEFUSING);
-            } else if (defusing) {
-                if (defusingChannel_ < 0 && audio)
-                    defusingChannel_ = audio->PlaySoundTrackedAt(SoundEffect::BOMB_DEFUSING,
-                        bombX_, bombY_, ListenerX(), ListenerY());
-            } else if (audio) audio->StopChannel(defusingChannel_);
-            if (defusing) {
-                if (defuseProgress_ <= 0.0f) {
-                    const std::string bArea = world_ ? world_->FindAreaAt(bombX_, bombY_)
-                                                     : std::string();
-                    CoachOnEvent(Team::T,  CoachEventType::DefuseStarted, bArea);
-                    CoachOnEvent(Team::CT, CoachEventType::DefuseStarted, bArea);
+                const float remaining = (1-actor.defuseProgress)*duration;
+                const bool sameTime = std::abs(remaining-bestRemaining) < .0001f;
+                if (remaining < bestRemaining-.0001f || (sameTime && id == previousLeader)) {
+                    bestRemaining = remaining;
+                    activeDefuser_ = id;
+                    defuseProgress_ = actor.defuseProgress;
+                    defuseRemaining_ = remaining;
                 }
-                defuseProgress_ += dt / ((playerDefusing && player_.hasDefuseKit) ? 4.0f : DEFUSE_TIME);
-                if (defuseProgress_ >= 1.0f) {
-                    std::cout << "[Defuse] #" << defuserIdx << " success" << std::endl;
-                    std::cout << "[CS2D] C4 已拆除!" << std::endl;
-                    StopObjectiveAudio(audio);
-                    bombPlanted_ = false;
-                    bombTimer_ = 0.0f;
-                    defuseProgress_ = 0.0f;
-                    EmitSound(SoundEventType::BombDefused, bombX_, bombY_, Team::CT);
-                    if (audio) audio->PlaySound(SoundEffect::BOMB_DEFUSE);
-
-                    // ---- 拆包奖励：拆包者个人 +$300（照抄 CS2，不给全队）----
-                    {
-                        const int bonus = economy_.GrantDefuse();
-                        if (defuserIdx == -1) {
-                            player_.money += bonus;
-                            economy_.Clamp(player_.money);
-                            std::cout << "[Economy] 玩家拆包 +$" << bonus << std::endl;
-                        } else if (defuserIdx >= 0 &&
-                                   defuserIdx < static_cast<int>(bots_.size())) {
-                            bots_[static_cast<size_t>(defuserIdx)].money += bonus;
-                            economy_.Clamp(bots_[static_cast<size_t>(defuserIdx)].money);
-                            std::cout << "[Economy] " << bots_[static_cast<size_t>(defuserIdx)].name
-                                      << " 拆包 +$" << bonus << std::endl;
-                        }
-                    }
-
-                    ApplyRoundResult(Team::CT, audio);
-                    round_.EndRound(Team::CT);
-                }
+            };
+            const float pdx=player_.x-bombX_, pdy=player_.y-bombY_;
+            const bool playerDefusing = player_.alive && player_.team == Team::CT && interactHeld &&
+                pdx*pdx+pdy*pdy <= Tuning::DefuseRadius*Tuning::DefuseRadius;
+            updateDefuser(player_,-1,playerDefusing);
+            for (size_t i=0;i<bots_.size();++i) {
+                const bool eligible = BotCanDefuse(i,bots_[i]);
+                AiAt(i).defusing = eligible;
+                if (eligible) bots_[i].vx=bots_[i].vy=0;
+                updateDefuser(bots_[i],static_cast<int>(i),eligible);
+            }
+            if (winner != -2) {
+                StopObjectiveAudio(audio);
+                bombPlanted_ = false;
+                bombTimer_ = 0;
+                EmitSound(SoundEventType::BombDefused,bombX_,bombY_,Team::CT);
+                if (audio) audio->PlaySound(SoundEffect::BOMB_DEFUSE);
+                Player& successful = winner == -1 ? player_ : bots_[winner];
+                successful.money += economy_.GrantDefuse();
+                economy_.Clamp(successful.money);
+                std::cout << "[Defuse] #" << winner << " success" << std::endl;
+                ApplyRoundResult(Team::CT,audio);
+                round_.EndRound(Team::CT);
             } else {
-                // 松开拆包键 / 离开包点：进度立刻清零（不给半途而废留余地）
-                defuseProgress_ = 0.0f;
-                // 同时清掉 BOT 的拆包标记，避免它们继续站桩
-                for (auto& b : bots_) AiAt(AiIndexOf(b)).defusing = false;
+                bombTimer_ -= dt;
+                if (bombTimer_ <= 0) DetonateBomb(audio);
             }
         }
         return;
@@ -267,9 +222,11 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
 void CS2DGame::PlantBomb(float x, float y, AudioManager* audio) {
     StopObjectiveAudio(audio);
     // C4 已安装：从玩家手里/槽位里移除
+    bombPlanter_ = bombCarrier_;
     bombCarrier_ = -2;
     playerHoldingC4_ = false;
     player_.weapons[4] = WeaponId::None;
+    player_.equipment[4]={};
     if (player_.weaponSlot == 4) EquipFallbackWeapon();
     bombPlanted_ = true;
     // Set coords before events so FindAreaAt is not fed stale/zero bomb position.
@@ -324,7 +281,7 @@ void CS2DGame::DetonateBomb(AudioManager* audio) {
         if (d > RADIUS) return;
         const float f = 1.0f - d / RADIUS;
         if (ApplyDamage(p, static_cast<int>(200.0f * f), 1.0f)) {   // C4 爆炸无视护甲
-            OnCombatantKilled(p, audio);
+            OnCombatantKilled(p, audio, DamageOwner(bombPlanter_), WeaponId::C4,c4EquipmentId_,SDL_FPoint{bombX_,bombY_});
         }
     };
     damageAt(player_);
@@ -361,11 +318,20 @@ void CS2DGame::AssignBombCarrier() {
 }
 
 void CS2DGame::StopObjectiveAudio(AudioManager* audio) {
-    if (audio) {
-        audio->StopChannel(plantingChannel_);
-        audio->StopChannel(defusingChannel_);
+    auto stop = [&](int& channel) {
+        if (audio) audio->StopChannel(channel);
+        else if (channel >= 0 && Mix_QuerySpec(nullptr,nullptr,nullptr)) Mix_HaltChannel(channel);
+        channel = -1;
+    };
+    stop(plantingChannel_);
+    stop(player_.defuseChannel);
+    player_.defuseProgress = 0;
+    for (size_t i=0;i<bots_.size();++i) {
+        stop(bots_[i].defuseChannel);
+        bots_[i].defuseProgress = 0;
+        AiAt(i).defusing = false;
     }
-    plantingChannel_ = defusingChannel_ = -1;
     activeDefuser_ = -2;
-    plantProgress_ = 0.0f;
+    defuseProgress_ = defuseRemaining_ = 0;
+    plantProgress_ = botPlantProgress_ = 0;
 }

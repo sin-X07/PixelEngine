@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include "AimLineStyle.hpp"
 #include "Tuning.hpp"
 #include "CS2DWorld.hpp"
@@ -9,6 +10,7 @@
 #include <SDL2/SDL.h>
 #include <SDL_image.h>
 #include <vector>
+#include <array>
 #include <string>
 
 // ============================================================================
@@ -18,6 +20,7 @@
 
 // 精灵绘制参数（由 CS2DGame 填充，避免循环 include）
 struct SpriteDrawParams {
+    float meleeSwing = 0;
     float x       = 0.0f;
     float y       = 0.0f;
     float size    = Tuning::PlayerSize; // 角色视觉盒与碰撞盒共享尺寸。
@@ -46,6 +49,13 @@ struct SpriteSheetDef {
 
 class CS2DRenderer {
 public:
+    void DrawDroppedKit(float x, float y);
+    void SetVisibilityFilter(std::function<bool(float,float)> filter) {
+        visibilityFilter_=std::move(filter);
+        if (visibilityFilter_) visibilityPixels_.assign(static_cast<size_t>(viewW_)*viewH_,-1);
+    }
+    void MaskedCopy(SDL_Texture* texture, const SDL_Rect* source, const SDL_FRect& destination, float angle);
+
     CS2DRenderer() = default;
     ~CS2DRenderer() { Clean(); }
 
@@ -74,6 +84,7 @@ public:
     // 当前为可运行的最小占位实现，接线与调用时序由功能方保证。
     // 参数里 centerX/Y、radiusPx、crossThickness、crossGap 都是逻辑画布坐标，
     // 由 CS2DGame 按准星世界点投影 + 设置项算好，UI 不做命中/相机计算。
+    void KeepActorInViewport(float x,float y,float radius,float aimX,float aimY,float scopeRadius);
     void KeepScopeInViewport(float aimX, float aimY, float radiusPx, int width, int height);
     void DrawScopeOverlay(const Presentation::ScopeOverlayParams& p);
     // 飞行中的投掷物：按类型画对应的旋转图标（替代原来的 bullet 占位）
@@ -103,7 +114,8 @@ public:
     void SetConeAngleDeg(float angle) { vis_.SetConeAngleDeg(angle); }
     void ApplyCameraShake(float x, float y) { cameraX_ += x; cameraY_ += y; }
     void DrawAimLine(float playerX, float playerY, float angle,
-                     const AimLineStyle& style = AimLineStyle{}, float uiScale = 1.0f);
+                     const AimLineStyle& style = AimLineStyle{}, float uiScale = 1.0f, float blur = 0.0f);
+    void DrawAimLinePreview(const AimLineStyle& style, float width, float height);
     void DrawRadarHUD(float playerX, float playerY, float playerAngle,
                       const std::vector<RadarDot>& dots,
                       float mapW, float mapH,
@@ -127,6 +139,7 @@ public:
     void DrawSmokeCloud(float worldX, float worldY, float worldRadius,
                         float age, float expandTime, float life, float maxLife, float seed);
     // 燃烧弹火区：焦黑地面 + 闪烁的橙色火团
+    void DrawFireCells(const std::vector<SDL_FPoint>& cells,float x,float y,float radius,float age,float life,float seed);
     void DrawFireZone(float worldX, float worldY, float worldRadius,
                       float age, float life, float maxLife, float seed);
     void DrawFlashOverlay(Uint8 alpha);
@@ -184,6 +197,8 @@ public:
     void  SetViewportSize(int w, int h);   // 全屏 FOV 自适应后重建视野纹理
 
 private:
+    std::function<bool(float,float)> visibilityFilter_;
+    std::vector<std::int8_t> visibilityPixels_;
     float cameraAnchorX_ = 0.0f, cameraAnchorY_ = 0.0f;
     float cameraOffsetX_ = 0.0f, cameraOffsetY_ = 0.0f;
     bool cameraAnchored_ = false, cameraSettled_ = true;
@@ -258,13 +273,16 @@ private:
     void CreateSmokeTexture();
 
     // 雷达底图：把地图背景（或碰撞网格）一次性烘焙成纹理，避免每帧逐像素采样
+    SDL_Texture* kitTexture_ = nullptr;
     SDL_Texture* radarMapTex_ = nullptr;
+    std::array<SDL_Texture*, 2> radarFrameTex_{};
+    std::array<int, 2> radarFrameSize_{};
     float radarImgX_ = 0.0f, radarImgY_ = 0.0f; // 图像在底图内的偏移（letterbox）
     float radarImgW_ = 0.0f, radarImgH_ = 0.0f;
     void BuildRadarTexture();
 
     void DrawWeaponForCharacter(float cx, float cy, float size, float aimAngle,
-                                int weaponSlot, int weaponId, bool muzzleFlash);
+                                int weaponSlot, int weaponId, bool muzzleFlash, float meleeSwing = 0);
     void DrawMuzzleFlash(float cx, float cy, float size, float aimAngle, int weaponSlot);
 
     // ========= 视野遮罩 =========

@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include "CS2DTypes.hpp"
 #include <SDL2/SDL.h>
 #include <vector>
@@ -33,6 +34,7 @@ public:
 
     // 从解析后的 CS2DMapData 构建运行时数据
     bool Build(const CS2DMapData& data);
+    std::uint64_t Revision() const { return revision_; }
 
     // 碰撞查询
     bool IsSolid(int tileRow, int tileCol) const;
@@ -107,6 +109,7 @@ public:
     bool CheckRectCollision(float x, float y, float w, float h) const;
 
 private:
+    std::uint64_t revision_ = 0;
     int mapWidth_     = 0;
     int mapHeight_    = 0;
     int tileWidth_    = 8;

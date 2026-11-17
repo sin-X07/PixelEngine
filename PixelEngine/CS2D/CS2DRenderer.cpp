@@ -1,4 +1,5 @@
 #include "CS2DRenderer.hpp"
+#include "Visibility/BodyGeometry.hpp"
 #include "../Graphics/TeamVisualStyle.hpp"
 #include "../Graphics/UiScale.hpp"
 #include "../Core/PathUtils.hpp"
@@ -6,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <iostream>
+#include <array>
 #include <filesystem>
 
 namespace {
@@ -97,7 +99,22 @@ void CS2DRenderer::SetViewportSize(int w, int h) {
     CreateVisionTexture();
 }
 
+void CS2DRenderer::DrawDroppedKit(float x, float y) {
+    if (!kitTexture_) kitTexture_ = IMG_LoadTexture(renderer_,PathUtils::ResolveProjectFile("assets/cs2d/sprites/defuse_kit_d.png").c_str());
+    if (!kitTexture_) return;
+    const float size=8*zoom_;
+    SDL_FRect target{(x-cameraX_)*zoom_-size/2,(y-cameraY_)*zoom_-size/2,size,size};
+    MaskedCopy(kitTexture_,nullptr,target,0);
+}
+
 void CS2DRenderer::Clean() {
+    if (kitTexture_) { SDL_DestroyTexture(kitTexture_); kitTexture_=nullptr; }
+    if (radarMapTex_) { SDL_DestroyTexture(radarMapTex_); radarMapTex_ = nullptr; }
+    for (auto*& texture : radarFrameTex_) {
+        if (texture) SDL_DestroyTexture(texture);
+        texture = nullptr;
+    }
+    radarFrameSize_.fill(0);
     if (backgroundTex_) { SDL_DestroyTexture(backgroundTex_); backgroundTex_ = nullptr; }
     if (perimeterTex_) { SDL_DestroyTexture(perimeterTex_); perimeterTex_ = nullptr; }
     if (perimeterGroundTex_) { SDL_DestroyTexture(perimeterGroundTex_); perimeterGroundTex_ = nullptr; }
@@ -584,24 +601,110 @@ void CS2DRenderer::DrawOverlay() {
 
 static constexpr float WALK_BOB_AMPLITUDE   = 1.2f;   // 世界单位（×zoom 后约 2.4px）
 
-void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
-    // 选序列帧 sheet
-    const SpriteSheetDef* sheet = nullptr;
-    if (p.spriteKey == 0)      sheet = &ctSheet_;
-    else if (p.spriteKey == 1) sheet = &tSheet_;
-    else                       sheet = &tAltSheet_;
+void CS2DRenderer::MaskedCopy(SDL_Texture *texture, const SDL_Rect *source, const SDL_FRect &dst,
+                              float angle) {
+    if (!renderer_ || !texture || dst.w <= 0 || dst.h <= 0)
+        return;
+    if (!visibilityFilter_) {
+        SDL_RenderCopyExF(renderer_, texture, source, &dst, angle, nullptr, SDL_FLIP_NONE);
+        return;
+    }
+    int tw = 0, th = 0;
+    if (SDL_QueryTexture(texture, nullptr, nullptr, &tw, &th) != 0 || tw <= 0 || th <= 0)
+        return;
+    const SDL_Rect src = source ? *source : SDL_Rect{0, 0, tw, th};
+    const float rad = angle * .01745329252f, c = std::cos(rad), s = std::sin(rad);
+    const float cx = dst.x + dst.w * .5f, cy = dst.y + dst.h * .5f;
+    const float ex = (std::abs(c) * dst.w + std::abs(s) * dst.h) * .5f;
+    const float ey = (std::abs(s) * dst.w + std::abs(c) * dst.h) * .5f;
+    Uint8 red = 255, green = 255, blue = 255, alpha = 255;
+    SDL_GetTextureColorMod(texture, &red, &green, &blue);
+    SDL_GetTextureAlphaMod(texture, &alpha);
+    std::vector<SDL_Vertex> vertices;
+    std::vector<int> indices;
+    auto uv = [&](float x, float y) {
+        const float u = ((x - cx) * c + (y - cy) * s) / dst.w + .5f;
+        const float v = (-(x - cx) * s + (y - cy) * c) / dst.h + .5f;
+        return SDL_FPoint{(src.x + u * src.w) / tw, (src.y + v * src.h) / th};
+    };
+    const int left = std::max(0, static_cast<int>(cx - ex));
+    const int right = std::min(viewW_, static_cast<int>(std::ceil(cx + ex)));
+    auto visible = [&](int x, int y) {
+        const auto point = uv(x + .5f, y + .5f);
+        if (point.x < static_cast<float>(src.x) / tw || point.y < static_cast<float>(src.y) / th ||
+            point.x >= static_cast<float>(src.x + src.w) / tw ||
+            point.y >= static_cast<float>(src.y + src.h) / th)
+            return false;
+        auto &cached = visibilityPixels_[static_cast<size_t>(y) * viewW_ + x];
+        if (cached < 0)
+            cached = visibilityFilter_(cameraX_ + (x + .5f) / zoom_, cameraY_ + (y + .5f) / zoom_) ? 1 : 0;
+        return cached != 0;
+    };
+    // Each contiguous visible row is one textured quad, with pixel-exact clipping.
+    for (int y = std::max(0, static_cast<int>(cy - ey));
+         y < std::min(viewH_, static_cast<int>(std::ceil(cy + ey))); ++y) {
+        int x = left;
+        while (x < right) {
+            while (x < right && !visible(x, y))
+                ++x;
+            const int start = x;
+            while (x < right && visible(x, y))
+                ++x;
+            if (start == x)
+                continue;
+            const int base = static_cast<int>(vertices.size());
+            const SDL_FPoint corners[] = {{static_cast<float>(start), static_cast<float>(y)},
+                                          {static_cast<float>(x), static_cast<float>(y)},
+                                          {static_cast<float>(x), y + 1.f},
+                                          {static_cast<float>(start), y + 1.f}};
+            for (const auto point : corners) {
+                auto coordinate = uv(point.x, point.y);
+                coordinate.x = std::clamp(coordinate.x, static_cast<float>(src.x) / tw,
+                                          static_cast<float>(src.x + src.w) / tw);
+                coordinate.y = std::clamp(coordinate.y, static_cast<float>(src.y) / th,
+                                          static_cast<float>(src.y + src.h) / th);
+                vertices.push_back({point, {red, green, blue, alpha}, coordinate});
+            }
+            const int quad[] = {base, base + 1, base + 2, base, base + 2, base + 3};
+            indices.insert(indices.end(), std::begin(quad), std::end(quad));
+        }
+    }
+    if (!vertices.empty())
+        SDL_RenderGeometry(renderer_, texture, vertices.data(), static_cast<int>(vertices.size()),
+                           indices.data(), static_cast<int>(indices.size()));
+}
 
-    if (!sheet || !sheet->tex) return;
+void CS2DRenderer::DrawCharacter(const SpriteDrawParams &p) {
+    // 选序列帧 sheet
+    const SpriteSheetDef *sheet = nullptr;
+    if (p.spriteKey == 0)
+        sheet = &ctSheet_;
+    else if (p.spriteKey == 1)
+        sheet = &tSheet_;
+    else
+        sheet = &tAltSheet_;
+
+    if (!sheet || !sheet->tex)
+        return;
 
     // ---- 按武器槽固定切片（死亡用主武器帧 + 倾斜淡出） ----
-    int frameCol = 0, frameRow = 0;   // 默认：第1行第1列（主武器）
-    if (p.animState != 3) {           // 非死亡状态才按槽位切帧
+    int frameCol = 0, frameRow = 0; // 默认：第1行第1列（主武器）
+    if (p.animState != 3) {         // 非死亡状态才按槽位切帧
         switch (p.weaponSlot) {
-            case 1:  frameCol = 1; frameRow = 1; break;  // 副武器：第2行第2列
-            case 2:
-            case 3:
-            case 4:  frameCol = 0; frameRow = 1; break;  // 近战：  第2行第1列
-            default: frameCol = 0; frameRow = 0; break;  // 主武器：第1行第1列
+        case 4:
+        case 1:
+            frameCol = 1;
+            frameRow = 1;
+            break; // 副武器：第2行第2列
+        case 2:
+        case 3:
+            frameCol = 0;
+            frameRow = 1;
+            break; // 近战：  第2行第1列
+        default:
+            frameCol = 0;
+            frameRow = 0;
+            break; // 主武器：第1行第1列
         }
     }
 
@@ -624,7 +727,8 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
         tiltDeg = -90.0f;
         const float fadeFactor = std::max(0.0f, 1.0f - p.deathTimer / 2.0f);
         alpha = static_cast<Uint8>(alpha * fadeFactor);
-        if (alpha < 5) return;
+        if (alpha < 5)
+            return;
     }
 
     // 行走 bobbing（世界单位，随缩放）
@@ -646,24 +750,35 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
     dst.h = sz;
 
     SDL_SetTextureAlphaMod(sheet->tex, alpha);
-    SDL_FPoint center = { sz * 0.5f, sz * 0.5f };
+    SDL_FPoint center = {sz * 0.5f, sz * 0.5f};
     // 最新三套人物的全部姿势均朝上，统一旋转到实际瞄准方向。
     constexpr float poseAngleOffset = 90.0f;
-    const float charAngle = p.aimAngle * 180.0f / 3.14159265f + tiltDeg
-                            + (p.animState == 3 ? 0.0f : poseAngleOffset);
+    const float charAngle =
+        p.aimAngle * 180.0f / 3.14159265f + tiltDeg + (p.animState == 3 ? 0.0f : poseAngleOffset);
 
     // ---- 敌我轮廓素材（紧贴角色剪影）----
     // 友军蓝 / 敌军红 / 自己白；白色描边素材 + ColorMod，所以一份素材服务三色。
     // 先画轮廓再画角色，轮廓被本体盖住内侧，只剩贴边的一圈。
     {
-        const SpriteSheetDef* outline = nullptr;
-        if (p.spriteKey == 0)      outline = &ctOutlineSheet_;
-        else if (p.spriteKey == 1) outline = &tOutlineSheet_;
-        else                       outline = &tAltOutlineSheet_;
+        const SpriteSheetDef *outline = nullptr;
+        if (p.spriteKey == 0)
+            outline = &ctOutlineSheet_;
+        else if (p.spriteKey == 1)
+            outline = &tOutlineSheet_;
+        else
+            outline = &tAltOutlineSheet_;
 
-        Uint8 rr = 236, gg = 88, bb = 78;               // 敌军：红
-        if (p.localPlayer)      { rr = 240; gg = 244; bb = 250; }   // 自己：白
-        else if (p.friendly)    { rr = 88;  gg = 168; bb = 245; }   // 友军：蓝
+        Uint8 rr = 236, gg = 88, bb = 78; // 敌军：红
+        if (p.localPlayer) {
+            rr = 240;
+            gg = 244;
+            bb = 250;
+        } // 自己：白
+        else if (p.friendly) {
+            rr = 88;
+            gg = 168;
+            bb = 245;
+        } // 友军：蓝
 
         if (outline && outline->tex && p.animState != 3) {
 #if SDL_VERSION_ATLEAST(2, 0, 12)
@@ -674,27 +789,94 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams& p) {
             // 略降不透明度：1px 描边在放大后不会显得"重"
             SDL_SetTextureAlphaMod(outline->tex, static_cast<Uint8>(alpha * 0.82f));
             // 轮廓素材本身就是外扩一圈，绘制框与本体相同即可贴合
-            SDL_RenderCopyExF(renderer_, outline->tex, &src, &dst,
-                              charAngle, &center, SDL_FLIP_NONE);
+            const auto characterVisibility = visibilityFilter_;
+            if (characterVisibility)
+                SetVisibilityFilter([this, p, characterVisibility](float x, float y) {
+                    if (!characterVisibility(x, y))
+                        return false;
+                    const float step = 1 / std::max(.01f, zoom_);
+                    for (int oy = -1; oy <= 1; ++oy)
+                        for (int ox = -1; ox <= 1; ++ox) {
+                            const float px = x + ox * step, py = y + oy * step;
+                            if (BodyGeometry::Contains(p.spriteKey, p.weaponSlot, p.x, p.y, p.size,
+                                                       p.aimAngle, p.animState, p.animTimer, px, py) &&
+                                characterVisibility(px, py))
+                                return true;
+                        }
+                    return false;
+                });
+            MaskedCopy(outline->tex, &src, dst, charAngle);
+            if (characterVisibility)
+                SetVisibilityFilter(characterVisibility);
             SDL_SetTextureColorMod(outline->tex, 255, 255, 255);
             SDL_SetTextureAlphaMod(outline->tex, 255);
         }
     }
 
-    SDL_RenderCopyExF(renderer_, sheet->tex, &src, &dst,
-                      charAngle, &center, SDL_FLIP_NONE);
+    MaskedCopy(sheet->tex, &src, dst, charAngle);
     SDL_SetTextureAlphaMod(sheet->tex, 255);
 
     // 武器
     if (p.animState != 3) {
-        DrawWeaponForCharacter(cx + xOff, cy + yOff, p.size, p.aimAngle,
-                               p.weaponSlot, p.weaponId, p.animState == 2);
+        DrawWeaponForCharacter(cx + xOff, cy + yOff, p.size, p.aimAngle, p.weaponSlot, p.weaponId,
+                               p.animState == 2, p.meleeSwing);
     }
-
 }
 // 枪口火焰：cx/cy 为武器中心的屏幕坐标
+namespace {
+// Cached Gaussian profile shared by the scope and world-space auxiliary line.
+void DrawSoftSegment(SDL_Renderer* renderer, SDL_FPoint a, SDL_FPoint b,
+                     float thickness, float blur, SDL_Color color) {
+    const float length = std::hypot(b.x-a.x,b.y-a.y);
+    if (length < .001f) return;
+    static const std::array<float,33> profile = [] {
+        std::array<float,33> values{};
+        for (int i=0;i<33;++i) {
+            const float x=(i-16)/16.0f;
+            values[i]=std::exp(-4.5f*x*x);
+        }
+        values.front()=values.back()=0;
+        return values;
+    }();
+    const float nx=-(b.y-a.y)/length, ny=(b.x-a.x)/length;
+    const float half=thickness*.5f;
+    if (blur < .05f) {
+        const SDL_Vertex vertices[] = {{{a.x+nx*half,a.y+ny*half},color,{0,0}},
+            {{b.x+nx*half,b.y+ny*half},color,{0,0}}, {{b.x-nx*half,b.y-ny*half},color,{0,0}},
+            {{a.x-nx*half,a.y-ny*half},color,{0,0}}};
+        const int indices[]={0,1,2,0,2,3};
+        SDL_RenderGeometry(renderer,nullptr,vertices,4,indices,6);
+        return;
+    }
+    std::array<SDL_Vertex,66> vertices{};
+    std::array<int,192> indices{};
+    const float extent=half+blur;
+    for (int i=0;i<33;++i) {
+        const float offset=(i-16)/16.0f*extent;
+        SDL_Color sample=color;
+        sample.a=static_cast<Uint8>(color.a*profile[i]*thickness/(thickness+blur*.65f));
+        vertices[i*2]={{a.x+nx*offset,a.y+ny*offset},sample,{0,0}};
+        vertices[i*2+1]={{b.x+nx*offset,b.y+ny*offset},sample,{0,0}};
+        if (i<32) {
+            const int n=i*2;
+            const int quad[]={n,n+1,n+3,n,n+3,n+2};
+            std::copy(std::begin(quad),std::end(quad),indices.begin()+i*6);
+        }
+    }
+    SDL_RenderGeometry(renderer,nullptr,vertices.data(),66,indices.data(),192);
+}
+}
+
+void CS2DRenderer::DrawAimLinePreview(const AimLineStyle& style, float width, float height) {
+    const float split=width*.55f, y=height*.5f;
+    DrawSoftSegment(renderer_,{20,y},{split,y},style.solidThickness*g_uiScale,0,style.solid);
+    const float dash=style.dashLength*g_uiScale, gap=style.gapLength*g_uiScale;
+    for (float x=split;x<width-20;x+=dash+gap)
+        DrawSoftSegment(renderer_,{x,y},{std::min(x+dash,width-20),y},style.hiddenThickness*g_uiScale,0,style.hidden);
+}
+
 void CS2DRenderer::DrawAimLine(float playerX, float playerY, float angle,
-                                 const AimLineStyle& inputStyle, float uiScale) {
+                                 const AimLineStyle& inputStyle, float uiScale, float blur) {
     if (!renderer_ || !world_) return;
     // A ray begins at the actor and extends beyond every visible viewport corner.
     const float muzzleX = playerX, muzzleY = playerY;
@@ -717,16 +899,9 @@ void CS2DRenderer::DrawAimLine(float playerX, float playerY, float angle,
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
     auto segment = [&](float from, float to, float thickness, SDL_Color color) {
         if (to <= from || color.a == 0) return;
-        const float nx = -dy / length * thickness * uiScale * 0.5f;
-        const float ny = dx / length * thickness * uiScale * 0.5f;
-        const float ax = startX + dx * from, ay = startY + dy * from;
-        const float bx = startX + dx * to, by = startY + dy * to;
-        const SDL_Vertex vertices[] = {
-            {{ax + nx, ay + ny}, color, {0, 0}}, {{bx + nx, by + ny}, color, {0, 0}},
-            {{bx - nx, by - ny}, color, {0, 0}}, {{ax - nx, ay - ny}, color, {0, 0}}
-        };
-        const int indices[] = {0, 1, 2, 0, 2, 3};
-        SDL_RenderGeometry(renderer_, nullptr, vertices, 4, indices, 6);
+        const SDL_FPoint a{startX+dx*from,startY+dy*from};
+        const SDL_FPoint b{startX+dx*to,startY+dy*to};
+        DrawSoftSegment(renderer_,a,b,thickness*uiScale,blur*uiScale,color);
     };
     segment(0.0f, fraction, style.solidThickness, style.solid);
     for (float distance = length * fraction; distance < length;
@@ -747,6 +922,7 @@ void CS2DRenderer::DrawMuzzleFlash(float cx, float cy, float size, float aimAngl
     const float mx = cx + std::cos(aimAngle) * tip * zoom_;
     const float my = cy + std::sin(aimAngle) * tip * zoom_;
 
+    if (visibilityFilter_ && !visibilityFilter_(cameraX_+mx/zoom_,cameraY_+my/zoom_)) return;
     const float r = 5.2f * zoom_;
 
     // 外层：橙色柔光
@@ -771,22 +947,27 @@ void CS2DRenderer::DrawMuzzleFlash(float cx, float cy, float size, float aimAngl
 }
 
 void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float aimAngle,
-                                          int weaponSlot, int weaponId, bool muzzleFlash) {
+                                          int weaponSlot, int weaponId, bool muzzleFlash, float meleeSwing) {
     if (weaponId <= 0 || weaponId >= static_cast<int>(weaponSprites_.size())) return;
     SDL_Texture* tex = weaponSprites_[weaponId];
     if (!tex) return;
 
     const WeaponDef& def = WeaponDB::Get(static_cast<WeaponId>(weaponId));
     const float degOffset = def.degOffset;
-    const float weaponSz  = (weaponSlot == 1) ? Tuning::PistolDrawSize
+    const float weaponSz  = (weaponSlot == 1 || weaponSlot == 4) ? Tuning::PistolDrawSize
                           : (weaponSlot == 2) ? 9.0f
                           : (weaponSlot == 3) ? 4.4f   // 投掷物手持：缩小
                           : Tuning::PrimaryDrawSize;
 
     // 武器绘制在精灵前方偏移
     const float offset = size * 0.35f * zoom_;
-    const float wx = cx + std::cos(aimAngle) * offset;
-    const float wy = cy + std::sin(aimAngle) * offset;
+    const bool melee = def.cls == WeaponClass::Melee;
+    const float rightOffset = melee ? size*Tuning::MeleeGripRightMul*zoom_ : 0;
+    const float forwardOffset = melee ? size*Tuning::MeleeGripForwardMul*zoom_ : offset;
+    const float weaponAngle = aimAngle + (melee ? std::sin(std::clamp(meleeSwing,0.0f,1.0f)*3.14159265f)*.6f : 0);
+    const float extension = melee ? weaponSz*Tuning::MeleeGripToCenterMul*zoom_ : 0;
+    const float wx = cx + std::cos(aimAngle)*forwardOffset - std::sin(aimAngle)*rightOffset + std::cos(weaponAngle)*extension;
+    const float wy = cy + std::sin(aimAngle)*forwardOffset + std::cos(aimAngle)*rightOffset + std::sin(weaponAngle)*extension;
     const float drawSz = weaponSz * zoom_;
 
     int textureW = 0, textureH = 0;
@@ -796,9 +977,7 @@ void CS2DRenderer::DrawWeaponForCharacter(float cx, float cy, float size, float 
     const float drawH = textureH * scale;
     SDL_FRect wdst{wx - drawW * 0.5f, wy - drawH * 0.5f, drawW, drawH};
     SDL_FPoint wcenter{drawW * 0.5f, drawH * 0.5f};
-    SDL_RenderCopyExF(renderer_, tex, nullptr, &wdst,
-                      aimAngle * 180.0f / 3.14159265f + degOffset,
-                      &wcenter, SDL_FLIP_NONE);
+    MaskedCopy(tex,nullptr,wdst,weaponAngle * 180.0f / 3.14159265f + degOffset);
 
     // 开枪瞬间的枪口火焰（近战/投掷物不画）
     if (muzzleFlash && def.cls != WeaponClass::Melee && def.cls != WeaponClass::Grenade) {
@@ -906,14 +1085,15 @@ void CS2DRenderer::DrawCircleOutline(float worldX, float worldY, float radius,
         const float ang = 6.28318531f * static_cast<float>(i) / static_cast<float>(segments);
         const float nx = cx + std::cos(ang) * rr;
         const float ny = cy + std::sin(ang) * rr;
-        SDL_RenderDrawLineF(renderer_, px, py, nx, ny);
+        if (!visibilityFilter_ || visibilityFilter_(cameraX_+(px+nx)*.5f/zoom_,cameraY_+(py+ny)*.5f/zoom_)) SDL_RenderDrawLineF(renderer_, px, py, nx, ny);
         px = nx; py = ny;
     }
 }
 
-void CS2DRenderer::DrawCircleFilled(float worldX, float worldY, float radius,
-                                    Uint8 r, Uint8 g, Uint8 b, Uint8 a, int segments) {
-    if (!renderer_ || segments < 3) return;
+void CS2DRenderer::DrawCircleFilled(float worldX, float worldY, float radius, Uint8 r, Uint8 g, Uint8 b,
+                                    Uint8 a, int segments) {
+    if (!renderer_ || segments < 3)
+        return;
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(renderer_, r, g, b, a);
 
@@ -921,6 +1101,30 @@ void CS2DRenderer::DrawCircleFilled(float worldX, float worldY, float radius,
     const float cy = (worldY - cameraY_) * zoom_;
     const float rr = radius * zoom_;
 
+    if (visibilityFilter_) {
+        std::vector<SDL_Vertex> pixels;
+        std::vector<int> indices;
+        for (int y = std::max(0, static_cast<int>(cy - rr));
+             y < std::min(viewH_, static_cast<int>(std::ceil(cy + rr))); ++y)
+            for (int x = std::max(0, static_cast<int>(cx - rr));
+                 x < std::min(viewW_, static_cast<int>(std::ceil(cx + rr))); ++x) {
+                if (std::hypot(x + .5f - cx, y + .5f - cy) > rr ||
+                    !visibilityFilter_(cameraX_ + (x + .5f) / zoom_, cameraY_ + (y + .5f) / zoom_))
+                    continue;
+                const int base = static_cast<int>(pixels.size());
+                const SDL_Color color{r, g, b, a};
+                pixels.push_back({{static_cast<float>(x), static_cast<float>(y)}, color, {0, 0}});
+                pixels.push_back({{x + 1.f, static_cast<float>(y)}, color, {0, 0}});
+                pixels.push_back({{x + 1.f, y + 1.f}, color, {0, 0}});
+                pixels.push_back({{static_cast<float>(x), y + 1.f}, color, {0, 0}});
+                const int quad[] = {base, base + 1, base + 2, base, base + 2, base + 3};
+                indices.insert(indices.end(), std::begin(quad), std::end(quad));
+            }
+        if (!pixels.empty())
+            SDL_RenderGeometry(renderer_, nullptr, pixels.data(), static_cast<int>(pixels.size()),
+                               indices.data(), static_cast<int>(indices.size()));
+        return;
+    }
     // 三角形扇
     float px = cx + rr, py = cy;
     for (int i = 1; i <= segments; ++i) {
@@ -928,17 +1132,18 @@ void CS2DRenderer::DrawCircleFilled(float worldX, float worldY, float radius,
         const float nx = cx + std::cos(ang) * rr;
         const float ny = cy + std::sin(ang) * rr;
         SDL_Vertex v[3];
-        v[0].position = { cx, cy };
-        v[0].color = { r, g, b, a };
-        v[0].tex_coord = { 0, 0 };
-        v[1].position = { px, py };
-        v[1].color = { r, g, b, a };
-        v[1].tex_coord = { 0, 0 };
-        v[2].position = { nx, ny };
-        v[2].color = { r, g, b, a };
-        v[2].tex_coord = { 0, 0 };
+        v[0].position = {cx, cy};
+        v[0].color = {r, g, b, a};
+        v[0].tex_coord = {0, 0};
+        v[1].position = {px, py};
+        v[1].color = {r, g, b, a};
+        v[1].tex_coord = {0, 0};
+        v[2].position = {nx, ny};
+        v[2].color = {r, g, b, a};
+        v[2].tex_coord = {0, 0};
         SDL_RenderGeometry(renderer_, nullptr, v, 3, nullptr, 0);
-        px = nx; py = ny;
+        px = nx;
+        py = ny;
     }
 }
 
@@ -975,8 +1180,7 @@ void CS2DRenderer::DrawDroppedWeapon(int weaponId, float worldX, float worldY,
 
     // 地面投影，避免看着像浮在空中
     const SDL_FPoint rotCenter = { dst.w * 0.5f, dst.h * 0.5f };
-    SDL_RenderCopyExF(renderer_, tex, nullptr, &dst,
-                      static_cast<double>(angleDeg), &rotCenter, SDL_FLIP_NONE);
+    MaskedCopy(tex,nullptr,dst,angleDeg);
 
 }
 // ============================================================================
@@ -1145,6 +1349,24 @@ int CS2DRenderer::EffectiveFogAlpha() const {
                       0, 255);
 }
 
+void CS2DRenderer::KeepActorInViewport(float x, float y, float radius, float aimX, float aimY,
+                                       float scopeRadius) {
+    const float safe = 12;
+    // Joint bounds include the entire body, attached equipment and lens.
+    const float availableX = std::max(1.0f, viewW_ - safe * 2 - scopeRadius);
+    const float availableY = std::max(1.0f, viewH_ - safe * 2 - scopeRadius);
+    zoom_ = std::min(
+        {zoom_, availableX / (std::abs(aimX - x) + radius), availableY / (std::abs(aimY - y) + radius)});
+    const float loX =
+        std::max(x + radius - (viewW_ - safe) / zoom_, aimX - (viewW_ - scopeRadius - safe) / zoom_);
+    const float hiX = std::min(x - radius - safe / zoom_, aimX - (scopeRadius + safe) / zoom_);
+    const float loY =
+        std::max(y + radius - (viewH_ - safe) / zoom_, aimY - (viewH_ - scopeRadius - safe) / zoom_);
+    const float hiY = std::min(y - radius - safe / zoom_, aimY - (scopeRadius + safe) / zoom_);
+    cameraX_ = std::clamp(cameraX_, std::min(loX, hiX), std::max(loX, hiX));
+    cameraY_ = std::clamp(cameraY_, std::min(loY, hiY), std::max(loY, hiY));
+}
+
 void CS2DRenderer::KeepScopeInViewport(float aimX, float aimY, float radiusPx, int width, int height) {
     // Constrain the camera itself so world aim, cursor and scope center stay coincident.
     const float margin = radiusPx + 5.0f;
@@ -1220,30 +1442,17 @@ void CS2DRenderer::DrawScopeOverlay(const Presentation::ScopeOverlayParams& p) {
         }
     }
 
-    // 5) 大十字：把镜筒分成四象限（gap 为 0 时四段在圆心相接）
-    const float gap = std::clamp(p.crossGap, 0.0f, r);
-    const float thick = std::clamp(p.crossThickness, 1.0f, 8.0f);
-    const int   lines = std::max(1, static_cast<int>(std::lround(thick)));
-    // 先画一层深色描边打底，亮色线压在中间：浅色地图上也能看清
-    const float halo = thick + 2.0f;
-    const int   haloLines = lines + 2;
-    SDL_SetRenderDrawColor(renderer_, 8, 10, 12, static_cast<Uint8>(120.0f * t));
-    for (int i = 0; i < haloLines; ++i) {
-        const float off = static_cast<float>(i) - (static_cast<float>(haloLines) - 1.0f) * 0.5f;
-        (void)halo;
-        SDL_RenderDrawLineF(renderer_, cx + off, cy - r, cx + off, cy - gap);
-        SDL_RenderDrawLineF(renderer_, cx + off, cy + gap, cx + off, cy + r);
-        SDL_RenderDrawLineF(renderer_, cx - r, cy + off, cx - gap, cy + off);
-        SDL_RenderDrawLineF(renderer_, cx + gap, cy + off, cx + r, cy + off);
-    }
-    SDL_SetRenderDrawColor(renderer_, 240, 246, 250, static_cast<Uint8>(225.0f * t));
-    for (int i = 0; i < lines; ++i) {
-        const float off = static_cast<float>(i) - (static_cast<float>(lines) - 1.0f) * 0.5f;
-        SDL_RenderDrawLineF(renderer_, cx + off, cy - r, cx + off, cy - gap);
-        SDL_RenderDrawLineF(renderer_, cx + off, cy + gap, cx + off, cy + r);
-        SDL_RenderDrawLineF(renderer_, cx - r, cy + off, cx - gap, cy + off);
-        SDL_RenderDrawLineF(renderer_, cx + gap, cy + off, cx + r, cy + off);
-    }
+    const float gap = std::clamp(p.crossGap,0.0f,r);
+    const float thickness = std::clamp(p.crossThickness,1.0f,8.0f) * g_uiScale;
+    const float blur = p.motionBlur * g_uiScale;
+    auto cross = [&](float width, SDL_Color color) {
+        DrawSoftSegment(renderer_,{cx,cy-r},{cx,cy-gap},width,blur,color);
+        DrawSoftSegment(renderer_,{cx,cy+gap},{cx,cy+r},width,blur,color);
+        DrawSoftSegment(renderer_,{cx-r,cy},{cx-gap,cy},width,blur,color);
+        DrawSoftSegment(renderer_,{cx+gap,cy},{cx+r,cy},width,blur,color);
+    };
+    cross(thickness+2,{8,10,12,static_cast<Uint8>(120*t)});
+    cross(thickness,{240,246,250,static_cast<Uint8>(225*t)});
 
     // 6) 档位提示：2x 时在右下内侧多一小段刻度，不用文字（渲染层没有字体）
     if (p.scope.level >= 2) {
@@ -1269,7 +1478,7 @@ void CS2DRenderer::DrawThrownGrenade(int weaponId, float worldX, float worldY,
     if (!tex) return;
 
     // 地面投影，避免看起来像浮在空中
-    DrawCircleFilled(worldX + 1.2f, worldY + 2.2f, 6.4f, 0, 0, 0, 70);
+
 
     const float cx = (worldX - cameraX_) * zoom_;
     const float cy = (worldY - cameraY_) * zoom_;
@@ -1280,41 +1489,33 @@ void CS2DRenderer::DrawThrownGrenade(int weaponId, float worldX, float worldY,
     const float drawW = width * fit, drawH = height * fit;
     SDL_FRect dst{cx - drawW * 0.5f, cy - drawH * 0.5f, drawW, drawH};
     const SDL_FPoint center{drawW * 0.5f, drawH * 0.5f};
-    SDL_RenderCopyExF(renderer_, tex, nullptr, &dst, spinDeg, &center, SDL_FLIP_NONE);
+    MaskedCopy(tex,nullptr,dst,spinDeg);
 }
 
 void CS2DRenderer::DrawCrosshair(float cx, float cy,
                                   Uint8 r, Uint8 g, Uint8 b, Uint8 a,
                                   float thickness, bool centerDot,
                                   float length, float gap) {
-    // 水平线：左段 + 右段，中间 gap
-    SDL_SetRenderDrawColor(renderer_, r, g, b, a);
-    for (float i = 0.0f; i < thickness; i += 1.0f) {
-        const float off = i - thickness * 0.5f;
-        const float lx = static_cast<float>(static_cast<int>(cx - gap - length));
-        const float rx = static_cast<float>(static_cast<int>(cx + gap));
-        const float lx2 = static_cast<float>(static_cast<int>(cx - gap));
-        const float rx2 = static_cast<float>(static_cast<int>(cx + gap + length));
-        const float sy = static_cast<float>(static_cast<int>(cy + off));
-        SDL_RenderDrawLineF(renderer_, lx, sy, lx2, sy);
-        SDL_RenderDrawLineF(renderer_, rx, sy, rx2, sy);
-    }
-    // 竖直线：上段 + 下段，中间 gap
-    for (float i = 0.0f; i < thickness; i += 1.0f) {
-        const float off = i - thickness * 0.5f;
-        const float ty = static_cast<float>(static_cast<int>(cy - gap - length));
-        const float by = static_cast<float>(static_cast<int>(cy + gap));
-        const float ty2 = static_cast<float>(static_cast<int>(cy - gap));
-        const float by2 = static_cast<float>(static_cast<int>(cy + gap + length));
-        const float sx = static_cast<float>(static_cast<int>(cx + off));
-        SDL_RenderDrawLineF(renderer_, sx, ty, sx, ty2);
-        SDL_RenderDrawLineF(renderer_, sx, by, sx, by2);
-    }
-    // 中心点
+    SDL_SetRenderDrawBlendMode(renderer_,SDL_BLENDMODE_BLEND);
+    const SDL_Color color{r,g,b,a};
+    DrawSoftSegment(renderer_,{cx-gap-length,cy},{cx-gap,cy},thickness,0,color);
+    DrawSoftSegment(renderer_,{cx+gap,cy},{cx+gap+length,cy},thickness,0,color);
+    DrawSoftSegment(renderer_,{cx,cy-gap-length},{cx,cy-gap},thickness,0,color);
+    DrawSoftSegment(renderer_,{cx,cy+gap},{cx,cy+gap+length},thickness,0,color);
     if (centerDot) {
-        for (float i = -1.0f; i <= 1.0f; i += 1.0f)
-            for (float j = -1.0f; j <= 1.0f; j += 1.0f)
-                SDL_RenderDrawPointF(renderer_, cx + i, cy + j);
+        constexpr int segments=32;
+        const float radius=1.5f*g_uiScale;
+        for (int i=0;i<segments;++i) {
+            const float a0=6.283185307f*i/segments, a1=6.283185307f*(i+1)/segments;
+            const SDL_Color clear{r,g,b,0};
+            const SDL_Vertex vertices[]={{{cx,cy},color,{0,0}},
+                {{cx+std::cos(a0)*radius,cy+std::sin(a0)*radius},color,{0,0}},
+                {{cx+std::cos(a1)*radius,cy+std::sin(a1)*radius},color,{0,0}},
+                {{cx+std::cos(a0)*(radius+.75f),cy+std::sin(a0)*(radius+.75f)},clear,{0,0}},
+                {{cx+std::cos(a1)*(radius+.75f),cy+std::sin(a1)*(radius+.75f)},clear,{0,0}}};
+            const int indices[]={0,1,2,1,3,4,1,4,2};
+            SDL_RenderGeometry(renderer_,nullptr,vertices,5,indices,9);
+        }
     }
 }
 
@@ -1423,7 +1624,7 @@ void CS2DRenderer::DrawSmokeCloud(float worldX, float worldY, float worldRadius,
     const float cy = (worldY - cameraY_) * zoom_;
     const float p = std::clamp(age / std::max(0.08f, expandTime), 0.0f, 1.0f);
     const float ease = 1.0f - (1.0f - p) * (1.0f - p);          // 先快后慢地扩散
-    const float r = worldRadius * (0.12f + 0.88f * ease) * zoom_;
+    const float r = Tuning::SmokeEffectiveRadius(worldRadius,age,expandTime,life)*zoom_;
     if (r < 1.5f) return;
 
     // 出现时快速淡入，最后 2 秒淡出
@@ -1433,7 +1634,7 @@ void CS2DRenderer::DrawSmokeCloud(float worldX, float worldY, float worldRadius,
     if (k <= 0.01f) return;
 
     auto drawPuff = [&](float ox, float oy, float scale, float rot, float alphaMul) {
-        const float size = r * 2.0f * scale;
+        const float size = r * 2.0f * std::min(scale,std::max(.01f,.98f-std::hypot(ox,oy)/r));
         SDL_FRect dst = { cx + ox - size * 0.5f, cy + oy - size * 0.5f, size, size };
         const Uint8 a = static_cast<Uint8>(std::clamp(alphaMul * k * 255.0f, 0.0f, 255.0f));
         if (a < 3) return;
@@ -1471,6 +1672,38 @@ void CS2DRenderer::DrawSmokeCloud(float worldX, float worldY, float worldRadius,
     }
 
     SDL_SetTextureAlphaMod(smokeTex_, 255);
+}
+
+void CS2DRenderer::DrawFireCells(const std::vector<SDL_FPoint> &cells, float x, float y, float radius,
+                                 float age, float life, float seed) {
+    std::vector<SDL_Vertex> vertices;
+    std::vector<int> indices;
+    const float activeRadius = Tuning::FireEffectiveRadius(radius, age, life);
+    const float fade = std::clamp(life / .6f, 0.0f, 1.0f);
+    for (const auto cell : cells) {
+        if (std::hypot(cell.x - x, cell.y - y) > activeRadius ||
+            (visibilityFilter_ && !visibilityFilter_(cell.x, cell.y)))
+            continue;
+        const float cx = (cell.x - cameraX_) * zoom_, cy = (cell.y - cameraY_) * zoom_;
+        const float flicker = .5f + .5f * std::sin(age * 12 + cell.x * .7f + cell.y * .9f + seed);
+        const float half = 2 * zoom_;
+        const int base = static_cast<int>(vertices.size());
+        const SDL_Color edge{240, 65, 12, static_cast<Uint8>(110 * fade)};
+        const SDL_Color core{255, static_cast<Uint8>(165 + 65 * flicker), 68,
+                             static_cast<Uint8>((200 + 45 * flicker) * fade)};
+        vertices.push_back({{cx - half, cy - half}, edge, {0, 0}});
+        vertices.push_back({{cx + half, cy - half}, edge, {0, 0}});
+        vertices.push_back({{cx + half, cy + half}, edge, {0, 0}});
+        vertices.push_back({{cx - half, cy + half}, edge, {0, 0}});
+        vertices.push_back({{cx, cy - half * .4f * flicker}, core, {0, 0}});
+        const int fan[] = {base,     base + 1, base + 4, base + 1, base + 2, base + 4,
+                           base + 2, base + 3, base + 4, base + 3, base,     base + 4};
+        indices.insert(indices.end(), std::begin(fan), std::end(fan));
+    }
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    if (!vertices.empty())
+        SDL_RenderGeometry(renderer_, nullptr, vertices.data(), static_cast<int>(vertices.size()),
+                           indices.data(), static_cast<int>(indices.size()));
 }
 
 void CS2DRenderer::DrawFireZone(float worldX, float worldY, float worldRadius,
@@ -1646,138 +1879,125 @@ void CS2DRenderer::DrawScoreboard(int total, int kills, int deaths, int viewW, i
 }
 
 void CS2DRenderer::DrawRadarHUD(float playerX, float playerY, float playerAngle,
-                                 const std::vector<RadarDot>& dots,
-                                 float mapW, float mapH,
-                                 bool playerCentered, bool rotateWithPlayer,
-                                 bool blendBg, int bgAlpha,
-                                 int hudSize, float mapZoom,
-                                 bool showCenterRadar,
-                                 int viewW, int viewH) {
-    const int radarSize = showCenterRadar ? 320 : hudSize;
-    const int margin = std::max(4, static_cast<int>(std::lround(8.0f * g_uiScale)));
-    const int radarX = showCenterRadar ? (viewW - radarSize) / 2 : margin;
-    const int radarY = showCenterRadar ? (viewH - radarSize) / 2 : margin;
-    if (mapW <= 0.0f || mapH <= 0.0f) return;
-
-    // 背景
-    SDL_SetRenderDrawColor(renderer_, 0, 0, 0,
-                           static_cast<Uint8>(showCenterRadar ? 200 : bgAlpha));
-    const SDL_Rect bgRect = {radarX, radarY, radarSize, radarSize};
-    SDL_RenderFillRect(renderer_, &bgRect);
-
-    // ---- 统一的坐标变换 ----
-    // mapZoom 语义：1 = 整张地图刚好铺满雷达；>1 放大；<1 缩小。
-    // 兼容旧存档：历史默认值 0.005 是另一套公式的产物，这里视为 1。
-    float zoom = mapZoom;
-    if (zoom < 0.5f || zoom > 8.0f) zoom = 1.0f;
-
-    const float spanW = mapW / zoom;
-    const float spanH = mapH / zoom;
-
-    // 视野中心（并且限制在地图内，避免边缘看到空白导致点与图错位）
-    float cx = playerCentered ? playerX : mapW * 0.5f;
-    float cy = playerCentered ? playerY : mapH * 0.5f;
-    if (spanW <= mapW) cx = std::clamp(cx, spanW * 0.5f, mapW - spanW * 0.5f);
-    else              cx = mapW * 0.5f;
-    if (spanH <= mapH) cy = std::clamp(cy, spanH * 0.5f, mapH - spanH * 0.5f);
-    else              cy = mapH * 0.5f;
-
-    // 世界 → 雷达像素
-    const float sx = static_cast<float>(radarSize) / spanW;
-    const float sy = static_cast<float>(radarSize) / spanH;
-    const float halfSize = static_cast<float>(radarSize) * 0.5f;
-
-    // 跟随旋转角（与地图贴图的 RenderCopyEx 用同一个角度）
-    const float rotRad = rotateWithPlayer ? (playerAngle + 1.5707963f) : 0.0f;
-    const float cosR = std::cos(rotRad);
-    const float sinR = std::sin(rotRad);
-
-    auto worldToRadar = [&](float wx, float wy) {
-        float dx = (wx - cx) * sx;
-        float dy = (wy - cy) * sy;
-        if (rotateWithPlayer) {
-            const float rx = dx * cosR - dy * sinR;
-            const float ry = dx * sinR + dy * cosR;
-            dx = rx;
-            dy = ry;
-        }
-        return std::make_pair(radarX + halfSize + dx, radarY + halfSize + dy);
-    };
-
-    // ---- 地图底图：与点位共用同一套中心/缩放/旋转 ----
-    if (radarMapTex_ && radarImgW_ > 0.0f && radarImgH_ > 0.0f) {
-        const float kx = radarImgW_ / mapW;
-        const float ky = radarImgH_ / mapH;
-
-        SDL_Rect src;
-        src.x = static_cast<int>(radarImgX_ + (cx - spanW * 0.5f) * kx);
-        src.y = static_cast<int>(radarImgY_ + (cy - spanH * 0.5f) * ky);
-        src.w = std::max(1, static_cast<int>(spanW * kx));
-        src.h = std::max(1, static_cast<int>(spanH * ky));
-
-        const SDL_Rect dst = {radarX, radarY, radarSize, radarSize};
-
-        const Uint8 mod = static_cast<Uint8>(std::clamp(bgAlpha, 0, 255));
-        SDL_SetTextureColorMod(radarMapTex_, mod, mod, mod);
-
-        if (rotateWithPlayer) {
-            const SDL_Point center = {radarSize / 2, radarSize / 2};
-            SDL_RenderCopyEx(renderer_, radarMapTex_, &src, &dst,
-                             static_cast<double>(rotRad * 180.0f / 3.14159265f),
-                             &center, SDL_FLIP_NONE);
-        } else {
-            SDL_RenderCopy(renderer_, radarMapTex_, &src, &dst);
-        }
-        SDL_SetTextureColorMod(radarMapTex_, 255, 255, 255);
+    const std::vector<RadarDot>& dots, float mapW, float mapH,
+    bool playerCentered, bool rotateWithPlayer, bool blendBg, int bgAlpha,
+    int hudSize, float mapZoom, bool showCenterRadar, int viewW, int viewH) {
+    if (!renderer_ || mapW <= 0 || mapH <= 0) return;
+    const int size = std::clamp(hudSize, 24, std::max(24, std::min(viewW, viewH) - 16));
+    const int margin = std::max(4, static_cast<int>(std::lround(8 * g_uiScale)));
+    const float x = showCenterRadar ? (viewW-size)*.5f : static_cast<float>(margin);
+    const float y = showCenterRadar ? (viewH-size)*.5f : static_cast<float>(margin);
+    const float half = size*.5f;
+    const int frameIndex = showCenterRadar ? 1 : 0;
+    auto*& frameTexture = radarFrameTex_[frameIndex];
+    if (!frameTexture || radarFrameSize_[frameIndex] != size) {
+        if (frameTexture) SDL_DestroyTexture(frameTexture);
+        frameTexture = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, size, size);
+        radarFrameSize_[frameIndex] = size;
+        if (!frameTexture) return;
+        SDL_SetTextureBlendMode(frameTexture, SDL_BLENDMODE_BLEND);
     }
-
-    // 屏幕空间实心圆（半径很小时逐行扫描比多边形更干净）
-    auto fillCircle = [&](float ccx, float ccy, float rad, Uint8 cr, Uint8 cg, Uint8 cb, Uint8 alpha = 255) {
-        SDL_SetRenderDrawColor(renderer_, cr, cg, cb, alpha);
-        const int ri = static_cast<int>(std::ceil(rad));
-        for (int dy = -ri; dy <= ri; ++dy) {
-            const float w2 = rad * rad - static_cast<float>(dy * dy);
-            if (w2 <= 0.0f) continue;
-            const float halfW = std::sqrt(w2);
-            SDL_RenderDrawLineF(renderer_, ccx - halfW, ccy + dy, ccx + halfW, ccy + dy);
+    SDL_Texture* oldTarget = SDL_GetRenderTarget(renderer_);
+    SDL_Rect oldViewport, oldClip;
+    SDL_RenderGetViewport(renderer_, &oldViewport);
+    SDL_RenderGetClipRect(renderer_, &oldClip);
+    const bool clipped = SDL_RenderIsClipEnabled(renderer_) == SDL_TRUE;
+    SDL_BlendMode oldBlend;
+    SDL_GetRenderDrawBlendMode(renderer_, &oldBlend);
+    Uint8 oldR, oldG, oldB, oldA;
+    SDL_GetRenderDrawColor(renderer_, &oldR, &oldG, &oldB, &oldA);
+    float oldScaleX, oldScaleY;
+    SDL_RenderGetScale(renderer_, &oldScaleX, &oldScaleY);
+    SDL_SetRenderTarget(renderer_, frameTexture);
+    SDL_RenderSetViewport(renderer_, nullptr);
+    SDL_RenderSetClipRect(renderer_, nullptr);
+    SDL_RenderSetScale(renderer_, 1, 1);
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
+    SDL_RenderClear(renderer_);
+    const float zoom = mapZoom >= .5f && mapZoom <= 8 ? mapZoom : 1;
+    const float scale = size * zoom / std::max(mapW, mapH);
+    const float centerX = playerCentered ? playerX : mapW*.5f;
+    const float centerY = playerCentered ? playerY : mapH*.5f;
+    const float angle = rotateWithPlayer ? -playerAngle - 1.570796327f : 0;
+    const float cs = std::cos(angle), sn = std::sin(angle);
+    auto point = [&](float wx, float wy) {
+        const float dx = (wx-centerX)*scale, dy = (wy-centerY)*scale;
+        return SDL_FPoint{half + dx*cs-dy*sn, half + dx*sn+dy*cs};
+    };
+    // Draw the whole map with one affine transform, including map-edge blank space.
+    if (radarMapTex_ && radarImgW_ > 0 && radarImgH_ > 0) {
+        int tw = 0, th = 0;
+        SDL_QueryTexture(radarMapTex_, nullptr, nullptr, &tw, &th);
+        const SDL_Color color{255,255,255,static_cast<Uint8>(blendBg ? std::clamp(bgAlpha,0,255) : 255)};
+        const float u0 = radarImgX_/tw, v0 = radarImgY_/th;
+        const float u1 = (radarImgX_+radarImgW_)/tw, v1 = (radarImgY_+radarImgH_)/th;
+        const SDL_Vertex vertices[] = {{point(0,0),color,{u0,v0}}, {point(mapW,0),color,{u1,v0}},
+            {point(mapW,mapH),color,{u1,v1}}, {point(0,mapH),color,{u0,v1}}};
+        const int indices[] = {0,1,2,0,2,3};
+        SDL_BlendMode textureBlend;
+        Uint8 tr,tg,tb,ta;
+        SDL_GetTextureBlendMode(radarMapTex_, &textureBlend);
+        SDL_GetTextureColorMod(radarMapTex_, &tr,&tg,&tb);
+        SDL_GetTextureAlphaMod(radarMapTex_, &ta);
+        SDL_SetTextureBlendMode(radarMapTex_, SDL_BLENDMODE_NONE);
+        SDL_SetTextureColorMod(radarMapTex_,255,255,255);
+        SDL_SetTextureAlphaMod(radarMapTex_,255);
+        SDL_RenderGeometry(renderer_,radarMapTex_,vertices,4,indices,6);
+        SDL_SetTextureBlendMode(radarMapTex_, textureBlend);
+        SDL_SetTextureColorMod(radarMapTex_,tr,tg,tb);
+        SDL_SetTextureAlphaMod(radarMapTex_,ta);
+    }
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    auto dot = [&](SDL_FPoint p, float radius, SDL_Color color) {
+        SDL_SetRenderDrawColor(renderer_,color.r,color.g,color.b,color.a);
+        for (int row = -static_cast<int>(std::ceil(radius)); row <= static_cast<int>(std::ceil(radius)); ++row) {
+            const float extent = std::sqrt(std::max(0.0f,radius*radius-row*row));
+            SDL_RenderDrawLineF(renderer_,p.x-extent,p.y+row,p.x+extent,p.y+row);
         }
     };
-
-    // 标记半径随缩放变化：铺满全图时很小，放大后变大
-    const float dotR = std::clamp(1.5f + 0.9f * (zoom - 1.0f), 1.5f, 4.5f);
-
-    // ---- 点位（友军 / 可见敌人）----
+    const float dotRadius = std::clamp(1.5f+.5f*(zoom-1),1.5f,4.5f) * std::max(.7f,g_uiScale);
     for (const auto& d : dots) {
-        auto [rx, ry] = worldToRadar(d.x, d.y);
-        if (rx < radarX + 1 || rx > radarX + radarSize - 1 ||
-            ry < radarY + 1 || ry > radarY + radarSize - 1) continue;
-
-        // 深色描边 + 彩色圆点，避免与地图底色糊在一起
-        fillCircle(rx, ry, dotR + 0.9f, 10, 12, 16, d.alpha);
-        fillCircle(rx, ry, dotR, d.r, d.g, d.b, d.alpha);
+        const auto p = point(d.x,d.y);
+        dot(p,dotRadius+1,{8,12,16,d.alpha});
+        dot(p,dotRadius,{d.r,d.g,d.b,d.alpha});
     }
-
-    // ---- 玩家：与 BOT 同样是圆点，用更亮的青色 + 外圈区分自己 ----
-    {
-        auto [px, py] = worldToRadar(playerX, playerY);
-        const float selfR = dotR + 0.9f;
-        fillCircle(px, py, selfR + 1.4f, 10, 12, 16);       // 深色描边
-        fillCircle(px, py, selfR, 110, 215, 255);            // 青色实心
-        // 外圈：只描边，进一步和友军区分
-        SDL_SetRenderDrawColor(renderer_, 225, 245, 255, 235);
-        const int ri = static_cast<int>(std::ceil(selfR + 2.2f));
-        for (int deg = 0; deg < 360; deg += 12) {
-            const float a = static_cast<float>(deg) * 0.0174533f;
-            SDL_RenderDrawPointF(renderer_,
-                                 px + std::cos(a) * (selfR + 2.2f),
-                                 py + std::sin(a) * (selfR + 2.2f));
+    const auto self = point(playerX,playerY);
+    dot(self,dotRadius+2,{220,240,255,255});
+    dot(self,dotRadius+1,{8,12,16,255});
+    dot(self,dotRadius,{110,215,255,255});
+    SDL_SetRenderTarget(renderer_,oldTarget);
+    SDL_RenderSetScale(renderer_,oldScaleX,oldScaleY);
+    SDL_RenderSetViewport(renderer_,&oldViewport);
+    SDL_RenderSetClipRect(renderer_,clipped ? &oldClip : nullptr);
+    SDL_SetRenderDrawBlendMode(renderer_,SDL_BLENDMODE_BLEND);
+    // Circular texture mesh with an antialiased outer ring clips every radar layer.
+    constexpr int segments = 128;
+    std::array<SDL_Vertex,1+segments*2> mesh{};
+    std::array<int,segments*9> indices{};
+    const float radius = half-1;
+    mesh[0] = {{x+half,y+half},{255,255,255,255},{.5f,.5f}};
+    for (int i=0; i<segments; ++i) {
+        const float a = 6.283185307f*i/segments;
+        for (int ring=0;ring<2;++ring) {
+            const float rr = radius+ring;
+            mesh[1+i*2+ring] = {{x+half+std::cos(a)*rr,y+half+std::sin(a)*rr},
+                {255,255,255,static_cast<Uint8>(ring ? 0 : 255)},
+                {.5f+std::cos(a)*rr/size,.5f+std::sin(a)*rr/size}};
         }
-        (void)ri;
+        const int inner=1+i*2, outer=inner+1, next=1+((i+1)%segments)*2;
+        const int tris[] = {0,inner,next,inner,outer,next+1,inner,next+1,next};
+        std::copy(std::begin(tris),std::end(tris),indices.begin()+i*9);
     }
-
-    // 外框最后画，压住底图边缘
-    SDL_SetRenderDrawColor(renderer_, 120, 160, 200, 220);
-    SDL_RenderDrawRect(renderer_, &bgRect);
+    SDL_RenderGeometry(renderer_,frameTexture,mesh.data(),static_cast<int>(mesh.size()),indices.data(),static_cast<int>(indices.size()));
+    SDL_SetRenderDrawColor(renderer_,130,150,168,220);
+    for (int i=0;i<segments;++i) {
+        const float a=6.283185307f*i/segments, b=6.283185307f*(i+1)/segments;
+        SDL_RenderDrawLineF(renderer_,x+half+std::cos(a)*radius,y+half+std::sin(a)*radius,
+            x+half+std::cos(b)*radius,y+half+std::sin(b)*radius);
+    }
+    SDL_SetRenderDrawColor(renderer_,oldR,oldG,oldB,oldA);
+    SDL_SetRenderDrawBlendMode(renderer_,oldBlend);
 }
 
 // ============================================================================

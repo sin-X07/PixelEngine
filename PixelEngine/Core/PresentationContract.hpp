@@ -15,6 +15,11 @@
 
 namespace Presentation {
 
+struct DamageDirection {
+    float angle = 0;
+    float remaining = 0;
+};
+
 // ---- 购买 ----
 enum class BuyKind { Weapon, Armor, DefuseKit };
 
@@ -95,6 +100,7 @@ inline constexpr float kScopeCameraShiftMax = 0.5f;
 
 // 契约 v1.3：开镜覆盖层的绘制参数（大十字把镜筒分成四象限；不再画中心小十字）
 struct ScopeOverlayParams {
+    float motionBlur = 0.0f;
     ScopeView scope{};
     float centerX = 0.0f;         // 镜筒圆心（逻辑画布坐标，由准星世界点投影得到）
     float centerY = 0.0f;

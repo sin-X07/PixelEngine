@@ -1,5 +1,7 @@
 #include "CS2DGame.hpp"
+#include "Visibility/BodyGeometry.hpp"
 #include "Tuning.hpp"
+#include "Weapons/Ballistics.hpp"
 #include "NadePhysics.hpp"
 #include "../Audio/AudioManager.hpp"
 #include <iostream>
@@ -63,6 +65,9 @@ void CS2DGame::UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bo
         ? std::clamp(finalSpeed / runMaxSpeed, 0.0f, 1.0f)
         : 0.0f;
     const float targetBloom = (target < 0.02f) ? 0.0f : target;
+    const float blurTarget = 5.0f * std::clamp(target,0.0f,1.0f);
+    const float blurSeconds = blurTarget > aimMotionBlur_ ? .08f : .15f;
+    aimMotionBlur_ += (blurTarget-aimMotionBlur_) * (1-std::exp(-3*dt/blurSeconds));
 
     // 指数缓动追赶目标：按下静步平滑聚合，松开静步平滑散开。
     const float rate = (targetBloom > crosshairBloom_)
@@ -156,8 +161,10 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
             if (!bot.alive || !IsHostile(player_, bot)) continue;   // 死斗 FFA
             const float bdx = bot.x - player_.x;
             const float bdy = bot.y - player_.y;
-            if (std::sqrt(bdx * bdx + bdy * bdy) < def.range) {
-                if (ApplyDamage(bot, static_cast<int>(def.damage), WeaponDB::ArmorPen(def.id))) OnCombatantKilled(bot, audio, &player_);
+            if (std::sqrt(bdx * bdx + bdy * bdy) < def.range &&
+                std::cos(std::atan2(bdy, bdx) - player_.aimAngle) >=
+                    std::cos(Tuning::MeleeConeHalfAngleDeg * 3.14159265f / 180.0f)) {
+                if (ApplyDamage(bot, static_cast<int>(def.damage), WeaponDB::ArmorPen(def.id))) OnCombatantKilled(bot, audio, &player_, def.id);
             }
         }
         player_.shootCooldown = def.cooldown;
@@ -180,13 +187,13 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
 
     // 散布 + 多弹丸（霰弹）
     // 静止 = 基础散布；静步/跑动按速度放大，跑动时明显打不准。
-    const float bloom = GetCrosshairBloom();
-    const float moveSpreadMul =
-        1.0f + bloom * (Tuning::MoveSpreadMaxMul - 1.0f);
-    const float shotSpread = def.spreadBase * moveSpreadMul;
+    const float speedFraction = std::hypot(player_.vx,player_.vy) /
+        std::max(1.0f,Tuning::PlayerBaseSpeed*def.moveSpeedMul);
+    const float shotSpread = Ballistics::Spread(def.id,speedFraction,scopeEngagement_,player_.BallisticInaccuracy(),player_.fireStates[player_.weaponSlot].shot);
     std::uniform_real_distribution<float> spreadDist(-shotSpread, shotSpread);
-    player_.ApplyRecoil(def.recoilKickDeg);
-    recoilShake_ = std::min(Tuning::RecoilShakeMax, recoilShake_ + def.recoilKickDeg * Tuning::RecoilShakePerDegree);
+    const auto recoilStep=Ballistics::Recoil(def.id,player_.fireStates[player_.weaponSlot].shot,scopeEngagement_);
+    player_.ApplyWeaponRecoil(scopeEngagement_);
+    recoilShake_ = std::min(Tuning::RecoilShakeMax, recoilShake_ + std::hypot(recoilStep.x,recoilStep.y)/Tuning::DegreesToRadians*Tuning::RecoilShakePerDegree);
     recoilShakeAge_ = 0.0f;
     for (int p = 0; p < std::max(1, def.pellets); ++p) {
         const float angle = player_.EffectiveAim() + spreadDist(rng_);
@@ -218,6 +225,8 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
 void CS2DGame::FireBullet(float x, float y, float angle, const WeaponDef& def,
                           int ownerIdx, Team ownerTeam) {
     Bullet b;
+    b.sourcePosition={x,y};
+    if (const auto* owner=DamageOwner(ownerIdx)) b.equipmentId=owner->equipment[owner->weaponSlot].id;
     b.x = x;
     b.y = y;
     b.vx = std::cos(angle) * def.bulletSpeed;
@@ -260,39 +269,65 @@ void CS2DGame::AddBulletVisual(const Bullet& b, float fromX, float fromY,
     }
 }
 
-void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
+void CS2DGame::UpdateBullets(float dt, AudioManager *audio) {
     // 先让旧段随时间淡出，再加入本帧新段（寿命只在模拟里推进，Render 不消费）
-    for (auto& seg : bulletVisuals_) seg.remainingSeconds -= dt;
+    for (auto &seg : bulletVisuals_)
+        seg.remainingSeconds -= dt;
     bulletVisuals_.erase(
         std::remove_if(bulletVisuals_.begin(), bulletVisuals_.end(),
-                       [](const Presentation::BulletVisualSegment& s) {
-                           return s.remainingSeconds <= 0.0f;
-                       }),
+                       [](const Presentation::BulletVisualSegment &s) { return s.remainingSeconds <= 0.0f; }),
         bulletVisuals_.end());
 
-    for (auto& bullet : bullets_) {
-        if (!bullet.active) continue;
+    for (auto &bullet : bullets_) {
+        if (!bullet.active)
+            continue;
 
         // 本步起点：段的两端都取实际模拟位置，不从速度反推
         const float prevX = bullet.x;
         const float prevY = bullet.y;
         bool segImpact = false;
 
-        const float stepX = bullet.vx * dt;
-        const float stepY = bullet.vy * dt;
-        bullet.x += stepX;
-        bullet.y += stepY;
-        bullet.traveled += std::sqrt(stepX * stepX + stepY * stepY);
+        const float speed = std::hypot(bullet.vx, bullet.vy);
+        const float distance = std::min(speed * dt, std::max(0.0f, bullet.maxDist - bullet.traveled));
+        const float scale = distance / std::max(.001f, speed);
+        bullet.x += bullet.vx * scale;
+        bullet.y += bullet.vy * scale;
+        bullet.traveled += distance;
+        const bool reachedRange = bullet.traveled >= bullet.maxDist;
 
-        if (bullet.traveled >= bullet.maxDist) {
-            bullet.active = false;
-            AddBulletVisual(bullet, prevX, prevY, bullet.x, bullet.y, false);
-            continue;
+        const float wall = visibility_.FirstBulletWallFraction(prevX, prevY, bullet.x, bullet.y);
+        float nearest = wall;
+        int hitActor = -2;
+        auto intersection = [&](const Player &actor, int index) {
+            if (!actor.alive || bullet.ownerIdx == index || !IsHostileTeam(bullet.ownerTeam, actor.team))
+                return;
+            const float dx = bullet.x - prevX, dy = bullet.y - prevY;
+            const float length = std::hypot(dx, dy);
+            const float projection =
+                length > 0 ? ((actor.x - prevX) * dx + (actor.y - prevY) * dy) / (length * length) : 0;
+            const float radius = actor.size;
+            const float from = std::max(0.0f, projection - radius / std::max(.001f, length));
+            const float to = std::min(nearest, projection + radius / std::max(.001f, length));
+            const float step = std::max(.001f, actor.size / 128 / std::max(.001f, length));
+            for (float fraction = from; fraction <= to; fraction += step) {
+                const float x = prevX + dx * fraction, y = prevY + dy * fraction;
+                if (!BodyGeometry::Contains(actor.spriteKey, ActorPoseSlot(actor), actor.x, actor.y,
+                                            actor.size, actor.EffectiveAim(),
+                                            static_cast<int>(actor.animState), actor.animTimer, x, y))
+                    continue;
+                nearest = fraction;
+                hitActor = index;
+                break;
+            }
+        };
+        intersection(player_, -1);
+        for (size_t index = 0; index < bots_.size(); ++index)
+            intersection(bots_[index], static_cast<int>(index));
+        if (nearest < 1) {
+            bullet.x = prevX + (bullet.x - prevX) * nearest;
+            bullet.y = prevY + (bullet.y - prevY) * nearest;
         }
-
-        int row = 0, col = 0;
-        world_->WorldToTile(bullet.x, bullet.y, row, col);
-        if (world_->IsBlockingBullet(row, col)) {
+        if (hitActor == -2 && wall < 1) {
             bullet.active = false;
             AddBulletVisual(bullet, prevX, prevY, bullet.x, bullet.y, true);
             continue;
@@ -300,106 +335,75 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
 
         // ---- 命中 BOT ----
         for (size_t i = 0; i < bots_.size(); ++i) {
-            auto& bot = bots_[i];
-            if (!bot.alive) continue;
+            auto &bot = bots_[i];
+            if (!bot.alive)
+                continue;
             // 死斗 FFA：任何他人的子弹都能命中；同时排除"自己打自己"的退化情况
-            if (bullet.ownerIdx == static_cast<int>(i)) continue;
-            if (!IsHostileTeam(bullet.ownerTeam, bot.team)) continue;
+            if (bullet.ownerIdx == static_cast<int>(i))
+                continue;
+            if (!IsHostileTeam(bullet.ownerTeam, bot.team))
+                continue;
 
             const float dx = bullet.x - bot.x;
             const float dy = bullet.y - bot.y;
-            const float hitR = bot.size * 0.5f + Tuning::BulletHitPadding;
             if (dx * dx + dy * dy < Tuning::BulletNearRadius * Tuning::BulletNearRadius) {
-                auto& ai = AiAt(i);
+                auto &ai = AiAt(i);
                 const float speed = std::max(std::hypot(bullet.vx, bullet.vy), 1.0f);
                 ai.dodgeX = bot.x - bullet.vy / speed * Tuning::BulletDodgeDistance;
                 ai.dodgeY = bot.y + bullet.vx / speed * Tuning::BulletDodgeDistance;
-                ai.Perceive(-4, clockSec_, tactics_.perception[std::clamp(ai.difficulty, 0, 3)].reaction * Tuning::BulletReactionMul);
+                ai.Perceive(-4, clockSec_,
+                            tactics_.perception[std::clamp(ai.difficulty, 0, 3)].reaction *
+                                Tuning::BulletReactionMul);
             }
-            if (dx * dx + dy * dy >= hitR * hitR) continue;
+            if (hitActor != static_cast<int>(i))
+                continue;
 
             bullet.active = false;
-            segImpact = true;   // 打中角色 = 实际碰撞终止
-            const std::string victimName =
-                bot.name.empty() ? ("BOT#" + std::to_string(i)) : bot.name;
+            segImpact = true; // 打中角色 = 实际碰撞终止
             {
-                auto& hitAi = AiAt(i);
-                hitAi.Perceive(bullet.ownerIdx, clockSec_, tactics_.perception[std::clamp(hitAi.difficulty, 0, 3)].reaction);
-                hitAi.lastHitTimer = 2.0f;   // 拆包安全判定：最近受击
+                auto &hitAi = AiAt(i);
+                hitAi.Perceive(bullet.ownerIdx, clockSec_,
+                               tactics_.perception[std::clamp(hitAi.difficulty, 0, 3)].reaction);
+                hitAi.lastHitTimer = 2.0f; // 拆包安全判定：最近受击
                 if (bullet.ownerIdx == -1) {
                     hitAi.threatX = player_.x;
                     hitAi.threatY = player_.y;
-                } else if (bullet.ownerIdx >= 0 &&
-                           bullet.ownerIdx < static_cast<int>(bots_.size())) {
+                } else if (bullet.ownerIdx >= 0 && bullet.ownerIdx < static_cast<int>(bots_.size())) {
                     hitAi.threatX = bots_[static_cast<size_t>(bullet.ownerIdx)].x;
                     hitAi.threatY = bots_[static_cast<size_t>(bullet.ownerIdx)].y;
                 }
             }
 
             // 玩家命中反馈（无论是否致死）
-            if (bullet.ownerIdx == -1) hitMarkerTimer_ = 0.18f;
+            if (bullet.ownerIdx == -1)
+                hitMarkerTimer_ = 0.18f;
 
             if (ApplyDamage(bot, bullet.damage, WeaponDB::ArmorPen(bullet.weapon))) {
-                Player* bulletKiller = (bullet.ownerIdx == -1)
-                    ? &player_
-                    : ((bullet.ownerIdx >= 0 &&
-                        bullet.ownerIdx < static_cast<int>(bots_.size()))
-                       ? &bots_[static_cast<size_t>(bullet.ownerIdx)] : nullptr);
-                OnCombatantKilled(bot, audio, bulletKiller);
+                Player *bulletKiller =
+                    (bullet.ownerIdx == -1)
+                        ? &player_
+                        : ((bullet.ownerIdx >= 0 && bullet.ownerIdx < static_cast<int>(bots_.size()))
+                               ? &bots_[static_cast<size_t>(bullet.ownerIdx)]
+                               : nullptr);
+                OnCombatantKilled(bot, audio, bulletKiller, bullet.weapon,bullet.equipmentId,bullet.sourcePosition);
 
-                // 玩家击杀：只发奖励 + 播报。
-                // 计数（playerKills_ / player_.kills）已在 OnCombatantKilled 里统一加过，
-                // 这里再 ++ 会变成"杀一个 +2"。
-                if (bullet.ownerIdx == -1) {
-                    // 击杀奖励按武器类型发放（照抄 CS2）
-                    player_.money += economy_.GrantKill(WeaponDB::KillReward(bullet.weapon));
-                    economy_.Clamp(player_.money);
-                    PushKillFeed("你 击杀 " + victimName);
-                } else {
-                    const std::string killerName =
-                        (bullet.ownerIdx >= 0 &&
-                         bullet.ownerIdx < static_cast<int>(bots_.size()))
-                            ? (bots_[static_cast<size_t>(bullet.ownerIdx)].name.empty()
-                                   ? ("BOT#" + std::to_string(bullet.ownerIdx))
-                                   : bots_[static_cast<size_t>(bullet.ownerIdx)].name)
-                            : std::string("BOT");
-                    PushKillFeed(killerName + " 击杀 " + victimName);
-                    // BOT 击杀奖励（同样按武器类型）
-                    if (bullet.ownerIdx >= 0 &&
-                        bullet.ownerIdx < static_cast<int>(bots_.size())) {
-                        bots_[bullet.ownerIdx].money +=
-                            economy_.GrantKill(WeaponDB::KillReward(bullet.weapon));
-                        economy_.Clamp(bots_[bullet.ownerIdx].money);
-                    }
-                }
-
-                if (audio) audio->PlaySoundAt(SoundEffect::KILL, bot.x, bot.y,
-                                              ListenerX(), ListenerY());
+                if (audio)
+                    audio->PlaySoundAt(SoundEffect::KILL, bot.x, bot.y, ListenerX(), ListenerY());
             } else if (audio) {
-                audio->PlaySoundAt(SoundEffect::HIT, bot.x, bot.y,
-                                   ListenerX(), ListenerY());
+                audio->PlaySoundAt(SoundEffect::HIT, bot.x, bot.y, ListenerX(), ListenerY());
             }
 
             // 受击反应：血量低且当前未在撤退 → 记录威胁来源并撤退一次
-            if (AiAt(i).retreatTimer <= 0.0f && bot.health > 0 &&
-                bot.health <= Tuning::RetreatHealth) {
+            if (AiAt(i).retreatTimer <= 0.0f && bot.health > 0 && bot.health <= Tuning::RetreatHealth) {
                 AiAt(i).retreatTimer = Tuning::RetreatDuration;
                 if (bullet.ownerIdx == -1) {
                     AiAt(i).threatX = player_.x;
                     AiAt(i).threatY = player_.y;
-                } else if (bullet.ownerIdx >= 0 &&
-                           bullet.ownerIdx < static_cast<int>(bots_.size())) {
+                } else if (bullet.ownerIdx >= 0 && bullet.ownerIdx < static_cast<int>(bots_.size())) {
                     AiAt(i).threatX = bots_[bullet.ownerIdx].x;
                     AiAt(i).threatY = bots_[bullet.ownerIdx].y;
                 }
-                // 受击立刻转向威胁：否则扇形视野下会「背后挨枪还在往前走」
-                if (Tuning::BotTurnOnHit > 0.0f) {
-                    const float tdx = AiAt(i).threatX - bot.x;
-                    const float tdy = AiAt(i).threatY - bot.y;
-                    if (tdx * tdx + tdy * tdy > 1.0f) {
-                        bot.aimAngle = std::atan2(tdy, tdx);
-                    }
-                }
+                // UpdateBots turns toward threatX/Y using the per-frame turn limit.
             }
             break;
         }
@@ -408,31 +412,24 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
         // 死斗 FFA：BOT 的子弹一律能命中玩家；排除玩家自己的子弹
         if (bullet.active && player_.alive && bullet.ownerIdx != -1 &&
             IsHostileTeam(bullet.ownerTeam, player_.team)) {
-            const float dx = bullet.x - player_.x;
-            const float dy = bullet.y - player_.y;
-            const float hitR = player_.size * 0.5f + Tuning::BulletHitPadding;
-            if (dx * dx + dy * dy < hitR * hitR) {
+            if (hitActor == -1) {
                 bullet.active = false;
-                segImpact = true;   // 打中玩家 = 实际碰撞终止
-                damageFlashTimer_ = 0.30f;   // 玩家受伤反馈
-                if (audio) audio->PlaySound(player_.armor > 0 ? SoundEffect::ARMOR_HIT
-                                                              : SoundEffect::HIT);
+                segImpact = true; // 打中玩家 = 实际碰撞终止
+                auto direction = std::min_element(damageDirections_.begin(), damageDirections_.end(),
+                                                  [](const DamageDirection &a, const DamageDirection &b) {
+                                                      return a.remaining < b.remaining;
+                                                  });
+                // Reverse bullet velocity points toward the incoming shot source.
+                *direction = {std::atan2(-bullet.vy, -bullet.vx), 0.5f};
+                damageFlashTimer_ = 0.30f; // 玩家受伤反馈
+                if (audio)
+                    audio->PlaySound(player_.armor > 0 ? SoundEffect::ARMOR_HIT : SoundEffect::HIT);
                 if (ApplyDamage(player_, bullet.damage, WeaponDB::ArmorPen(bullet.weapon))) {
-                    const std::string killerName =
-                        (bullet.ownerIdx >= 0 &&
-                         bullet.ownerIdx < static_cast<int>(bots_.size()) &&
-                         !bots_[static_cast<size_t>(bullet.ownerIdx)].name.empty())
-                            ? bots_[static_cast<size_t>(bullet.ownerIdx)].name
-                            : std::string("BOT#") + std::to_string(bullet.ownerIdx);
-                    PushKillFeed(killerName + " 击杀 你");
-                    OnCombatantKilled(player_, audio);
-                    // BOT 击杀玩家奖励（按武器类型）
-                    if (bullet.ownerIdx >= 0 &&
-                        bullet.ownerIdx < static_cast<int>(bots_.size())) {
-                        bots_[bullet.ownerIdx].money +=
-                            economy_.GrantKill(WeaponDB::KillReward(bullet.weapon));
-                        economy_.Clamp(bots_[bullet.ownerIdx].money);
-                    }
+                    OnCombatantKilled(player_, audio,
+                                      bullet.ownerIdx >= 0 && bullet.ownerIdx < static_cast<int>(bots_.size())
+                                          ? &bots_[bullet.ownerIdx]
+                                          : nullptr,
+                                      bullet.weapon,bullet.equipmentId,bullet.sourcePosition);
                 }
             }
         }
@@ -440,41 +437,54 @@ void CS2DGame::UpdateBullets(float dt, AudioManager* audio) {
         // 本步的视觉段：命中角色 / 命中玩家都在这里补上，
         // 高速弹当帧失活也能留下可见的一段。
         AddBulletVisual(bullet, prevX, prevY, bullet.x, bullet.y, segImpact);
+        if (reachedRange)
+            bullet.active = false;
     }
 
-    bullets_.erase(std::remove_if(bullets_.begin(), bullets_.end(),
-                                  [](const Bullet& b) { return !b.active; }),
-                   bullets_.end());
+    bullets_.erase(
+        std::remove_if(bullets_.begin(), bullets_.end(), [](const Bullet &b) { return !b.active; }),
+        bullets_.end());
 }
-
 
 // ============================================================================
 // 手雷
 // ============================================================================
 
-void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle, AudioManager* audio, float targetDistance) {
-    if (thrower.grenadeCount <= 0) return;
+void CS2DGame::ThrowGrenade(Player &thrower, float aimAngle, AudioManager *audio, float targetDistance) {
+    if (thrower.grenadeCount <= 0)
+        return;
 
     const WeaponId type = thrower.ActiveGrenade();
-    const WeaponDef& def = WeaponDB::Get(type);
-    if (def.cls != WeaponClass::Grenade) return;
+    const WeaponDef &def = WeaponDB::Get(type);
+    if (def.cls != WeaponClass::Grenade)
+        return;
 
     if (audio) {
-        if (&thrower == &player_) audio->PlaySound(SoundEffect::PULL_PIN);
-        else audio->PlaySoundAt(SoundEffect::PULL_PIN, thrower.x, thrower.y, ListenerX(), ListenerY());
+        if (&thrower == &player_)
+            audio->PlaySound(SoundEffect::PULL_PIN);
+        else
+            audio->PlaySoundAt(SoundEffect::PULL_PIN, thrower.x, thrower.y, ListenerX(), ListenerY());
     }
     Grenade g;
     g.x = thrower.x;
     g.y = thrower.y;
     // Drag maps cursor distance to launch speed, with the configured range limits.
-    const float distance = targetDistance >= 0.0f ? targetDistance
-        : std::hypot(aimWorldX_ - thrower.x, aimWorldY_ - thrower.y);
-    const float speed = std::clamp(Tuning::NadeFriction * distance, Tuning::NadeThrowSpeedMin, Tuning::NadeThrowSpeedMax);
+    const float distance =
+        targetDistance >= 0.0f ? targetDistance : std::hypot(aimWorldX_ - thrower.x, aimWorldY_ - thrower.y);
+    const float speed =
+        std::clamp(Tuning::NadeFriction * distance, Tuning::NadeThrowSpeedMin, Tuning::NadeThrowSpeedMax);
     g.vx = std::cos(aimAngle) * speed;
     g.vy = std::sin(aimAngle) * speed;
     g.fuse = 1.4f;
     g.type = type;
     g.team = thrower.team;
+    g.equipmentId=thrower.grenadeEquipment[thrower.grenadeSlot].id;
+    g.owner = &thrower == &player_ ? -1 : static_cast<int>(&thrower - bots_.data());
+    g.imitate = thrower.lastGun;
+    if (g.imitate == WeaponId::None)
+        g.imitate = thrower.weapons[0] != WeaponId::None ? thrower.weapons[0] : thrower.weapons[1];
+    if (g.imitate == WeaponId::None)
+        g.imitate = thrower.team == Team::CT ? WeaponId::USP_S : WeaponId::Glock18;
     g.active = true;
     grenades_.push_back(g);
 
@@ -487,40 +497,49 @@ void CS2DGame::ThrowGrenade(Player& thrower, float aimAngle, AudioManager* audio
         if (back < 0 || back > 2 || thrower.weapons[back] == WeaponId::None) {
             back = -1;
             for (int s = 0; s <= 2; ++s) {
-                if (thrower.weapons[s] != WeaponId::None) { back = s; break; }
+                if (thrower.weapons[s] != WeaponId::None) {
+                    back = s;
+                    break;
+                }
             }
         }
-        if (back >= 0) SwitchWeaponSlot(back);
+        if (back >= 0)
+            SwitchWeaponSlot(back);
     }
 
     // 投掷动作本身会出声（附近敌人能听到，见 Tuning::HearThrowRadius）
     {
-        const int idx = (&thrower == &player_)
-            ? -1
-            : static_cast<int>(&thrower - bots_.data());
+        const int idx = (&thrower == &player_) ? -1 : static_cast<int>(&thrower - bots_.data());
         EmitSound(SoundEventType::GrenadeThrow, thrower.x, thrower.y, thrower.team, idx);
     }
 
     // 出手音效：按投掷物类型选择，且与投掷动作在同一帧
     if (audio) {
         SoundEffect se = SoundEffect::GRENADE_THROW;
-        if (type == WeaponId::GrenadeHE)         se = SoundEffect::THROW_HE;
-        else if (type == WeaponId::GrenadeFlash)  se = SoundEffect::THROW_FLASH;
-        else if (type == WeaponId::GrenadeSmoke)  se = SoundEffect::THROW_SMOKE;
+        if (type == WeaponId::GrenadeHE)
+            se = SoundEffect::THROW_HE;
+        else if (type == WeaponId::GrenadeFlash)
+            se = SoundEffect::THROW_FLASH;
+        else if (type == WeaponId::GrenadeSmoke)
+            se = SoundEffect::THROW_SMOKE;
 
         // 玩家自己的投掷用 2D 播放，保证一定能听到（不受距离衰减影响）
-        if (&thrower == &player_) audio->PlaySound(se);
-        else audio->PlaySoundAt(se, thrower.x, thrower.y, ListenerX(), ListenerY());
+        if (&thrower == &player_)
+            audio->PlaySound(se);
+        else
+            audio->PlaySoundAt(se, thrower.x, thrower.y, ListenerX(), ListenerY());
     }
 }
 
-void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
+void CS2DGame::UpdateGrenades(float dt, AudioManager *audio) {
     // 投掷物飞行 + 撞墙反弹 + 引信
-    for (auto& g : grenades_) {
-        if (!g.active) continue;
+    for (auto &g : grenades_) {
+        if (!g.active)
+            continue;
 
         g.fuse -= dt;
-        if (g.bounceHearCooldown > 0.0f) g.bounceHearCooldown -= dt;
+        if (g.bounceHearCooldown > 0.0f)
+            g.bounceHearCooldown -= dt;
 
         // 子步进：每步不超过半个 tile，避免高速穿过薄墙
         const float speed = std::sqrt(g.vx * g.vx + g.vy * g.vy);
@@ -533,7 +552,8 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
         const float sub = dt / static_cast<float>(steps);
 
         for (int st = 0; st < steps; ++st) {
-            if (g.vx == 0.0f && g.vy == 0.0f) break;
+            if (g.vx == 0.0f && g.vy == 0.0f)
+                break;
 
             const float oldX = g.x, oldY = g.y;
             const float nx = oldX + g.vx * sub;
@@ -546,12 +566,14 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
             if (g.vx != 0.0f) {
                 world_->WorldToTile(nx, oldY, row, col);
                 hitX = world_->IsBlockingBullet(row, col);
-                if (!hitX) g.x = nx;
+                if (!hitX)
+                    g.x = nx;
             }
             if (g.vy != 0.0f) {
                 world_->WorldToTile(g.x, ny, row, col);
                 hitY = world_->IsBlockingBullet(row, col);
-                if (!hitY) g.y = ny;
+                if (!hitY)
+                    g.y = ny;
             }
             // 斜向穿角：两个单轴都可行，但对角格是墙 → 回退并双轴反弹
             if (!hitX && !hitY && g.vx != 0.0f && g.vy != 0.0f) {
@@ -565,8 +587,7 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
 
             if (hitX || hitY) {
                 const float before = std::sqrt(g.vx * g.vx + g.vy * g.vy);
-                ApplyNadeBounce(g.vx, g.vy, hitX, hitY,
-                                Tuning::NadeBounceRestitution,
+                ApplyNadeBounce(g.vx, g.vy, hitX, hitY, Tuning::NadeBounceRestitution,
                                 Tuning::NadeMinBounceSpeed);
                 const float after = std::sqrt(g.vx * g.vx + g.vy * g.vy);
                 ++g.wallBounces;
@@ -574,11 +595,10 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
                 // 撞墙同样会发出听觉信息（附近敌人能据此判断投掷物位置）
                 if (g.bounceHearCooldown <= 0.0f) {
                     g.bounceHearCooldown = Tuning::NadeBounceHearCooldown;
-                    EmitSound(SoundEventType::GrenadeBounce, g.x, g.y, g.team);
-                    std::cout << "[Nade] 撞墙反弹 (" << static_cast<int>(g.x) << ","
-                              << static_cast<int>(g.y) << ") 速度 "
-                              << static_cast<int>(before) << " → "
-                              << static_cast<int>(after) << std::endl;
+                    EmitSound(SoundEventType::GrenadeBounce, g.x, g.y, g.team, g.owner, 0, g.type, g.fuse);
+                    std::cout << "[Nade] 撞墙反弹 (" << static_cast<int>(g.x) << "," << static_cast<int>(g.y)
+                              << ") 速度 " << static_cast<int>(before) << " → " << static_cast<int>(after)
+                              << std::endl;
                 }
             }
         }
@@ -586,7 +606,8 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
         // 地面摩擦（指数衰减；v0/friction ≈ 总投掷距离）
         // 飞行时缓慢自转（停下后保持角度）
         const float spinSpeed = std::sqrt(g.vx * g.vx + g.vy * g.vy);
-        if (spinSpeed > 16.0f) g.spin = std::fmod(g.spin + spinSpeed * dt * 0.7f, 360.0f);
+        if (spinSpeed > 16.0f)
+            g.spin = std::fmod(g.spin + spinSpeed * dt * 0.7f, 360.0f);
 
         g.vx -= g.vx * Tuning::NadeFriction * dt;
         g.vy -= g.vy * Tuning::NadeFriction * dt;
@@ -599,67 +620,172 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager* audio) {
             const float spd2 = g.vx * g.vx + g.vy * g.vy;
             if (spd2 < 400.0f * 400.0f) {
                 g.landingWarned = true;
-                EmitSound(SoundEventType::GrenadeBounce, g.x, g.y, g.team);
-                std::cout << "[Nade] 落点 (" << static_cast<int>(g.x) << ","
-                          << static_cast<int>(g.y) << ") → 落点信息已广播"
+                EmitSound(SoundEventType::GrenadeBounce, g.x, g.y, g.team, g.owner, 0, g.type, g.fuse);
+                std::cout << "[Nade] 落点 (" << static_cast<int>(g.x) << "," << static_cast<int>(g.y)
+                          << ") → 落点信息已广播"
                           << "（反弹 " << g.wallBounces << " 次）" << std::endl;
             }
         }
 
+        if (g.type == WeaponId::GrenadeDecoy && g.fuse <= 0 && std::hypot(g.vx, g.vy) > 16)
+            g.fuse = .05f;
         if (g.fuse <= 0.0f) {
             ExplodeGrenade(g, audio);
             g.active = false;
         }
     }
-    grenades_.erase(std::remove_if(grenades_.begin(), grenades_.end(),
-                                   [](const Grenade& g) { return !g.active; }),
-                    grenades_.end());
+    grenades_.erase(
+        std::remove_if(grenades_.begin(), grenades_.end(), [](const Grenade &g) { return !g.active; }),
+        grenades_.end());
 
     // 烟雾云寿命
-    for (auto& s : smokes_) { s.life -= dt; s.age += dt; }
-    smokes_.erase(std::remove_if(smokes_.begin(), smokes_.end(),
-                                 [](const SmokeCloud& s) { return s.life <= 0.0f; }),
-                  smokes_.end());
+    for (auto &s : smokes_) {
+        s.life -= dt;
+        s.age += dt;
+    }
+    smokes_.erase(
+        std::remove_if(smokes_.begin(), smokes_.end(), [](const SmokeCloud &s) { return s.life <= 0.0f; }),
+        smokes_.end());
 
     // 火区寿命 + 持续伤害（燃烧弹 / 燃烧瓶）
-    for (auto& f : fires_) { f.life -= dt; f.age += dt; }
-    fires_.erase(std::remove_if(fires_.begin(), fires_.end(),
-                              [](const FireZone& f) { return f.life <= 0.0f; }),
-                 fires_.end());
+    for (auto &f : fires_) {
+        f.life -= dt;
+        f.age += dt;
+        RebuildFireCells(f);
+    }
+    fires_.erase(
+        std::remove_if(fires_.begin(), fires_.end(), [](const FireZone &f) { return f.life <= 0.0f; }),
+        fires_.end());
 
     fireTickTimer_ -= dt;
     if (fireTickTimer_ <= 0.0f) {
         fireTickTimer_ = Tuning::FireTickInterval;
-        auto burn = [&](Player& p) {
-            if (!p.alive) return;
-            for (const auto& f : fires_) {
+        auto burn = [&](Player &p) {
+            if (!p.alive)
+                return;
+            for (const auto &f : fires_) {
                 const float dx = p.x - f.x;
                 const float dy = p.y - f.y;
-                if (dx * dx + dy * dy <= f.radius * f.radius) {
-                    ApplyDamage(p, Tuning::FireTickDamage, 1.0f);   // 火区无视护甲（CS2 同）
+                if (FireContains(f, p.x, p.y)) {
+                    if (ApplyDamage(p, Tuning::FireTickDamage, 1.0f))
+                        OnCombatantKilled(p, audio, DamageOwner(f.owner), f.weapon,f.equipmentId,SDL_FPoint{f.x,f.y}); // 火区无视护甲（CS2 同）
                     break;
                 }
             }
         };
         burn(player_);
-        for (auto& b : bots_) burn(b);
+        for (auto &b : bots_)
+            burn(b);
     }
+
+    for (auto &decoy : decoys_) {
+        decoy.life -= dt;
+        decoy.nextShot -= dt;
+        if (decoy.life <= 0) {
+            if (audio)
+                audio->PlaySoundAt(SoundEffect::GRENADE_EXPLODE, decoy.x, decoy.y, ListenerX(), ListenerY());
+            EmitSound(SoundEventType::Explosion, decoy.x, decoy.y, decoy.team, decoy.owner);
+        } else if (decoy.nextShot <= 0) {
+            if (audio)
+                audio->PlayWeaponFireAt(decoy.weapon, decoy.x, decoy.y, ListenerX(), ListenerY());
+            EmitSound(SoundEventType::Gunshot, decoy.x, decoy.y, decoy.team, decoy.owner,
+                      GunshotRadius(WeaponDB::Get(decoy.weapon)));
+            ++decoy.shot;
+            decoy.nextShot =
+                decoy.shot % 3 == 0 ? 1.1f : std::max(.09f, WeaponDB::Get(decoy.weapon).cooldown);
+        }
+    }
+    decoys_.erase(
+        std::remove_if(decoys_.begin(), decoys_.end(), [](const Decoy &decoy) { return decoy.life <= 0; }),
+        decoys_.end());
 
     // 闪光致盲衰减
     if (flashTimer_ > 0.0f) {
         flashTimer_ -= dt;
         if (flashTimer_ <= 0.0f) {
             flashTimer_ = 0.0f;
-            flashPeak_  = 0.0f;
+            flashPeak_ = 0.0f;
         }
     }
+}
+
+float CS2DGame::ExpectedBlastDamage(float x, float y, const Player &target) const {
+    const float distance = std::hypot(target.x - x, target.y - y);
+    if (distance >= Tuning::NadeBlastRadius)
+        return 0;
+    const auto &pose = BodyGeometry::Get(target.spriteKey, ActorPoseSlot(target));
+    int exposed = 0, total = 0;
+    for (size_t i = 0; i < pose.samples.size(); i += 8) {
+        const auto point =
+            BodyGeometry::Transform(pose.samples[i], target.x, target.y, target.size, target.EffectiveAim(),
+                                    static_cast<int>(target.animState), target.animTimer);
+        exposed += visibility_.HasLineOfSight(x, y, point.x, point.y) ? 1 : 0;
+        ++total;
+    }
+    const float falloff = 1 - distance / Tuning::NadeBlastRadius;
+    return total ? Tuning::NadeMaxDamage * falloff * falloff * exposed / total : 0;
+}
+
+void CS2DGame::RebuildFireCells(FireZone &fire) const {
+    if (!world_ || fire.terrainRevision == world_->Revision())
+        return;
+    fire.terrainRevision = world_->Revision();
+    constexpr float step = 4;
+    const int extent = static_cast<int>(std::ceil(fire.radius / step)), width = extent * 2 + 1;
+    std::vector<bool> visited(width * width, false);
+    std::vector<SDL_Point> queue;
+    fire.cells.clear();
+    auto legal = [&](int x, int y) {
+        const float px = fire.x + x * step, py = fire.y + y * step;
+        return x * x + y * y <= extent * extent &&
+               !world_->CheckRectCollision(px - step * .5f, py - step * .5f, step, step);
+    };
+    SDL_Point seed{};
+    if (!legal(0, 0)) {
+        int nearest = 1000;
+        for (int y = -2; y <= 2; ++y)
+            for (int x = -2; x <= 2; ++x) {
+                const int distance = x * x + y * y;
+                if (distance < nearest && legal(x, y)) {
+                    seed = {x, y};
+                    nearest = distance;
+                }
+            }
+        if (nearest == 1000)
+            return;
+    }
+    queue.push_back(seed);
+    visited[(seed.y + extent) * width + seed.x + extent] = true;
+    for (size_t i = 0; i < queue.size(); ++i) {
+        const auto p = queue[i];
+        fire.cells.push_back({fire.x + p.x * step, fire.y + p.y * step});
+        const SDL_Point next[] = {{p.x - 1, p.y}, {p.x + 1, p.y}, {p.x, p.y - 1}, {p.x, p.y + 1}};
+        for (auto n : next) {
+            if (std::abs(n.x) > extent || std::abs(n.y) > extent)
+                continue;
+            const int index = (n.y + extent) * width + n.x + extent;
+            if (visited[index])
+                continue;
+            visited[index] = true;
+            if (legal(n.x, n.y))
+                queue.push_back(n);
+        }
+    }
+}
+
+bool CS2DGame::FireContains(const FireZone &fire, float x, float y) const {
+    const float radius = Tuning::FireEffectiveRadius(fire.radius, fire.age, fire.life);
+    for (const auto cell : fire.cells)
+        if (std::hypot(cell.x - fire.x, cell.y - fire.y) <= radius && std::abs(cell.x - x) <= 2 &&
+            std::abs(cell.y - y) <= 2)
+            return true;
+    return false;
 }
 
 void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
     switch (g.type) {
         case WeaponId::GrenadeHE: {
             const float RADIUS  = Tuning::NadeBlastRadius;
-            const float MAX_DMG = Tuning::NadeMaxDamage;
 
             auto damageAt = [&](Player& p) {
                 if (!p.alive) return;   // 道具对所有人（含己方与投掷者）生效
@@ -668,17 +794,15 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
                 const float d = std::sqrt(dx * dx + dy * dy);
                 if (d > RADIUS) return;
                 // 平方衰减：贴近中心才有高伤害，边缘伤害很低
-                const float t = 1.0f - d / RADIUS;
-                const float falloff = t * t;
-                if (ApplyDamage(p, static_cast<int>(MAX_DMG * falloff), 0.5f)) {   // 爆炸按 50% 穿透
-                    OnCombatantKilled(p, audio);
+                if (ApplyDamage(p, static_cast<int>(ExpectedBlastDamage(g.x,g.y,p)), 0.5f)) {   // 爆炸按 50% 穿透
+                    OnCombatantKilled(p, audio, DamageOwner(g.owner), g.type,g.equipmentId,SDL_FPoint{g.x,g.y});
                 }
             };
 
             damageAt(player_);
             for (auto& b : bots_) damageAt(b);
 
-            // 爆炸特效（供 Render 画扩散圆环）
+            // 爆闪、碎片及烟尘由世界渲染阶段绘制。
             blasts_.push_back(BlastFx{ g.x, g.y, Tuning::NadeBlastFxTime,
                                        Tuning::NadeBlastFxTime });
 
@@ -751,14 +875,17 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
             f.maxLife = Tuning::FireLife;
             f.age = 0.0f;
             f.seed = std::fmod(g.x * 0.011f + g.y * 0.019f, 1.0f);
+            f.owner=g.owner;f.weapon=g.type;f.equipmentId=g.equipmentId;
+            RebuildFireCells(f);
             fires_.push_back(f);
             if (audio) audio->PlaySound(SoundEffect::FIRE_IGNITE);
             EmitSound(SoundEventType::Explosion, g.x, g.y, g.team);
             break;
         }
         case WeaponId::GrenadeDecoy: {
-            if (audio) audio->PlaySound(SoundEffect::DECOY_EXPLODE);
-            EmitSound(SoundEventType::Explosion, g.x, g.y, g.team);
+            Decoy decoy;
+            decoy.x=g.x;decoy.y=g.y;decoy.owner=g.owner;decoy.team=g.team;decoy.weapon=g.imitate;
+            decoys_.push_back(decoy);
             break;
         }
         default:
@@ -773,17 +900,16 @@ bool CS2DGame::SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) con
     const float dx = x2 - x1;
     const float dy = y2 - y1;
     const float len2 = dx * dx + dy * dy;
-    if (len2 < 0.0001f) return false;
 
     for (const auto& s : smokes_) {
         // 点到线段最短距离，与烟雾半径比较
-        float t = ((s.x - x1) * dx + (s.y - y1) * dy) / len2;
+        float t = len2>0.0001f ? ((s.x - x1) * dx + (s.y - y1) * dy) / len2 : 0;
         t = std::clamp(t, 0.0f, 1.0f);
         const float px = x1 + dx * t;
         const float py = y1 + dy * t;
         const float ddx = s.x - px;
         const float ddy = s.y - py;
-        if (ddx * ddx + ddy * ddy <= s.radius * s.radius) return true;
+        if (ddx * ddx + ddy * ddy <= std::pow(Tuning::SmokeEffectiveRadius(s.radius,s.age,s.expandTime,s.life),2)) return true;
     }
     return false;
 }
@@ -792,8 +918,34 @@ bool CS2DGame::SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) con
 // 死亡处理
 // ============================================================================
 
-void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio, Player* killer) {
-    if (!victim.alive) return;
+void CS2DGame::OnCombatantKilled(Player &victim, AudioManager *audio, Player *killer, WeaponId weapon, std::uint64_t equipmentId, std::optional<SDL_FPoint> sourcePosition) {
+    if (audio)
+        audio->StopChannel(victim.defuseChannel);
+    else if (victim.defuseChannel >= 0 && Mix_QuerySpec(nullptr, nullptr, nullptr))
+        Mix_HaltChannel(victim.defuseChannel);
+    victim.defuseChannel = -1;
+    victim.defuseProgress = 0;
+    if (!victim.alive)
+        return;
+
+    KillFeedEntry event;
+    event.equipmentId=equipmentId;
+    if (!event.equipmentId && killer) {
+        for(int slot=0;slot<5;++slot) if (killer->weapons[slot]==weapon) event.equipmentId=killer->equipment[slot].id;
+    }
+    event.sourcePosition=sourcePosition.value_or(killer ? SDL_FPoint{killer->x,killer->y} : SDL_FPoint{victim.x,victim.y});
+    event.id = nextKillEventId_++;
+    event.timestamp = clockSec_;
+    event.killer = killer == &player_ ? "你" : killer ? killer->name : "环境";
+    event.victim = &victim == &player_ ? "你" : victim.name;
+    event.killerTeam = killer ? killer->team : Team::None;
+    event.victimTeam = victim.team;
+    event.weapon = weapon;
+    event.personal = killer == &player_ || &victim == &player_;
+    event.text = event.killer + " 击杀 " + event.victim;
+    killFeed_.insert(killFeed_.begin(), event);
+    if (killFeed_.size() > 6)
+        killFeed_.resize(6);
 
     victim.alive = false;
     victim.health = 0;
@@ -805,7 +957,8 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio, Player* ki
     // 玩家阵亡 → 开镜立即归零（不依赖 game.Update 的 dt）
     if (&victim == &player_) {
         StopObjectiveAudio(audio);
-        if (audio) audio->PlaySound(SoundEffect::DEATH);
+        if (audio)
+            audio->PlaySound(SoundEffect::DEATH);
         ResetScope(Presentation::ScopeResetReason::PlayerDied);
     }
 
@@ -833,7 +986,12 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio, Player* ki
 
     if (killer && killer != &victim) {
         ++killer->kills;
-        if (killer == &player_) ++playerKills_;
+        if (killer == &player_)
+            ++playerKills_;
+        if (weapon != WeaponId::None && IsHostile(victim, *killer)) {
+            killer->money += economy_.GrantKill(WeaponDB::KillReward(weapon));
+            economy_.Clamp(killer->money);
+        }
     }
 
     // C4 携带者阵亡 → C4 掉在原地
@@ -853,14 +1011,13 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio, Player* ki
         const std::string area = world_ ? world_->FindAreaAt(victim.x, victim.y) : std::string();
         for (Team t : {Team::T, Team::CT}) {
             RoundMemo::Death d;
-            d.team  = victim.team;
-            d.area  = area;
-            d.x     = victim.x;
-            d.y     = victim.y;
+            d.team = victim.team;
+            d.area = area;
+            d.x = victim.x;
+            d.y = victim.y;
             d.atSec = clockSec_;
             CoachFor(t).deaths.push_back(d);
-            CoachOnEvent(t, victim.team == t ? CoachEventType::AllyDown
-                                             : CoachEventType::EnemyDown, area);
+            CoachOnEvent(t, victim.team == t ? CoachEventType::AllyDown : CoachEventType::EnemyDown, area);
         }
         if (&victim == &player_) {
             CoachOnEvent(player_.team, CoachEventType::HumanDied, area);
@@ -869,15 +1026,17 @@ void CS2DGame::OnCombatantKilled(Player& victim, AudioManager* audio, Player* ki
     }
 
     // 记录阵亡点：队友会尝试「补枪」（trade）
-    lastDeathX_      = victim.x;
-    lastDeathY_      = victim.y;
-    lastDeathTeam_   = victim.team;
-    lastDeathTimer_  = 3.5f;
+    lastDeathX_ = victim.x;
+    lastDeathY_ = victim.y;
+    lastDeathTeam_ = victim.team;
+    lastDeathTimer_ = 3.5f;
 
     if (&victim == &player_) {
         ++playerDeaths_;
-        if (audio) audio->PlaySound(SoundEffect::KILL);
-        if (mode_ == MatchMode::DeathMatch) botRespawnTimer_ = BOT_RESPAWN_DELAY;
+        if (audio)
+            audio->PlaySound(SoundEffect::KILL);
+        if (mode_ == MatchMode::DeathMatch)
+            botRespawnTimer_ = BOT_RESPAWN_DELAY;
         std::cout << "[CS2D] 玩家阵亡 (累计 " << playerDeaths_ << ")" << std::endl;
     } else {
         // BOT 阵亡由击杀方计分；此处只需统计自身
@@ -925,6 +1084,7 @@ bool CS2DGame::ApplyDamage(Player& victim, int amount, float armorPen) {
     if (!victim.alive || amount <= 0) return false;
 
     const ArmorDamageResult r = ResolveArmorDamage(amount, armorPen, victim.armor);
+    if (r.armorLoss>0) for (auto& record:victim.armorEquipment) record.used=true;
     victim.armor = std::max(0, victim.armor - r.armorLoss);
     if (victim.armor <= 0) victim.helmet = false;   // 护甲耗尽，头盔失效
 
@@ -1027,15 +1187,15 @@ void CS2DGame::UpdateReload(Player& p, float dt) {
 }
 
 bool CS2DGame::IsEnemyNearby(float x, float y, float safeRadius, Team myTeam) const {
-    auto near = [&](const Player& u) {
+    auto nearby = [&](const Player& u) {
         if (!u.alive || u.team == myTeam) return false;
         const float dx = u.x - x;
         const float dy = u.y - y;
         return dx * dx + dy * dy < safeRadius * safeRadius;
     };
 
-    if (near(player_)) return true;
-    for (const auto& bot : bots_) if (near(bot)) return true;
+    if (nearby(player_)) return true;
+    for (const auto& bot : bots_) if (nearby(bot)) return true;
     return false;
 }
 
@@ -1045,10 +1205,22 @@ bool CS2DGame::IsEnemyNearby(float x, float y, float safeRadius, Team myTeam) co
 // 掉落武器 / 拾取
 // ============================================================================
 
-void CS2DGame::DropEquipmentOnDeath(const Player& victim) {
+void CS2DGame::DropEquipmentOnDeath(Player& victim) {
+    if (victim.hasDefuseKit) {
+        DroppedItem kit;
+        kit.defuseKit = true;
+        kit.equipment = victim.kitEquipment;
+        victim.kitEquipment = {};
+        kit.x = victim.x;
+        kit.y = victim.y;
+        kit.pickupDelay = .8f;
+        drops_.push_back(kit);
+        victim.hasDefuseKit = false;
+    }
     WeaponId dropId = WeaponId::None;
     bool isGrenade = false;
     bool fromPrimary = false;
+    int grenadeIndex = -1;
     int  dropMag = 0, dropReserve = 0;
 
     // 优先级 1：主武器
@@ -1056,15 +1228,14 @@ void CS2DGame::DropEquipmentOnDeath(const Player& victim) {
         dropId = victim.weapons[0];
         fromPrimary = true;
     } else {
-        // 优先级 2：副武器（起始手枪不掉落）
-        const bool isT = (victim.team == Team::T);
-        if (victim.weapons[1] != WeaponId::None &&
-            !WeaponDB::IsDefaultPistol(victim.weapons[1], isT)) {
+        // 优先级 2：副武器（包括起始手枪）
+        if (victim.weapons[1] != WeaponId::None) {
             dropId = victim.weapons[1];
         } else if (victim.grenadeCount > 0) {
             // 优先级 3：随机掉一个投掷物
             const int idx = static_cast<int>(rng_() % static_cast<unsigned>(victim.grenadeCount));
             dropId = victim.grenades[idx];
+            grenadeIndex = idx;
             isGrenade = true;
         }
     }
@@ -1084,6 +1255,9 @@ void CS2DGame::DropEquipmentOnDeath(const Player& victim) {
     }
 
     DroppedItem it;
+    const int sourceSlot=fromPrimary ? 0 : 1;
+    it.equipment=isGrenade ? victim.grenadeEquipment[grenadeIndex] : victim.equipment[sourceSlot];
+    it.fireState=victim.fireStates[sourceSlot];
     it.id = dropId;
     it.isGrenade = isGrenade;
     it.life = 30.0f;
@@ -1107,30 +1281,98 @@ void CS2DGame::DropEquipmentOnDeath(const Player& victim) {
               << static_cast<int>(victim.y) << ")" << std::endl;
 }
 
-void CS2DGame::TryPickupDrops(bool manual, AudioManager* audio) {
-    if (!player_.alive) return;
+void CS2DGame::TryPickupDrops(bool manual, AudioManager *audio) {
 
+    // CT participants can recover a dropped kit independently of weapon pickup.
+    for (auto &drop : drops_) {
+        if (!drop.defuseKit || drop.pickupDelay > 0)
+            continue;
+        auto pickupKit = [&](Player &actor) {
+            if (!drop.defuseKit || !actor.alive || actor.team != Team::CT || actor.hasDefuseKit)
+                return;
+            if (std::hypot(actor.x - drop.x, actor.y - drop.y) > Tuning::DropPickupRadius)
+                return;
+            actor.hasDefuseKit = true;
+            actor.kitEquipment = drop.equipment;
+            drop.defuseKit = false;
+            if (audio)
+                audio->PlaySound(SoundEffect::PICKUP);
+        };
+        pickupKit(player_);
+        for (auto &bot : bots_)
+            pickupKit(bot);
+    }
+    if (!manual)
+        for (auto &actor : bots_) {
+            if (!actor.alive)
+                continue;
+            for (auto &drop : drops_) {
+                if (drop.id == WeaponId::None || drop.pickupDelay > 0 ||
+                    std::hypot(actor.x - drop.x, actor.y - drop.y) > Tuning::DropPickupRadius)
+                    continue;
+                const auto &definition = WeaponDB::Get(drop.id);
+                const int targetSlot = definition.slot == WeaponSlotKind::Primary ? 0 : 1;
+                const bool playerCanTake =
+                    drop.isGrenade
+                        ? player_.grenadeCount < Player::MAX_GRENADES &&
+                              player_.CountGrenade(drop.id) < (drop.id == WeaponId::GrenadeFlash ? 2 : 1)
+                        : player_.weapons[targetSlot] == WeaponId::None;
+                if (player_.alive && playerCanTake &&
+                    std::hypot(player_.x - drop.x, player_.y - drop.y) <= Tuning::DropPickupRadius)
+                    continue;
+                if (drop.isGrenade) {
+                    const int limit = drop.id == WeaponId::GrenadeFlash ? 2 : 1;
+                    if (actor.grenadeCount >= Player::MAX_GRENADES || actor.CountGrenade(drop.id) >= limit)
+                        continue;
+                    actor.grenadeEquipment[actor.grenadeCount] = drop.equipment;
+                    actor.grenades[actor.grenadeCount++] = drop.id;
+                    actor.SyncActiveGrenade();
+                } else {
+                    const int slot = definition.slot == WeaponSlotKind::Primary ? 0 : 1;
+                    if (actor.weapons[slot] != WeaponId::None)
+                        continue;
+                    actor.SetSlotWeaponWithAmmo(slot, drop.id, drop.magAmmo, drop.reserveAmmo);
+                    actor.equipment[slot] = drop.equipment;
+                    actor.fireStates[slot] = drop.fireState;
+                    if (actor.weaponSlot == slot)
+                        actor.LoadAmmoFromSlot();
+                }
+                drop.id = WeaponId::None;
+            }
+        }
+    if (!player_.alive)
+        return;
     // 找最近的掉落物
-    int   best = -1;
-    float bestD2 = (manual ? Tuning::ManualPickupRadius * Tuning::ManualPickupRadius : Tuning::DropPickupRadius * Tuning::DropPickupRadius);
+    int best = -1;
+    float bestD2 = (manual ? Tuning::ManualPickupRadius * Tuning::ManualPickupRadius
+                           : Tuning::DropPickupRadius * Tuning::DropPickupRadius);
     for (size_t i = 0; i < drops_.size(); ++i) {
-        if (drops_[i].id == WeaponId::None) continue;
-        if (drops_[i].pickupDelay > 0.0f) continue;   // 冷却中
+        if (drops_[i].id == WeaponId::None)
+            continue;
+        if (drops_[i].pickupDelay > 0.0f)
+            continue; // 冷却中
         const float dx = drops_[i].x - player_.x;
         const float dy = drops_[i].y - player_.y;
         const float d2 = dx * dx + dy * dy;
-        if (d2 < bestD2) { bestD2 = d2; best = static_cast<int>(i); }
+        if (d2 < bestD2) {
+            bestD2 = d2;
+            best = static_cast<int>(i);
+        }
     }
-    if (best < 0) return;
+    if (best < 0)
+        return;
 
-    DroppedItem& d = drops_[static_cast<size_t>(best)];
-    const WeaponDef& def = WeaponDB::Get(d.id);
+    // 替换旧枪会向 drops_ 追加物品，使用快照避免扩容使引用失效。
+    const DroppedItem d = drops_[static_cast<size_t>(best)];
+    const WeaponDef &def = WeaponDB::Get(d.id);
+    const int oldSlot = player_.weaponSlot;
+    const WeaponId oldWeapon = player_.CurrentWeapon().id;
     bool taken = false;
 
     if (d.isGrenade) {
         const int limit = (d.id == WeaponId::GrenadeFlash) ? 2 : 1;
-        if (player_.grenadeCount < Player::MAX_GRENADES &&
-            player_.CountGrenade(d.id) < limit) {
+        if (player_.grenadeCount < Player::MAX_GRENADES && player_.CountGrenade(d.id) < limit) {
+            player_.grenadeEquipment[player_.grenadeCount] = d.equipment;
             player_.grenades[player_.grenadeCount++] = d.id;
             player_.SyncActiveGrenade();
             taken = true;
@@ -1139,7 +1381,7 @@ void CS2DGame::TryPickupDrops(bool manual, AudioManager* audio) {
         // 自动拾取只在空槽时发生，按住 E 可以替换
         if (manual || player_.weapons[0] == WeaponId::None) {
             // 手上有旧主武器且不是同一把 → 先丢到地上
-            if (player_.weapons[0] != WeaponId::None && player_.weapons[0] != d.id) {
+            if (player_.weapons[0] != WeaponId::None) {
                 DropWeaponToGround(0, player_.x, player_.y);
             }
             // 捡起时沿用原持有者丢弃瞬间的弹药状态
@@ -1148,16 +1390,18 @@ void CS2DGame::TryPickupDrops(bool manual, AudioManager* audio) {
             } else {
                 player_.SetSlotWeapon(0, d.id);
             }
+            player_.equipment[0] = d.equipment;
+            player_.fireStates[0] = d.fireState;
             if (player_.weaponSlot == 0) {
                 player_.LoadAmmoFromSlot();
             }
-            player_.reloading   = false;
+            player_.reloading = false;
             player_.reloadTimer = 0.0f;
             taken = true;
         }
     } else if (def.slot == WeaponSlotKind::Secondary) {
         if (manual || player_.weapons[1] == WeaponId::None) {
-            if (player_.weapons[1] != WeaponId::None && player_.weapons[1] != d.id) {
+            if (player_.weapons[1] != WeaponId::None) {
                 DropWeaponToGround(1, player_.x, player_.y);
             }
             if (d.hasAmmoState) {
@@ -1165,44 +1409,60 @@ void CS2DGame::TryPickupDrops(bool manual, AudioManager* audio) {
             } else {
                 player_.SetSlotWeapon(1, d.id);
             }
+            player_.equipment[1] = d.equipment;
+            player_.fireStates[1] = d.fireState;
             if (player_.weaponSlot == 1) {
                 player_.LoadAmmoFromSlot();
             }
-            player_.reloading   = false;
+            player_.reloading = false;
             player_.reloadTimer = 0.0f;
             taken = true;
         }
     }
 
     if (taken) {
-        d.id = WeaponId::None;
-        if (audio) audio->PlaySound(SoundEffect::PICKUP);
+        if (oldWeapon != player_.CurrentWeapon().id) {
+            previousEquipSlot_ = oldSlot;
+            previousEquipWeapon_ = oldWeapon;
+            ResetScope(Presentation::ScopeResetReason::WeaponChanged);
+        }
+        drops_[static_cast<size_t>(best)].id = WeaponId::None;
+        if (audio)
+            audio->PlaySound(SoundEffect::PICKUP);
     }
 }
 
 // G：丢弃当前武器（近战不可丢弃）
 // 把某个槽位的枪丢到地面（换枪/被替换时调用，避免旧枪凭空消失）
-void CS2DGame::DropWeaponToGround(int slot, float x, float y) {
-    if (slot < 0 || slot > 4) return;
-    const WeaponId id = player_.weapons[slot];
-    if (id == WeaponId::None) return;
+void CS2DGame::DropWeaponToGround(int slot,float x,float y) {
+    DropWeaponToGround(player_,slot,x,y);
+}
+
+void CS2DGame::DropWeaponToGround(Player &actor, int slot, float x, float y) {
+    if (slot < 0 || slot > 4)
+        return;
+    const WeaponId id = actor.weapons[slot];
+    if (id == WeaponId::None)
+        return;
 
     // 丢弃瞬间的弹药：正被手持的槽用实时值，否则用它自己的缓存
     int magAmmo = 0, reserveAmmo = 0;
-    if (player_.weaponSlot == slot) {
-        magAmmo     = player_.ammo;
-        reserveAmmo = player_.reserve;
+    if (actor.weaponSlot == slot) {
+        magAmmo = actor.ammo;
+        reserveAmmo = actor.reserve;
     } else {
-        magAmmo     = player_.ammoSlot[slot];
-        reserveAmmo = player_.reserveSlot[slot];
+        magAmmo = actor.ammoSlot[slot];
+        reserveAmmo = actor.reserveSlot[slot];
     }
 
     DroppedItem it;
+    it.equipment = actor.equipment[slot];
+    it.fireState = actor.fireStates[slot];
     it.id = id;
     it.isGrenade = false;
     it.hasAmmoState = true;
-    it.magAmmo      = magAmmo;
-    it.reserveAmmo  = reserveAmmo;
+    it.magAmmo = magAmmo;
+    it.reserveAmmo = reserveAmmo;
     std::uniform_real_distribution<float> ang(0.0f, 360.0f);
     std::uniform_real_distribution<float> jitter(-12.0f, 12.0f);
     it.x = x + jitter(rng_);
@@ -1211,8 +1471,8 @@ void CS2DGame::DropWeaponToGround(int slot, float x, float y) {
     it.pickupDelay = 0.8f;
     drops_.push_back(it);
 
-    std::cout << "[Drop] 换下 " << WeaponDB::Get(id).name
-              << " 弹匣 " << magAmmo << " 备弹 " << reserveAmmo << std::endl;
+    std::cout << "[Drop] 换下 " << WeaponDB::Get(id).name << " 弹匣 " << magAmmo << " 备弹 " << reserveAmmo
+              << std::endl;
 }
 
 void CS2DGame::DropCurrentWeapon() {
@@ -1236,6 +1496,8 @@ void CS2DGame::DropCurrentWeapon() {
     if (!player_.alive) return;
 
     const int slot = player_.weaponSlot;
+    const auto droppedReceipt=slot==3 ? player_.grenadeEquipment[player_.grenadeSlot] : player_.equipment[slot];
+    const auto droppedFireState=player_.fireStates[slot];
     if (slot == 2) return;                     // 近战不能丢
 
     WeaponId dropId = WeaponId::None;
@@ -1249,10 +1511,9 @@ void CS2DGame::DropCurrentWeapon() {
         player_.ConsumeActiveGrenade();
         // 没有投掷物了：回到有枪的槽位
         if (player_.grenadeCount <= 0) {
-            if (player_.weapons[0] != WeaponId::None)      player_.weaponSlot = 0;
-            else if (player_.weapons[1] != WeaponId::None) player_.weaponSlot = 1;
-            else                                           player_.weaponSlot = 2;
-            player_.LoadAmmoFromSlot();
+            const int target = player_.weapons[0] != WeaponId::None ? 0 :
+                player_.weapons[1] != WeaponId::None ? 1 : 2;
+            SwitchWeaponSlot(target);
         }
     } else {
         dropId = player_.weapons[slot];
@@ -1269,16 +1530,17 @@ void CS2DGame::DropCurrentWeapon() {
 
         // 主武器丢了 → 自动换成副武器，再不行换近战
         if (slot == 0) {
-            if (player_.weapons[1] != WeaponId::None) { player_.weaponSlot = 1; }
-            else                                       { player_.weaponSlot = 2; }
-            player_.LoadAmmoFromSlot();
+            SwitchWeaponSlot(player_.weapons[1] != WeaponId::None ? 1 : 2);
         } else if (slot == 1) {
-            player_.weaponSlot = 2;
-            player_.LoadAmmoFromSlot();
+            SwitchWeaponSlot(2);
         }
     }
 
+    previousEquipSlot_ = slot;
+    previousEquipWeapon_ = dropId;
     DroppedItem it;
+    it.equipment=droppedReceipt;
+    it.fireState=droppedFireState;
     it.id = dropId;
     it.isGrenade = isGrenade;
     it.hasAmmoState = !isGrenade;

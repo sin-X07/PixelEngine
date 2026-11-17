@@ -49,7 +49,7 @@ public:
 
     // ---- 输入处理 ----
     void InitializeCursor(float angle);
-    void SetReferenceMode(float zoom, float cameraShift, bool angled = false, bool normalAngled = false);
+    void SetReferenceMode(float zoom, float cameraShift);
     void SetReferenceWorldBounds(float width, float height) {
         referenceWorldW_ = width;
         referenceWorldH_ = height;
@@ -58,10 +58,11 @@ public:
     void SetVisibleAimPoint(float x, float y) { visibleWorld_ = {x, y}; visibleWorldValid_ = true; }
     bool ScreenAnchorActive() const { return screenAnchor_; }
     bool EdgeZoomRequested() const { return edgeZoomRequested_; }
+    int CameraDistanceTier() const { return cameraDistanceTier_; }
     void UpdateCursor(int relX, int relY, float sensitivity, float zoom,
                       float camX, float camY, int viewW, int viewH, float playerX, float playerY,
                       float& outWorldX, float& outWorldY, float recoilAngle = 0.0f,
-                      SDL_FPoint renderOffset = {0.0f, 0.0f});
+                      SDL_FPoint renderOffset = {0.0f, 0.0f}, SDL_FPoint ballisticKick = {});
     void UpdateTabToggle();
 
     // ---- 渲染 ----
@@ -87,9 +88,10 @@ private:
     float referenceModeZoom_ = 1.0f, referenceCameraShift_ = Tuning::CameraLookShift;
     float referenceWorldW_ = 0.0f, referenceWorldH_ = 0.0f;
     float handoffElapsed_ = 0.0f;
-    bool referenceAngled_ = false, finishHandoff_ = false;
-    bool limitAngled_ = false;
+    bool finishHandoff_ = false;
+
     bool screenAnchor_ = false, scopeClosing_ = false;
     bool edgeZoomRequested_ = false;
+    int cameraDistanceTier_ = 0;
     bool cursorScoped_ = false;
 };

@@ -69,8 +69,12 @@ private:
 
     // 状态机与时钟
     const float MS_PER_UPDATE = 16.6666f;
+    std::array<SDL_Texture*,3> settingsPreviewTex_{};
+    void RenderSettingsPreviews();
     GameState currentState = MAIN_MENU;
     GameState settingsReturnState = MAIN_MENU;
+    GameState exitReturnState_ = MAIN_MENU;
+    Uint64 sidePauseStartMs_ = 0;
     bool exitToDesktop = false;
     int  targetFPS_ = 60;
     bool cursorCaptured_ = false;
@@ -142,6 +146,10 @@ private:
     void StartSideSpawnZoom();
     void UpdateSideSpawnTransition();
     float SideFadeAlpha() const;
+    void DrawMatchShowcase();
+    std::array<SDL_Texture*,2> showcaseTextures_{};
+    Uint64 showcaseStarted_ = 0;
+    int showcaseW_=0,showcaseH_=0;
     void DrawSideMapPreview();
     int          hovered3D_ = -1;
     int          focused3D_ = -1;

@@ -4,6 +4,7 @@
 #include <cmath>
 
 bool CS2DWorld::Build(const CS2DMapData& data) {
+    ++revision_;
     mapData_    = data;
     mapWidth_   = data.mapWidth;
     mapHeight_  = data.mapHeight;

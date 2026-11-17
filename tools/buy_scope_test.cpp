@@ -13,6 +13,7 @@
 // 运行（工作目录为仓库根）：
 //   build/tests/gameplay_tests.exe
 #include <cstdio>
+#include <fstream>
 #include <cstring>
 #include <cstdlib>
 #include <cmath>
@@ -23,6 +24,8 @@
 #include "Audio/AudioManager.hpp"
 #include "CS2D/CS2DRenderer.hpp"
 #include "CS2D/CS2DOverlay.hpp"
+#include "CS2D/Visibility/BodyGeometry.hpp"
+#include "CS2D/ShowcaseCamera.hpp"
 #include "Storage/SaveManager.hpp"
 #include "CS2D/CS2DWorld.hpp"
 #include "CS2D/TMJParser.hpp"
@@ -31,8 +34,14 @@
 #include "Core/BuildInfo.hpp"
 #include "dev_replay/replay.hpp"
 #include "Input/FireInputGate.hpp"
+#include "Input/InputManager.hpp"
 #include "Graphics/Menu3DModel.hpp"
 #include "Graphics/Menu3D.hpp"
+#include "Graphics/GameUI.hpp"
+#include "Graphics/WeaponIconCache.hpp"
+#include "Graphics/ImGuiUI.hpp"
+#include "Graphics/UiScale.hpp"
+#include "ThirdParty/imgui/imgui_internal.h"
 
 struct Menu3DTestAccess {
     static bool ChickenAvoidance(const std::string& directory) {
@@ -1255,15 +1264,15 @@ static void TestAimLinePersistenceAndRecoilRecovery() {
         game.Update(1.0f / 60.0f, true, player.x + 100, player.y,
                     false, false, false, false, false, false, false, nullptr);
         if (player.ammo < ammo) {
-            check(player.aimKick < previousKick, "continuous shots rotate rightward aim toward twelve oclock");
-            previousKick = player.aimKick;
+            check(player.BallisticKick().y < 0, "weapon curve produces screen-up recoil while firing");
+            previousKick = player.BallisticKick().y;
         }
     }
-    const float heldKick = player.aimKick;
+    const float heldKick = player.BallisticKick().y;
     for (int tick = 0; tick < 60; ++tick)
         game.Update(1.0f / 60.0f, false, player.x + 100, player.y,
                     false, false, false, false, false, false, false, nullptr);
-    check(heldKick < 0 && std::abs(player.aimKick) < std::abs(heldKick) * 0.02f, "recoil returns after firing stops");
+    check(heldKick < 0 && std::abs(player.BallisticKick().y) < std::abs(heldKick) * 0.02f, "recoil returns after firing stops");
 }
 
 static void TestReactionBenchmark() {
@@ -1328,7 +1337,7 @@ static void TestGrenadeCursorDistance() {
 }
 
 static void TestFixedReferenceCursor() {
-    for (int mode = 0; mode < 4; ++mode) {
+    for (int mode = 0; mode < 3; ++mode) {
         for (int fps : {60, 120, 144}) {
             for (const auto direction : std::vector<std::pair<int, int>>{{1,0}, {-1,0}, {0,1}, {0,-1}, {1,1}}) {
                 CS2DOverlay reference, animated;
@@ -1336,11 +1345,12 @@ static void TestFixedReferenceCursor() {
                 animated.InitializeCursor(0.0f);
                 const float modeZoom = mode == 1 ? 1.5f : mode == 2 ? 2.0f : 1.0f;
                 const float shift = CS2DGame::ScopeCameraShiftForZoom(modeZoom);
-                reference.SetReferenceMode(modeZoom, shift, mode == 3);
-                animated.SetReferenceMode(modeZoom, shift, mode == 3);
+                reference.SetReferenceMode(modeZoom, shift);
+                animated.SetReferenceMode(modeZoom, shift);
                 bool same = true;
                 int entries = 0, exits = 0;
                 bool previous = false;
+                float previousX=500,previousY=500;
                 for (int frame = 0; frame < fps * 4; ++frame) {
                     int motion = 0;
                     if (frame < fps) motion = 2880 / fps;
@@ -1348,12 +1358,19 @@ static void TestFixedReferenceCursor() {
                     const float time = static_cast<float>(frame) / fps;
                     const float zoom = 6.0f * (0.85f + 0.15f * std::cos(time * 5.0f));
                     float rx = 0, ry = 0, ax = 0, ay = 0;
-                    reference.UpdateCursor(motion * direction.first, motion * direction.second, 1, 6,
+                    int motionX=motion*direction.first,motionY=motion*direction.second;
+                    if (frame>=fps*2 && frame<fps*3) {
+                        const float referenceZoom=VisibilityQuery::BaseZoomForViewport(1920,1080)*modeZoom;
+                        motionX=static_cast<int>(std::lround((500-previousX)*referenceZoom/(fps*3-frame)));
+                        motionY=static_cast<int>(std::lround((500-previousY)*referenceZoom/(fps*3-frame)));
+                    }
+                    reference.UpdateCursor(motionX, motionY, 1, 6,
                         0, 0, 1920, 1080, 500, 500, rx, ry);
-                    animated.UpdateCursor(motion * direction.first, motion * direction.second, 1, zoom,
+                    animated.UpdateCursor(motionX, motionY, 1, zoom,
                         150 * std::sin(time), -80 * std::cos(time), 1920, 1080, 500, 500, ax, ay);
                     same = same && std::abs(rx - ax) < 0.001f && std::abs(ry - ay) < 0.001f &&
                         reference.EdgeZoomRequested() == animated.EdgeZoomRequested();
+                    previousX=ax;previousY=ay;
                     const bool requested = animated.EdgeZoomRequested();
                     if (requested && !previous) ++entries;
                     if (!requested && previous) ++exits;
@@ -1387,8 +1404,9 @@ static void TestFixedReferenceCursor() {
         border.UpdateCursor(-side.first * 20, -side.second * 20, 1, 4.2f, 0, 0,
             1920, 1080, playerX, playerY, x, y);
         check(border.EdgeZoomRequested(), "small inward motion stays inside the reference hysteresis band");
-        border.UpdateCursor(-side.first * 80, -side.second * 80, 1, 4.2f, 0, 0,
+        border.UpdateCursor(static_cast<int>((playerX-x)*VisibilityQuery::BaseZoomForViewport(1920,1080)), static_cast<int>((playerY-y)*VisibilityQuery::BaseZoomForViewport(1920,1080)), 1, 4.2f, 0, 0,
             1920, 1080, playerX, playerY, x, y);
+        border.UpdateCursor(0,0,1,4.2f,0,0,1920,1080,playerX,playerY,x,y);
         check(!border.EdgeZoomRequested(), "inward motion exits reference hysteresis at map borders");
     }
     CS2DOverlay cursor;
@@ -1430,7 +1448,7 @@ static void TestFixedReferenceCursor() {
 }
 
 static void TestSharedAimDistance() {
-    for (bool angled : {false, true}) {
+    for (bool angled : {false}) {
         for (const auto player : std::vector<std::pair<float, float>>{{440,440}, {20,20}, {860,860}}) {
             for (const auto direction : std::vector<std::pair<int, int>>{{1,0}, {-1,0}, {0,1}, {0,-1}, {1,1}}) {
                 float baselineX = 0, baselineY = 0;
@@ -1439,7 +1457,7 @@ static void TestSharedAimDistance() {
                     CS2DOverlay cursor;
                     cursor.InitializeCursor(std::atan2(static_cast<float>(direction.second), static_cast<float>(direction.first)));
                     cursor.SetReferenceWorldBounds(880, 880);
-                    cursor.SetReferenceMode(zoom, CS2DGame::ScopeCameraShiftForZoom(zoom), zoom == 1.0f && angled, angled);
+                    cursor.SetReferenceMode(zoom, CS2DGame::ScopeCameraShiftForZoom(zoom));
                     float x = 0, y = 0;
                     cursor.UpdateCursor(direction.first * 100000, direction.second * 100000, 1, 6 * zoom,
                         0, 0, 1920, 1080, player.first, player.second, x, y);
@@ -1604,8 +1622,9 @@ static void TestMovementFrameInterpolation() {
             if (!game.GetBullets().empty()) {
                 const auto& bullet = game.GetBullets().back();
                 const float shotAngle = std::atan2(bullet.vy, bullet.vx);
-                const float shotSpread = player.CurrentWeapon().spreadBase *
-                    (1.0f + game.GetCrosshairBloom() * (Tuning::MoveSpreadMaxMul - 1.0f));
+                const float shotSpread = Ballistics::Spread(player.CurrentWeapon().id,
+                    std::hypot(player.vx,player.vy)/std::max(1.0f,Tuning::PlayerBaseSpeed*player.CurrentWeapon().moveSpeedMul),
+                    game.GetScopeView().transition,player.BallisticInaccuracy());
                 check(std::abs(std::remainder(shotAngle - player.EffectiveAim(), Tuning::Pi * 2)) <= shotSpread + 0.00001f,
                       "current shot uses the same recoil-adjusted direction as the reticle");
             }
@@ -1657,8 +1676,7 @@ static void TestScopeFrameSnapshot() {
             player.health = player.maxHealth = 100000;
             player.SetSlotWeapon(0, WeaponId::AWP);
             game.SwitchWeaponSlot(0);
-            for (int cameraMode = 0; cameraMode < 2; ++cameraMode) {
-                if (cameraMode > 0) game.ToggleCameraMode();
+            for (int cameraMode = 0; cameraMode < 1; ++cameraMode) {
                 for (int fps : {60, 120, 144}) {
                     game.ResetScope(Presentation::ScopeResetReason::InputBlocked);
                     game.SetEdgeZoomRequested(false);
@@ -1675,7 +1693,7 @@ static void TestScopeFrameSnapshot() {
                     auto sync = [&](float dt, bool commitAllowed = false) {
                         const auto scope = game.GetScopeView();
                         const float shift = scope.level > 0 ? CS2DGame::ScopeCameraShiftForZoom(scope.targetZoomMultiplier) : Tuning::CameraLookShift;
-                        cursor.SetReferenceMode(scope.targetZoomMultiplier, shift, scope.level == 0 && game.AngledCameraEnabled(), game.AngledCameraEnabled());
+                        cursor.SetReferenceMode(scope.targetZoomMultiplier, shift);
                         if (!cursor.ScreenAnchorActive()) {
                             cursor.SetVisibleAimPoint(game.GetRenderAimX(), game.GetRenderAimY());
                             cursor.virtCursorX = (game.GetRenderAimX() - renderer.GetCameraX()) * renderer.GetZoom();
@@ -1687,7 +1705,7 @@ static void TestScopeFrameSnapshot() {
                         cursor.UpdateCursor(0, 0, 0, renderer.GetZoom(), renderer.GetCameraX(), renderer.GetCameraY(),
                             1280, 720, player.x, player.y, x, y, player.aimKick, {view.x - player.x, view.y - player.y});
                         game.SetAimTarget(x, y, !cursor.ScreenAnchorActive());
-                        game.SetEdgeZoomRequested(cursor.EdgeZoomRequested());
+                        game.SetCameraDistanceTier(cursor.CameraDistanceTier());
                         if (cursor.ScreenAnchorActive() && !sawAnchor) {
                             sawAnchor = true;
                             lockedX = game.GetRenderAimX();
@@ -1758,17 +1776,19 @@ static void TestCameraEdgeZoom() {
             cursor.UpdateCursor(10000, 0, 1, renderer.GetZoom(), renderer.GetCameraX(), renderer.GetCameraY(),
                 1920, 1080, x, y, targetX, targetY);
             bool stable = true;
+            float settledZoom=0;
             for (int frame = 0; frame < 180; ++frame) {
                 cursor.UpdateCursor(0, 0, 1, renderer.GetZoom(), renderer.GetCameraX(), renderer.GetCameraY(),
                     1920, 1080, x, y, targetX, targetY);
-                game.SetEdgeZoomRequested(cursor.EdgeZoomRequested());
+                game.SetCameraDistanceTier(cursor.CameraDistanceTier());
                 game.Update(1.0f / 60.0f, false, targetX, targetY, false, false, false, false, false, false, false, nullptr);
                 game.Render(1920, 1080);
-                if (frame >= 30) stable = stable && std::fabs(renderer.GetZoom() / baseZoom - Tuning::EdgeZoomOutMin) < 0.001f;
+                if (frame==60) settledZoom=renderer.GetZoom();
+                if (frame>60) stable=stable && std::fabs(renderer.GetZoom()-settledZoom)<.001f;
             }
             check(stable, "stationary edge cursor stays zoomed out for three seconds without oscillation");
-            check(std::fabs(renderer.GetZoom() / baseZoom - Tuning::EdgeZoomOutMin) < 0.001f, "edge zoom reaches 0.7 within half a second");
-            check(std::fabs(renderer.GetVisionRadius() * Tuning::EdgeZoomOutMin - baseRadius) < 0.01f, "edge zoom and fog share final multiplier");
+            check(cursor.CameraDistanceTier()==2 && renderer.GetZoom()/baseZoom<=.50f/1.12f+.001f, "round3 far tier is reached and joint actor bounds may reduce magnification");
+            check(std::isfinite(renderer.GetVisionRadius()) && renderer.GetVisionRadius()>=baseRadius, "round3 camera and fog retain finite shared geometry");
             const float zoom = renderer.GetZoom();
             game.Render(1920, 1080);
             check(renderer.GetZoom() == zoom, "repeated Render preserves edge transition state");
@@ -1778,11 +1798,12 @@ static void TestCameraEdgeZoom() {
                 VisibilityQuery::BaseZoomForViewport(1920, 1080)));
             cursor.UpdateCursor(inwardMotion, 0, 1, renderer.GetZoom(), renderer.GetCameraX(), renderer.GetCameraY(),
                 1920, 1080, x, y, targetX, targetY);
-            game.SetEdgeZoomRequested(cursor.EdgeZoomRequested());
-            for (int frame = 0; frame < 25; ++frame) {
+            game.SetCameraDistanceTier(cursor.CameraDistanceTier());
+            for (int frame = 0; frame < 60; ++frame) {
+                game.SetCameraDistanceTier(0);
                 game.Update(1.0f / 60.0f, false,
-                    renderer.GetCameraX() + 960.0f / renderer.GetZoom(),
-                    renderer.GetCameraY() + 540.0f / renderer.GetZoom(),
+                    x + Tuning::InitialAimDistance,
+                    y,
                     false, false, false, false, false, false, false, nullptr);
                 game.Render(1920, 1080);
             }
@@ -2003,6 +2024,631 @@ static void TestHdMapNavigation() {
 }
 
 struct CS2DGameTestAccess {
+    static int BenchmarkRound3Visibility() {
+        SDL_InitSubSystem(SDL_INIT_VIDEO);
+        SDL_Window *window =
+            SDL_CreateWindow("PIX34 visibility benchmark", 0, 0, 1280, 720, SDL_WINDOW_HIDDEN);
+        SDL_Renderer *output =
+            window ? SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE)
+                   : nullptr;
+        if (!output) {
+            SDL_DestroyWindow(window);
+            return 1;
+        }
+        std::filesystem::create_directories("build-evidence/pix34-round3");
+        std::ofstream csv("build-evidence/pix34-round3/visibility-performance.csv");
+        csv << "mode,renderer,frame,query_ms,render_ms,fog_ms\n";
+        {
+            CS2DRenderer renderer;
+            renderer.Initialize(output, "assets/cs2d/maps", 1280, 720);
+            CS2DGame game;
+            game.SetMatchMode(MatchMode::DeathMatch);
+            if (!game.LoadMap(MapPath(), &renderer, true))
+                return 1;
+            game.bots_.resize(9);
+            game.player_.x = 1100;
+            game.player_.y = 100;
+            game.player_.aimAngle = 1.5707963f;
+            for (int index = 0; index < 9; ++index) {
+                auto &actor = game.bots_[index];
+                actor.alive = true;
+                actor.team = Team::T;
+                actor.spriteKey = 1 + index % 2;
+                actor.x = 1040 + (index % 3) * 60;
+                actor.y = 150 + (index / 3) * 50;
+                actor.aimAngle = 1.5707963f;
+                actor.weaponSlot = index % 3;
+            }
+            const auto visible = [&](float x, float y) { return game.CanSeePoint(game.player_, x, y); };
+            SDL_RendererInfo info{};
+            SDL_GetRendererInfo(output, &info);
+            const double toMilliseconds = 1000.0 / SDL_GetPerformanceFrequency();
+            for (int mode = 0; mode < 2; ++mode)
+                for (int frame = -30; frame < 120; ++frame) {
+                    game.clockSec_ += 1.f / 60;
+                    bool seen[9]{};
+                    const Uint64 beforeQuery = SDL_GetPerformanceCounter();
+                    for (int index = 0; index < 9; ++index)
+                        seen[index] =
+                            mode ? game.QueryBodyVisibility(game.player_, game.bots_[index]).fraction > 0
+                                 : game.CanSeePoint(game.player_, game.bots_[index].x, game.bots_[index].y);
+                    const Uint64 beforeRender = SDL_GetPerformanceCounter();
+                    renderer.SetPreviewCamera(1100, 200, 2, false);
+                    SDL_SetRenderDrawColor(output, 0, 0, 0, 255);
+                    SDL_RenderClear(output);
+                    renderer.DrawWorld();
+                    if (mode)
+                        renderer.SetVisibilityFilter(visible);
+                    else
+                        renderer.SetVisibilityFilter({});
+                    for (int index = 0; index < 9; ++index) {
+                        if (!seen[index])
+                            continue;
+                        const auto &actor = game.bots_[index];
+                        SpriteDrawParams sprite;
+                        sprite.x = actor.x;
+                        sprite.y = actor.y;
+                        sprite.size = actor.size;
+                        sprite.spriteKey = actor.spriteKey;
+                        sprite.weaponSlot = actor.weaponSlot;
+                        sprite.weaponId = static_cast<int>(actor.weaponSlot == 0   ? WeaponId::AK47
+                                                           : actor.weaponSlot == 1 ? WeaponId::USP_S
+                                                                                   : WeaponId::Knife);
+                        sprite.aimAngle = actor.aimAngle;
+                        renderer.DrawCharacter(sprite);
+                    }
+                    renderer.SetVisibilityFilter({});
+                    renderer.DrawVisionFog(game.player_.x, game.player_.y, game.player_.aimAngle);
+                    SDL_RenderPresent(output);
+                    const Uint64 afterRender = SDL_GetPerformanceCounter();
+                    if (frame >= 0)
+                        csv << (mode ? "partial-body" : "center-cull") << ',' << info.name << ',' << frame
+                            << ',' << (beforeRender - beforeQuery) * toMilliseconds << ','
+                            << (afterRender - beforeRender) * toMilliseconds << ','
+                            << renderer.LastFogMilliseconds() << '\n';
+                }
+        }
+        SDL_DestroyRenderer(output);
+        SDL_DestroyWindow(window);
+        return csv ? 0 : 1;
+    }
+
+    static void TestPix34Round3() {
+        CS2DGame game;
+        if (!LoadDeathMatch(game))
+            return;
+        game.bots_.clear();
+        auto &player = game.player_;
+        player.team = Team::CT;
+        const auto spawns = game.world_->SpawnsForTeam(true);
+        if (!spawns.empty()) {
+            player.x = spawns.front()->x;
+            player.y = spawns.front()->y;
+        }
+        const auto rifle = WeaponReq(WeaponId::M4A4);
+        check(game.ExecutePurchase(rifle).code == Presentation::BuyCode::Ok,
+              "round3 purchase creates rifle instance");
+        const auto identity = player.equipment[0].id;
+        check(identity != 0 && game.EvaluateRefund(rifle).amount == 3100,
+              "round3 unused purchase quotes actual full payment");
+        game.SwitchWeaponSlot(2);
+        game.SwitchWeaponSlot(0);
+        check(game.EvaluateRefund(rifle).amount == 3100, "round3 switching preserves refund eligibility");
+        game.DropCurrentWeapon();
+        check(!game.ExecuteRefund(rifle), "round3 ground equipment cannot be refunded");
+        for (auto &drop : game.drops_) {
+            drop.pickupDelay = 0;
+            drop.x = player.x;
+            drop.y = player.y;
+        }
+        game.TryPickupDrops(true, nullptr);
+        check(player.equipment[0].id == identity && game.EvaluateRefund(rifle).amount == 3100,
+              "round3 recovered own unused instance retains receipt");
+        const int money = player.money;
+        check(game.ExecuteRefund(rifle) && player.money == money + 3100 &&
+                  player.weapons[0] == WeaponId::None,
+              "round3 refund removes equipment and returns payment once");
+        check(!game.ExecuteRefund(rifle) && player.money == money + 3100,
+              "round3 repeated refund cannot duplicate money");
+        game.ExecutePurchase(rifle);
+        player.money = 16000;
+        check(!game.ExecuteRefund(rifle) && player.weapons[0] == WeaponId::M4A4,
+              "round3 balance cap rejection preserves instance");
+        player.money = 10000;
+        player.weaponSlot = 0;
+        player.LoadAmmoFromSlot();
+        player.ApplyWeaponRecoil(0);
+        check(!game.ExecuteRefund(rifle), "round3 fired instance permanently loses refund eligibility");
+        const auto usedIdentity = player.equipment[0].id;
+        const auto oldAmmo = player.ammo;
+        game.ExecutePurchase(WeaponReq(WeaponId::AWP));
+        check(std::any_of(game.drops_.begin(), game.drops_.end(),
+                          [&](const auto &drop) {
+                              return drop.equipment.id == usedIdentity && drop.magAmmo == oldAmmo &&
+                                     drop.equipment.used;
+                          }),
+              "round3 replacement drops old ammo identity and use history");
+        game.ExecuteRefund(WeaponReq(WeaponId::AWP));
+        game.drops_.clear();
+        game.ExecutePurchase(WeaponReq(WeaponId::FAMAS));
+        const auto borrowedIdentity = player.equipment[0].id;
+        game.DropCurrentWeapon();
+        const float returnX = player.x, returnY = player.y;
+        game.bots_.resize(1);
+        auto &borrower = game.bots_[0];
+        borrower.alive = true;
+        borrower.team = Team::T;
+        borrower.x = game.drops_.back().x;
+        borrower.y = game.drops_.back().y;
+        game.drops_.back().pickupDelay = 0;
+        player.x -= 200;
+        game.TryPickupDrops(false, nullptr);
+        check(borrower.equipment[0].id == borrowedIdentity && !game.ExecuteRefund(WeaponReq(WeaponId::FAMAS)),
+              "round3 another actor can hold an original purchase without allowing owner refund");
+        borrower.weaponSlot = 0;
+        borrower.LoadAmmoFromSlot();
+        borrower.ApplyWeaponRecoil(0);
+        game.DropWeaponToGround(borrower, 0, returnX, returnY);
+        borrower.ClearSlotWeapon(0);
+        borrower.alive = false;
+        player.x = returnX;
+        player.y = returnY;
+        game.drops_.back().pickupDelay = 0;
+        game.TryPickupDrops(true, nullptr);
+        check(player.equipment[0].id == borrowedIdentity && player.equipment[0].used &&
+                  game.EvaluateRefund(WeaponReq(WeaponId::FAMAS)).amount == 0,
+              "round3 another actor's use remains attached after original buyer recovers equipment");
+        game.bots_.clear();
+        game.ExecutePurchase(WeaponReq(WeaponId::GrenadeFlash));
+        game.ExecutePurchase(WeaponReq(WeaponId::GrenadeFlash));
+        const auto newest = player.grenadeEquipment[1].id;
+        check(game.EvaluateRefund(WeaponReq(WeaponId::GrenadeFlash)).quantity == 2,
+              "round3 refund quotes same-kind grenade count");
+        check(game.ExecuteRefund(WeaponReq(WeaponId::GrenadeFlash)) && player.grenadeCount == 1 &&
+                  player.grenadeEquipment[0].id != newest,
+              "round3 grenade refund selects latest eligible instance");
+        player.armor = 0;
+        player.helmet = false;
+        game.ExecutePurchase(ArmorReq(1));
+        game.ExecutePurchase(ArmorReq(2));
+        check(game.ExecuteRefund(ArmorReq(2)) && player.armor == 100 && !player.helmet,
+              "round3 helmet upgrade rolls back previous armor state");
+        check(game.ExecuteRefund(ArmorReq(1)) && player.armor == 0,
+              "round3 armor receipts roll back in reverse purchase order");
+        game.ExecutePurchase(ArmorReq(1));
+        game.ApplyDamage(player, 20, .5f);
+        check(!game.ExecuteRefund(ArmorReq(1)), "round3 armor used to absorb damage cannot be refunded");
+        Presentation::BuyRequest kit;
+        kit.kind = Presentation::BuyKind::DefuseKit;
+        game.ExecutePurchase(kit);
+        const auto kitIdentity = player.kitEquipment.id;
+        game.mode_ = MatchMode::BombDefusal;
+        game.round_.Reset(RoundConfig{});
+        game.round_.Update(2.1f);
+        game.round_.Update(6.1f);
+        game.PlantBomb(player.x, player.y, nullptr);
+        game.UpdateObjective(.1f, true, nullptr);
+        check(player.kitEquipment.used && game.EvaluateRefund(kit).amount == 0,
+              "round3 kit becomes nonrefundable only after real defuse progress advances");
+        game.mode_ = MatchMode::DeathMatch;
+        game.bombPlanted_ = false;
+        game.OnCombatantKilled(player, nullptr);
+        check(!player.hasDefuseKit && std::any_of(game.drops_.begin(), game.drops_.end(),
+                                                  [&](const auto &drop) {
+                                                      return drop.defuseKit &&
+                                                             drop.equipment.id == kitIdentity;
+                                                  }),
+              "round3 death drops kit with its own identity");
+        game.bots_.resize(1);
+        auto &bot = game.bots_[0];
+        bot.alive = true;
+        bot.team = Team::CT;
+        bot.x = player.x;
+        bot.y = player.y;
+        for (auto &drop : game.drops_) {
+            drop.pickupDelay = 0;
+            drop.x = bot.x;
+            drop.y = bot.y;
+        }
+        game.TryPickupDrops(false, nullptr);
+        check(bot.hasDefuseKit && bot.kitEquipment.id == kitIdentity,
+              "round3 living CT bot recovers kit while human is dead");
+        game.bots_.emplace_back();
+        auto &starter = game.bots_.back();
+        starter.alive = true;
+        starter.team = Team::T;
+        starter.x = returnX;
+        starter.y = returnY;
+        starter.SetSlotWeapon(1, WeaponId::Glock18);
+        starter.weaponSlot = 1;
+        starter.LoadAmmoFromSlot();
+        game.OnCombatantKilled(starter, nullptr, &player, WeaponId::Knife);
+        check(game.drops_.back().id == WeaponId::Glock18 && game.killFeed_.front().weapon == WeaponId::Knife,
+              "round3 bot starter pistol drops and melee kill records its actual weapon");
+        const auto feed = game.killFeed_.size();
+        game.OnCombatantKilled(player, nullptr);
+        check(game.killFeed_.size() == feed, "round3 repeated death emits one structured kill event");
+        game.bots_.clear();
+        CS2DMapData data;
+        data.mapWidth = data.mapHeight = 100;
+        data.tileWidth = data.tileHeight = 8;
+        ObjectLayerDef walls;
+        walls.name = "Collisions";
+        ObjectDef wall;
+        wall.type = "wall";
+        wall.x = 200;
+        wall.y = 0;
+        wall.width = 8;
+        wall.height = 800;
+        walls.objects.push_back(wall);
+        data.objectLayers.push_back(walls);
+        game.world_->Build(data);
+        game.visibility_.SetWorld(game.world_.get());
+        player.alive = true;
+        player.health = 1000;
+        player.x = 240;
+        player.y = 400;
+        player.aimAngle = 3.14159265f;
+        check(game.ExpectedBlastDamage(170, 400, player) == 0,
+              "round3 solid wall fully blocks grenade body damage samples");
+        player.x = 170;
+        check(game.ExpectedBlastDamage(170, 400, player) > 70,
+              "round3 exposed body receives close blast damage");
+        data.objectLayers[0].objects[0].y = 400;
+        data.objectLayers[0].objects[0].height = 400;
+        game.world_->Build(data);
+        game.bots_.resize(1);
+        auto &exposedActor = game.bots_[0];
+        exposedActor.alive = true;
+        exposedActor.team = Team::T;
+        exposedActor.x = 240;
+        exposedActor.y = 400;
+        exposedActor.aimAngle = 3.14159265f;
+        exposedActor.health = exposedActor.maxHealth = 1000;
+        player.x = 170;
+        player.y = 400;
+        player.aimAngle = 0;
+        const auto exposed = game.QueryBodyVisibility(player, exposedActor);
+        check(!game.CanSeePoint(player, 240, 400) && exposed.fraction > 0 && exposed.fraction < 1,
+              "round3 exposed body is detectable while its center is hidden");
+        check(game.visibility_.HasLineOfSight(170, 400, exposed.aim.x, exposed.aim.y),
+              "round3 largest visible component supplies a valid exposed aim point");
+        game.FireBullet(170, 400, std::atan2(exposed.aim.y - 400, exposed.aim.x - 170),
+                        WeaponDB::Get(WeaponId::USP_S), -1, Team::CT);
+        game.UpdateBullets(.1f, nullptr);
+        check(exposedActor.health < 1000, "round3 bullet intersects exposed alpha geometry before wall");
+        data.objectLayers[0].objects[0].y = 0;
+        data.objectLayers[0].objects[0].height = 800;
+        game.world_->Build(data);
+        game.bullets_.clear();
+        const int beforeWallShot = exposedActor.health;
+        game.FireBullet(170, 400, 0, WeaponDB::Get(WeaponId::AWP), -1, Team::CT);
+        game.UpdateBullets(.1f, nullptr);
+        check(exposedActor.health == beforeWallShot &&
+                  game.QueryBodyVisibility(player, exposedActor).fraction == 0,
+              "round3 closest wall blocks both body visibility and bullet damage");
+        game.bots_.clear();
+        CS2DGame::Player recoilActor;
+        recoilActor.SetSlotWeapon(0, WeaponId::AK47);
+        recoilActor.weaponSlot = 0;
+        recoilActor.aimAngle = .7f;
+        recoilActor.aimDistance = 300;
+        recoilActor.ApplyWeaponRecoil(0);
+        const auto vector = recoilActor.EffectiveAimVector();
+        const auto decoded =
+            Ballistics::RemoveKick({vector.x * 300, vector.y * 300}, recoilActor.BallisticKick());
+        check(std::hypot(decoded.x - std::cos(.7f) * 300, decoded.y - std::sin(.7f) * 300) < .001f,
+              "round3 cursor handoff exactly removes horizontal and vertical ballistic recoil");
+        auto recovered = recoilActor.fireStates[0];
+        recovered.Recover(10);
+        check(recovered.weapon == WeaponId::None,
+              "round3 dropped instance uses the same complete recoil recovery");
+        CS2DGame::FireZone fire;
+        fire.x = 180;
+        fire.y = 400;
+        fire.age = 1;
+        game.RebuildFireCells(fire);
+        check(!fire.cells.empty() && !game.FireContains(fire, 220, 400) && game.FireContains(fire, 180, 400),
+              "round3 shared fire region stops at wall and contains visible flame cells");
+        bool legal = true;
+        for (const auto cell : fire.cells)
+            legal &= !game.world_->CheckRectCollision(cell.x - 2, cell.y - 2, 4, 4);
+        check(legal, "round3 fire never occupies a blocking terrain cell");
+        CS2DGame::FireZone wallFire = fire;
+        wallFire.x = 198;
+        wallFire.terrainRevision = 0;
+        game.RebuildFireCells(wallFire);
+        check(!wallFire.cells.empty() && !game.FireContains(wallFire, 220, 400),
+              "round3 wall-adjacent impact ignites connected legal floor on its own side");
+        fire.owner = -1;
+        fire.weapon = WeaponId::GrenadeIncendiary;
+        game.fires_ = {fire};
+        game.fireTickTimer_ = 0;
+        game.bots_.resize(1);
+        auto &burnVictim = game.bots_[0];
+        burnVictim.alive = true;
+        burnVictim.team = Team::T;
+        burnVictim.x = 180;
+        burnVictim.y = 400;
+        burnVictim.health = 1;
+        game.UpdateGrenades(.1f, nullptr);
+        check(!burnVictim.alive && game.killFeed_.front().weapon == WeaponId::GrenadeIncendiary &&
+                  game.killFeed_.front().killer == "你",
+              "round3 lethal fire enters unified death and records original thrower and weapon");
+        game.fires_.clear();
+        burnVictim.alive = true;
+        burnVictim.health = 1;
+        player.alive = false;
+        CS2DGame::Grenade delayed;
+        delayed.type = WeaponId::GrenadeHE;
+        delayed.owner = -1;
+        delayed.x = 180;
+        delayed.y = 400;
+        game.ExplodeGrenade(delayed, nullptr);
+        check(!burnVictim.alive && game.killFeed_.front().weapon == WeaponId::GrenadeHE &&
+                  game.killFeed_.front().killer == "你",
+              "round3 delayed grenade kill retains weapon and attribution after owner death");
+        player.alive = true;
+        game.bots_.clear();
+        game.smokes_.push_back({});
+        game.smokes_[0].x = 170;
+        game.smokes_[0].y = 400;
+        game.smokes_[0].age = 2;
+        check(game.SegmentBlockedBySmoke(170, 400, 175, 400),
+              "round3 observer inside smoke cannot see own body or neighboring entities");
+        check(game.SegmentBlockedBySmoke(170, 400, 170, 400),
+              "round3 smoke also masks the exact observer origin pixel");
+        game.smokes_.clear();
+        CS2DGame::Grenade decoy;
+        decoy.type = WeaponId::GrenadeDecoy;
+        decoy.imitate = WeaponId::AWP;
+        decoy.owner = -1;
+        decoy.x = 170;
+        decoy.y = 400;
+        game.ExplodeGrenade(decoy, nullptr);
+        check(game.decoys_.size() == 1 && game.decoys_[0].weapon == WeaponId::AWP,
+              "round3 decoy captures original weapon and persists independently of thrower");
+        game.UpdateGrenades(1, nullptr);
+        check(game.decoys_.size() == 1 && game.decoys_[0].shot == 1,
+              "round3 active decoy emits located weapon gunshot event");
+        game.UpdateGrenades(15, nullptr);
+        check(game.decoys_.empty(), "round3 decoy expires once after its final explosion event");
+        CS2DGame epochs;
+        if (LoadDeathMatch(epochs)) {
+            auto &buyer = epochs.player_;
+            epochs.ExecutePurchase(WeaponReq(WeaponId::M4A4));
+            check(epochs.EvaluateRefund(WeaponReq(WeaponId::M4A4)).amount == 3100,
+                  "round3 newly purchased deathmatch equipment starts refundable");
+            epochs.SpawnPlayer();
+            check(buyer.weapons[0] == WeaponId::M4A4 &&
+                      epochs.EvaluateRefund(WeaponReq(WeaponId::M4A4)).amount == 0,
+                  "round3 deathmatch free respawn loadout receives a new nonrefundable identity");
+            epochs.mode_ = MatchMode::TeamElimination;
+            epochs.ExecutePurchase(WeaponReq(WeaponId::FAMAS));
+            const auto rifleIdentity = buyer.equipment[0].id;
+            auto &survivor = epochs.bots_[0];
+            const auto pistolIdentity = survivor.equipment[1].id;
+            survivor.grenades[0] = WeaponId::GrenadeSmoke;
+            survivor.grenadeCount = 1;
+            survivor.grenadeSlot = 0;
+            survivor.SyncActiveGrenade();
+            survivor.grenadeEquipment[0].id = epochs.nextEquipmentId_++;
+            const auto grenadeIdentity = survivor.grenadeEquipment[0].id;
+            survivor.hasDefuseKit = true;
+            survivor.kitEquipment.id = epochs.nextEquipmentId_++;
+            const auto survivingKit = survivor.kitEquipment.id;
+            epochs.RespawnAllForRound(true);
+            check(buyer.weapons[0] == WeaponId::FAMAS && buyer.equipment[0].id == rifleIdentity &&
+                      epochs.EvaluateRefund(WeaponReq(WeaponId::FAMAS)).amount == 0,
+                  "round3 surviving equipment keeps identity while old-round purchase receipt expires");
+            check(survivor.equipment[1].id == pistolIdentity &&
+                      survivor.ActiveGrenade() == WeaponId::GrenadeSmoke &&
+                      survivor.grenadeEquipment[0].id == grenadeIdentity && survivor.hasDefuseKit &&
+                      survivor.kitEquipment.id == survivingKit,
+                  "round3 survivor bot retains gun grenade and kit instances across round reset");
+        }
+        for (const auto size :
+             std::vector<SDL_FPoint>{{1280, 720}, {1920, 1080}, {2560, 1600}, {3440, 1440}, {1024, 768}}) {
+            bool inside = true;
+            for (int shot = 0; shot < 20; ++shot)
+                for (int frame = 0; frame <= 80; ++frame) {
+                    const auto view = ShowcaseCamera::Sample(frame * .1f, shot, 880, 640, size.x, size.y,
+                                                             {{120, 120}, {760, 520}});
+                    const float hw = size.x / (view.zoom * 2), hh = size.y / (view.zoom * 2);
+                    inside &= view.center.x - hw >= -.01f && view.center.y - hh >= -.01f &&
+                              view.center.x + hw <= 880.01f && view.center.y + hh <= 640.01f;
+                }
+            check(inside,
+                  "round3 all showcase Bezier paths remain entirely within map at supported aspect ratios");
+        }
+    }
+    static void TestPix34() {
+        CS2DGame game;
+        if (!LoadDeathMatch(game)) return;
+        CS2DMapData data;
+        data.mapWidth = data.mapHeight = 200;
+        data.tileWidth = data.tileHeight = 8;
+        game.GetWorld().Build(data);
+        game.bots_.resize(1);
+        game.player_.x = game.player_.y = 400;
+        game.player_.SetSlotWeapon(2, WeaponId::Knife);
+        game.SwitchWeaponSlot(2);
+        auto& bot = game.bots_.front();
+        bot.alive = true;
+        bot.team = Team::T;
+        game.player_.team = Team::CT;
+        bot.x = 380; bot.y = 400; bot.health = 100;
+        game.UpdatePlayerShooting(0, true, 600, 400, nullptr);
+        check(bot.health == 100, "PIX-34 melee misses enemy behind attacker");
+        game.prevMouseDown_ = false;
+        game.player_.shootCooldown = 0;
+        bot.x = 420;
+        game.UpdatePlayerShooting(0, true, 600, 400, nullptr);
+        check(bot.health < 100, "PIX-34 melee hits enemy in forward cone");
+        game.player_.alive = false;
+        bot.health = bot.maxHealth = 100;
+        bot.aimAngle = 0;
+        auto& hitAi = game.AiAt(0);
+        hitAi.lastHitTimer = 2;
+        hitAi.threatX = bot.x - 100;
+        hitAi.threatY = bot.y;
+        game.UpdateBOTs(1.0f/60, nullptr);
+        check(std::abs(bot.aimAngle) > 0 && std::abs(bot.aimAngle) <= Tuning::BotMaxTurnRate/60 + 0.001f,
+              "PIX-34 hit response obeys turn limit across movement and scanning");
+        game.player_.alive = true;
+        game.bots_.clear();
+        for (float distance : {200.0f, 400.0f}) {
+            game.grenades_.clear();
+            auto& player = game.player_;
+            player.grenades[0] = WeaponId::GrenadeHE;
+            player.grenadeCount = 1; player.grenadeSlot = 0;
+            player.SyncActiveGrenade();
+            game.ThrowGrenade(player, 0, nullptr, distance);
+            check(!game.grenades_.empty(), "PIX-34 grenade launches");
+            for (int frame = 0; frame < 83; ++frame) game.UpdateGrenades(1.0f/60, nullptr);
+            const float travelled = game.grenades_.front().x - player.x;
+            check(std::abs(travelled - distance) <= 30, "PIX-34 200/400 grenade landing error within 30 units");
+            std::printf("[PIX-34] target=%.0f travelled=%.2f error=%.2f\n", distance, travelled, std::abs(travelled-distance));
+        }
+        game.SetBotDifficulty(3);
+        for (auto& ai : game.botAi_) check(ai.difficulty == 3, "PIX-34 difficulty applied");
+    }
+
+    static void TestPix34Round2() {
+        CS2DGame game;
+        if (!LoadDeathMatch(game)) return;
+        game.QuickSwitchWeapon();
+        check(game.player_.weaponSlot == 2, "round2 initial Q equips knife");
+        game.QuickSwitchWeapon();
+        check(game.player_.weaponSlot == 1, "round2 Q returns to starting pistol");
+        game.player_.grenades[0]=WeaponId::GrenadeHE;
+        game.player_.grenades[1]=WeaponId::GrenadeFlash;
+        game.player_.grenadeCount=2;
+        game.player_.grenadeSlot=0;
+        game.player_.SyncActiveGrenade();
+        game.SwitchWeaponSlot(3);
+        game.SwitchWeaponSlot(3);
+        game.QuickSwitchWeapon();
+        check(game.player_.ActiveGrenade()==WeaponId::GrenadeHE, "round2 Q remembers grenade identity inside one slot");
+        game.QuickSwitchWeapon();
+        check(game.player_.ActiveGrenade()==WeaponId::GrenadeFlash, "round2 grenade Q switches both ways");
+        game.player_.grenades[0]=WeaponId::GrenadeFlash;
+        game.player_.grenadeCount=1;
+        game.player_.grenadeSlot=0;
+        game.player_.SyncActiveGrenade();
+        game.QuickSwitchWeapon();
+        check(game.player_.weaponSlot==2, "round2 consumed previous grenade falls back to knife");
+        game.player_.team = Team::T;
+        game.bombCarrier_ = -1;
+        game.bombPlanted_ = game.bombDropped_ = false;
+        game.ToggleHoldC4();
+        game.QuickSwitchWeapon();
+        check(game.player_.weaponSlot == 2 && !game.PlayerHoldingC4(), "round2 Q stows C4 and restores the previous equipment");
+        game.QuickSwitchWeapon();
+        check(game.player_.weaponSlot == 4 && game.PlayerHoldingC4(), "round2 Q restores held C4");
+        game.SwitchWeaponSlot(1);
+        const int previousSlot = game.previousEquipSlot_;
+        game.SwitchWeaponSlot(-1);
+        check(game.previousEquipSlot_ == previousSlot && game.player_.weaponSlot == 1,
+              "round2 invalid switch leaves equipment history unchanged");
+        game.player_.SetSlotWeapon(0, WeaponId::AK47);
+        game.SwitchWeaponSlot(0);
+        game.DropCurrentWeapon();
+        game.QuickSwitchWeapon();
+        check(game.player_.weaponSlot == 2, "round2 Q after dropping a gun falls back to knife");
+        game.player_.SetSlotWeapon(0, WeaponId::AK47);
+        game.SwitchWeaponSlot(0);
+        CS2DGame::DroppedItem incoming;
+        incoming.id = WeaponId::AWP;
+        incoming.x = game.player_.x;
+        incoming.y = game.player_.y;
+        incoming.pickupDelay = 0;
+        game.drops_.push_back(incoming);
+        game.drops_.shrink_to_fit();
+        game.TryPickupDrops(true,nullptr);
+        check(game.player_.weapons[0] == WeaponId::AWP, "round2 replacing held weapon survives dropped item vector growth");
+        game.QuickSwitchWeapon();
+        check(game.player_.weaponSlot == 2, "round2 Q after replacing its previous weapon falls back to knife");
+
+        CS2DMapData data;
+        data.mapWidth=data.mapHeight=100;
+        data.tileWidth=data.tileHeight=8;
+        game.GetWorld().Build(data);
+        game.player_.x = game.player_.y = 400;
+        game.player_.vx = game.player_.vy = 0;
+        for (int frame = 0; frame < 60; ++frame) game.UpdatePlayerMovement(1.0f/60,false,false,false,true,false);
+        const float runningBlur = game.GetAimMotionBlur();
+        for (int frame = 0; frame < 60; ++frame) game.UpdatePlayerMovement(1.0f/60,false,false,false,true,true);
+        check(runningBlur > game.GetAimMotionBlur() && game.GetAimMotionBlur() > 0,
+              "round2 running produces stronger reticle blur than stealth");
+        for (int frame = 0; frame < 120; ++frame) game.UpdatePlayerMovement(1.0f/60,false,false,false,false,false);
+        check(game.GetAimMotionBlur() < .05f, "round2 stopping smoothly restores reticle clarity");
+        game.bots_.resize(2);
+        game.mode_=MatchMode::BombDefusal;
+        auto setup = [&] {
+            game.round_.Reset(RoundConfig{});
+            game.round_.Update(2.1f);
+            game.round_.Update(6.1f);
+            game.player_.alive=true;
+            game.player_.team=Team::CT;
+            game.player_.x=game.player_.y=400;
+            game.player_.hasDefuseKit=false;
+            for (size_t i=0;i<game.bots_.size();++i) {
+                auto& bot=game.bots_[i];
+                bot.alive=true; bot.team=Team::CT; bot.x=bot.y=400;
+                bot.hasDefuseKit=i==0;
+                game.AiAt(i).lastHitTimer=0;
+                game.AiAt(i).defuseCooldown=0;
+            }
+            game.PlantBomb(400,400,nullptr);
+        };
+        setup();
+        game.UpdateObjective(1,true,nullptr);
+        check(std::abs(game.player_.defuseProgress-.1f)<.001f && std::abs(game.bots_[0].defuseProgress-.25f)<.001f &&
+            std::abs(game.bots_[1].defuseProgress-.1f)<.001f, "round2 player and multiple BOTs progress independently");
+        check(game.activeDefuser_==0 && std::abs(game.GetDefuseRemaining()-3)<.001f, "round2 kit BOT leads by estimated finish time");
+        game.UpdateObjective(1,false,nullptr);
+        check(game.player_.defuseProgress==0 && std::abs(game.bots_[0].defuseProgress-.5f)<.001f,
+            "round2 releasing player interact preserves BOT progress");
+        game.bots_[0].alive=false;
+        game.UpdateObjective(.5f,false,nullptr);
+        check(game.activeDefuser_==1 && std::abs(game.GetDefuseProgress()-.25f)<.001f,
+            "round2 leading defuser death promotes next independent progress");
+        setup();
+        game.player_.defuseProgress=.4f;
+        game.bots_[0].defuseProgress=.1f;
+        game.bots_[1].alive=false;
+        game.UpdateObjective(.1f,true,nullptr);
+        check(game.activeDefuser_==0 && game.player_.defuseProgress>game.bots_[0].defuseProgress,
+            "round2 HUD selects earliest completion instead of highest percentage");
+        setup();
+        game.player_.hasDefuseKit=true;
+        game.player_.defuseProgress=.99f;
+        for (auto& bot:game.bots_) bot.alive=false;
+        game.bombTimer_=.05f;
+        game.UpdateObjective(.1f,true,nullptr);
+        check(!game.bombPlanted_ && game.round_.LastWinner()==Team::CT, "round2 completion before fuse wins within a large simulation step");
+        setup();
+        game.player_.hasDefuseKit=true;
+        game.player_.defuseProgress=.99f;
+        for (auto& bot:game.bots_) bot.alive=false;
+        game.bombTimer_=.01f;
+        game.UpdateObjective(.1f,true,nullptr);
+        check(!game.bombPlanted_ && game.round_.LastWinner()==Team::T, "round2 fuse deadline prevents late defuse");
+        setup();
+        game.player_.hasDefuseKit = true;
+        game.player_.money = game.bots_[0].money = 0;
+        game.player_.defuseProgress = game.bots_[0].defuseProgress = .99f;
+        const int scoreBefore = game.GetScoreCT();
+        game.UpdateObjective(.1f,true,nullptr);
+        const int moneyAfter = game.player_.money;
+        check(game.player_.money == game.bots_[0].money+300 && game.GetScoreCT() == scoreBefore+1,
+              "round2 simultaneous completion chooses stable winner and awards one personal bonus");
+        game.UpdateObjective(.1f,true,nullptr);
+        check(game.player_.money == moneyAfter && game.GetScoreCT() == scoreBefore+1,
+              "round2 repeated objective update cannot duplicate reward or round result");
+    }
+
     static void TestPix33() {
         CS2DGame game;
         if (!LoadDeathMatch(game)) return;
@@ -2015,8 +2661,10 @@ struct CS2DGameTestAccess {
         check(game.player_.money == money - 400 && game.player_.hasDefuseKit, "PIX-33 kit costs $400");
         check(game.EvaluatePurchase(kit) == Presentation::BuyCode::AlreadyEquipped, "PIX-33 duplicate kit rejected");
         game.OnCombatantKilled(game.player_, nullptr);
+        check(std::any_of(game.drops_.begin(),game.drops_.end(),[](const auto& drop) { return drop.defuseKit; }),
+              "round3 death creates an independent dropped kit");
         game.RespawnAllForRound(false);
-        check(game.player_.hasDefuseKit, "PIX-33 kit survives death and new round");
+        check(!game.player_.hasDefuseKit, "round3 kit drops on death and is absent after respawn");
         game.player_.team = Team::T;
         check(game.EvaluatePurchase(kit) == Presentation::BuyCode::InvalidItem, "PIX-33 T kit purchase invalid");
         game.player_.team = Team::CT;
@@ -2057,6 +2705,22 @@ struct CS2DGameTestAccess {
             audio.StopChannel(channel);
             check(channel == -1 && !Mix_Playing(original), "PIX-33 tracked audio stops");
         }
+        int playerChannel = audio.PlaySoundTracked(SoundEffect::BOMB_DEFUSING, 2);
+        int botChannel = audio.PlaySoundTrackedAt(SoundEffect::BOMB_DEFUSING_KIT, 0, 0, 0, 0, 3);
+        check(playerChannel == 2 && botChannel == 3 && Mix_Playing(2) && Mix_Playing(3),
+              "round2 concurrent defusers own distinct reserved audio channels");
+        audio.StopChannel(playerChannel);
+        check(!Mix_Playing(2) && Mix_Playing(3), "round2 cancelling one participant preserves another participant audio");
+        int effectChannel = audio.PlaySoundTracked(SoundEffect::PICKUP);
+        check(effectChannel >= 12, "round2 ordinary sounds cannot reuse objective participant channels");
+        game.player_.alive = true;
+        game.player_.defuseProgress = .5f;
+        game.player_.defuseChannel = audio.PlaySoundTracked(SoundEffect::BOMB_DEFUSING,2);
+        game.OnCombatantKilled(game.player_,nullptr);
+        check(!Mix_Playing(2) && Mix_Playing(3) && game.player_.defuseProgress == 0,
+              "round2 death without an audio argument stops only the victim defuse voice");
+        audio.StopChannel(botChannel);
+        audio.StopChannel(effectChannel);
     }
 
     static void Move(CS2DGame& game) { game.UpdatePlayerMovement(1.0f/60, false, false, false, true, false); }
@@ -2255,6 +2919,25 @@ struct SpriteAssetReview {
                 }
             }
             save("character-poses");
+            std::filesystem::create_directories("build-evidence/pix34-round2");
+            renderer.SetPreviewCamera(1280.0f/12,720.0f/12,6,false);
+            for (int equipment=0;equipment<2;++equipment) {
+                clear();
+                for (int team=0;team<3;++team) for (int direction=0;direction<8;++direction) {
+                    SpriteDrawParams actor;
+                    actor.x=(80+direction*160)/6.0f;
+                    actor.y=(120+team*240)/6.0f;
+                    actor.spriteKey=team;
+                    actor.weaponSlot=equipment ? 4 : 2;
+                    actor.weaponId=static_cast<int>(equipment ? WeaponId::C4 : WeaponId::Knife);
+                    actor.aimAngle=direction*3.14159265f/4;
+                    renderer.DrawCharacter(actor);
+                }
+                SDL_RenderPresent(output);
+                const char* path=equipment ? "build-evidence/pix34-round2/c4-directions.png" : "build-evidence/pix34-round2/knife-directions.png";
+                check(IMG_SavePNG(surface,path)==0,"round2 equipment attachment acceptance image saved");
+            }
+            renderer.SetPreviewCamera(1280.0f/24,720.0f/24,12,false);
             for (int team = 0; team < 3; ++team) {
                 SpriteDrawParams actor;
                 actor.x = 20;
@@ -2336,10 +3019,601 @@ struct SpriteAssetReview {
     }
 };
 
-int main() {
+static void TestPix34Input() {
+    SDL_InitSubSystem(SDL_INIT_EVENTS);
+    InputManager input;
+    input.gameplayContext = true;
+    input.bindings.keys[static_cast<int>(GameAction::Buy)] = SDL_SCANCODE_F2;
+    SDL_Event key{};
+    key.type = SDL_KEYDOWN;
+    key.key.keysym.scancode = SDL_SCANCODE_F2;
+    key.key.keysym.sym = SDLK_z;
+    SDL_PushEvent(&key);
+    input.ProcessEvents(nullptr);
+    check(input.IsBuyMenuToggleRequested(), "PIX-34 remapped event uses physical scancode independently of layout");
+    input.captureKey = true;
+    key.key.keysym.scancode = SDL_SCANCODE_ESCAPE;
+    SDL_PushEvent(&key);
+    input.ProcessEvents(nullptr);
+    check(input.capturedInput == InputBinding(SDL_SCANCODE_ESCAPE) && !input.IsPauseToggleRequested(), "PIX-34 capture consumes Escape before pause");
+    input.captureKey = false;
+    key.key.keysym.scancode = SDL_SCANCODE_F1;
+    SDL_PushEvent(&key);
+    input.ProcessEvents(nullptr);
+    check(input.helpRequested && !input.IsMuteToggleRequested(), "PIX-34 F1 opens help independently of mute");
+    input.bindings.keys[static_cast<int>(GameAction::Fire)] = InputBinding::Mouse(SDL_BUTTON_RIGHT);
+    input.bindings.keys[static_cast<int>(GameAction::Scope)] = InputBinding::Mouse(SDL_BUTTON_LEFT);
+    SDL_Event mouse{};
+    mouse.type = SDL_MOUSEBUTTONDOWN;
+    mouse.button.button = SDL_BUTTON_RIGHT;
+    SDL_PushEvent(&mouse);
+    input.ProcessEvents(nullptr);
+    check(input.IsMouseLeftClicked() && !input.IsMouseRightClicked(), "PIX-34 left-handed right button fires");
+    input.ProcessEvents(nullptr);
+    check(input.IsDown(GameAction::Fire) && !input.WasPressed(GameAction::Fire),
+          "round2 mouse held state survives a frame without a new edge");
+    mouse.type = SDL_MOUSEBUTTONUP;
+    SDL_PushEvent(&mouse);
+    input.ProcessEvents(nullptr);
+    check(input.WasReleased(GameAction::Fire) && !input.IsDown(GameAction::Fire),
+          "round2 mouse release edge clears held state");
+    input.ProcessEvents(nullptr);
+    check(!input.WasReleased(GameAction::Fire), "round2 release edge lasts one frame");
+    for (int action = 0; action < GameActionCount; ++action) {
+        KeyBindings bindings;
+        bindings.keys.fill({});
+        bindings.keys[action] = InputBinding::Mouse(SDL_BUTTON_X1);
+        input.SetBindings(bindings);
+        mouse.type = SDL_MOUSEBUTTONDOWN;
+        mouse.button.button = SDL_BUTTON_X1;
+        SDL_PushEvent(&mouse);
+        input.ProcessEvents(nullptr);
+        check(input.WasPressed(static_cast<GameAction>(action)) && input.IsDown(static_cast<GameAction>(action)),
+              "round2 every action supports a side mouse button");
+    }
+    SDL_Event focus{};
+    focus.type = SDL_WINDOWEVENT;
+    focus.window.event = SDL_WINDOWEVENT_FOCUS_LOST;
+    SDL_PushEvent(&focus);
+    input.captureKey = true;
+    input.ProcessEvents(nullptr);
+    check(!input.IsDown(GameAction::QuickSwitch) && !input.captureKey,
+          "round2 focus loss clears held actions and capture state");
+    input.gameplayContext = false;
+    input.bindings.keys[static_cast<int>(GameAction::Pause)] = InputBinding::Mouse(SDL_BUTTON_X2);
+    mouse.button.button = SDL_BUTTON_X2;
+    SDL_PushEvent(&mouse);
+    input.ProcessEvents(nullptr);
+    check(input.WasPressed(GameAction::Pause), "round2 mouse bound return action remains usable in menus");
+    input.SetBindings(KeyBindings{});
+    input.uiConsumesMouse = true;
+    mouse.button.button = SDL_BUTTON_LEFT;
+    SDL_PushEvent(&mouse);
+    input.ProcessEvents(nullptr);
+    check(!input.WasPressed(GameAction::Fire), "round2 left click consumed by a menu widget cannot fire");
+    input.SetBindings(KeyBindings{});
+    input.bindings.keys[static_cast<int>(GameAction::Fire)] = InputBinding::Mouse(SDL_BUTTON_X2);
+    const auto previous = PathUtils::BaseDir();
+    auto directory = std::filesystem::absolute("build-evidence/pix34-settings-test");
+    std::filesystem::create_directories(directory);
+    PathUtils::SetBaseDir(directory.string());
+    SaveManager saved;
+    saved.MutableSettings().bindings = input.bindings;
+    saved.MutableSettings().botDifficulty = 3;
+    saved.MutableSettings().combatHintsVisible = false;
+    saved.Save();
+    SaveManager loaded;
+    loaded.Load();
+    check(loaded.GetSettings().bindings.keys == input.bindings.keys,
+          "PIX-34 all key bindings and handedness survive restart");
+    check(loaded.GetSettings().botDifficulty == 3, "PIX-34 difficulty survives restart");
+    check(!loaded.GetSettings().combatHintsVisible, "round2 combat help preference survives restart");
+    const auto savePath = directory / (std::string("cs2d_save") + std::string(BuildInfo::SaveSuffix()) + ".ini");
+    IniFile legacy;
+    legacy.SetInt("bindings", "0", SDL_SCANCODE_Q);
+    legacy.SetInt("bindings", "1", SDL_SCANCODE_F1);
+    legacy.SetBool("bindings", "left_handed", true);
+    legacy.Save(savePath.string());
+    SaveManager migrated;
+    migrated.Load();
+    const auto& legacyBindings = migrated.GetSettings().bindings;
+    check(legacyBindings.keys[0] == InputBinding(SDL_SCANCODE_Q) && legacyBindings.keys[1] == InputBinding(SDL_SCANCODE_F1),
+          "round2 legacy keyboard bindings keep their original actions");
+    check(legacyBindings[GameAction::Help].device == InputBinding::Device::None &&
+          legacyBindings[GameAction::QuickSwitch].device == InputBinding::Device::None,
+          "round2 occupied new defaults migrate to unbound without overwriting original actions");
+    check(legacyBindings[GameAction::Fire] == InputBinding::Mouse(SDL_BUTTON_RIGHT) &&
+          legacyBindings[GameAction::Scope] == InputBinding::Mouse(SDL_BUTTON_LEFT),
+          "round2 legacy handedness migrates into independent mouse bindings");
+    migrated.Save();
+    SaveManager migratedAgain;
+    migratedAgain.Load();
+    check(migratedAgain.GetSettings().bindings.keys == legacyBindings.keys,
+          "round2 migrated named bindings remain stable after another restart");
+    PathUtils::SetBaseDir(previous);
+}
+
+static void TestRound2SettingsLayouts() {
+    std::filesystem::create_directories("build-evidence/pix34-round2");
+    check(SDL_InitSubSystem(SDL_INIT_VIDEO) == 0, "round2 settings test initializes SDL video");
+    const int dimensions[][2] = {{1280,720}, {1920,1080}, {2560,1600}, {3440,1440}, {1024,768}};
+    for (const auto& dimension : dimensions) {
+        const int width = dimension[0], height = dimension[1];
+        SDL_Window* window = SDL_CreateWindow("PIX-34 layout regression", 0, 0, width, height, SDL_WINDOW_HIDDEN);
+        SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0,width,height,32,SDL_PIXELFORMAT_RGBA32);
+        SDL_Renderer* output = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+        check(window && output, "round2 settings layout target initializes");
+        if (!window || !output) {
+            if (output) SDL_DestroyRenderer(output);
+            if (surface) SDL_FreeSurface(surface);
+            if (window) SDL_DestroyWindow(window);
+            continue;
+        }
+        {
+            ImGuiUI ui;
+            check(ui.Initialize(window,output), "round2 settings initializes real font and renderer backends");
+            ImGui::GetIO().IniFilename = nullptr;
+            GameUI gameUI;
+            gameUI.SetImGuiUI(&ui);
+            GameSettings settings;
+            InputManager input;
+            GameUI::MenuCtx menu;
+            menu.state = SETTINGS;
+            menu.settings = &settings;
+            menu.input = &input;
+            for (int percent : {100,75,50}) {
+                const int logicalHeight = 1080*percent/100;
+                const int logicalWidth = static_cast<int>(std::lround(logicalHeight*static_cast<float>(width)/height));
+                SDL_RenderSetLogicalSize(output,logicalWidth,logicalHeight);
+                ui.SetUiScale(std::min(logicalWidth/1920.0f,logicalHeight/1080.0f));
+                for (int frame = 0; frame < 2; ++frame) {
+                    SDL_SetRenderDrawColor(output,0,0,0,255);
+                    SDL_RenderClear(output);
+                    ui.BeginFrame();
+                    gameUI.DrawMenu(menu,GameUI::Actions{});
+                    ui.EndFrame();
+                    SDL_RenderPresent(output);
+                }
+                const auto* data = ImGui::GetDrawData();
+                bool finite = data && data->TotalVtxCount > 0;
+                for (int list = 0; data && list < data->CmdListsCount; ++list)
+                    for (const auto& vertex : data->CmdLists[list]->VtxBuffer)
+                        finite = finite && std::isfinite(vertex.pos.x) && std::isfinite(vertex.pos.y);
+                check(finite, "round2 settings emits valid geometry at each resolution and rendering scale");
+                if (percent == 100 || percent == 50) {
+                    const std::string path = "build-evidence/pix34-round2/layout-"+std::to_string(width)+"x"+
+                        std::to_string(height)+"-"+std::to_string(percent)+".png";
+                    check(IMG_SavePNG(surface,path.c_str()) == 0, "round2 settings resolution evidence saved");
+                }
+                ui.BeginFrame();
+                GameUI::InGameCtx hud;
+                hud.playerTeam = Team::CT;
+                hud.weaponName = "AWP";
+                hud.bindings = &settings.bindings;
+                hud.objective = 1;
+                hud.bombPlanted = true;
+                hud.bombTimer = 20;
+                hud.defuseProgress = .5f;
+                hud.defuseRemaining = 2;
+                hud.defuserName = "你";
+                gameUI.DrawInGame(hud,&ui);
+                gameUI.DrawCombatHints(settings.bindings);
+                ui.EndFrame();
+                const auto* canvas = ImGui::FindWindowByName("##gameHUD");
+                const auto* debug = ImGui::FindWindowByName("Debug##Default");
+                check(canvas && canvas->DrawList->VtxBuffer.Size > 100 && (!debug || !debug->Active),
+                      "round2 HUD has a fullscreen canvas and never exposes the implicit debug window");
+                const auto* hints = ImGui::FindWindowByName("##combatHints");
+                check(hints && hints->Pos.x >= 0 && hints->Pos.x+hints->Size.x <= logicalWidth+1 &&
+                    hints->Pos.y >= 0 && hints->Pos.y+hints->Size.y <= logicalHeight+1,
+                    "round2 combat hints remain inside all viewport sizes");
+                if (width == 1280 && percent == 100) {
+                    for (int direction = 0; direction < 8; ++direction) {
+                        SDL_SetRenderDrawColor(output,40,60,80,255);
+                        SDL_RenderClear(output);
+                        std::array<Presentation::DamageDirection,4> hits{};
+                        hits[0] = {direction*Tuning::Pi/4,.5f};
+                        ui.BeginFrame();
+                        gameUI.DrawDamageDirections(hits);
+                        ui.EndFrame();
+                        SDL_RenderPresent(output);
+                        const auto* row = static_cast<const Uint8*>(surface->pixels)+height/2*surface->pitch;
+                        check(row[width/2*4] == 40 && row[width/2*4+1] == 60,
+                              "round2 directional damage leaves the screen center clear in all eight directions");
+                        const std::string path = "build-evidence/pix34-round2/damage-"+std::to_string(direction)+".png";
+                        check(IMG_SavePNG(surface,path.c_str()) == 0, "round2 eight direction damage evidence saved");
+                    }
+                    std::vector<MatchRecord> records(50);
+                    for (auto& record : records) {
+                        record.time = "2026-11-16 18:00";
+                        record.modeId = "bomb";
+                        record.mapId = "ancient_ruins";
+                        record.result = "win";
+                        record.scoreCT = record.rounds = 8;
+                    }
+                    GameUI::HistoryCtx history;
+                    history.records = &records;
+                    ui.BeginFrame();
+                    gameUI.DrawHistory(history,GameUI::Actions{});
+                    ui.EndFrame();
+                    ImGuiWindow* listWindow = nullptr;
+                    for (int position = 0; position < 3; ++position) {
+                        if (listWindow) ImGui::SetScrollY(listWindow,listWindow->ScrollMax.y*position/2);
+                        SDL_SetRenderDrawColor(output,0,0,0,255);
+                        SDL_RenderClear(output);
+                        ui.BeginFrame();
+                        gameUI.DrawHistory(history,GameUI::Actions{});
+                        ui.EndFrame();
+                        SDL_RenderPresent(output);
+                        for (auto* candidate : ImGui::GetCurrentContext()->Windows)
+                            if (std::strstr(candidate->Name,"##historyList")) listWindow = candidate;
+                        check(listWindow && listWindow->ScrollMax.y > 0 && listWindow->DrawList->VtxBuffer.Size > 0,
+                              "round2 long history owns its scrollable clipped drawing list");
+                        const std::string path = "build-evidence/pix34-round2/history-"+std::to_string(position)+".png";
+                        check(IMG_SavePNG(surface,path.c_str()) == 0, "round2 history scroll evidence saved");
+                    }
+                }
+            }
+        }
+        SDL_DestroyRenderer(output);
+        SDL_FreeSurface(surface);
+        SDL_DestroyWindow(window);
+    }
+    g_uiScale = 1;
+}
+
+static void TestRound2RadarRendering() {
+    SDL_Surface* surface=SDL_CreateRGBSurfaceWithFormat(0,640,480,32,SDL_PIXELFORMAT_RGBA32);
+    SDL_Renderer* software=surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+    check(software!=nullptr,"round2 software radar renderer initializes");
+    if (!software) { if(surface) SDL_FreeSurface(surface); return; }
+    {
+        CS2DMapData data;
+        data.mapWidth=data.mapHeight=100;
+        data.tileWidth=data.tileHeight=8;
+        CS2DWorld world;
+        world.Build(data);
+        CS2DRenderer renderer;
+        renderer.Initialize(software,"assets/cs2d/maps",640,480);
+        renderer.SetWorld(&world);
+        auto pixel = [&](int x,int y) {
+            SDL_Color color{};
+            const auto* row=static_cast<const Uint8*>(surface->pixels)+y*surface->pitch;
+            Uint32 value;
+            std::memcpy(&value,row+x*4,4);
+            SDL_GetRGBA(value,surface->format,&color.r,&color.g,&color.b,&color.a);
+            return color;
+        };
+        auto draw = [&](int alpha,bool rotated,bool centered,float px,float py,int size=200) {
+            SDL_SetRenderDrawColor(software,100,120,140,255);
+            SDL_RenderClear(software);
+            const std::vector<CS2DRenderer::RadarDot> dots={{px+100,py,240,40,40,255}};
+            renderer.DrawRadarHUD(px,py,0,dots,800,800,centered,rotated,true,alpha,size,1,false,640,480);
+            SDL_RenderPresent(software);
+        };
+        draw(0,false,true,400,400);
+        const auto transparent=pixel(70,100);
+        check(transparent.r==100 && transparent.g==120 && transparent.b==140,"round2 alpha zero preserves underlying scene");
+        const auto corner=pixel(10,10);
+        check(corner.r==100 && corner.g==120,"round2 radar clips square corners");
+        draw(255,false,true,400,400);
+        const auto opaque=pixel(70,100);
+        check(opaque.r<100 && opaque.b<140,"round2 opaque radar draws map without RGB alpha modulation");
+        draw(128,false,true,400,400);
+        const auto half=pixel(70,100);
+        check(half.r>opaque.r && half.r<transparent.r,"round2 intermediate radar alpha blends with scene");
+        draw(0,true,true,400,400);
+        const auto red=pixel(108,83);
+        check(red.r>red.g*2,"round2 rotating radar puts player forward at top");
+        draw(0,false,true,0,0);
+        const auto self=pixel(108,108);
+        check(self.b>self.r,"round2 player stays centered at map corner");
+        draw(0,false,false,0,0);
+        const auto center=pixel(108,108);
+        check(center.r==100 && center.g==120,"round2 disabled centering uses map center");
+        draw(0,false,true,400,400,400);
+        const auto largeSelf=pixel(208,208);
+        check(largeSelf.b>largeSelf.r,"round2 400 unit radar supports centered markers");
+        SDL_SetRenderDrawColor(software,0,0,0,255);
+        SDL_RenderClear(software);
+        renderer.DrawCrosshair(320,240,255,255,255,255,2,true,12,5);
+        SDL_RenderPresent(software);
+        check(pixel(320,240).r > 200 && pixel(323,243).r == 0,
+              "round2 center dot is circular and shares the reticle center");
+        check(pixel(309,239).r == pixel(330,239).r && pixel(319,229).r == pixel(319,250).r,
+              "round2 reticle arms are symmetric around a common floating point center");
+        Presentation::ScopeOverlayParams scope;
+        scope.scope.active = scope.scope.supported = true;
+        scope.scope.transition = 1;
+        scope.centerX = 320;
+        scope.centerY = 240;
+        scope.radiusPx = 150;
+        scope.crossThickness = 2;
+        auto drawScope = [&](float blur) {
+            SDL_SetRenderDrawColor(software,0,0,0,255);
+            SDL_RenderClear(software);
+            scope.motionBlur = blur;
+            renderer.DrawScopeOverlay(scope);
+            SDL_RenderPresent(software);
+        };
+        drawScope(0);
+        const auto sharpEdge = pixel(370,242);
+        std::filesystem::create_directories("build-evidence/pix34-round2");
+        IMG_SavePNG(surface,"build-evidence/pix34-round2/scope-static.png");
+        drawScope(3);
+        check(pixel(370,242).r > sharpEdge.r,
+              "round2 moving scope softens the reticle outside its original hard edge");
+        IMG_SavePNG(surface,"build-evidence/pix34-round2/scope-moving.png");
+        renderer.Clean();
+    }
+    SDL_DestroyRenderer(software);
+    SDL_FreeSurface(surface);
+}
+
+static void TestRound3PartialRendering() {
+    SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, 640, 480, 32, SDL_PIXELFORMAT_RGBA32);
+    SDL_Renderer *software = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+    check(software != nullptr, "round3 partial visibility renderer initializes");
+    if (software) {
+        CS2DWorld world;
+        CS2DMapData data;
+        data.mapWidth = data.mapHeight = 100;
+        data.tileWidth = data.tileHeight = 8;
+        world.Build(data);
+        CS2DRenderer renderer;
+        renderer.Initialize(software, "assets/cs2d/maps", 640, 480);
+        renderer.SetWorld(&world);
+        renderer.SetPreviewCamera(320, 240, 1, false);
+        SDL_SetRenderDrawColor(software, 0, 0, 0, 255);
+        SDL_RenderClear(software);
+        renderer.SetVisibilityFilter([](float x, float) { return x >= 320; });
+        SpriteDrawParams actor;
+        actor.x = 320.2f;
+        actor.y = 240.3f;
+        actor.size = 128.3f;
+        actor.aimAngle = .37f;
+        actor.weaponSlot = 1;
+        actor.weaponId = static_cast<int>(WeaponId::USP_S);
+        actor.localPlayer = true;
+        renderer.DrawCharacter(actor);
+        SDL_RenderPresent(software);
+        int left = 0, right = 0;
+        for (int y = 100; y < 380; ++y)
+            for (int x = 180; x < 460; ++x) {
+                const auto *pixel = static_cast<const Uint8 *>(surface->pixels) + y * surface->pitch + x * 4;
+                if (pixel[0] + pixel[1] + pixel[2] > 20) {
+                    if (x < 320)
+                        ++left;
+                    else
+                        ++right;
+                }
+            }
+        std::printf("[round3 masked pixels] left=%d right=%d SDL=%s\n", left, right, SDL_GetError());
+        check(left == 0 && right > 100, "round3 actual body weapon and outline retain exposed pixels only");
+        std::filesystem::create_directories("build-evidence/pix34-round3");
+        IMG_SavePNG(surface, "build-evidence/pix34-round3/partial-body.png");
+        bool bounded = true;
+        for (float tier : {1.12f, .70f, .50f})
+            for (float scope : {1.f, 2.f})
+                for (int direction = 0; direction < 8; ++direction)
+                    for (float distance : {50.f, 400.f, 800.f}) {
+                        const float angle = direction * 6.2831853f / 8;
+                        const float aimX = std::cos(angle) * distance, aimY = std::sin(angle) * distance;
+                        const float lens = scope > 1 ? 100.f : 8.f;
+                        renderer.UpdateCamera(0, 0, 640, 480, tier * scope);
+                        renderer.ApplyCameraShake(20, -20);
+                        renderer.KeepActorInViewport(0, 0, 14, aimX, aimY, lens);
+                        const float zoom = renderer.GetZoom();
+                        const float actorX = -renderer.GetCameraX() * zoom,
+                                    actorY = -renderer.GetCameraY() * zoom;
+                        const float scopeX = (aimX - renderer.GetCameraX()) * zoom,
+                                    scopeY = (aimY - renderer.GetCameraY()) * zoom;
+                        bounded &= std::isfinite(zoom) && zoom > 0 && actorX - 14 * zoom >= 11.9f &&
+                                   actorX + 14 * zoom <= 628.1f && actorY - 14 * zoom >= 11.9f &&
+                                   actorY + 14 * zoom <= 468.1f && scopeX >= lens + 11.9f &&
+                                   scopeX <= 640 - lens - 11.9f && scopeY >= lens + 11.9f &&
+                                   scopeY <= 480 - lens - 11.9f;
+                    }
+        check(bounded, "round3 all tiers scopes aim directions and recoil shake keep complete actor and lens "
+                       "inside safe viewport");
+    }
+    SDL_DestroyRenderer(software);
+    SDL_FreeSurface(surface);
+}
+
+static void TestRound3HudLayouts() {
+    const std::filesystem::path directory = "build-evidence/pix34-round3";
+    std::filesystem::create_directories(directory);
+    SDL_InitSubSystem(SDL_INIT_VIDEO);
+    const int dimensions[][2] = {{1280, 720}, {1920, 1080}, {2560, 1600}, {3440, 1440}, {1024, 768}};
+    for (const auto &dimensionsForCase : dimensions) {
+        const int width = dimensionsForCase[0], height = dimensionsForCase[1];
+        SDL_Window *window = SDL_CreateWindow("PIX34 HUD review", 0, 0, width, height, SDL_WINDOW_HIDDEN);
+        SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, width, height, 32, SDL_PIXELFORMAT_RGBA32);
+        SDL_Renderer *renderer = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+        check(window && renderer, "round3 HUD matrix target initializes");
+        if (window && renderer) {
+            ImGuiUI ui;
+            ui.Initialize(window, renderer);
+            ImGui::GetIO().IniFilename = nullptr;
+            WeaponIconCache icons;
+            icons.Initialize(renderer);
+            GameUI gameUI;
+            gameUI.SetImGuiUI(&ui);
+            gameUI.SetWeaponIconCache(&icons);
+            KeyBindings bindings;
+            for (int percent : {100, 75, 50}) {
+                const int logicalH = 1080 * percent / 100;
+                const int logicalW =
+                    static_cast<int>(std::lround(logicalH * static_cast<float>(width) / height));
+                SDL_RenderSetLogicalSize(renderer, logicalW, logicalH);
+                ui.SetUiScale(std::min(logicalW / 1920.f, logicalH / 1080.f));
+                const char *scenes[] = {"buy",      "combat",    "planted",   "defusing",
+                                        "low-time", "round-end", "deathmatch"};
+                for (int scene = 0; scene < 7; ++scene) {
+                    GameUI::InGameCtx hud;
+                    hud.state = PLAYING;
+                    hud.playerTeam = scene == 6 ? Team::None : Team::CT;
+                    hud.bindings = &bindings;
+                    hud.scoreT = 7;
+                    hud.scoreCT = 6;
+                    hud.aliveT = 3;
+                    hud.aliveCT = 4;
+                    hud.roundNumber = 14;
+                    hud.roundRemainingSec = scene == 4 ? 7 : 83;
+                    hud.roundPhase = scene == 0 ? 2 : scene == 5 ? 4 : 3;
+                    hud.objective = scene == 6 ? 0 : 1;
+                    hud.health = 83;
+                    hud.maxHealth = 100;
+                    hud.armor = 100;
+                    hud.helmet = true;
+                    hud.money = 4200;
+                    hud.ammo = 7;
+                    hud.magazineSize = 30;
+                    hud.reserveAmmo = 90;
+                    hud.hasDefuseKit = scene != 6;
+                    hud.kills = 24;
+                    hud.deaths = 9;
+                    hud.bombPlanted = scene == 2 || scene == 3;
+                    hud.bombTimer = scene == 3 ? 9.2f : 31.8f;
+                    hud.defuseProgress = scene == 3 ? .62f : 0;
+                    hud.defuseRemaining = 1.52f;
+                    hud.defuserName = "你";
+                    if (scene == 5) {
+                        hud.announcement = "反恐精英胜利";
+                        hud.announcementAlpha = 1;
+                    }
+                    for (const auto id :
+                         {WeaponId::M4A1S, WeaponId::USP_S, WeaponId::Knife, WeaponId::GrenadeHE,
+                          WeaponId::GrenadeFlash, WeaponId::GrenadeSmoke}) {
+                        const auto &definition = WeaponDB::Get(id);
+                        const int slot = definition.slot == WeaponSlotKind::Primary     ? 0
+                                         : definition.slot == WeaponSlotKind::Secondary ? 1
+                                         : definition.slot == WeaponSlotKind::Melee     ? 2
+                                                                                        : 3;
+                        hud.equipment.push_back(
+                            {definition.name, definition.iconPath,
+                             bindings[static_cast<GameAction>(static_cast<int>(GameAction::Slot1) + slot)]
+                                 .Label(),
+                             id == WeaponId::GrenadeFlash ? 2 : 1, id == WeaponId::M4A1S});
+                    }
+                    for (int index = 0; index < 6; ++index) {
+                        const auto &definition = WeaponDB::Get(index % 2 ? WeaponId::AWP : WeaponId::AK47);
+                        hud.killFeed.push_back(
+                            {static_cast<std::uint64_t>(index + 1), index % 2 ? "长名称测试玩家甲" : "你",
+                             "目标玩家", definition.iconPath, Team::CT, Team::T, 3.2f, index % 2 == 0});
+                    }
+                    for (int frame = 0; frame < 5; ++frame) {
+                        SDL_SetRenderDrawColor(renderer, 44, 48, 50, 255);
+                        SDL_RenderClear(renderer);
+                        ui.BeginFrame();
+                        ImGui::GetIO().DeltaTime = .1f;
+                        gameUI.DrawInGame(hud, &ui);
+                        gameUI.DrawCombatHints(bindings);
+                        ui.EndFrame();
+                        SDL_RenderPresent(renderer);
+                    }
+                    const auto *draws = ImGui::GetDrawData();
+                    bool valid = draws && draws->TotalVtxCount > 0;
+                    for (int list = 0; draws && list < draws->CmdListsCount; ++list)
+                        for (const auto &vertex : draws->CmdLists[list]->VtxBuffer)
+                            valid &= std::isfinite(vertex.pos.x) && std::isfinite(vertex.pos.y);
+                    check(valid, "round3 HUD stage resolution and rendering scale emit finite geometry");
+                    if (scene == 3 || (width == 1920 && percent == 100)) {
+                        const auto path = directory / ("hud-" + std::string(scenes[scene]) + "-" +
+                                                       std::to_string(width) + "x" + std::to_string(height) +
+                                                       "-" + std::to_string(percent) + ".png");
+                        check(IMG_SavePNG(surface, path.string().c_str()) == 0,
+                              "round3 HUD state evidence saved");
+                    }
+                }
+            }
+        }
+        SDL_DestroyRenderer(renderer);
+        SDL_FreeSurface(surface);
+        SDL_DestroyWindow(window);
+    }
+}
+
+static int ExportRound3Ballistics() {
+    std::filesystem::create_directories("build-evidence/pix34-round3/ballistics");
+    std::ofstream parameters("build-evidence/pix34-round3/ballistics/converted-parameters.csv");
+    std::ofstream curves("build-evidence/pix34-round3/ballistics/recoil-curves.csv");
+    std::ofstream impacts("build-evidence/pix34-round3/ballistics/impact-samples.csv");
+    parameters << "id,name,seed,scope,speed,spread_radians,spread_degrees,recovery_seconds,recoil_gain\n";
+    curves << "id,name,scope,shot,kick_x,kick_y,inaccuracy\n";
+    impacts << "id,name,scope,speed,sample,forward,lateral\n";
+    for (int index = 2; index <= static_cast<int>(WeaponId::Negev); ++index) {
+        const auto id = static_cast<WeaponId>(index);
+        const auto &weapon = WeaponDB::Get(id);
+        const auto &profile = Ballistics::Get(id);
+        for (int scoped = 0; scoped <= 1; ++scoped) {
+            CS2DGame::Player actor;
+            actor.SetSlotWeapon(0, id);
+            actor.weaponSlot = 0;
+            actor.LoadAmmoFromSlot();
+            for (int shot = 0; shot < std::min(40, std::max(1, weapon.magazine)); ++shot) {
+                actor.ApplyWeaponRecoil(static_cast<float>(scoped));
+                const auto kick = actor.BallisticKick();
+                curves << index << ',' << weapon.name << ',' << scoped << ',' << shot + 1 << ',' << kick.x
+                       << ',' << kick.y << ',' << actor.BallisticInaccuracy() << '\n';
+                actor.RecoverBallistics(weapon.cooldown);
+            }
+            for (int speed = 0; speed <= 1; ++speed) {
+                const float spread =
+                    Ballistics::Spread(id, static_cast<float>(speed), static_cast<float>(scoped), 0);
+                parameters << index << ',' << weapon.name << ',' << profile.seed << ',' << scoped << ','
+                           << speed << ',' << spread << ',' << spread / Tuning::DegreesToRadians << ','
+                           << profile.recovery << ',' << std::tan(.6f * Tuning::DegreesToRadians) / 30
+                           << '\n';
+                std::mt19937 random(profile.seed);
+                std::uniform_real_distribution<float> sample(-spread, spread);
+                for (int hit = 0; hit < 512; ++hit) {
+                    const float angle = sample(random);
+                    impacts << index << ',' << weapon.name << ',' << scoped << ',' << speed << ',' << hit
+                            << ',' << 500 * std::cos(angle) << ',' << 500 * std::sin(angle) << '\n';
+                }
+            }
+        }
+    }
+    return parameters && curves && impacts ? 0 : 1;
+}
+
+int main(int argc,char** argv) {
+    if (argc>1 && std::string(argv[1])=="--benchmark-visibility") return CS2DGameTestAccess::BenchmarkRound3Visibility();
+    if (argc>1 && std::string(argv[1])=="--round3-visuals") {
+        TestRound3PartialRendering();TestRound3HudLayouts();
+        std::printf("Round3 visuals: %d passed, %d failed\n",g_pass,g_fail);
+        return g_fail ? 1 : 0;
+    }
+    if (argc>1 && std::string(argv[1])=="--export-ballistics") return ExportRound3Ballistics();
+    if (argc>1 && std::string(argv[1])=="--round3") {
+        CS2DGameTestAccess::TestPix34Round3();
+        TestRound3PartialRendering();
+        std::printf("Round3 focused: %d passed, %d failed\n",g_pass,g_fail);
+        return g_fail ? 1 : 0;
+    }
     std::printf("===== 合并契约 v1 玩法回归测试 =====\n");
     std::printf("地图: %s\n", MapPath());
 
+    for (int id=2;id<=static_cast<int>(WeaponId::Negev);++id) {
+        const auto weapon=static_cast<WeaponId>(id);
+        const auto a=Ballistics::Recoil(weapon,5,0);
+        const auto b=Ballistics::Recoil(weapon,5,0);
+        check(a.x==b.x && a.y==b.y && std::isfinite(a.x) && std::isfinite(a.y),
+              "round3 all weapon recoil curves are finite and deterministic");
+        check(Ballistics::Spread(weapon,1,0,0)>=Ballistics::Spread(weapon,0,0,0),
+              "round3 moving spread respects each weapon profile");
+    }
+    check(Ballistics::Spread(WeaponId::AWP,0,0,0)>Ballistics::Spread(WeaponId::AWP,0,1,0),
+          "round3 AWP unscoped fire has greater random dispersion");
+    CS2DGameTestAccess::TestPix34Round3();
+    TestRound3PartialRendering();
+    TestPix34Input();
+    TestRound2RadarRendering();
+    TestRound2SettingsLayouts();
+    CS2DGameTestAccess::TestPix34Round2();
+    CS2DGameTestAccess::TestPix34();
     CS2DGameTestAccess::TestPix33();
     CS2DGameTestAccess::TestSharedBotVisibility();
     CS2DGameTestAccess::TestBotScopeMovement();

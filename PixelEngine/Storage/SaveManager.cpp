@@ -20,6 +20,29 @@ void SaveManager::Load() {
         return;
     }
 
+    settings_.botDifficulty = std::clamp(ini.GetInt("settings", "bot_difficulty", 2), 0, 3);
+    settings_.combatHintsVisible = ini.GetBool("settings", "combat_hints", true);
+    const KeyBindings defaults;
+    const bool modern = ini.GetInt("bindings", "version", 0) >= 2;
+    for (int i = 0; i < GameActionCount; ++i) {
+        InputBinding input = defaults.keys[i];
+        if (modern) {
+            const std::string id = ActionIds[i];
+            input.device = static_cast<InputBinding::Device>(ini.GetInt("bindings", id + "_device", static_cast<int>(input.device)));
+            input.code = ini.GetInt("bindings", id + "_code", input.code);
+        } else if (i < 19) {
+            input = InputBinding(static_cast<SDL_Scancode>(ini.GetInt("bindings", std::to_string(i), defaults.keys[i].code)));
+        } else if (i == static_cast<int>(GameAction::Fire) || i == static_cast<int>(GameAction::Scope)) {
+            const bool leftHanded = ini.GetBool("bindings", "left_handed", false);
+            const bool fire = i == static_cast<int>(GameAction::Fire);
+            input = InputBinding::Mouse(fire != leftHanded ? SDL_BUTTON_LEFT : SDL_BUTTON_RIGHT);
+        }
+        if (!input.Valid()) input = defaults.keys[i];
+        bool duplicate = false;
+        for (int j = 0; j < i; ++j) duplicate = duplicate || (input.device != InputBinding::Device::None && settings_.bindings.keys[j] == input);
+        settings_.bindings.keys[i] = duplicate ? InputBinding{} : input;
+    }
+
     // ---- 通用设置 ----
     settings_.mouseSensitivity = ini.GetFloat("settings", "sensitivity", 1.0f);
     settings_.resIdx           = ini.GetInt  ("settings", "res_idx", 0);
@@ -72,7 +95,9 @@ void SaveManager::Load() {
     settings_.radarBlendBg          = ini.GetBool ("radar", "blend_bg", false);
     settings_.radarBgAlpha          = ini.GetInt  ("radar", "bg_alpha", 160);
     settings_.radarHudSize          = ini.GetInt  ("radar", "hud_size", 120);
-    settings_.radarMapZoom          = ini.GetFloat("radar", "map_zoom", 0.005f);
+    settings_.radarMapZoom          = ini.GetFloat("radar", "map_zoom", 1.0f);
+    if (settings_.radarMapZoom < .5f || settings_.radarMapZoom > 8) settings_.radarMapZoom = 1;
+    settings_.radarHudSize = std::clamp(settings_.radarHudSize,60,400);
 
     // ---- 主菜单 3D 自定义 ----
     const int menuPoseVersion = ini.GetInt("menu", "pose_version", 0);
@@ -100,6 +125,14 @@ void SaveManager::Load() {
 
 void SaveManager::Save() {
     IniFile ini;
+    ini.SetInt("settings", "bot_difficulty", settings_.botDifficulty);
+    ini.SetBool("settings", "combat_hints", settings_.combatHintsVisible);
+    ini.SetInt("bindings", "version", 2);
+    for (int i = 0; i < GameActionCount; ++i) {
+        const std::string id = ActionIds[i];
+        ini.SetInt("bindings", id + "_device", static_cast<int>(settings_.bindings.keys[i].device));
+        ini.SetInt("bindings", id + "_code", settings_.bindings.keys[i].code);
+    }
 
     ini.SetFloat("settings", "sensitivity", settings_.mouseSensitivity);
     ini.SetInt  ("settings", "res_idx",     settings_.resIdx);

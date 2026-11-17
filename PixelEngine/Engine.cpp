@@ -1,3 +1,4 @@
+#include "CS2D/ShowcaseCamera.hpp"
 #include "Engine.hpp"
 #include <cstdlib>
 #include <ctime>
@@ -99,6 +100,7 @@ GameUI::Actions Engine::BuildActions() {
             SDL_ShowCursor(SDL_ENABLE);
             audioManager->PlayMusic(AudioManager::MusicTrackPath(audioManager->GetMusicTrack()));
         }
+        if (currentState == SETTINGS) saveManager->Save();
         currentState = s;
     };
     a.openSettings = [this](GameState ret) { settingsReturnState = ret; currentState = SETTINGS; };
@@ -210,18 +212,24 @@ GameUI::Actions Engine::BuildActions() {
         mapPreviewRectValid_ = true;
     };
     a.resumeGame   = [this] {
+        if (sidePauseStartMs_) {
+            sidePhaseStartMs_ += SDL_GetTicks64() - sidePauseStartMs_;
+            sidePauseStartMs_ = 0;
+        }
         currentState = PLAYING;
-        SDL_SetRelativeMouseMode(SDL_TRUE);
-        SDL_ShowCursor(SDL_DISABLE);
+        SDL_SetRelativeMouseMode(sideChoicePending_ ? SDL_FALSE : SDL_TRUE);
+        SDL_ShowCursor(sideChoicePending_ ? SDL_ENABLE : SDL_DISABLE);
         audioManager->ResumeMusic();
     };
-    a.confirmExit = [this](bool toDesktop) { exitToDesktop = toDesktop; currentState = EXIT_CONFIRM; };
+    a.confirmExit = [this](bool toDesktop) { exitReturnState_ = currentState; exitToDesktop = toDesktop; currentState = EXIT_CONFIRM; };
     a.quitApp = [this] {
         SDL_SetRelativeMouseMode(SDL_FALSE);
         SDL_ShowCursor(SDL_ENABLE);
         if (exitToDesktop) {
             isRunning = false;
         } else {
+            sideChoicePending_ = sidePopupOpen_ = false;
+            sidePauseStartMs_ = 0;
             currentState = MAIN_MENU;
             audioManager->ResumeMusic();
         }
@@ -229,7 +237,9 @@ GameUI::Actions Engine::BuildActions() {
     a.quitToDesktop = [this] {
         SDL_SetRelativeMouseMode(SDL_FALSE);
         SDL_ShowCursor(SDL_ENABLE);
-        isRunning = false;
+        exitReturnState_ = MAIN_MENU;
+        exitToDesktop = true;
+        currentState = EXIT_CONFIRM;
     };
 
     a.toggleMute       = [this] { audioManager->ToggleMute(); };
@@ -418,6 +428,7 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
 
     // 存档（先读，以便应用分辨率 / 灵敏度 / 准星等设置）
     saveManager->Load();
+    inputManager->SetBindings(saveManager->GetSettings().bindings);
     ApplySavedSettings();
 
     // 窗口
@@ -722,6 +733,8 @@ void Engine::Run() {
 // ============================================================================
 
 void Engine::Clean() {
+    for (auto*& texture:showcaseTextures_) {if(texture) SDL_DestroyTexture(texture);texture=nullptr;}
+    for (auto*& preview : settingsPreviewTex_) { if (preview) SDL_DestroyTexture(preview); preview = nullptr; }
 #ifdef PIXEL_DEV_REPLAY
     CloseRecordFile();
 #endif
@@ -793,7 +806,17 @@ void Engine::ToggleFullscreen() {
 // ============================================================================
 
 void Engine::HandleInput() {
+    inputManager->SetBindings(saveManager->GetSettings().bindings);
+    if (currentState != SETTINGS) {
+        inputManager->CancelCapture();
+    }
+    inputManager->gameplayContext = currentState == PLAYING && !buyMenuOpen_ && !sideChoicePending_ && !sidePopupOpen_ && !IsTransitionActive();
+    inputManager->uiConsumesMouse = ImGui::IsAnyItemHovered();
     inputManager->ProcessEvents(renderer);
+    if (inputManager->helpRequested) {
+        auto& settings = saveManager->MutableSettings();
+        settings.combatHintsVisible = !settings.combatHintsVisible;
+    }
     const bool nativeFullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
     if (nativeFullscreen != isFullscreen) {
         isFullscreen = nativeFullscreen;
@@ -807,19 +830,24 @@ void Engine::HandleInput() {
     if (inputManager->IsFullscreenToggleRequested()) ToggleFullscreen();
     if (inputManager->IsMuteToggleRequested()) audioManager->ToggleMute();
 
-    if (inputManager->IsPauseToggleRequested() && !IsTransitionActive() &&
-        !sidePopupOpen_ && !sideChoicePending_) {
+    if (inputManager->IsPauseToggleRequested() && (!IsTransitionActive() || sideChoicePending_)) {
         if (currentState == PLAYING) {
+            if (sideChoicePending_ || sidePopupOpen_) sidePauseStartMs_ = SDL_GetTicks64();
             currentState = PAUSED;
             SDL_SetRelativeMouseMode(SDL_FALSE);
             SDL_ShowCursor(SDL_ENABLE);
             audioManager->PauseMusic();
         } else if (currentState == PAUSED) {
+            if (sidePauseStartMs_) {
+                sidePhaseStartMs_ += SDL_GetTicks64() - sidePauseStartMs_;
+                sidePauseStartMs_ = 0;
+            }
             currentState = PLAYING;
-            SDL_SetRelativeMouseMode(SDL_TRUE);
-            SDL_ShowCursor(SDL_DISABLE);
+            SDL_SetRelativeMouseMode(sideChoicePending_ ? SDL_FALSE : SDL_TRUE);
+            SDL_ShowCursor(sideChoicePending_ ? SDL_ENABLE : SDL_DISABLE);
             audioManager->ResumeMusic();
         } else if (currentState == SETTINGS) {
+            saveManager->Save();
             SaveAudioConfig();
             currentState = settingsReturnState;
         } else if (currentState == MATCH_END) {
@@ -827,11 +855,9 @@ void Engine::HandleInput() {
             currentState = MAIN_MENU;
             audioManager->PlayMusic(AudioManager::MusicTrackPath(audioManager->GetMusicTrack()));
         } else if (currentState == RESTART_CONFIRM || currentState == EXIT_CONFIRM) {
-            currentState = PAUSED;
+            currentState = currentState == EXIT_CONFIRM ? exitReturnState_ : PAUSED;
         } else if (currentState == MAP_SELECT || currentState == HISTORY) {
             currentState = MAIN_MENU;
-        } else {
-            isRunning = false;
         }
     }
 
@@ -857,10 +883,10 @@ void Engine::HandleInput() {
         cursorCaptured_ = false;
     }
     // ---- 买枪菜单 ----
-    if (inputManager->IsBuyMenuToggleRequested()) {
+    if (inputManager->IsBuyMenuToggleRequested() && cs2dGame->IsBuyPhase() && cs2dGame->IsPlayerInBuyZone()) {
         buyMenuOpen_ = !buyMenuOpen_;
     }
-    if (buyMenuOpen_ && !cs2dGame->IsBuyPhase()) {
+    if (buyMenuOpen_ && (!cs2dGame->IsBuyPhase() || !cs2dGame->IsPlayerInBuyZone())) {
         buyMenuOpen_ = false;   // 离开购买期自动关闭
     }
 
@@ -888,49 +914,36 @@ void Engine::HandleInput() {
                                  logicalW_, logicalH_,
                                  cs2dGame->GetPlayer().x, cs2dGame->GetPlayer().y,
                                  cs2dWorldMouseX, cs2dWorldMouseY, cs2dGame->GetPlayer().aimKick,
-                                 {playerView.x - cs2dGame->GetPlayer().x, playerView.y - cs2dGame->GetPlayer().y});
+                                 {playerView.x - cs2dGame->GetPlayer().x, playerView.y - cs2dGame->GetPlayer().y}, cs2dGame->GetPlayer().BallisticKick());
         cs2dGame->SetAimTarget(cs2dWorldMouseX, cs2dWorldMouseY, !cs2dOverlay.ScreenAnchorActive());
         cs2dMouseDown = inputManager->IsMouseLeftDown();
 
-    // G：丢弃当前武器（近战不可丢）。边沿触发，避免按住连丢。
-    {
-        static bool prevG = false;
-        const Uint8* kbG = SDL_GetKeyboardState(nullptr);
-        const bool nowG = kbG[SDL_SCANCODE_G] != 0;
-        if (nowG && !prevG && !buyMenuOpen_) {
-            cs2dGame->DropCurrentWeapon();
-        }
-        prevG = nowG;
-    }
+        if (inputManager->WasPressed(GameAction::Drop)) cs2dGame->DropCurrentWeapon();
         SDL_ShowCursor(SDL_DISABLE);
     }
 
-    const Uint8* kb = SDL_GetKeyboardState(nullptr);
-    cs2dKeyW     = kb[SDL_SCANCODE_W];
-    cs2dKeyA     = kb[SDL_SCANCODE_A];
-    cs2dKeyS     = kb[SDL_SCANCODE_S];
-    cs2dKeyD     = kb[SDL_SCANCODE_D];
-    cs2dKeyShift = kb[SDL_SCANCODE_LSHIFT] || kb[SDL_SCANCODE_RSHIFT];
-    cs2dKeyR     = kb[SDL_SCANCODE_R];
-
-    // Tab 按住 → 记分板
+    cs2dKeyW = inputManager->IsDown(GameAction::Forward);
+    cs2dKeyA = inputManager->IsDown(GameAction::Left);
+    cs2dKeyS = inputManager->IsDown(GameAction::Back);
+    cs2dKeyD = inputManager->IsDown(GameAction::Right);
+    cs2dKeyShift = inputManager->IsDown(GameAction::Stealth);
+    cs2dKeyR = inputManager->IsDown(GameAction::Reload);
     cs2dOverlay.prevTab = cs2dOverlay.keyTab;
-    cs2dOverlay.keyTab  = kb[SDL_SCANCODE_TAB];
-    showScoreboard_     = cs2dOverlay.keyTab;
+    cs2dOverlay.keyTab = inputManager->IsDown(GameAction::Scoreboard);
+    showScoreboard_ = cs2dOverlay.keyTab;
+    if (!buyMenuOpen_ && cs2dGame->IsSpectating()) {
+        if (inputManager->WasPressed(GameAction::Fire)) cs2dGame->SpectatorCycle(-1);
+        if (inputManager->WasPressed(GameAction::Scope)) cs2dGame->SpectatorCycle(1);
+    }
+    if (!buyMenuOpen_ && inputManager->WasPressed(GameAction::Spectate)) cs2dGame->RequestSpectateToggle();
+    if (!buyMenuOpen_ && inputManager->WasPressed(GameAction::QuickSwitch)) cs2dGame->QuickSwitchWeapon();
 
     // 武器槽：1=主武器 2=副武器 3=近战 4=投掷物
     if (inputManager->IsDigit1Requested()) cs2dGame->SwitchWeaponSlot(0);
     if (inputManager->IsDigit2Requested()) cs2dGame->SwitchWeaponSlot(1);
     if (inputManager->IsDigit3Requested()) cs2dGame->SwitchWeaponSlot(2);
     if (inputManager->IsDigit4Requested()) cs2dGame->SwitchWeaponSlot(3);
-    // 5：拿起 / 收起 C4
-    {
-        static bool prev5 = false;
-        const bool now5 = kb[SDL_SCANCODE_5] != 0;
-        if (now5 && !prev5) cs2dGame->ToggleHoldC4();
-        prev5 = now5;
-    }
-    // 5：拿起 / 收起 C4
+    if (inputManager->WasPressed(GameAction::C4)) cs2dGame->ToggleHoldC4();
 
 }
 
@@ -955,6 +968,7 @@ void Engine::BeginSideMapPreview() {
     sideCamTargetY_ = sideFullCenterY_;
     sideZoomTarget_ = std::clamp(std::min(vw, vh) / 200.0f, 1.2f, 6.0f);
     sidePhase_ = SidePhase::FullMap;
+    sidePauseStartMs_ = 0;
     sidePhaseStartMs_ = SDL_GetTicks64();
     sideMatchInitialized_ = false;
 }
@@ -966,6 +980,7 @@ void Engine::StartSideSpawnZoom() {
     sideCamStartY_ = sideFullCenterY_;
     sideZoomStart_ = sideFullZoom_;
     sidePhase_ = SidePhase::ZoomToSpawn;
+    sidePauseStartMs_ = 0;
     sidePhaseStartMs_ = SDL_GetTicks64();
 }
 
@@ -976,7 +991,7 @@ float Engine::SideFadeAlpha() const {
             return 0.0f;
         case SidePhase::ZoomToSpawn: {
             const float raw = std::clamp(
-                static_cast<float>(SDL_GetTicks64() - sidePhaseStartMs_) / 900.0f,
+                static_cast<float>((sidePauseStartMs_ ? sidePauseStartMs_ : SDL_GetTicks64()) - sidePhaseStartMs_) / 900.0f,
                 0.0f, 1.0f);
             return raw * raw * (3.0f - 2.0f * raw);
         }
@@ -984,12 +999,78 @@ float Engine::SideFadeAlpha() const {
             return 1.0f;
         case SidePhase::Reveal: {
             const float raw = std::clamp(
-                static_cast<float>(SDL_GetTicks64() - sidePhaseStartMs_) / 650.0f,
+                static_cast<float>((sidePauseStartMs_ ? sidePauseStartMs_ : SDL_GetTicks64()) - sidePhaseStartMs_) / 650.0f,
                 0.0f, 1.0f);
             return 1.0f - raw * raw * (3.0f - 2.0f * raw);
         }
     }
     return 0.0f;
+}
+
+void Engine::DrawMatchShowcase() {
+    if (!cs2dGame)
+        return;
+    if (!showcaseStarted_)
+        showcaseStarted_ = SDL_GetTicks64();
+    if (showcaseW_ != logicalW_ || showcaseH_ != logicalH_) {
+        for (auto *&texture : showcaseTextures_) {
+            if (texture)
+                SDL_DestroyTexture(texture);
+            texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
+                                        logicalW_, logicalH_);
+            if (texture)
+                SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+        }
+        showcaseW_ = logicalW_;
+        showcaseH_ = logicalH_;
+    }
+    const auto &world = cs2dGame->GetWorld();
+    std::vector<SDL_FPoint> points;
+    for (const auto &spawn : world.GetSpawnPoints())
+        points.push_back({spawn.x, spawn.y});
+    for (const auto &area : world.GetAreas())
+        for (const auto &rect : area.rects)
+            points.push_back({rect.x + rect.width * .5f, rect.y + rect.height * .5f});
+    const float elapsed = (SDL_GetTicks64() - showcaseStarted_) * .001f;
+    const int shot = static_cast<int>(elapsed / 6.8f);
+    const float phase = std::fmod(elapsed, 6.8f);
+    const auto current = ShowcaseCamera::Sample(phase, shot, world.GetMapPixelW(), world.GetMapPixelH(),
+                                                logicalW_, logicalH_, points);
+    SDL_Texture *target = SDL_GetRenderTarget(renderer);
+    SDL_Rect viewport, clip;
+    SDL_RenderGetViewport(renderer, &viewport);
+    SDL_RenderGetClipRect(renderer, &clip);
+    const bool clipped = SDL_RenderIsClipEnabled(renderer);
+    SDL_BlendMode blend;
+    SDL_GetRenderDrawBlendMode(renderer, &blend);
+    auto renderView = [&](int index, const ShowcaseCamera::View &view) {
+        SDL_SetRenderTarget(renderer, showcaseTextures_[index]);
+        SDL_RenderSetViewport(renderer, nullptr);
+        SDL_RenderSetClipRect(renderer, nullptr);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        cs2dGame->RenderMapPreview(logicalW_, logicalH_, view.center.x, view.center.y, view.zoom, true);
+    };
+    if (showcaseTextures_[0] && showcaseTextures_[1]) {
+        renderView(0, current);
+        if (shot > 0 && phase < 1.2f)
+            renderView(1, ShowcaseCamera::Sample(phase + 6.8f, shot - 1, world.GetMapPixelW(),
+                                                 world.GetMapPixelH(), logicalW_, logicalH_, points));
+        SDL_SetRenderTarget(renderer, target);
+        SDL_RenderSetViewport(renderer, &viewport);
+        SDL_RenderSetClipRect(renderer, clipped ? &clip : nullptr);
+        if (shot > 0 && phase < 1.2f) {
+            SDL_SetTextureAlphaMod(showcaseTextures_[1], 255);
+            SDL_RenderCopy(renderer, showcaseTextures_[1], nullptr, nullptr);
+            const float t = phase / 1.2f;
+            SDL_SetTextureAlphaMod(showcaseTextures_[0], static_cast<Uint8>(255 * t * t * (3 - 2 * t)));
+        } else
+            SDL_SetTextureAlphaMod(showcaseTextures_[0], 255);
+        SDL_RenderCopy(renderer, showcaseTextures_[0], nullptr, nullptr);
+    } else
+        cs2dGame->RenderMapPreview(logicalW_, logicalH_, current.center.x, current.center.y, current.zoom,
+                                   true);
+    SDL_SetRenderDrawBlendMode(renderer, blend);
 }
 
 void Engine::DrawSideMapPreview() {
@@ -999,7 +1080,7 @@ void Engine::DrawSideMapPreview() {
     float zoom = sideFullZoom_;
     if (sidePhase_ == SidePhase::ZoomToSpawn) {
         const float raw = std::clamp(
-            static_cast<float>(SDL_GetTicks64() - sidePhaseStartMs_) / 900.0f,
+            static_cast<float>((sidePauseStartMs_ ? sidePauseStartMs_ : SDL_GetTicks64()) - sidePhaseStartMs_) / 900.0f,
             0.0f, 1.0f);
         const float t = raw * raw * (3.0f - 2.0f * raw);
         cx = sideCamStartX_ + (sideCamTargetX_ - sideCamStartX_) * t;
@@ -1221,7 +1302,7 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
         BeginSideMapPreview();
     }
 
-    inputManager->SwitchToEnglishKeyboardLayout();
+
 
     // 记录本场地图 id 与开始时间（历史记录用）
     // 按地图目录匹配：路径里含该地图的 tmj 即认作该地图，避免逐张硬编码
@@ -1389,8 +1470,7 @@ void Engine::SyncAimCursor(float dt, bool commitAllowed) {
     const auto& world = cs2dGame->GetWorld();
     cs2dOverlay.SetReferenceWorldBounds(std::max(world.GetMapPixelW(), world.GetImageW()),
         std::max(world.GetMapPixelH(), world.GetImageH()));
-    cs2dOverlay.SetReferenceMode(scope.targetZoomMultiplier, shift,
-        scope.level == 0 && cs2dGame->AngledCameraEnabled(), cs2dGame->AngledCameraEnabled());
+    cs2dOverlay.SetReferenceMode(scope.targetZoomMultiplier, shift);
     if (!cs2dOverlay.ScreenAnchorActive()) {
         cs2dOverlay.SetVisibleAimPoint(cs2dGame->GetRenderAimX(), cs2dGame->GetRenderAimY());
         cs2dOverlay.virtCursorX = (cs2dGame->GetRenderAimX() - cs2dRenderer->GetCameraX()) * cs2dRenderer->GetZoom();
@@ -1401,12 +1481,13 @@ void Engine::SyncAimCursor(float dt, bool commitAllowed) {
     cs2dOverlay.UpdateCursor(0, 0, 0.0f, cs2dRenderer->GetZoom(),
         cs2dRenderer->GetCameraX(), cs2dRenderer->GetCameraY(), logicalW_, logicalH_,
         player.x, player.y, cs2dWorldMouseX, cs2dWorldMouseY, player.aimKick,
-        {playerView.x - player.x, playerView.y - player.y});
+        {playerView.x - player.x, playerView.y - player.y}, player.BallisticKick());
     cs2dGame->SetAimTarget(cs2dWorldMouseX, cs2dWorldMouseY, !cs2dOverlay.ScreenAnchorActive());
-    cs2dGame->SetEdgeZoomRequested(cs2dOverlay.EdgeZoomRequested());
+    cs2dGame->SetCameraDistanceTier(cs2dOverlay.CameraDistanceTier());
 }
 
 void Engine::Update(float dt) {
+    cs2dGame->SetBotDifficulty(saveManager->GetSettings().botDifficulty);
     if (currentState != PLAYING) {
         fireInputGate_.Block();
         // 暂停 / 设置 / 退出 / 主菜单：不跑 game.Update，开镜也必须立即归零
@@ -1424,8 +1505,7 @@ void Engine::Update(float dt) {
     }
 
     // E 键用于拆包（按住）
-    const Uint8* kbNow = SDL_GetKeyboardState(nullptr);
-    const bool interactHeld = kbNow[SDL_SCANCODE_E];
+    const bool interactHeld = inputManager->IsDown(GameAction::Interact);
 
     // 调试装备只应用一次（验收截图用；正常启动不会走到这里）
     if (debugLoadoutPending_) {
@@ -1434,6 +1514,9 @@ void Engine::Update(float dt) {
     }
     if (debugBuyMenuPending_ && cs2dGame && cs2dGame->IsBuyPhase()) {
         buyMenuOpen_ = true;
+        SDL_SetRelativeMouseMode(SDL_FALSE);
+        SDL_ShowCursor(SDL_ENABLE);
+        cursorCaptured_ = false;
         debugBuyMenuPending_ = false;
     }
     // 调试死亡镜头（--killplayer）：进对局 2s 后按真实死亡流程杀一次玩家
@@ -1745,6 +1828,54 @@ void Engine::DrawTransition(SDL_Texture* oldTex, SDL_Texture* newTex) {
     SDL_SetTextureAlphaMod(newTex, 255);
 }
 
+void Engine::RenderSettingsPreviews() {
+    SDL_Texture* target=SDL_GetRenderTarget(renderer);
+    SDL_Rect viewport,clip;
+    SDL_RenderGetViewport(renderer,&viewport);
+    SDL_RenderGetClipRect(renderer,&clip);
+    const bool clipped=SDL_RenderIsClipEnabled(renderer)==SDL_TRUE;
+    float sx,sy;
+    SDL_RenderGetScale(renderer,&sx,&sy);
+    SDL_BlendMode blend;
+    SDL_GetRenderDrawBlendMode(renderer,&blend);
+    Uint8 red, green, blue, alpha;
+    SDL_GetRenderDrawColor(renderer, &red, &green, &blue, &alpha);
+    const auto& settings=saveManager->GetSettings();
+    for (int i=0;i<3;++i) {
+        if (!settingsPreviewTex_[i]) {
+            settingsPreviewTex_[i]=SDL_CreateTexture(renderer,SDL_PIXELFORMAT_RGBA8888,SDL_TEXTUREACCESS_TARGET,640,240);
+            if (!settingsPreviewTex_[i]) continue;
+            SDL_SetTextureBlendMode(settingsPreviewTex_[i],SDL_BLENDMODE_BLEND);
+        }
+        SDL_SetRenderTarget(renderer,settingsPreviewTex_[i]);
+        SDL_RenderSetViewport(renderer,nullptr);
+        SDL_RenderSetClipRect(renderer,nullptr);
+        SDL_RenderSetScale(renderer,1,1);
+        SDL_SetRenderDrawColor(renderer,18,22,28,255);
+        SDL_RenderClear(renderer);
+        SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
+        if (i==0) cs2dRenderer->DrawCrosshair(320,120,settings.crossR,settings.crossG,settings.crossB,settings.crossA,
+            settings.crossThickness*g_uiScale,settings.crossCenterDot,settings.crossLength*g_uiScale,settings.crossGap*g_uiScale);
+        if (i==1 && settings.aimLine) cs2dRenderer->DrawAimLinePreview(settings.aimLineStyle,640,240);
+        if (i==2) {
+            const auto& world=cs2dGame->GetWorld();
+            const float width=std::max(800.0f,static_cast<float>(world.GetMapPixelW()));
+            const float height=std::max(800.0f,static_cast<float>(world.GetMapPixelH()));
+            const std::vector<CS2DRenderer::RadarDot> dots={{width*.45f,height*.4f,80,180,240,255},
+                {width*.65f,height*.6f,230,80,70,255}};
+            cs2dRenderer->DrawRadarHUD(width*.35f,height*.5f,-.6f,dots,width,height,
+                settings.radarPlayerCentered,settings.radarRotateWithPlayer,settings.radarBlendBg,settings.radarBgAlpha,
+                220,settings.radarMapZoom,true,640,240);
+        }
+    }
+    SDL_SetRenderTarget(renderer,target);
+    SDL_RenderSetScale(renderer,sx,sy);
+    SDL_RenderSetViewport(renderer,&viewport);
+    SDL_RenderSetClipRect(renderer,clipped ? &clip : nullptr);
+    SDL_SetRenderDrawBlendMode(renderer,blend);
+    SDL_SetRenderDrawColor(renderer, red, green, blue, alpha);
+}
+
 void Engine::Render() {
 
     const Uint64 nowTicks = SDL_GetTicks64();
@@ -1761,7 +1892,7 @@ void Engine::Render() {
         audioManager->PlayMusic(AudioManager::MusicTrackPath(audioManager->GetMusicTrack()));
     }
 
-    UpdateSidePopupFade(frameDt);
+    if (currentState == PLAYING) UpdateSidePopupFade(frameDt);
 
     // 进对局前的三段式：地图卡放大压黑 → 黑屏加载 → 游戏淡入
     if (matchLoadPhase_ == MatchLoadPhase::Zoom) {
@@ -1831,7 +1962,7 @@ void Engine::Render() {
 
     const bool transitioning = IsTransitionActive();
     const bool matchLoading = (matchLoadPhase_ == MatchLoadPhase::Loading);
-    if (sidePopupOpen_) {
+    if (sidePopupOpen_ && currentState == PLAYING) {
         // 弹窗期间持续保证绝对鼠标 + 可见光标（对局开始时会切到相对鼠标）
         SDL_SetRelativeMouseMode(SDL_FALSE);
         SDL_ShowCursor(SDL_ENABLE);
@@ -1863,9 +1994,13 @@ void Engine::Render() {
             (sidePhase_ == SidePhase::FullMap ||
              sidePhase_ == SidePhase::ZoomToSpawn ||
              sidePhase_ == SidePhase::DarkHold);
-        if (sideMapPreview) {
+        if (currentState==MATCH_END) {
+            DrawMatchShowcase();
+        } else if (sideMapPreview) {
+            showcaseStarted_=0;
             DrawSideMapPreview();
         } else {
+            showcaseStarted_=0;
             cs2dGame->Render(logicalW_, logicalH_);
             if (!sideChoicePending_) {
                 cs2dOverlay.Render(cs2dRenderer.get(), cs2dGame.get(), logicalW_, logicalH_);
@@ -1873,6 +2008,7 @@ void Engine::Render() {
         }
     }
 
+    if (currentState == SETTINGS) RenderSettingsPreviews();
     imGuiUI->BeginFrame();
 
     if (!holdOldPage) {
@@ -1901,6 +2037,10 @@ void Engine::Render() {
         ctx.state              = currentState;
         ctx.settingsReturnState = settingsReturnState;
         ctx.exitToDesktop      = exitToDesktop;
+        ctx.exitReturnState = exitReturnState_;
+        ctx.settings = &saveManager->MutableSettings();
+        for (size_t i=0;i<settingsPreviewTex_.size();++i) ctx.settingsPreviews[i]=settingsPreviewTex_[i];
+        ctx.input = inputManager.get();
         ctx.masterVolume       = audioManager->GetMasterVolume();
         ctx.musicVolume        = audioManager->GetMusicVolume();
         ctx.effectsVolume      = audioManager->GetEffectsVolume();
@@ -2227,6 +2367,7 @@ void Engine::Render() {
         }
     } else {
         GameUI::InGameCtx ictx;
+        ictx.bindings = &saveManager->GetSettings().bindings;
         ictx.state    = currentState;
 
         // 观战跟随 BOT 时，右下武器栏与左下血量/护甲显示被观战者的实时状态。
@@ -2234,8 +2375,39 @@ void Engine::Render() {
         const CS2DGame::Player& status = view ? *view : cs2dGame->GetPlayer();
 
         ictx.weaponName = cs2dGame->GetWeaponNameFor(status);
+        auto addEquipment = [&](WeaponId id, int slot, int count, bool selected) {
+            if (id == WeaponId::None)
+                return;
+            const auto &def = WeaponDB::Get(id);
+            const GameAction action =
+                slot == 4 ? GameAction::C4
+                          : static_cast<GameAction>(static_cast<int>(GameAction::Slot1) + slot);
+            ictx.equipment.push_back({def.name, def.iconPath,
+                                      saveManager->GetSettings().bindings[action].Label(), count, selected});
+        };
+        for (int slot = 0; slot < 3; ++slot)
+            addEquipment(status.weapons[slot], slot, 1, status.weaponSlot == slot);
+        for (int i = 0; i < status.grenadeCount; ++i) {
+            bool seen = false;
+            int count = 0;
+            bool selected = false;
+            for (int j = 0; j < status.grenadeCount; ++j) {
+                if (status.grenades[j] != status.grenades[i])
+                    continue;
+                if (j < i)
+                    seen = true;
+                ++count;
+                selected |= status.weaponSlot == 3 && status.grenadeSlot == j;
+            }
+            if (!seen)
+                addEquipment(status.grenades[i], 3, count, selected);
+        }
+        addEquipment(cs2dGame->ActorHasC4(status) ? WeaponId::C4 : WeaponId::None, 4, 1,
+                     status.weaponSlot == 4);
+
         ictx.ammo     = status.ammo;
-        ictx.magazineSize = (status.weaponSlot == 2) ? 0 : status.maxAmmo;
+        const auto heldClass=status.CurrentWeapon().cls;
+        ictx.magazineSize = heldClass==WeaponClass::Melee || heldClass==WeaponClass::Grenade || heldClass==WeaponClass::Bomb ? 0 : status.maxAmmo;
         ictx.reserveAmmo = status.reserve;
         ictx.hasNoWeaponHint = status.reloading;
         ictx.hintText        = "换弹中...";
@@ -2271,10 +2443,12 @@ void Engine::Render() {
         ictx.bombPlanted      = cs2dGame->IsBombPlanted();
         ictx.bombTimer        = cs2dGame->GetBombTimer();
         ictx.defuseProgress   = cs2dGame->GetDefuseProgress();
+        ictx.defuseRemaining = cs2dGame->GetDefuseRemaining();
+        ictx.defuserName = cs2dGame->GetDefuserName();
 
         // 击杀播报
         for (const auto& e : cs2dGame->GetKillFeed()) {
-            ictx.killFeed.push_back(e.text);
+            ictx.killFeed.push_back({e.id, e.killer, e.victim, WeaponDB::Get(e.weapon).iconPath, e.killerTeam, e.victimTeam, e.life, e.personal});
         }
 
         // 屏幕中央提示（回合开始 / 胜负）
@@ -2351,7 +2525,7 @@ void Engine::Render() {
     }
 
     // 进入游戏后的阵营选择弹窗（游戏画面在背后，HUD 暂时隐藏）
-    if (sidePopupOpen_) {
+    if (sidePopupOpen_ && currentState == PLAYING) {
         GameUI::SideSelectCtx sctx;
         // 契约 v1 第 5 节：爆破模式标记由实际 MatchMode 填充
         sctx.bombMode = (currentMatchMode_ == MatchMode::BombDefusal);
@@ -2372,6 +2546,13 @@ void Engine::Render() {
     }
     }   // !holdOldPage
 
+    if (currentState == PLAYING && !sideChoicePending_ && !sidePopupOpen_) {
+        gameUI->DrawDamageDirections(cs2dGame->GetDamageDirections());
+    }
+    if (saveManager->GetSettings().combatHintsVisible && currentState == PLAYING &&
+        cs2dGame->GetPlayer().alive && !buyMenuOpen_ && !sideChoicePending_ && !sidePopupOpen_) {
+        gameUI->DrawCombatHints(saveManager->GetSettings().bindings);
+    }
     imGuiUI->EndFrame();
 
     if (sceneReady) {
@@ -2395,7 +2576,7 @@ void Engine::Render() {
         }
     }
 
-    if (sideChoicePending_) {
+    if (sideChoicePending_ && currentState == PLAYING) {
         const float a = SideFadeAlpha();
         if (a > 0.001f) {
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
@@ -2497,11 +2678,9 @@ static const char* BuyCategoryLabel(WeaponClass cls) {
 
 void Engine::RenderBuyMenu() {
     GameUI::BuyMenuCtx bctx;
+    bctx.closeBinding = saveManager->GetSettings().bindings[GameAction::Buy].Label();
     bctx.money  = cs2dGame->GetPlayerMoney();
-    bctx.canBuy = cs2dGame->IsBuyPhase() && cs2dGame->IsPlayerInBuyZone();
-    if (!bctx.canBuy) {
-        bctx.hint = cs2dGame->IsBuyPhase() ? "不在购买区内" : "当前不是购买阶段";
-    }
+    bctx.canBuy = true;
 
     const CS2DGame::Player& p = cs2dGame->GetPlayer();
     bctx.playerTeam = p.team;
@@ -2559,7 +2738,7 @@ void Engine::RenderBuyMenu() {
         bctx.items.push_back(k);
     }
 
-    {
+    if (p.team == Team::CT) {
         GameUI::BuyItem kit;
         kit.kind = 2;
         kit.weaponId = -3;
@@ -2574,6 +2753,13 @@ void Engine::RenderBuyMenu() {
         kit.owned = kit.availability == Presentation::BuyCode::AlreadyEquipped;
         bctx.items.push_back(kit);
     }
+    for (auto& item:bctx.items) {
+        const auto refund=cs2dGame->EvaluateRefund(item.request);
+        item.refundAmount=refund.amount;
+        item.refundQuantity=refund.quantity;
+        item.refundReason=refund.reason;
+    }
+    bctx.refund=[this](const Presentation::BuyRequest& request) { return cs2dGame->ExecuteRefund(request); };
     gameUI->DrawBuyMenu(bctx, [this](const Presentation::BuyRequest& r) {
         // 一帧最多一次：DrawBuyMenu 内部保证，这里只负责提交与返回真实结果
         const Presentation::BuyResult res = cs2dGame->ExecutePurchase(r, audioManager.get());

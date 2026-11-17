@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 
 // ============================================================================
 // Tuning — 玩法调参常量集中地
@@ -10,6 +11,18 @@
 // ============================================================================
 
 namespace Tuning {
+inline float FireEffectiveRadius(float radius, float age, float life) {
+    return radius * std::clamp(age / .3f, 0.0f, 1.0f) * std::clamp(life, 0.0f, 1.0f);
+}
+inline float SmokeEffectiveRadius(float radius, float age, float expandTime, float life) {
+    const float p = std::clamp(age / std::max(.08f, expandTime), 0.0f, 1.0f);
+    return radius * (.12f + .88f * (1 - (1 - p) * (1 - p))) * std::clamp(life / 2.0f, 0.0f, 1.0f);
+}
+
+constexpr float MeleeGripForwardMul = -0.20f;
+constexpr float MeleeGripRightMul = 0.26f;
+constexpr float MeleeGripToCenterMul = 0.35f;
+
 constexpr float ScopeMoveMul = 0.6f;
 // 全地图共享的固定世界属性，按高清地图的全局空间基准校准。
 constexpr float PlayerSize = 14.0f;
@@ -37,12 +50,13 @@ constexpr float AimLineDashPixels = 8.0f, AimLineGapPixels = 6.0f;
 constexpr float WeaponOffsetMul = 0.35f, MuzzleLengthMul = 0.55f;
 constexpr float PistolDrawSize = 6.0f, PrimaryDrawSize = 8.0f;
 constexpr float CameraLookShift = 0.5f;
-constexpr float CameraAngledLength = 200.0f;
 constexpr float EdgeZoomOutZone = 0.005f;
 constexpr float EdgeZoomHysteresis = 10.0f;
 constexpr float EdgeZoomOutMin = 0.7f;
 constexpr float EdgeZoomFovAngleMul = 0.25f;
 constexpr float EdgeZoomSeconds = 0.4f;
+constexpr float MeleeConeHalfAngleDeg = 60.0f;
+constexpr float BotRecoilRecoverMul[] = {0.8f, 0.85f, 0.9f, 0.95f};
 constexpr float BotFovRadiusMul[] = {0.8f, 0.85f, 0.9f, 0.95f};
 constexpr float BotFovAngleMul[] = {0.8f, 0.85f, 0.9f, 0.95f};
 constexpr float BotReactionSecs[] = {2.5f, 1.0f, 0.5f, 0.35f};

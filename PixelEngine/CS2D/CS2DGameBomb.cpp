@@ -14,8 +14,6 @@ void CS2DGame::ToggleHoldC4() {
         return;
     }
     if (player_.weaponSlot == 4) {
-        player_.weapons[4] = WeaponId::None;
-        playerHoldingC4_ = false;
         SwitchWeaponSlot(1);
     } else {
         SwitchWeaponSlot(4);
@@ -48,7 +46,10 @@ void CS2DGame::UpdateBombItem(float dt) {
         if (best) {
             bombCarrier_ = (best == &player_) ? -1 : static_cast<int>(best - bots_.data());
             bombDropped_ = false;
-            if (best == &player_) player_.weapons[4] = WeaponId::C4;
+            if (best == &player_) {
+                player_.weapons[4]=WeaponId::C4;
+                player_.equipment[4]={};player_.equipment[4].id=c4EquipmentId_;player_.equipment[4].epoch=purchaseEpoch_;
+            }
             if (best == &player_) {
                 std::cout << "[C4] 玩家拾取了掉落的 C4" << std::endl;
             } else {
@@ -93,6 +94,7 @@ void CS2DGame::DropC4(float x, float y) {
     bombCarrier_ = -2;
     playerHoldingC4_ = false;
     player_.weapons[4] = WeaponId::None;
+    player_.equipment[4]={};
     if (player_.weaponSlot == 4) EquipFallbackWeapon();
     std::cout << "[C4] C4 掉落在 (" << static_cast<int>(x) << ","
               << static_cast<int>(y) << ")" << std::endl;
@@ -108,7 +110,7 @@ void CS2DGame::EquipFallbackWeapon() {
     int target = 2;   // 近战永远有
     if (player_.weapons[0] != WeaponId::None)      target = 0;
     else if (player_.weapons[1] != WeaponId::None) target = 1;
-    player_.weaponSlot = target;
+    SwitchWeaponSlot(target);
     player_.reloading = false;
     player_.reloadTimer = 0.0f;
     playerHoldingC4_ = false;

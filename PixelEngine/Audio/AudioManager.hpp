@@ -188,9 +188,9 @@ public:
     int  GetClickSound() const { return clickSoundIndex_; }
 
     void PlaySound(SoundEffect effect);
-    int PlaySoundTracked(SoundEffect effect);
+    int PlaySoundTracked(SoundEffect effect, int channel = -1);
     void StopChannel(int& channel);
-    int PlaySoundTrackedAt(SoundEffect effect, float x, float y, float listenerX, float listenerY);
+    int PlaySoundTrackedAt(SoundEffect effect, float x, float y, float listenerX, float listenerY, int channel = -1);
     // 3D 音效：声像由声源的世界位置相对听者决定（与听者朝向无关）
     void PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
                      float listenerX, float listenerY);
