@@ -88,10 +88,9 @@ struct BulletVisualSegment {
 };
 
 // 独立镜内放大参数，同帧镜内比例 = 主场景实际比例 × 档位倍率。
-// 档位倍率表：level 即下标，0=关；右键循环 关 → 1 → 2 → 关
+// 档位倍率表：level 即下标，0=关；右键循环 关 → 1.5× → 3× → 关
 inline constexpr int   kScopeLevelCount = 3;
-inline constexpr float kScopeZoomLevels[kScopeLevelCount] = { 1.0f, 1.5f, 2.0f };
-inline constexpr float kScopeZoomMultiplier = 1.5f;      // 兼容旧调用（== 档位 1）
+inline constexpr float kScopeZoomLevels[kScopeLevelCount] = { 1.0f, 1.5f, 3.0f };
 inline constexpr float kScopeTransitionSeconds = 0.12f;  // 每次换档的过渡时长
 // 镜筒半径 = 短边 × 该系数（屏幕上），镜内世界半径 = 半径像素 / 镜内比例。
 inline constexpr float kScopeCircleRadiusFrac = 0.42f;

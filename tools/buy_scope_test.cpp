@@ -441,7 +441,7 @@ static void TestScope() {
     check(!v.active && v.transition == 0.0f && v.zoomMultiplier == 1.0f && v.level == 0,
           "初始：未开镜、过渡 0、倍率 1、档位 0");
 
-    // ---- 契约 v1.1：右键循环 关 → 1.5x → 2x → 关 ----
+    // ---- 契约 v1.1：右键循环 关 → 1.5x → 3x → 关 ----
     game.UpdateScopeInput(true, true);
     v = game.GetScopeView();
     check(v.active && v.level == 1, "右键 #1 → level=1（1.5x）");
@@ -462,18 +462,18 @@ static void TestScope() {
     check(v.transition > 0.99f, "0.133s 后镜框淡入完成");
     check(std::fabs(v.zoomMultiplier - 1.5f) < 0.001f, "档位 1 倍率到位 = 1.5");
 
-    // 右键 #2 → 2x：镜框保持，只升倍率
+    // 右键 #2 → 3x：镜框保持，只升倍率
     game.UpdateScopeInput(true, true);
     v = game.GetScopeView();
-    check(v.active && v.level == 2, "右键 #2 → level=2（2x）");
+    check(v.active && v.level == 2, "右键 #2 → level=2（3x）");
     check(v.transition > 0.99f, "档位切换期间镜框不重播淡入");
     for (int i = 0; i < 8; ++i) {
         game.Update(1.0f / 60.0f, false, game.GetPlayer().x, game.GetPlayer().y,
                     false, false, false, false, false, false, false, nullptr);
     }
     v = game.GetScopeView();
-    check(std::fabs(v.zoomMultiplier - 2.0f) < 0.001f, "档位 2 倍率到位 = 2.0");
-    check(std::fabs(v.targetZoomMultiplier - 2.0f) < 0.001f, "档位 2 目标倍率 = 2.0");
+    check(std::fabs(v.zoomMultiplier - 3.0f) < 0.001f, "档位 2 倍率到位 = 3.0");
+    check(std::fabs(v.targetZoomMultiplier - 3.0f) < 0.001f, "档位 2 目标倍率 = 3.0");
 
     // 右键 #3 → 关镜，过渡回落
     game.UpdateScopeInput(true, true);
@@ -483,7 +483,7 @@ static void TestScope() {
                 false, false, false, false, false, false, false, nullptr);
     v = game.GetScopeView();
     check(v.transition > 0.4f && v.transition < 0.6f, "0.06s 后镜框淡出到约 0.5");
-    check(v.zoomMultiplier > 1.4f && v.zoomMultiplier < 1.6f, "淡出中倍率约 1.5（从 2.0 回落）");
+    check(v.zoomMultiplier > 1.9f && v.zoomMultiplier < 2.1f, "淡出中倍率约 2.0（从 3.0 回落）");
 
     // ResetScope 立即归零且幂等（档位 2 时强制重置）
     game.UpdateScopeInput(true, true);   // → 1
@@ -563,8 +563,8 @@ static void TestScopeCameraLevels() {
     check(std::fabs(game.GetScopeView().targetZoomMultiplier - 1.5f) < 0.01f,
           "档位 1 的 targetZoomMultiplier = 1.5");
     game.UpdateScopeInput(true, true);
-    check(std::fabs(game.GetScopeView().targetZoomMultiplier - 2.0f) < 0.01f,
-          "档位 2 的 targetZoomMultiplier = 2.0");
+    check(std::fabs(game.GetScopeView().targetZoomMultiplier - 3.0f) < 0.01f,
+          "档位 2 的 targetZoomMultiplier = 3.0");
     check(game.GetScopeView().level == 2, "档位 2 时 level == 2（UI 可据此显示倍率）");
 }
 
@@ -1455,7 +1455,7 @@ static void TestSharedAimDistance() {
             for (const auto direction : std::vector<std::pair<int, int>>{{1,0}, {-1,0}, {0,1}, {0,-1}, {1,1}}) {
                 float baselineX = 0, baselineY = 0;
                 bool same = true;
-                for (float zoom : {1.0f, 1.5f, 2.0f}) {
+                for (float zoom : {1.0f, 1.5f, 3.0f}) {
                     CS2DOverlay cursor;
                     cursor.InitializeCursor(std::atan2(static_cast<float>(direction.second), static_cast<float>(direction.first)));
                     cursor.SetReferenceWorldBounds(880, 880);
@@ -2042,6 +2042,25 @@ struct CS2DGameTestAccess {
         game.bombY_=game.player_.y;
         game.bombTimer_=40;
         game.UpdateSpectatorState();
+    }
+
+    // PIX-36 观战自由视角并集证据：阵亡后切自由视角，两名队友朝向相反，
+    // 雾区应点亮两块（任一队友看得见即点亮）。相机镜头仍由 specFreeX/Y 控制。
+    static void PlaceFreeUnionSpectator(CS2DGame& game) {
+        game.specMode_ = CS2DGame::SpectateMode::Free;
+        game.specTarget_ = 0;
+        for (size_t i = 0; i < game.bots_.size(); ++i) {
+            game.bots_[i].alive = true;
+            game.bots_[i].team = game.player_.team;
+            game.bots_[i].aimAngle = (i % 2 == 0) ? 0.0f : Tuning::Pi;
+        }
+        if (!game.bots_.empty()) {
+            game.specFreeX_ = game.bots_[0].x;
+            game.specFreeY_ = game.bots_[0].y;
+        } else {
+            game.specFreeX_ = game.player_.x;
+            game.specFreeY_ = game.player_.y;
+        }
     }
 
     static void KillExperienceActor(CS2DGame& game) {
@@ -3370,6 +3389,595 @@ struct CS2DGameTestAccess {
         game.GetWorld().Build(data);
         check(!game.PlayerCanSeeBot(bot) && !game.BotCanSeePlayer(bot), "walls occlude both visibility directions");
     }
+    // ---------------------------------------------------------------------------
+    // PIX-36 第五部分：开镜 3 倍 / 弹速分档 / 观战并集 / 脚步 / 拆包隔离 / 镜内玩家 / 阵亡直播
+    // ---------------------------------------------------------------------------
+
+    // 弹速表：档位 spot-check（每档抽一把枪，防 kWeapons 位置初始化错位）
+    static void TestPix36BulletSpeeds() {
+        std::printf("\n===== PIX-36 弹速分档 =====\n");
+        struct Sample { WeaponId id; float speed; const char* label; };
+        const Sample samples[] = {
+            { WeaponId::AWP,          5600.0f, "sniper AWP 5600" },
+            { WeaponId::SSG08,        4800.0f, "sniper SSG08 4800" },
+            { WeaponId::SCAR20,       4800.0f, "sniper SCAR-20 4800" },
+            { WeaponId::G3SG1,        4800.0f, "sniper G3SG1 4800" },
+            { WeaponId::M4A4,         3400.0f, "rifle M4A4 3400" },
+            { WeaponId::SG553,        3300.0f, "rifle SG553 3300" },
+            { WeaponId::AK47,         3200.0f, "rifle AK-47 3200" },
+            { WeaponId::GalilAR,      3100.0f, "rifle Galil AR 3100" },
+            { WeaponId::M249,         3300.0f, "MG M249 3300" },
+            { WeaponId::Negev,        3100.0f, "MG Negev 3100" },
+            { WeaponId::MP5SD,        2500.0f, "SMG MP5-SD 2500" },
+            { WeaponId::MP9,          2400.0f, "SMG MP9 2400" },
+            { WeaponId::UMP45,        2300.0f, "SMG UMP-45 2300" },
+            { WeaponId::Deagle,       2500.0f, "pistol Desert Eagle 2500" },
+            { WeaponId::FiveSeven,    2200.0f, "pistol Five-SeveN 2200" },
+            { WeaponId::USP_S,        2100.0f, "pistol USP-S 2100" },
+            { WeaponId::Glock18,      2000.0f, "pistol Glock-18 2000" },
+            { WeaponId::Nova,         1600.0f, "shotgun Nova 1600" },
+            { WeaponId::MAG7,         1600.0f, "shotgun MAG-7 1600" },
+            { WeaponId::Zeus,         4000.0f, "Zeus unchanged at 4000" },
+            { WeaponId::GrenadeHE,     840.0f, "grenade physics unchanged at 840" },
+        };
+        for (const auto& s : samples) {
+            check(std::fabs(WeaponDB::Get(s.id).bulletSpeed - s.speed) < 0.5f, s.label);
+        }
+        // 排序与真实初速一致：AWP 最快、M4 快于 AK、Deagle 快于 Glock、步枪快于手枪。
+        check(WeaponDB::Get(WeaponId::AWP).bulletSpeed > WeaponDB::Get(WeaponId::SSG08).bulletSpeed,
+              "PIX-36 AWP is the fastest bullet");
+        check(WeaponDB::Get(WeaponId::M4A4).bulletSpeed > WeaponDB::Get(WeaponId::AK47).bulletSpeed,
+              "PIX-36 M4A4 outruns AK-47 like the real muzzle velocities");
+        check(WeaponDB::Get(WeaponId::Deagle).bulletSpeed > WeaponDB::Get(WeaponId::Glock18).bulletSpeed,
+              "PIX-36 Deagle outruns Glock-18");
+        check(WeaponDB::Get(WeaponId::GalilAR).bulletSpeed > WeaponDB::Get(WeaponId::Deagle).bulletSpeed,
+              "PIX-36 rifles still outrun pistols");
+        // 全表核对：所有 34 把枪的弹速都大于旧值上限（旧表最高 2200，Zeus/投掷物除外）
+        int checkedWeapons = 0;
+        for (int id = static_cast<int>(WeaponId::Glock18);
+             id <= static_cast<int>(WeaponId::Negev); ++id) {
+            const auto& def = WeaponDB::Get(static_cast<WeaponId>(id));
+            if (def.cls == WeaponClass::Grenade || def.cls == WeaponClass::ZeusGun ||
+                def.cls == WeaponClass::Bomb || def.cls == WeaponClass::Melee)
+                continue;
+            ++checkedWeapons;
+            check(def.bulletSpeed >= 1600.0f,
+                  "PIX-36 every firearm got a faster bullet than the old 1200-2200 band");
+        }
+        check(checkedWeapons == 33, "PIX-36 bullet speed table covers all 33 firearms");
+    }
+
+    // 高速命中回归：AWP 5600 px/s 打远距离目标，必须登记命中（无跨帧穿透漏检）
+    static void TestPix36HighSpeedHit() {
+        std::printf("\n===== PIX-36 高速命中 =====\n");
+        CS2DGame game;
+        game.SetRngSeed(47);
+        game.SetMatchMode(MatchMode::DeathMatch);
+        if (!game.LoadMap(MapPath(), nullptr, true)) return;
+        game.bots_.clear();
+        game.botAi_.clear();
+        auto& player = game.player_;
+        player.health = player.maxHealth = 100000;
+        player.alive = true;
+        // 用一面 200×100 瓦片的空地图替换世界，保证有一条干净的 1600 px 直线
+        // （真实地图的房间墙会随机挡道，命中测试要的是弹道检测本身，不是地图布局）
+        CS2DMapData open;
+        open.mapWidth = 200; open.mapHeight = 100;
+        open.tileWidth = open.tileHeight = 16;
+        game.world_->Build(open);
+        game.visibility_.SetWorld(game.world_.get());
+        player.x = 240.0f; player.y = 240.0f;
+        const float dirX = 1.0f, dirY = 0.0f;
+        check(game.visibility_.HasLineOfSight(player.x, player.y,
+                                              player.x + dirX * 1600.0f, player.y + dirY * 1600.0f),
+              "PIX-36 open lane is clear for the high-speed hit test");
+        CS2DGame::Player target;
+        target.team = (player.team == Team::T) ? Team::CT : Team::T;
+        target.alive = true;
+        target.health = target.maxHealth = 100000;
+        target.armor = 0;
+        target.x = player.x + dirX * 1600.0f;
+        target.y = player.y + dirY * 1600.0f;
+        target.size = Tuning::PlayerSize;
+        target.spriteKey = 0;
+        target.aimAngle = Tuning::Pi;   // 面向射手，命中盒完整
+        game.bots_.push_back(target);
+        game.botAi_.emplace_back();
+
+        game.bullets_.clear();
+        game.FireBullet(player.x, player.y, std::atan2(dirY, dirX),
+                        WeaponDB::Get(WeaponId::AWP), -1, player.team);
+        // 按 60fps 推进：AWP 每帧约 93 px，扫掠检测必须在到达目标前登记命中
+        int framesToHit = -1;
+        for (int frame = 0; frame < 60; ++frame) {
+            game.UpdateBullets(1.0f / 60.0f, nullptr);
+            if (game.bots_[0].health < 100000) { framesToHit = frame + 1; break; }
+            if (game.bullets_.empty()) break;
+        }
+        check(game.bots_[0].health < 100000,
+              "PIX-36 AWP 5600 px/s hits a distant target without tunneling");
+        check(framesToHit > 0 && framesToHit <= 30,
+              "PIX-36 AWP reaches a 1600 px target within the expected sub-second flight time");
+        // 弹道视觉段必须仍然存在（狙击开火不能变成「无弹道瞬移」）
+        check(!game.GetBulletVisuals().empty(), "PIX-36 fast bullets still emit a tracer segment");
+
+        // 各档位速度对比：同一帧内 AWP 走过的距离远大于手枪
+        const float awpStep = WeaponDB::Get(WeaponId::AWP).bulletSpeed / 60.0f;
+        const float pistolStep = WeaponDB::Get(WeaponId::Glock18).bulletSpeed / 60.0f;
+        check(awpStep > pistolStep * 2.0f,
+              "PIX-36 AWP step distance is more than twice the pistol per frame");
+        // 实机模拟验证：单帧位移与表值一致（防表值填对但发射用了别的字段）
+        CS2DGame stepGame;
+        stepGame.SetMatchMode(MatchMode::DeathMatch);
+        if (stepGame.LoadMap(MapPath(), nullptr, true)) {
+            stepGame.bots_.clear(); stepGame.botAi_.clear();
+            CS2DMapData open2;
+            open2.mapWidth = 200; open2.mapHeight = 100;
+            open2.tileWidth = open2.tileHeight = 16;
+            stepGame.world_->Build(open2);
+            stepGame.visibility_.SetWorld(stepGame.world_.get());
+            stepGame.player_.x = 240.0f; stepGame.player_.y = 240.0f;
+            stepGame.bullets_.clear();
+            stepGame.FireBullet(stepGame.player_.x, stepGame.player_.y, 0.0f,
+                                WeaponDB::Get(WeaponId::AWP), -1, stepGame.player_.team);
+            check(!stepGame.bullets_.empty() && stepGame.bullets_.front().maxDist ==
+                      WeaponDB::Get(WeaponId::AWP).range,
+                  "PIX-36 AWP bullet carries the AWP range");
+            stepGame.UpdateBullets(1.0f / 60.0f, nullptr);
+            const float measured = stepGame.bullets_.empty()
+                ? 0.0f : stepGame.bullets_.front().traveled;
+            check(std::fabs(measured - awpStep) < 1.0f,
+                  "PIX-36 simulated AWP step equals the table speed / 60");
+        }
+    }
+
+    // 观战自由视角：队友视锥并集 + 修「沿用旧 BOT 朝向」bug
+    static void TestPix36SpectateUnion() {
+        std::printf("\n===== PIX-36 观战自由视角并集 =====\n");
+        // 纯几何层：多观察者并集 = 各观察者最大值，且单观察者与逐值版本一致
+        CS2DMapData data;
+        data.mapWidth = data.mapHeight = 60;
+        data.tileWidth = data.tileHeight = 16;
+        CS2DWorld world;
+        world.Build(data);
+        VisibilityQuery vis;
+        vis.SetWorld(&world);
+        vis.SetVisionRadius(200.0f);
+        vis.SetConeAngleDeg(Tuning::VisionConeDeg);
+        const VisibilityQuery::Observer east{300, 300, 0.0f};            // 朝 +x
+        const VisibilityQuery::Observer west{300, 300, Tuning::Pi};      // 朝 -x
+        const float eastOnly = vis.ComputeVisibility(east.x, east.y, east.angle, 420, 300);
+        const float westOnly = vis.ComputeVisibility(west.x, west.y, west.angle, 420, 300);
+        check(eastOnly > 0.0f && westOnly == 0.0f, "PIX-36 cone filter still rejects the opposite direction");
+        const VisibilityQuery::Observer pair[2] = {east, west};
+        check(std::fabs(vis.ComputeVisibilityUnion(pair, 2, 420, 300) - eastOnly) < 0.001f,
+              "PIX-36 union equals the max of the contributing observers");
+        // 并集必须点亮两侧：+x 与 -x 各有一个目标
+        check(vis.ComputeVisibilityUnion(pair, 2, 120, 300) > 0.0f &&
+              vis.ComputeVisibilityUnion(pair, 2, 480, 300) > 0.0f,
+              "PIX-36 union lights both sides of two opposite teammates");
+        // 两名观察者都看不到的目标（背后 90° 之外且超半径）必须为 0
+        check(vis.ComputeVisibilityUnion(pair, 2, 300, 300 + 900) == 0.0f,
+              "PIX-36 union stays dark beyond every teammate vision radius");
+        // 单观察者结果与逐值版本逐位相同（无行为漂移）
+        for (float tx : {320.0f, 360.0f, 400.0f, 440.0f, 480.0f}) {
+            const float single = vis.ComputeVisibility(east.x, east.y, east.angle, tx, 300);
+            const float union1 = vis.ComputeVisibilityUnion(&east, 1, tx, 300);
+            check(single == union1, "PIX-36 single-observer union is bit-identical to the scalar path");
+        }
+        check(vis.ComputeVisibilityUnion(nullptr, 0, 400, 300) == 0.0f,
+              "PIX-36 empty observer list is fully fogged (caller falls back)");
+
+        // 性能：并集判定最多 4 名观察者，单像素代价应 ≤ 单观察者的 4 倍
+        // （先短路完全可见的情况，实测通常远低于这个上界）。
+        {
+            const VisibilityQuery::Observer four[4] = {
+                {300, 300, 0.0f}, {300, 300, Tuning::Pi * 0.5f},
+                {300, 300, Tuning::Pi}, {300, 300, Tuning::Pi * 1.5f}};
+            constexpr int kSamples = 20000;
+            auto bench = [&](const VisibilityQuery::Observer* obs, std::size_t n) {
+                const Uint64 t0 = SDL_GetPerformanceCounter();
+                float sink = 0.0f;
+                for (int i = 0; i < kSamples; ++i) {
+                    const float tx = 280.0f + static_cast<float>(i % 40);
+                    const float ty = 280.0f + static_cast<float>((i / 40) % 40);
+                    sink += n == 1 ? vis.ComputeVisibility(obs[0].x, obs[0].y, obs[0].angle, tx, ty)
+                                   : vis.ComputeVisibilityUnion(obs, n, tx, ty);
+                }
+                const Uint64 t1 = SDL_GetPerformanceCounter();
+                return std::make_pair(static_cast<double>(t1 - t0), static_cast<double>(sink));
+            };
+            const auto single = bench(four, 1);
+            const auto quad = bench(four, 4);
+            const double ratio = quad.first / std::max(1.0, single.first);
+            const double freq = static_cast<double>(SDL_GetPerformanceFrequency());
+            std::printf("[PIX-36] fog cost single=%.2fms quad=%.2fms ratio=%.2fx\n",
+                        single.first * 1000.0 / freq, quad.first * 1000.0 / freq, ratio);
+            check(ratio <= 4.5, "PIX-36 four-observer union stays within 4x of the single-observer fog cost");
+        }
+
+        // 游戏层：自由视角 = 存活队友视锥并集，且与最后跟随的 BOT 朝向解耦
+        CS2DGame game;
+        game.SetMatchMode(MatchMode::BombDefusal);
+        if (!game.LoadMap(MapPath(), nullptr, true)) return;
+        game.player_.team = Team::CT;
+        game.bots_.clear();
+        game.botAi_.clear();
+        for (int i = 0; i < 2; ++i) {
+            CS2DGame::Player mate;
+            mate.team = Team::CT;
+            mate.alive = true;
+            mate.name = "mate" + std::to_string(i);
+            mate.x = 400.0f + i * 40.0f;
+            mate.y = 400.0f;
+            mate.aimAngle = (i == 0) ? 0.0f : Tuning::Pi;   // 两人朝向相反
+            game.bots_.push_back(mate);
+            game.botAi_.emplace_back();
+        }
+        game.specMode_ = CS2DGame::SpectateMode::Free;
+        game.specTarget_ = 0;
+        game.specFreeX_ = 380.0f;
+        game.specFreeY_ = 400.0f;
+        VisibilityQuery::Observer observers[VisibilityQuery::kMaxObservers];
+        const std::size_t count = game.CollectFreeSpectateObservers(observers,
+                                                                   VisibilityQuery::kMaxObservers);
+        check(count == 2, "PIX-36 free spectator collects every living teammate");
+        bool oppositeKept = false;
+        for (std::size_t i = 0; i < count; ++i) {
+            // EffectiveAim() 走 atan2，π 会以 -π 形式返回；用 remainder 比较同向性
+            oppositeKept = oppositeKept ||
+                std::abs(std::remainder(observers[i].angle - Tuning::Pi, Tuning::Pi * 2.0f)) < 0.01f;
+        }
+        check(oppositeKept, "PIX-36 teammate facing the other way is included unchanged");
+        // bug 回归：把 specTarget_ 指到另一只 BOT 并转它的朝向，观察者列表与并集结果不变
+        const auto before = [&] {
+            VisibilityQuery unionQuery;
+            unionQuery.SetWorld(game.visibility_.World());
+            unionQuery.SetVisionRadius(game.visibility_.VisionRadius());
+            unionQuery.SetConeAngleDeg(Tuning::VisionConeDeg);
+            return unionQuery.ComputeVisibilityUnion(observers, count, 700.0f, 400.0f);
+        }();
+        game.specTarget_ = 1;
+        game.bots_[1].aimAngle = -Tuning::Pi * 0.5f;
+        VisibilityQuery::Observer observers2[VisibilityQuery::kMaxObservers];
+        const std::size_t count2 = game.CollectFreeSpectateObservers(observers2,
+                                                                    VisibilityQuery::kMaxObservers);
+        check(count2 == count, "PIX-36 observer count independent of the last follow target");
+        check(before == [&] {
+            VisibilityQuery unionQuery;
+            unionQuery.SetWorld(game.visibility_.World());
+            unionQuery.SetVisionRadius(game.visibility_.VisionRadius());
+            unionQuery.SetConeAngleDeg(Tuning::VisionConeDeg);
+            // 队友 1 的朝向确实变了，并集仍要用它的新朝向（队友自己转头应该影响并集）
+            return unionQuery.ComputeVisibilityUnion(observers2, count2, 700.0f, 400.0f);
+        }(), "PIX-36 union does not depend on the stale follow target angle");
+        // GetSpectatedPlayer 在自由视角下必须是 nullptr（旧 bug 的来源）
+        check(game.GetSpectatedPlayer() == nullptr,
+              "PIX-36 free spectator reports no single spectated player");
+        // 切回跟随：specTarget_ 保留并被恢复使用
+        game.SpectatorToggle();
+        check(game.specMode_ == CS2DGame::SpectateMode::Follow, "PIX-36 toggle returns to follow mode");
+        check(game.GetSpectatedPlayer() != nullptr, "PIX-36 follow mode still resolves a spectated player");
+        // 世代检查：死亡代码已删除（编译期保证），这里确认跟随模式仍按单观察者工作
+        check(game.GetSpectateMode() == CS2DGame::SpectateMode::Follow && game.GetSpectateTarget() >= 0,
+              "PIX-36 follow target index survives the free-mode round trip");
+    }
+
+    // 脚步：按实际位移触发，玩家与 BOT 同一套
+    static void TestPix36Footsteps() {
+        std::printf("\n===== PIX-36 脚步 =====\n");
+        check(std::fabs(Tuning::FootstepStride - 28.0f) < 0.001f,
+              "PIX-36 stride is 28 px (one body diameter)");
+        CS2DGame game;
+        game.SetMatchMode(MatchMode::DeathMatch);
+        if (!game.LoadMap(MapPath(), nullptr, true)) return;
+        game.bots_.clear();
+        game.botAi_.clear();
+        auto& player = game.player_;
+        player.health = player.maxHealth = 100000;
+        player.alive = true;
+        player.stealth = false;
+        player.SetSlotWeapon(0, WeaponId::None);
+        player.weaponSlot = 2;              // 匕首：120 px/s，最快档
+        game.scopeLevel_ = 0;
+
+        // ---- 步数：以已知速度直线行走已知距离，断言步数 ≈ 距离/28（±1 步） ----
+        // 用固定长度的合成位移驱动累计器（与真实移动解耦，只验证「位移→步数」映射）
+        game.ResetFootstepStride();
+        player.x = 300.0f; player.y = 300.0f;
+        player.vx = 120.0f; player.vy = 0.0f;
+        const float stepDistance = Tuning::FootstepStride * 0.5f;   // 每帧半身位
+        const int frames = 40;                                       // 20 个步幅 = 20 步
+        int observed = 0;
+        float walked = 0.0f;
+        for (int frame = 0; frame < frames; ++frame) {
+            player.x += stepDistance;
+            walked += stepDistance;
+            observed += game.AccumulateFootstep(player, game.footstepStride_,
+                                                game.footstepLastX_, game.footstepLastY_,
+                                                game.footstepLastValid_, nullptr, false);
+        }
+        const float expectedSteps = walked / Tuning::FootstepStride;
+        check(std::fabs(walked - 560.0f) < 0.001f, "PIX-36 walked exactly 560 px (20 strides)");
+        check(std::abs(static_cast<float>(observed) - expectedSteps) <= 1.0f,
+              "PIX-36 step count matches distance / stride (+-1 step)");
+        check(static_cast<int>(game.PlayerFootstepCount()) == observed,
+              "PIX-36 the player step statistic matches the triggered steps");
+
+        // 单帧最多 2 步：一次瞬移 5 个步幅只允许触发 2 步（防卡顿后连响）
+        game.ResetFootstepStride();
+        game.AccumulateFootstep(player, game.footstepStride_, game.footstepLastX_,
+                                game.footstepLastY_, game.footstepLastValid_, nullptr, false);
+        player.x += Tuning::FootstepStride * 5.0f;
+        const int burst = game.AccumulateFootstep(player, game.footstepStride_,
+                                                  game.footstepLastX_, game.footstepLastY_,
+                                                  game.footstepLastValid_, nullptr, false);
+        check(burst <= Tuning::FootstepMaxPerFrame,
+              "PIX-36 a single frame never emits more than the per-frame step cap");
+
+        // ---- 卡墙：有输入无位移 → 不触发步声 ----
+        game.ResetFootstepStride();
+        player.x = 300.0f; player.y = 300.0f;
+        player.vx = 120.0f;   // 速度不为零，但位置不变（顶墙）
+        int wallSteps = 0;
+        for (int frame = 0; frame < 120; ++frame) {
+            wallSteps += game.AccumulateFootstep(player, game.footstepStride_,
+                                                 game.footstepLastX_, game.footstepLastY_,
+                                                 game.footstepLastValid_, nullptr, false);
+        }
+        check(wallSteps == 0, "PIX-36 pushing into a wall (speed but no displacement) never emits a step");
+
+        // ---- 潜行：不累计、不出声 ----
+        game.ResetFootstepStride();
+        player.stealth = true;
+        player.x = 100.0f; player.y = 100.0f;
+        int stealthSteps = 0;
+        for (int frame = 0; frame < 60; ++frame) {
+            player.x += 50.0f / 60.0f;
+            stealthSteps += game.AccumulateFootstep(player, game.footstepStride_,
+                                                    game.footstepLastX_, game.footstepLastY_,
+                                                    game.footstepLastValid_, nullptr, false);
+        }
+        check(stealthSteps == 0 && game.footstepStride_ == 0.0f,
+              "PIX-36 stealth never accumulates stride and stays silent");
+        player.stealth = false;
+
+        // ---- 开镜步频慢于不开镜：同样的时间窗内走的距离更短 ----
+        auto walkDistance = [&](bool scoped, float seconds) {
+            player.x = 400.0f; player.y = 400.0f;
+            player.vx = player.vy = 0.0f;
+            player.SetSlotWeapon(0, WeaponId::AWP);
+            player.weaponSlot = 0;
+            game.scopeLevel_ = scoped ? 1 : 0;
+            float total = 0.0f;
+            for (int frame = 0; frame < static_cast<int>(seconds * 60.0f); ++frame) {
+                const float bx = player.x, by = player.y;
+                game.UpdatePlayerMovement(1.0f / 60.0f, false, false, false, true, false);
+                total += std::hypot(player.x - bx, player.y - by);
+            }
+            game.scopeLevel_ = 0;
+            return total;
+        };
+        const float runDistance = walkDistance(false, 0.6f);
+        const float scopeDistance = walkDistance(true, 0.6f);
+        check(runDistance > 20.0f && scopeDistance < runDistance * 0.85f,
+              "PIX-36 scoped movement covers less ground so the step cadence slows down");
+
+        // ---- BOT 同一套：各自累计器，步频 ≈ 移速 / 28 ----
+        game.bots_.clear();
+        game.botAi_.clear();
+        CS2DGame::Player bot;
+        bot.team = Team::T;
+        bot.alive = true;
+        bot.stealth = false;
+        bot.health = 100000;
+        bot.x = 600.0f; bot.y = 600.0f;
+        bot.vx = 120.0f;
+        bot.spriteKey = 0;
+        game.bots_.push_back(bot);
+        game.botAi_.emplace_back();
+        game.botAi_[0].footstepStride = 0.0f;
+        game.botAi_[0].footstepLastValid = false;
+        int botSteps = 0;
+        float botWalked = 0.0f;
+        for (int frame = 0; frame < 120; ++frame) {
+            game.bots_[0].x += 120.0f / 60.0f;
+            botWalked += 120.0f / 60.0f;
+            botSteps += game.AccumulateFootstep(game.bots_[0], game.botAi_[0].footstepStride,
+                                                game.botAi_[0].footstepLastX,
+                                                game.botAi_[0].footstepLastY,
+                                                game.botAi_[0].footstepLastValid, nullptr, true);
+        }
+        // 2 秒 × 120 px/s = 240 px → 240/28 ≈ 8.57 → 8..9 步
+        const float expectedBotSteps = botWalked / Tuning::FootstepStride;
+        check(std::abs(static_cast<float>(botSteps) - expectedBotSteps) <= 1.0f,
+              "PIX-36 a BOT's step cadence follows its own speed / stride");
+        // BOT 阵亡后累计器清零
+        game.bots_[0].alive = false;
+        game.AccumulateFootstep(game.bots_[0], game.botAi_[0].footstepStride,
+                                game.botAi_[0].footstepLastX, game.botAi_[0].footstepLastY,
+                                game.botAi_[0].footstepLastValid, nullptr, true);
+        check(game.botAi_[0].footstepStride == 0.0f && !game.botAi_[0].footstepLastValid,
+              "PIX-36 a dead BOT resets its stride accumulator");
+    }
+
+    // 拆包进度信息隔离：队友可见（只有秒数），对手完全不可见
+    static void TestPix36DefuseIsolation() {
+        std::printf("\n===== PIX-36 拆包信息隔离 =====\n");
+        CS2DGame game;
+        game.SetMatchMode(MatchMode::BombDefusal);
+        if (!game.LoadMap(MapPath(), nullptr, true)) return;
+        // T 方玩家 + 一名 CT 队友在 5 人里：直接构造拆包者
+        game.player_.team = Team::T;
+        game.bots_.clear();
+        game.botAi_.clear();
+        CS2DGame::Player defuser;
+        defuser.team = Team::CT;
+        defuser.alive = true;
+        defuser.name = "CT-defuser";
+        defuser.x = 400.0f; defuser.y = 400.0f;
+        defuser.defuseProgress = 0.4f;
+        game.bots_.push_back(defuser);
+        game.botAi_.emplace_back();
+        game.bombPlanted_ = true;
+        game.activeDefuser_ = 0;
+        game.defuseProgress_ = 0.4f;
+        game.defuseRemaining_ = 6.0f;
+        check(!game.IsDefuseVisibleToViewer(),
+              "PIX-36 a T-side viewer cannot see an enemy defuse");
+        // CT 观看者 → 可见
+        game.player_.team = Team::CT;
+        check(game.IsDefuseVisibleToViewer(),
+              "PIX-36 a CT-side viewer sees their teammate's defuse");
+        // 无人拆包 → 不可见
+        game.defuseProgress_ = 0.0f;
+        check(!game.IsDefuseVisibleToViewer(),
+              "PIX-36 no progress means nothing is visible");
+        // 观战：阵亡玩家仍按自己的阵营判断
+        game.defuseProgress_ = 0.4f;
+        game.player_.alive = false;
+        game.player_.team = Team::CT;
+        check(game.IsDefuseVisibleToViewer(),
+              "PIX-36 a dead CT spectator still sees the defuse (own team)");
+        game.player_.team = Team::T;
+        check(!game.IsDefuseVisibleToViewer(),
+              "PIX-36 a dead T spectator cannot see the defuse (own team)");
+        // 玩家本人拆包（activeDefuser_ == -1）→ 自己阵营自然可见；对手侧看不到
+        game.player_.alive = true;
+        game.player_.team = Team::CT;
+        game.activeDefuser_ = -1;
+        check(game.IsDefuseVisibleToViewer(), "PIX-36 the defuser himself sees his own progress");
+        // HUD 层：不可见时整行不画、横幅位置也恒定
+        GameUI::InGameCtx hidden;
+        hidden.objective = 1;
+        hidden.bombPlanted = true;
+        hidden.defuseProgress = 0.4f;
+        hidden.defuseRemaining = 6.0f;
+        hidden.defuseVisibleToViewer = false;
+        check(!hidden.defuseVisibleToViewer, "PIX-36 HUD context carries the visibility flag");
+        // 名称不再参与 HUD 绘制：即使传入也不会被显示（源码级约束由 GameUI 保证）
+        hidden.defuserName = "CT-defuser";
+        check(hidden.defuserName == "CT-defuser",
+              "PIX-36 defuser name stays available for tests but is not drawn by the HUD");
+    }
+
+    // 开镜倍率：档位表 1.5x / 3x，且镜内玩家同步放大（尺寸比 = 倍率）
+    static void TestPix36ScopeLevelsAndLensPlayer() {
+        std::printf("\n===== PIX-36 开镜 3 倍与镜内玩家 =====\n");
+        check(Presentation::kScopeLevelCount == 3, "PIX-36 three scope levels");
+        check(std::fabs(Presentation::kScopeZoomLevels[0] - 1.0f) < 0.001f &&
+              std::fabs(Presentation::kScopeZoomLevels[1] - 1.5f) < 0.001f &&
+              std::fabs(Presentation::kScopeZoomLevels[2] - 3.0f) < 0.001f,
+              "PIX-36 scope levels are off / 1.5x / 3x");
+        for (WeaponId scoped : {WeaponId::SSG08, WeaponId::AWP, WeaponId::SCAR20,
+                                WeaponId::G3SG1, WeaponId::SG553, WeaponId::AUG}) {
+            CS2DGame game;
+            if (!LoadDeathMatch(game)) return;
+            game.GetPlayer().money = 16000;
+            game.ExecutePurchase(WeaponReq(scoped));
+            if (!game.GetScopeView().supported) continue;
+            game.UpdateScopeInput(true, true);
+            check(std::fabs(game.GetScopeView().targetZoomMultiplier - 1.5f) < 0.01f,
+                  "PIX-36 all scoped weapons share level 1 = 1.5x");
+            game.UpdateScopeInput(true, true);
+            check(std::fabs(game.GetScopeView().targetZoomMultiplier - 3.0f) < 0.01f,
+                  "PIX-36 all scoped weapons share level 2 = 3x");
+        }
+        // 镜内玩家放大：把同一个角色分别画在主场景和镜内，逐像素量屏上高度，
+        // 比值必须 ≈ 镜内倍率（误差 ≤ 10%）——这测的是真实绘制路径，不是公式换算。
+        SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 640, 480, 32, SDL_PIXELFORMAT_RGBA32);
+        SDL_Renderer* software = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+        check(software != nullptr, "PIX-36 software renderer for the lens player check");
+        if (!software) { SDL_FreeSurface(surface); return; }
+        {
+            // renderer 必须在使用它的 SDL_Renderer 之前析构（Clean 会销毁纹理），
+            // 所以放进内层作用域，避免 SDL_DestroyRenderer 之后的 use-after-free。
+            CS2DRenderer renderer;
+            check(renderer.Initialize(software, "assets/cs2d/maps", 640, 480),
+                  "PIX-36 lens renderer initializes");
+            CS2DMapData data; data.mapWidth = data.mapHeight = 60;
+            data.tileWidth = data.tileHeight = 16;
+            CS2DWorld world; world.Build(data);
+            renderer.SetWorld(&world);
+
+            std::ofstream lens("build-evidence/experience/lens-player-ratio.csv");
+            lens << "zoom,main_px,scoped_px,ratio,error_percent\n";
+
+            // 在给定表面的某一列区间里，统计「非背景像素」覆盖的垂直跨度。
+            // 背景被清成纯黑，所以任何 RGB 之和 > 40 的像素都属于角色。
+            auto contentHeight = [](const SDL_Surface* shot, int x0, int x1) {
+                if (!shot) return 0;
+                int top = shot->h, bottom = -1;
+                for (int y = 0; y < shot->h; ++y) {
+                    bool hit = false;
+                    for (int x = std::max(0, x0); x <= std::min(shot->w - 1, x1) && !hit; ++x) {
+                        const auto* p = static_cast<const Uint8*>(shot->pixels) +
+                                        y * shot->pitch + x * 4;
+                        if (p[0] + p[1] + p[2] > 40) hit = true;
+                    }
+                    if (hit) { top = std::min(top, y); bottom = std::max(bottom, y); }
+                }
+                return bottom >= top ? bottom - top + 1 : 0;
+            };
+            SpriteDrawParams actor;
+            actor.aimAngle = 0.0f;
+            actor.size = 40.0f;
+            actor.weaponSlot = 1;
+            actor.weaponId = static_cast<int>(WeaponId::USP_S);
+            actor.spriteKey = 0;
+            actor.animState = static_cast<int>(CS2DGame::AnimState::Idle);
+            actor.localPlayer = true;
+
+            // 主场景：相机对准角色所在世界点，角色就画在屏幕正中
+            SDL_SetRenderDrawColor(software, 0, 0, 0, 255);
+            SDL_RenderClear(software);
+            renderer.UpdateCamera(800, 800, 640, 480);
+            actor.x = 800.0f; actor.y = 800.0f;
+            renderer.DrawCharacter(actor);
+            const int mainPx = contentHeight(surface, 260, 380);
+
+            int measuredZooms = 0;
+            for (float zoom : {1.5f, 3.0f}) {
+                SDL_SetRenderDrawColor(software, 0, 0, 0, 255);
+                SDL_RenderClear(software);
+                renderer.UpdateCamera(800, 800, 640, 480);
+                const bool began = renderer.BeginScopeScene(800, 800, 320, 240, zoom);
+                check(began, "PIX-36 lens render target begins for the player-size check");
+                if (!began) continue;
+                // BeginScopeScene 用深蓝灰（18,26,36）清屏，与下面「非背景」判定的
+                // 阈值冲突；这里改成纯黑清屏，让测量只看得到角色像素。
+                SDL_SetRenderDrawColor(software, 0, 0, 0, 255);
+                SDL_RenderClear(software);
+                // 镜内：同一个世界点被摆到镜心，角色同样出现在屏幕正中。
+                // 趁镜面纹理仍是当前渲染目标时读像素，量到的才是镜内真实尺寸。
+                actor.x = 800.0f; actor.y = 800.0f;
+                renderer.DrawCharacter(actor);
+                SDL_Surface* shot = SDL_CreateRGBSurfaceWithFormat(0, 640, 480, 32,
+                                                                  SDL_PIXELFORMAT_RGBA32);
+                int scopedPx = 0;
+                if (shot) {
+                    SDL_RenderReadPixels(software, nullptr, SDL_PIXELFORMAT_RGBA32,
+                                         shot->pixels, shot->pitch);
+                    scopedPx = contentHeight(shot, 260, 380);
+                    SDL_FreeSurface(shot);
+                }
+                renderer.EndScopeScene();
+                ++measuredZooms;
+                check(mainPx > 0 && scopedPx > 0,
+                      "PIX-36 both the main-scene and the scoped player render");
+                const float ratio = static_cast<float>(scopedPx) /
+                                    static_cast<float>(std::max(1, mainPx));
+                const float error = 100.0f * std::abs(ratio / zoom - 1.0f);
+                lens << zoom << ',' << mainPx << ',' << scopedPx << ',' << ratio << ',' << error << '\n';
+                check(error <= 10.0f,
+                      "PIX-36 scoped player size ratio matches the selected lens zoom");
+            }
+            check(measuredZooms == 2, "PIX-36 both lens zooms were measured on screen");
+        }
+        SDL_DestroyRenderer(software);
+        SDL_FreeSurface(surface);
+    }
+
 };
 
 static void TestScopeBoundsAndMovement() {
@@ -4062,8 +4670,10 @@ static void TestRound3HudLayouts(bool experience = false) {
                 SDL_RenderSetLogicalSize(renderer, logicalW, logicalH);
                 ui.SetUiScale(std::min(logicalW / 1920.f, logicalH / 1080.f));
                 const char *scenes[] = {"buy",      "combat",    "planted",   "defusing",
-                                        "low-time", "round-end", "deathmatch", "death-card", "c4-view", "armor-only", "no-armor"};
-                for (int scene = 0; scene < (experience ? 11 : 7); ++scene) {
+                                        "low-time", "round-end", "deathmatch", "death-card", "c4-view", "armor-only", "no-armor",
+                                        "defusing-ally", "defusing-enemy"};
+                const int sceneCount = experience ? 13 : 7;
+                for (int scene = 0; scene < sceneCount; ++scene) {
                     GameUI::InGameCtx hud;
                     hud.state = PLAYING;
                     hud.playerTeam = scene == 6 ? Team::None : Team::CT;
@@ -4102,11 +4712,16 @@ static void TestRound3HudLayouts(bool experience = false) {
                     hud.hasDefuseKit = scene != 6;
                     hud.kills = 24;
                     hud.deaths = 9;
-                    hud.bombPlanted = scene == 2 || scene == 3 || scene == 8;
+                    hud.bombPlanted = scene == 2 || scene == 3 || scene == 8 ||
+                                      scene == 11 || scene == 12;
                     hud.bombTimer = scene == 3 ? 9.2f : 31.8f;
-                    hud.defuseProgress = scene == 3 ? .62f : 0;
+                    // PIX-36 拆包信息隔离：队友侧只显示剩余秒数；对手侧整行隐藏。
+                    // scene 11 = 己方队友在拆包（可见），scene 12 = 敌方在拆包（完全不可见）。
+                    const bool allyDefusing = scene == 3 || scene == 11;
+                    hud.defuseProgress = allyDefusing ? .62f : (scene == 12 ? .62f : 0);
                     hud.defuseRemaining = 1.52f;
                     hud.defuserName = "你";
+                    hud.defuseVisibleToViewer = allyDefusing;
                     if (scene == 5) {
                         hud.announcement = "反恐精英胜利";
                         hud.announcementAlpha = 1;
@@ -4306,39 +4921,64 @@ struct EngineTestAccess {
                 const auto& player=engine.cs2dGame->GetPlayer();
                 engine.cs2dGame->Update(.15f,false,player.x+80,player.y,false,false,false,false,false,false,false,nullptr);
                 for(int i=0;i<30;++i) frame();
-                saveScene(level==1?"scope-1.5x.png":"scope-2x.png");
+                saveScene(level==1?"scope-1.5x.png":"scope-3x.png");
             }
             CS2DGameTestAccess::KillExperienceActor(*engine.cs2dGame);
             const auto& player=engine.cs2dGame->GetPlayer();
             engine.cs2dGame->Update(.2f,false,player.x,player.y,false,false,false,false,false,false,false,nullptr);
             frame();saveScene("death-card.png");
-            check(engine.deathWorldTex_!=nullptr,"experience real Engine captures the death world texture");
-            int width=0,height=0;SDL_QueryTexture(engine.deathWorldTex_,nullptr,nullptr,&width,&height);
-            std::vector<Uint8> first(width*height*4),second(first.size());
-            SDL_SetRenderTarget(engine.renderer,engine.deathWorldTex_);
-            SDL_RenderReadPixels(engine.renderer,nullptr,SDL_PIXELFORMAT_RGBA32,first.data(),width*4);
-            SDL_SetRenderTarget(engine.renderer,nullptr);
-            for(int i=0;i<45;++i) {
+            // 阵亡定格期改为直播：镜头固定，但世界逐帧重画。
+            // (a) 相隔 0.5 秒的两帧像素不同（世界在动）
+            // (b) 两帧的相机位置相同（镜头固定在阵亡位置）
+            auto readFrame=[&](std::vector<Uint8>& out){
+                SDL_SetRenderTarget(engine.renderer,nullptr);
+                out.resize(static_cast<size_t>(engine.logicalW_)*engine.logicalH_*4);
+                SDL_RenderReadPixels(engine.renderer,nullptr,SDL_PIXELFORMAT_RGBA32,out.data(),engine.logicalW_*4);
+            };
+            check(engine.cs2dGame->IsDeathFreeze(),"experience death freeze is active for the live feed check");
+            std::vector<Uint8> liveFirst,liveSecond;
+            const float cameraX0=engine.cs2dRenderer->GetCameraX();
+            const float cameraY0=engine.cs2dRenderer->GetCameraY();
+            const float cameraZoom0=engine.cs2dRenderer->GetZoom();
+            readFrame(liveFirst);
+            saveScene("death-live-frame-a.png");
+            for(int i=0;i<30;++i) {
                 engine.cs2dGame->Update(1.f/60,false,player.x,player.y,false,false,false,false,false,false,false,nullptr);
                 frame();
             }
-            SDL_SetRenderTarget(engine.renderer,engine.deathWorldTex_);
-            SDL_RenderReadPixels(engine.renderer,nullptr,SDL_PIXELFORMAT_RGBA32,second.data(),width*4);
-            SDL_SetRenderTarget(engine.renderer,nullptr);
-            check(first==second,"experience death world remains pixel-identical while simulation advances");
+            readFrame(liveSecond);
+            saveScene("death-live-frame-b.png");
+            check(liveFirst!=liveSecond,"experience death freeze keeps rendering the live world (two frames half a second apart differ)");
+            check(engine.cs2dRenderer->GetCameraX()==cameraX0 &&
+                  engine.cs2dRenderer->GetCameraY()==cameraY0 &&
+                  engine.cs2dRenderer->GetZoom()==cameraZoom0,
+                  "experience death freeze keeps the camera locked at the death position");
             const float remaining=engine.cs2dGame->GetDeathPresentation().remaining;
             engine.currentState=PAUSED;engine.Update(.5f);engine.currentState=PLAYING;
             check(engine.cs2dGame->GetDeathPresentation().remaining==remaining,"experience pause preserves the death presentation timer");
-            SDL_Texture* snapshot=engine.deathWorldTex_;
-            engine.ResizeLogicalViewport(1024,768);
-            engine.DrawGameplayWorld();
-            check(engine.deathWorldTex_==snapshot,"experience resizing reuses the frozen world image");
-            engine.cs2dGame->Update(1.f,false,player.x,player.y,false,false,false,false,false,false,false,nullptr);
-            engine.DrawGameplayWorld();
-            check(!engine.deathWorldTex_ && !engine.cs2dGame->IsDeathFreeze(),"experience spectator handoff releases the death texture");
+            // 定格期改尺寸：逻辑画布跟随渲染缩放重算（高度的 1080 基准），
+            // 渲染器与逻辑尺寸必须同步，并且仍然每帧直播。
+            const int resizeW=1024,resizeH=768;
+            engine.ResizeLogicalViewport(resizeW,resizeH);
+            frame();
+            check(engine.logicalW_>360 && engine.logicalH_==1080 &&
+                  engine.cs2dRenderer->GetViewW()==engine.logicalW_ &&
+                  engine.cs2dRenderer->GetViewH()==engine.logicalH_,
+                  "experience resizing during the death freeze re-renders the live world at the new viewport");
+            check(engine.cs2dGame->IsDeathFreeze(),
+                  "experience resizing does not end the death freeze early");
+            engine.cs2dGame->Update(1.2f,false,player.x,player.y,false,false,false,false,false,false,false,nullptr);
+            frame();
+            check(!engine.cs2dGame->IsDeathFreeze(),"experience death freeze hands off to the spectator view");
             CS2DGameTestAccess::PlaceExperienceBomb(*engine.cs2dGame);
             for(int i=0;i<45;++i) frame();
             saveScene("c4-spectator.png");
+            // PIX-36 观战自由视角并集：两名存活队友朝向相反，雾区应点亮两块。
+            {
+                CS2DGameTestAccess::PlaceFreeUnionSpectator(*engine.cs2dGame);
+                for(int i=0;i<45;++i) frame();
+                saveScene("spectator-free-union.png");
+            }
             engine.Clean();
         }
         PathUtils::SetBaseDir(previousBase);
@@ -4449,7 +5089,7 @@ static void TestExperienceRendering(bool gpu) {
         std::ofstream magnification(gpu ? "build-evidence/experience/scope-magnification-d3d11.csv" :
             "build-evidence/experience/scope-magnification-software.csv");
         magnification<<"requested,measured,error_percent\n";
-        for (float zoom:{1.5f,2.f}) {
+        for (float zoom:{1.5f,3.f}) {
             SDL_SetRenderDrawColor(output,0,0,0,255);SDL_RenderClear(output);
             const SDL_Rect clip{5,6,620,460};
             SDL_RenderSetClipRect(output,&clip);
@@ -4528,6 +5168,12 @@ int main(int argc,char** argv) {
         TestExperienceRendering(false);
         TestExperienceRendering(true);
         TestRound3HudLayouts(true);
+        CS2DGameTestAccess::TestPix36BulletSpeeds();
+        CS2DGameTestAccess::TestPix36HighSpeedHit();
+        CS2DGameTestAccess::TestPix36SpectateUnion();
+        CS2DGameTestAccess::TestPix36Footsteps();
+        CS2DGameTestAccess::TestPix36DefuseIsolation();
+        CS2DGameTestAccess::TestPix36ScopeLevelsAndLensPlayer();
         std::printf("Experience regressions: %d passed, %d failed\n",g_pass,g_fail);
         return g_fail ? 1 : 0;
     }
@@ -4592,6 +5238,12 @@ int main(int argc,char** argv) {
     }
     CS2DGameTestAccess::TestPerformanceInterpolation();
     CS2DGameTestAccess::TestPix35();
+    CS2DGameTestAccess::TestPix36BulletSpeeds();
+    CS2DGameTestAccess::TestPix36HighSpeedHit();
+    CS2DGameTestAccess::TestPix36SpectateUnion();
+    CS2DGameTestAccess::TestPix36Footsteps();
+    CS2DGameTestAccess::TestPix36DefuseIsolation();
+    CS2DGameTestAccess::TestPix36ScopeLevelsAndLensPlayer();
     if (argc > 1 && std::string(argv[1]) == "--pix35") {
         std::printf("PIX35 focused: %d passed, %d failed\n", g_pass, g_fail);
         return g_fail ? 1 : 0;

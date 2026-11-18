@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 
 class CS2DWorld;
 
@@ -26,6 +27,15 @@ public:
     static constexpr float kAngleSoftDeg = Tuning::VisionAngleSoftDeg;
     static constexpr float kMaxRadius    = 640.0f;   // 原 MAX_PLAYER_VISION_RADIUS
     static constexpr float kBaseZoomScale = 1.15f;   // 与 UpdateCamera 的镜头放大系数一致
+
+    // 一名观察者（观战自由视角把队友视锥并集时用）：位置 + 朝向
+    struct Observer {
+        float x = 0.0f;
+        float y = 0.0f;
+        float angle = 0.0f;
+    };
+    // 并集观察者上限：一名玩家 + 4 名队友，留一档余量
+    static constexpr std::size_t kMaxObservers = 8;
 
     void SetWorld(const CS2DWorld* world) { world_ = world; }
     const CS2DWorld* World() const { return world_; }
@@ -48,6 +58,16 @@ public:
     bool IsVisibleToPlayer(float playerX, float playerY, float aimAngle,
                            float targetX, float targetY) const {
         return ComputeVisibility(playerX, playerY, aimAngle, targetX, targetY) > 0.0f;
+    }
+
+    // ---- 多观察者：观战自由视角的「队友视锥并集」 ----
+    // 返回各观察者 ComputeVisibility 的最大值（任一观察者看得见即 > 0）。
+    // 顺序无关、与单观察者版本逐像素一致（观察者只有一名时结果完全相同）。
+    float ComputeVisibilityUnion(const Observer* observers, std::size_t count,
+                                 float targetX, float targetY) const;
+    bool IsVisibleToAnyObserver(const Observer* observers, std::size_t count,
+                                float targetX, float targetY) const {
+        return ComputeVisibilityUnion(observers, count, targetX, targetY) > 0.0f;
     }
 
     // ---- 视口 → 镜头/视野换算（渲染与无头仿真共用同一公式）----

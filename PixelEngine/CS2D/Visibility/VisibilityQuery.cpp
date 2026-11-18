@@ -97,6 +97,30 @@ float VisibilityQuery::ComputeVisibility(float playerX, float playerY, float aim
 }
 
 // ============================================================================
+// 多观察者并集：观战自由视角「队友视锥并集」的唯一实现。
+//
+// 语义 = max(各观察者 ComputeVisibility)：
+//   * 任一观察者看得见即 > 0（并集点亮）；
+//   * 只有一名观察者时与单观察者版本逐值相同（无行为漂移）；
+//   * 空列表 = 完全不可见（0），调用方据此回退到「按自己」。
+// 顺序：先算完全可见（==1）就短路，避免多观察者时逐像素代价 ×N。
+// ============================================================================
+float VisibilityQuery::ComputeVisibilityUnion(const Observer* observers, std::size_t count,
+                                             float targetX, float targetY) const {
+    if (!world_ || !observers || count == 0) return 0.0f;
+    float best = 0.0f;
+    for (std::size_t i = 0; i < count; ++i) {
+        const float vis = ComputeVisibility(observers[i].x, observers[i].y,
+                                            observers[i].angle, targetX, targetY);
+        if (vis > best) {
+            best = vis;
+            if (best >= 1.0f) return 1.0f;   // 已完全可见，无需再看其他观察者
+        }
+    }
+    return best;
+}
+
+// ============================================================================
 // 视口换算（原 CS2DRenderer::UpdateCamera 的两段公式，抽出来给无头仿真复用）
 // ============================================================================
 float VisibilityQuery::BaseZoomForViewport(int viewportW, int viewportH) {

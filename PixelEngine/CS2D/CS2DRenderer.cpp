@@ -1971,12 +1971,15 @@ void CS2DRenderer::DrawDamageVignette(Uint8 alpha) {
 }
 
 void CS2DRenderer::DrawVisionFog(float playerX, float playerY, float aimAngle) {
+    const VisibilityQuery::Observer observer{playerX, playerY, aimAngle};
+    DrawVisionFogUnion(&observer, 1);
+}
+
+void CS2DRenderer::DrawVisionFogUnion(const VisibilityQuery::Observer* observers, std::size_t count) {
     const Uint64 fogStart = SDL_GetPerformanceCounter();
     lastFogMs_ = 0.0f;
-    if (!visionTex_ || visionPixels_.empty() || !world_) return;
+    if (!visionTex_ || visionPixels_.empty() || !world_ || !observers || count == 0) return;
 
-    const float px = playerX;
-    const float py = playerY;
     // 契约 v1.2：雾 alpha 再乘用户设置的透明度百分比（只影响视觉，不影响可见性判定）
     const int baseAlpha = VISION_FOG_ALPHA;
     const float pctScale = static_cast<float>(std::clamp(fogOpacityPct_, 0, 100)) / 100.0f;
@@ -1988,8 +1991,9 @@ void CS2DRenderer::DrawVisionFog(float playerX, float playerY, float aimAngle) {
             const float worldX = cameraX_ + (x + 0.5f) * VISION_MASK_SCALE / zoom_;
             const float worldY = cameraY_ + (y + 0.5f) * VISION_MASK_SCALE / zoom_;
 
-            // 与敌人剔除共用同一套几何，避免遮罩与可见性漂移
-            const float vis = ComputeVisibility(px, py, aimAngle, worldX, worldY);
+            // 与敌人剔除共用同一套几何，避免遮罩与可见性漂移。
+            // 多观察者（观战自由视角）取并集最大值：任一队友看得见即点亮。
+            const float vis = vis_.ComputeVisibilityUnion(observers, count, worldX, worldY);
             const Uint8 alpha = static_cast<Uint8>(std::lround((1.0f - vis) * maxFogAlpha));
 
             const size_t idx = (static_cast<size_t>(y) * maskW_ + x) * 4;

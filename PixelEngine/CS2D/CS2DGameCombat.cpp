@@ -986,7 +986,6 @@ void CS2DGame::OnCombatantKilled(Player &victim, AudioManager *audio, Player *ki
         hitMarkerTimer_ = 0.0f;
         if (audio) {
             audio->StopChannel(plantingChannel_);
-            audio->StopFootstepLoop();
         } else if (plantingChannel_ >= 0 && Mix_QuerySpec(nullptr, nullptr, nullptr)) {
             Mix_HaltChannel(plantingChannel_);
         }

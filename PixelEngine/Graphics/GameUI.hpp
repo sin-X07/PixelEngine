@@ -223,8 +223,11 @@ public:
         bool  bombPlanted = false;
         float bombTimer = 0.0f;
         float defuseRemaining = 0;
-        std::string defuserName;
+        std::string defuserName;      // 仅调试/测试用，HUD 不再绘制（信息隔离）
         float defuseProgress = 0.0f;
+        // 拆包进度是否对观看者可见：拆包者与观看者同阵营才为 true。
+        // 对手侧整行隐藏，且横幅位置也不随拆包跳动（不留布局侧信道）。
+        bool  defuseVisibleToViewer = false;
 
         // 击杀播报 / 记分板
         struct KillView {

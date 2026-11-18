@@ -202,6 +202,15 @@ constexpr float GrenadeDodgeDist     = 180.0f;
 constexpr float PlantHearSpreadMul  = 0.72f;  // 听到下包 → 散布降到 72%
 constexpr float DefuseHearSpreadMul = 0.72f;  // 听到拆包 → 散布降到 72%
 
+// ---------------- 脚步 ----------------
+// 脚步按「实际位移」触发，玩家与 BOT 共用同一套：每走满一个步幅放一声。
+// 步幅 = 2 × PlayerSize（一个身位直径走一步）。对应步频：
+//   匕首 120 px/s → 0.23 s/步；步枪约 96 px/s → 0.29 s/步；开镜 AWP 约 62 px/s → 0.45 s/步。
+// 用位移而不是速度，卡墙（有输入无位移）不会出声，移速变化时步频自然跟随。
+constexpr float FootstepStride     = 28.0f;  // 每步的世界距离（px）
+constexpr float FootstepStillSpeed = 10.0f;  // 低于此速度视为静止（不累计）
+constexpr int   FootstepMaxPerFrame = 2;     // 单帧最多触发步数（防卡顿后连响）
+
 // ---------------- 脚步声细节 ----------------
 // 普通跑动会暴露位置；静步（玩家 Shift / BOT 的 lurk 慢走）不出声。
 // 脚步声只让「听见的那只 BOT」自己知道，不进入团队情报网。

@@ -103,8 +103,6 @@ GameUI::Actions Engine::BuildActions() {
         if (currentState == SETTINGS) saveManager->Save();
         if (s == MAIN_MENU) {
             cs2dGame->StopObjectiveAudio(audioManager.get());
-            audioManager->StopFootstepLoop();
-            ClearDeathSnapshot();
         }
         currentState = s;
     };
@@ -230,8 +228,6 @@ GameUI::Actions Engine::BuildActions() {
     a.confirmExit = [this](bool toDesktop) { exitReturnState_ = currentState; exitToDesktop = toDesktop; currentState = EXIT_CONFIRM; };
     a.quitApp = [this] {
         cs2dGame->StopObjectiveAudio(audioManager.get());
-        audioManager->StopFootstepLoop();
-        ClearDeathSnapshot();
         SDL_SetRelativeMouseMode(SDL_FALSE);
         SDL_ShowCursor(SDL_ENABLE);
         if (exitToDesktop) {
@@ -844,7 +840,6 @@ void Engine::Clean() {
 
     // 图标缓存必须先于 SDL_DestroyRenderer 释放（契约 v1 第 3 节）
     if (weaponIconCache_) { weaponIconCache_->Shutdown(); }
-    ClearDeathSnapshot();
 
     for (auto& t : sceneTex_) {
         if (t) { SDL_DestroyTexture(t); t = nullptr; }
@@ -932,7 +927,6 @@ void Engine::HandleInput() {
             SDL_ShowCursor(SDL_ENABLE);
             audioManager->PauseMusic();
             cs2dGame->SetObjectiveAudioPaused(true);
-            audioManager->StopFootstepLoop();
         } else if (currentState == PAUSED) {
             if (sidePauseStartMs_) {
                 sidePhaseStartMs_ += SDL_GetTicks64() - sidePauseStartMs_;
@@ -1698,7 +1692,6 @@ void Engine::Update(float dt) {
             cs2dMouseDown = false;
             SDL_SetRelativeMouseMode(SDL_FALSE);
             SDL_ShowCursor(SDL_ENABLE);
-            audioManager->StopFootstepLoop();
             currentState = MATCH_END;
             return;
         }
@@ -1981,41 +1974,6 @@ void Engine::RenderSettingsPreviews() {
     SDL_SetRenderDrawColor(renderer, red, green, blue, alpha);
 }
 
-void Engine::ClearDeathSnapshot() {
-    if (deathWorldTex_) SDL_DestroyTexture(deathWorldTex_);
-    deathWorldTex_ = nullptr;
-    deathWorldEvent_ = 0;
-}
-
-void Engine::DrawGameplayWorld() {
-    if (!cs2dGame->IsDeathFreeze()) {
-        ClearDeathSnapshot();
-        cs2dGame->Render(logicalW_, logicalH_);
-        return;
-    }
-    const auto eventId = cs2dGame->GetDeathPresentation().event.id;
-    if (deathWorldEvent_ != eventId || !deathWorldTex_) {
-        ClearDeathSnapshot();
-        deathWorldTex_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
-                                          SDL_TEXTUREACCESS_TARGET, logicalW_, logicalH_);
-        if (!deathWorldTex_) {
-            cs2dGame->Render(logicalW_, logicalH_);
-            return;
-        }
-        SDL_Texture* target = SDL_GetRenderTarget(renderer);
-        SDL_SetRenderTarget(renderer, deathWorldTex_);
-        SDL_SetRenderDrawColor(renderer, 18, 26, 36, 255);
-        SDL_RenderClear(renderer);
-        cs2dGame->Render(logicalW_, logicalH_);
-        SDL_SetRenderTarget(renderer, target);
-        SDL_SetTextureBlendMode(deathWorldTex_, SDL_BLENDMODE_NONE);
-        SDL_SetTextureScaleMode(deathWorldTex_, SDL_ScaleModeLinear);
-        deathWorldEvent_ = eventId;
-    }
-    const SDL_Rect destination{0, 0, logicalW_, logicalH_};
-    SDL_RenderCopy(renderer, deathWorldTex_, nullptr, &destination);
-}
-
 void Engine::Render() {
 
     const Uint64 nowTicks = SDL_GetTicks64();
@@ -2141,7 +2099,9 @@ void Engine::Render() {
             DrawSideMapPreview();
         } else {
             showcaseStarted_=0;
-            DrawGameplayWorld();
+            // 阵亡定格期内画面照常直播：镜头固定（PrepareCamera 提前返回），
+            // 世界每帧重新渲染，BOT 走位/炸弹计时/伤害数字实时推进。
+            cs2dGame->Render(logicalW_, logicalH_);
             if (!sideChoicePending_ && !cs2dGame->IsDeathFreeze()) {
                 cs2dOverlay.Render(cs2dRenderer.get(), cs2dGame.get(), logicalW_, logicalH_);
             }
@@ -2604,6 +2564,8 @@ void Engine::Render() {
         ictx.defuseProgress   = cs2dGame->GetDefuseProgress();
         ictx.defuseRemaining = cs2dGame->GetDefuseRemaining();
         ictx.defuserName = cs2dGame->GetDefuserName();
+        // 信息隔离：只有与拆包者同阵营时才把进度交给 HUD；对手侧整行隐藏。
+        ictx.defuseVisibleToViewer = cs2dGame->IsDefuseVisibleToViewer();
 
         // 击杀播报
         for (const auto& e : cs2dGame->GetKillFeed()) {

@@ -2564,12 +2564,15 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
         if (ctx.bombPlanted) {
             char buf[64];
             snprintf(buf, sizeof(buf), "C4 已安装");
-            DrawImGuiTextCentered(imGuiUI, buf, UI(ctx.defuseProgress > 0 ? 105.0f : 112.0f), 239, 117, 101,
+            // 横幅位置只按「对观看者可见的拆包状态」切换：对手侧位置恒定，
+            // 不随拆包开始/结束跳动（否则布局本身就是一条拆包进度侧信道）。
+            const bool defusingVisible = ctx.defuseProgress > 0.0f && ctx.defuseVisibleToViewer;
+            DrawImGuiTextCentered(imGuiUI, buf, UI(defusingVisible ? 105.0f : 112.0f), 239, 117, 101,
                                   255, 18);
-            if (ctx.defuseProgress > 0.0f) {
-                char db[160];
-                snprintf(db, sizeof(db), "%s · 拆包 %d%% · 剩余 %.1f 秒", ctx.defuserName.c_str(),
-                         static_cast<int>(ctx.defuseProgress * 100), ctx.defuseRemaining);
+            if (defusingVisible) {
+                // 队友侧只给剩余秒数：不显示拆包者名字，也不显示百分比。
+                char db[96];
+                snprintf(db, sizeof(db), "拆包中 · 剩余 %.1f 秒", ctx.defuseRemaining);
                 DrawImGuiTextCentered(imGuiUI, db, UI(127.0f), 147, 204, 229, 255, 14);
             }
         }
@@ -2887,12 +2890,15 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
             DrawImGuiTextCentered(imGuiUI, "观战 C4", yBase, 232, 196, 126, 255, 20);
         } else if (ctx.spectating) {
             if (ctx.spectateMode == 1) {
+                // 自由视角：视野来自存活队友视锥的并集，没有单一被观战者。
+                DrawImGuiTextCentered(imGuiUI, "自由视角 · 队友共享视野", yBase - UI(4.0f),
+                                      255, 225, 140, 255, 20);
                 DrawImGuiTextCentered(imGuiUI,
-                                      ("自由视角 · " + keyName(GameAction::Spectate) + " 回到队友视角 · " +
+                                      (keyName(GameAction::Spectate) + " 回到队友视角 · " +
                                        keyName(GameAction::Forward) + keyName(GameAction::Left) +
                                        keyName(GameAction::Back) + keyName(GameAction::Right) + " 移动镜头")
                                           .c_str(),
-                                      yBase, 200, 214, 230, 235, 16);
+                                      yBase + UI(22.0f), 200, 214, 230, 235, 16);
             } else {
                 char nameBuf[96];
                 snprintf(nameBuf, sizeof(nameBuf), "观战：%s",

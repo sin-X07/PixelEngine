@@ -444,7 +444,12 @@ public:
         float detourX = 0.0f, detourY = 0.0f;   // 卡住时的绕行方向（单位向量）
         float detourTimer = 0.0f;               // >0 时沿 detour 方向走
         bool  scanBaseValid   = false;
-        float footstepTimer   = 0.0f;  // 脚步音节奏
+        // 脚步：按实际位移累计（与玩家同一套）。累计满 Tuning::FootstepStride 触发一步，
+        // 余数保留，长期精确；死亡/重生/传送由 ResetFootstepStride() 清零。
+        float footstepStride  = 0.0f;  // 已累计的位移（px）
+        float footstepLastX   = 0.0f;  // 上一帧位置（算 |Δpos|）
+        float footstepLastY   = 0.0f;
+        bool  footstepLastValid = false;
 
         // 卡墙检测
         float lastX = 0.0f, lastY = 0.0f;
@@ -753,6 +758,22 @@ public:
     float GetBombY()        const { return bombY_; }
     float GetDefuseProgress() const { return defuseProgress_; }
     float GetDefuseRemaining() const { return defuseRemaining_; }
+    // 累计触发过的步数（玩家本人）：只读统计，供回归断言与调试，不影响玩法
+    std::uint64_t PlayerFootstepCount() const { return footstepCount_; }
+    // 拆包进度对观看者是否可见：拆包者与观看者同阵营才可见。
+    // 观看者恒为玩家本人的阵营（观战时仍是阵亡玩家自己的阵营，见 Sun 的决定）。
+    // 对手侧完全不可见——不留名字、百分比、秒数或横幅位移等任何可推断的痕迹。
+    bool IsDefuseVisibleToViewer() const {
+        if (defuseProgress_ <= 0.0f) return false;
+        const Team defuserTeam =
+            activeDefuser_ == -1
+                ? player_.team
+                : (activeDefuser_ >= 0 && activeDefuser_ < static_cast<int>(bots_.size())
+                       ? bots_[static_cast<size_t>(activeDefuser_)].team
+                       : Team::None);
+        if (defuserTeam == Team::None) return false;
+        return defuserTeam == player_.team;
+    }
     std::string GetDefuserName() const {
         if (activeDefuser_ == -1) return "你";
         if (activeDefuser_ >= 0 && activeDefuser_ < static_cast<int>(bots_.size())) return bots_[activeDefuser_].name;
@@ -920,9 +941,10 @@ public:
     bool          IsSpectating() const { return specMode_ != SpectateMode::None && !player_.alive; }
     SpectateMode  GetSpectateMode() const { return specMode_; }
     int           GetSpectateTarget() const { return specTarget_; }
-    // 当前被观战的 BOT（自由视角下保留最后跟随目标）；无效返回 nullptr。
+    // 当前被观战的 BOT。自由视角下返回 nullptr：那一视角的视野是「存活队友视锥的
+    // 并集」，没有单一被观战者；specTarget_ 仅保留给切回跟随时恢复目标用。
     const Player* GetSpectatedPlayer() const {
-        if (!IsDeathFreeze() && specMode_ != SpectateMode::Bomb &&
+        if (specMode_ == SpectateMode::Follow && !IsDeathFreeze() &&
             specTarget_ >= 0 && specTarget_ < static_cast<int>(bots_.size()) &&
             bots_[static_cast<size_t>(specTarget_)].alive) {
             return &bots_[static_cast<size_t>(specTarget_)];
@@ -1279,7 +1301,16 @@ private:
     void DropEquipmentOnDeath(Player& victim);
     float flashTimer_ = 0.0f;      // 玩家闪光致盲剩余秒数
     float flashPeak_  = 0.0f;      // 本次致盲的峰值强度 0~1（越近越白）
-    float footstepTimer_ = 0.0f;   // 玩家脚步声节奏
+    // 玩家脚步：按实际位移累计（与 BOT 同一套，见 BotRuntime::footstepStride）
+    float footstepStride_ = 0.0f;      // 已累计的位移（px）
+    float footstepLastX_ = 0.0f;       // 上一帧位置（算 |Δpos|）
+    float footstepLastY_ = 0.0f;
+    bool  footstepLastValid_ = false;
+    std::uint64_t footstepCount_ = 0;  // 已触发的步数（统计用）
+    void  ResetFootstepStride();
+    // 返回本帧触发的步数（0..Tuning::FootstepMaxPerFrame），供玩法与回归共用同一实现。
+    int   AccumulateFootstep(Player& actor, float& stride, float& lastX, float& lastY,
+                             bool& lastValid, AudioManager* audio, bool positional);
     bool spectateTogglePending_ = false;
     int previousEquipSlot_ = 2;
     WeaponId previousEquipWeapon_ = WeaponId::Knife;
@@ -1344,7 +1375,10 @@ private:
     int   specTarget_ = -1;
     float specFreeX_ = 0.0f, specFreeY_ = 0.0f;
     int   NextTeammateBot(int from, int dir) const;
-    bool  SpectatorCanSeeEnemy(const Player& e) const;
+    // 自由视角的视野观察者 = 存活队友（含玩家本人以外的己方角色）。
+    // 返回实际写入数量；为 0 时调用方回退到「按自己」。
+    std::size_t CollectFreeSpectateObservers(VisibilityQuery::Observer* out,
+                                            std::size_t capacity) const;
 
     int playerKills_  = 0;
     int playerDeaths_ = 0;

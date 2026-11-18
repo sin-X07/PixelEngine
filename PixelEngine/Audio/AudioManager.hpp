@@ -44,7 +44,6 @@ enum class SoundEffect {
     BOMB_BEEP,
     ROUND_WIN,
     FOOTSTEP,
-    FOOTSTEP_LOOP,   // 玩家脚步循环（sfx_footstep_loop.wav，移动时循环播放）
     ARMOR_HIT,
 
     // ---- 换弹音效（时长与各武器 reloadTime 对齐）----
@@ -92,8 +91,8 @@ enum class SoundEffect {
 
 // 自动武器专用通道：新枪声覆盖上一发，避免通道耗尽后失声
 constexpr int CHANNEL_AUTO_FIRE = 0;
-// 玩家脚步循环专用通道（1 下包，2 玩家拆包，3-11 BOT 拆包）
-constexpr int CHANNEL_FOOTSTEP_LOOP = 12;
+// 保留通道数：0 自动开火，1 玩家下包，2 玩家拆包，3–11 九名 BOT 拆包
+constexpr int kReservedChannels = 12;
 
 class AudioManager {
 private:
@@ -126,8 +125,6 @@ private:
     Mix_Chunk* bombBeepSound = nullptr;
     Mix_Chunk* roundWinSound = nullptr;
     Mix_Chunk* footstepSound = nullptr;
-    Mix_Chunk* footstepLoopSound = nullptr;
-    int footstepLoopChannel_ = -1;  // 循环脚步所在的通道（-1 = 未播放）
     Mix_Chunk* armorHitSound = nullptr;
     Mix_Chunk* dryFireSound = nullptr;
 
@@ -198,9 +195,6 @@ public:
     void PlaySound(SoundEffect effect, float volume = 1.0f);
     int PlaySoundTracked(SoundEffect effect, int channel = -1);
     void StopChannel(int& channel);
-    // 玩家脚步循环：移动时起播，停下/潜行/死亡/暂停/结算时停播
-    void PlayFootstepLoop();
-    void StopFootstepLoop();
     int PlaySoundTrackedAt(SoundEffect effect, float x, float y, float listenerX, float listenerY, int channel = -1);
     void UpdateTrackedSoundAt(int channel, SoundEffect effect, float x, float y,
                               float listenerX, float listenerY);

@@ -99,9 +99,9 @@ bool AudioManager::Initialize() {
     }
 
     Mix_AllocateChannels(44);
-    // 0 为自动开火，1 为下包，2 为玩家拆包，3–11 为九名 BOT 拆包，12 为玩家脚步循环。
+    // 0 为自动开火，1 为下包，2 为玩家拆包，3–11 为九名 BOT 拆包。
     // 过程音结束后保留通道归属，取消操作时不会停止其他新播放的声音。
-    Mix_ReserveChannels(13);
+    Mix_ReserveChannels(kReservedChannels);
     audioInitialized = true;
 
     int failedAudio = 0;
@@ -200,7 +200,6 @@ bool AudioManager::Initialize() {
     armorHitSound = loadChunk("assets/audio/sfx_armor_hit.wav", "护甲受击");
     dryFireSound = loadChunk("assets/audio/sfx_dryfire.wav", "空仓");
     footstepSound = loadChunk("assets/audio/sfx_footstep.mp3", "脚步");
-    footstepLoopSound = loadChunk("assets/audio/sfx_footstep_loop.wav", "脚步循环");
     equipSound = loadChunk("assets/audio/sfx_equip.mp3", "购买装备");
 
     // ---- 战局事件 ----
@@ -290,7 +289,6 @@ void AudioManager::Clean() {
     if (bombBeepSound)       { Mix_FreeChunk(bombBeepSound);       bombBeepSound = nullptr; }
     if (roundWinSound)       { Mix_FreeChunk(roundWinSound);       roundWinSound = nullptr; }
     if (footstepSound)       { Mix_FreeChunk(footstepSound);       footstepSound = nullptr; }
-    if (footstepLoopSound)   { Mix_FreeChunk(footstepLoopSound);   footstepLoopSound = nullptr; footstepLoopChannel_ = -1; }
     if (armorHitSound)       { Mix_FreeChunk(armorHitSound);       armorHitSound = nullptr; }
     if (dryFireSound) { Mix_FreeChunk(dryFireSound); dryFireSound = nullptr; }
 
@@ -426,7 +424,6 @@ Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
         case SoundEffect::BOMB_BEEP:        return bombBeepSound;
         case SoundEffect::ROUND_WIN:        return roundWinSound;
         case SoundEffect::FOOTSTEP:         return footstepSound;
-        case SoundEffect::FOOTSTEP_LOOP:    return footstepLoopSound;
         case SoundEffect::ARMOR_HIT:        return armorHitSound;
 
         case SoundEffect::RELOAD_GLOCK:      return reloadGlockSound;
@@ -610,19 +607,4 @@ void AudioManager::UpdateTrackedSoundAt(int channel, SoundEffect effect, float x
     PositionChannel(channel, x, y, listenerX, listenerY,
                     defusing ? Tuning::DefuseRadius : 0.0f,
                     defusing ? Tuning::DefuseHearRadius : 200.0f);
-}
-
-void AudioManager::PlayFootstepLoop() {
-    if (!audioInitialized || !footstepLoopSound) return;
-    if (footstepLoopChannel_ >= 0 && Mix_Playing(footstepLoopChannel_)) return;
-    const int chan = Mix_PlayChannel(CHANNEL_FOOTSTEP_LOOP, footstepLoopSound, -1);
-    if (chan >= 0) {
-        Mix_Volume(chan, effectsLevel_);
-        Mix_SetPanning(chan, 255, 255);
-        footstepLoopChannel_ = chan;
-    }
-}
-
-void AudioManager::StopFootstepLoop() {
-    StopChannel(footstepLoopChannel_);
 }

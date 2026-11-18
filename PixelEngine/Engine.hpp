@@ -94,10 +94,6 @@ private:
     // 这样切页时可以直接拿到旧页面快照，不需要每帧读像素。
     enum class TransitionKind { None, Fade, Slide, MapZoom, GoldWipe, PauseFreeze };
     SDL_Texture* sceneTex_[2] = { nullptr, nullptr };
-    SDL_Texture* deathWorldTex_ = nullptr;
-    std::uint64_t deathWorldEvent_ = 0;
-    void ClearDeathSnapshot();
-    void DrawGameplayWorld();
     int          sceneWrite_ = 0;
     int          sceneW_ = 0, sceneH_ = 0;
     bool         sceneValid_ = false;

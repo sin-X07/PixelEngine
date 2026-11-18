@@ -7,7 +7,8 @@
 // 观察者子系统
 //
 //   Follow 模式：镜头跟随某位存活队友，鼠标左右键切换队友
-//   Free   模式：镜头自由移动（WASD），但敌人只在「队友能看到」时才绘制
+//   Free   模式：镜头自由移动（WASD），视野 = 存活队友视锥的并集
+//   Bomb   模式：镜头锁在 C4 上方，360° 直线视野
 // ============================================================================
 
 int CS2DGame::NextTeammateBot(int from, int dir) const {
@@ -97,23 +98,18 @@ void CS2DGame::SpectatorMoveFree(float dx, float dy, float dt) {
 }
 
 // 只有队友能看到的敌人才允许出现在观察者画面里
-bool CS2DGame::SpectatorCanSeeEnemy(const Player& e) const {
-    if (!e.alive || e.team == player_.team) return true;   // 友军始终可见
-
-    auto seenBy = [&](const Player& f) {
-        if (!f.alive || f.team == e.team) return false;
-        return CanSeeActor(f, e);
-    };
-
-    if (specMode_ == SpectateMode::Follow &&
-        specTarget_ >= 0 && specTarget_ < static_cast<int>(bots_.size())) {
-        return seenBy(bots_[static_cast<size_t>(specTarget_)]);
+// 自由视角的观察者列表：存活队友（与玩家同阵营）。玩家本人已阵亡，不在列表里。
+std::size_t CS2DGame::CollectFreeSpectateObservers(VisibilityQuery::Observer* out,
+                                                  std::size_t capacity) const {
+    if (!out || capacity == 0) return 0;
+    std::size_t count = 0;
+    for (const auto& bot : bots_) {
+        if (count >= capacity) break;
+        if (!bot.alive || bot.team != player_.team) continue;
+        const auto view = GetActorView(bot);
+        out[count++] = {view.x, view.y, view.aimAngle};
     }
-
-    for (const auto& f : bots_) {
-        if (seenBy(f)) return true;
-    }
-    return false;
+    return count;
 }
 
 // 音频听者：观战跟随 → 被观战者；自由视角 → 镜头中心；否则玩家自己

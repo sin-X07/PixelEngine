@@ -141,6 +141,7 @@ void CS2DGame::ResetToNewMatch() {
     matchOverTimer_ = 0.0f;
     killFeed_.clear();
     deathPresentation_ = {};
+    ResetFootstepStride();
     contactsT_.clear();
     contactsCT_.clear();
 
@@ -542,6 +543,7 @@ void CS2DGame::SpawnPlayer() {
     SpectatorEnd();
     deathPresentation_ = {};
     deathCam_ = false; // 死斗重生：退出死亡镜头
+    ResetFootstepStride();   // 重生：清零脚步累计器，避免凭空补步
 
     player_.alive = true;
     player_.health = 100;
@@ -1094,20 +1096,17 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
         for (auto& bot : bots_) { bot.vx = bot.vy = 0.0f; }
     }
 
-    // BOT 脚步声：与玩家同一套节奏，按 3D 位置播放（静步的 BOT 不出声）
+    // BOT 脚步声：与玩家同一套「按实际位移累计」（静步的 BOT 不累计、不出声）
     for (size_t i = 0; i < bots_.size(); ++i) {
         auto& b = bots_[i];
         auto& bai = AiAt(i);
-        if (!b.alive) { bai.footstepTimer = 0.0f; continue; }
-        bai.footstepTimer -= dt;
-        const float spd = std::sqrt(b.vx * b.vx + b.vy * b.vy);
-        if (!b.stealth && spd > 10.0f && bai.footstepTimer <= 0.0f) {
-            bai.footstepTimer = 0.34f + static_cast<float>(i % 5) * 0.02f;
-            if (audio) {
-                audio->PlaySoundAt(SoundEffect::FOOTSTEP, b.x, b.y, ListenerX(), ListenerY());
-            }
-            OnFootstepSound(b, b.x, b.y);
+        if (!b.alive) {
+            bai.footstepStride = 0.0f;
+            bai.footstepLastValid = false;
+            continue;
         }
+        AccumulateFootstep(b, bai.footstepStride, bai.footstepLastX, bai.footstepLastY,
+                           bai.footstepLastValid, audio, true);
     }
 
     // E 键：边沿触发主动拾取（拆包/救人时不抢键）
@@ -1196,20 +1195,74 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
         if (announcementTimer_ <= 0.0f) announcement_.clear();
     }
 
-    // 玩家脚步声：循环播放（潜行/静止/死亡时停）；BOT 听觉情报仍按 0.32s 节奏发出
-    if (audio) {
-        const float spd = std::sqrt(player_.vx * player_.vx + player_.vy * player_.vy);
-        if (player_.alive && !player_.stealth && spd > 10.0f) audio->PlayFootstepLoop();
-        else audio->StopFootstepLoop();
+    // 玩家脚步声：与 BOT 同一套「按实际位移累计」，潜行/静止/卡墙/死亡时不累计
+    AccumulateFootstep(player_, footstepStride_, footstepLastX_, footstepLastY_,
+                       footstepLastValid_, audio, false);
+}
+
+// ============================================================================
+// 脚步：按实际位移触发（玩家与 BOT 共用）
+//
+// 为什么用位移而不是计时：SDL_mixer 没有变速循环接口，固定录音无法跟随移速；
+// 而位移天然跟随持械倍率、开镜减速、潜行与卡墙——走满一个步幅就是一步。
+// 累计器保留余数（stride -= 步幅），长期步数与距离严格对应。
+// ============================================================================
+void CS2DGame::ResetFootstepStride() {
+    footstepStride_ = 0.0f;
+    footstepLastValid_ = false;
+}
+
+int CS2DGame::AccumulateFootstep(Player& actor, float& stride, float& lastX, float& lastY,
+                                bool& lastValid, AudioManager* audio, bool positional) {
+    // 潜行：不累计、不出声（潜行的听觉半径设计保持不变）
+    // 死亡/传送：重置累计器，避免重生后凭空补步
+    if (!actor.alive || actor.stealth) {
+        stride = 0.0f;
+        lastValid = false;
+        return 0;
     }
-    if (player_.alive && !player_.stealth) {
-        footstepTimer_ -= dt;
-        const float spd = std::sqrt(player_.vx * player_.vx + player_.vy * player_.vy);
-        if (spd > 10.0f && footstepTimer_ <= 0.0f) {
-            footstepTimer_ = 0.32f;
-            OnFootstepSound(player_, player_.x, player_.y);
+    if (!lastValid) {
+        lastX = actor.x;
+        lastY = actor.y;
+        lastValid = true;
+        return 0;
+    }
+    const float dx = actor.x - lastX, dy = actor.y - lastY;
+    lastX = actor.x;
+    lastY = actor.y;
+    const float moved = std::sqrt(dx * dx + dy * dy);
+    // 传送 / 重生（单帧位移超过 40 个身位）：不计步，直接重新取基准
+    if (moved > Tuning::PlayerSize * 40.0f) {
+        stride = 0.0f;
+        return 0;
+    }
+    // 静止（本帧零位移）：不累计。用位移而不是输入速度——卡墙有输入无位移时也不出声。
+    if (moved <= 0.0f) return 0;
+    stride += moved;
+    if (stride < Tuning::FootstepStride) return 0;
+
+    // 单帧至多触发 N 步，余数保留：卡顿后不会一次连响
+    int steps = 0;
+    while (stride >= Tuning::FootstepStride && steps < Tuning::FootstepMaxPerFrame) {
+        stride -= Tuning::FootstepStride;
+        ++steps;
+    }
+    if (stride >= Tuning::FootstepStride) stride = std::fmod(stride, Tuning::FootstepStride);
+    if (steps <= 0) return 0;
+
+    // 音步与听觉事件严格同频：一声脚步 = 一条听觉事件
+    if (&actor == &player_) footstepCount_ += static_cast<std::uint64_t>(steps);
+    for (int i = 0; i < steps; ++i) {
+        if (audio) {
+            if (positional)
+                audio->PlaySoundAt(SoundEffect::FOOTSTEP, actor.x, actor.y,
+                                   ListenerX(), ListenerY());
+            else
+                audio->PlaySound(SoundEffect::FOOTSTEP);
         }
+        OnFootstepSound(actor, actor.x, actor.y);
     }
+    return steps;
 }
 
 // ============================================================================
@@ -1353,13 +1406,20 @@ void CS2DGame::Render(int viewW, int viewH) {
             renderer_->DrawScopeScene(op.centerX,op.centerY,aperture,scope.transition);
         }
         renderer_->DrawScopeOverlay(op);
+        // 镜圈外的玩家按主场景原大小单独贴；镜圈内不贴（镜内那一遍已放大绘制），
+        // 否则同一玩家会出现一大一小两重影像。
         const auto playerView = GetActorView(player_);
-        renderer_->SetVisibilityFilter([this,playerView](float x,float y) {
-            return visibility_.HasLineOfSight(playerView.x,playerView.y,x,y) &&
-                   !SegmentBlockedBySmoke(playerView.x,playerView.y,x,y);
-        },true);
-        renderer_->DrawCharacter(MakeActorDrawParams(player_,&player_));
-        renderer_->SetVisibilityFilter({});
+        const float scopeWorldRadius = scopeRadiusPx / std::max(0.001f, renderer_->GetZoom());
+        const float lensDistance = std::hypot(playerView.x - GetRenderAimX(),
+                                              playerView.y - GetRenderAimY());
+        if (lensDistance > scopeWorldRadius + player_.size) {
+            renderer_->SetVisibilityFilter([this,playerView](float x,float y) {
+                return visibility_.HasLineOfSight(playerView.x,playerView.y,x,y) &&
+                       !SegmentBlockedBySmoke(playerView.x,playerView.y,x,y);
+            },true);
+            renderer_->DrawCharacter(MakeActorDrawParams(player_,&player_));
+            renderer_->SetVisibilityFilter({});
+        }
     }
 
     // 闪光致盲（最上层）：致盲期间完全丧失视野，最后 0.4s 快速淡出
@@ -1399,21 +1459,49 @@ SpriteDrawParams CS2DGame::MakeActorDrawParams(const Player& actor, const Player
 void CS2DGame::DrawWorldPass(bool lens) {
     renderer_->DrawWorld();
 
+    const bool freeView = IsSpectating() && specMode_ == SpectateMode::Free;
     const Player *observer = GetSpectatedPlayer();
     if (!observer)
         observer = &player_;
     const auto observerView = GetActorView(*observer);
     const bool bombView = specMode_ == SpectateMode::Bomb && IsSpectating();
-    const float observerX = bombView ? bombX_ : IsSpectating() && specMode_ == SpectateMode::Free ? specFreeX_ : observerView.x;
-    const float observerY = bombView ? bombY_ : IsSpectating() && specMode_ == SpectateMode::Free ? specFreeY_ : observerView.y;
+    const float observerX = bombView ? bombX_ : freeView ? specFreeX_ : observerView.x;
+    const float observerY = bombView ? bombY_ : freeView ? specFreeY_ : observerView.y;
     const float observerAngle = observer == &player_ ? GetRenderAimAngle() : observerView.aimAngle;
-    const auto worldVisible = [this, observerX, observerY, observerAngle, bombView](float x, float y) {
-        const bool visible = bombView ? visibility_.HasLineOfSight(observerX, observerY, x, y) :
-            visibility_.ComputeVisibility(observerX, observerY, observerAngle, x, y) > 0;
-        return visible &&
-               !SegmentBlockedBySmoke(observerX, observerY, x, y);
+
+    // 自由视角：视野来自「存活队友视锥的并集」，与最后跟随的那只 BOT 的朝向无关。
+    // 没有存活队友时回退为按自己（阵亡位置）的朝向，画面不会黑屏。
+    VisibilityQuery::Observer freeObservers[VisibilityQuery::kMaxObservers];
+    std::size_t freeObserverCount = 0;
+    if (freeView) {
+        freeObserverCount = CollectFreeSpectateObservers(freeObservers,
+                                                        VisibilityQuery::kMaxObservers);
+    }
+    const bool useUnion = freeObserverCount > 0;
+    // 单一几何来源：雾、角色剔除、掉落物可见性全部走这一个判定。
+    const float singleX = useUnion ? freeObservers[0].x : observerX;
+    const float singleY = useUnion ? freeObservers[0].y : observerY;
+    const float singleAngle = useUnion ? freeObservers[0].angle : observerAngle;
+    auto visibilityAt = [&](float x, float y) {
+        return useUnion
+            ? visibility_.ComputeVisibilityUnion(freeObservers, freeObserverCount, x, y)
+            : visibility_.ComputeVisibility(singleX, singleY, singleAngle, x, y);
     };
-    const auto ownBodyVisible = [this, observerX, observerY](float x, float y) {
+    // 烟雾遮挡：按各观察者单独判断——任一观察者到目标的连线无烟即不算被烟挡。
+    auto smokeBlocked = [&](float x, float y) {
+        if (!useUnion) return SegmentBlockedBySmoke(singleX, singleY, x, y);
+        for (std::size_t i = 0; i < freeObserverCount; ++i) {
+            if (!SegmentBlockedBySmoke(freeObservers[i].x, freeObservers[i].y, x, y))
+                return false;
+        }
+        return true;
+    };
+    const auto worldVisible = [&](float x, float y) {
+        const bool visible = bombView ? visibility_.HasLineOfSight(observerX, observerY, x, y)
+                                      : visibilityAt(x, y) > 0;
+        return visible && !smokeBlocked(x, y);
+    };
+    const auto ownBodyVisible = [&](float x, float y) {
         return visibility_.HasLineOfSight(observerX, observerY, x, y) &&
                !SegmentBlockedBySmoke(observerX, observerY, x, y);
     };
@@ -1438,8 +1526,13 @@ void CS2DGame::DrawWorldPass(bool lens) {
             renderer_->SetVisibilityFilter(worldVisible, false, true);
     }
 
+    // 玩家自己：镜内那一遍（lens）与 BOT 走同一套 MakeActorDrawParams，因此镜里镜外
+    // 放大一致；镜圈外的那一份由 Render 在镜面合成之后按主场景比例单独贴。
+    // 镜内/镜外二选一，避免同一玩家一大一小重影。
+    // 自身躯体的过滤条件永远是 ownBodyVisible（自己在自己脚下，不受视锥限制）。
+    const bool ownBodyDrawable = !IsSpectating() && (player_.alive || player_.deathTimer <= 2.0f);
     const bool scopedBody = player_.alive && GetRenderScopeView().transition > .001f;
-    if (!lens && !scopedBody && !IsSpectating() && (player_.alive || player_.deathTimer <= 2.0f)) {
+    if (ownBodyDrawable && (lens || !scopedBody)) {
         const SpriteDrawParams sp = MakeActorDrawParams(player_, observer);
         renderer_->SetVisibilityFilter(ownBodyVisible, true);
         renderer_->DrawCharacter(sp);
@@ -1507,7 +1600,13 @@ void CS2DGame::DrawWorldPass(bool lens) {
     for (const auto &smoke : smokes_)
         renderer_->DrawSmokeCloud(smoke.x, smoke.y, smoke.radius, smoke.age, smoke.expandTime, smoke.life,
                                   smoke.maxLife, smoke.seed);
-    renderer_->DrawVisionFog(observerX, observerY, observerAngle);
+    if (bombView) {
+        renderer_->DrawVisionFog(observerX, observerY, observerAngle);
+    } else if (useUnion) {
+        renderer_->DrawVisionFogUnion(freeObservers, freeObserverCount);
+    } else {
+        renderer_->DrawVisionFog(observerX, observerY, observerAngle);
+    }
 
 }
 

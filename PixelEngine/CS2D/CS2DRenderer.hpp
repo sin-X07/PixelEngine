@@ -141,8 +141,11 @@ public:
     void DrawWeaponStatus(int weaponId, int ammo, int magazine,
                           int viewW = 800, int viewH = 600);
 
-    // 视野遮罩
+    // 视野遮罩（单观察者：玩家本人 / 跟随观战 / C4 观战）
     void DrawVisionFog(float playerX, float playerY, float aimAngle);
+    // 视野遮罩（多观察者并集：观战自由视角 = 存活队友视锥并集）。
+    // 与单观察者版本共用同一套像素循环，逐像素取并集最大值，软边/雾色完全一致。
+    void DrawVisionFogUnion(const VisibilityQuery::Observer* observers, std::size_t count);
 
     // 烟雾云 / 闪光致盲整屏覆盖
     void DrawSmokeCloud(float worldX, float worldY, float worldRadius,
@@ -177,6 +180,12 @@ public:
     bool IsVisibleToPlayer(float playerX, float playerY, float aimAngle,
                            float targetX, float targetY) const {
         return ComputeVisibility(playerX, playerY, aimAngle, targetX, targetY) > 0.0f;
+    }
+
+    // 目标是否落在任一观察者视野内（观战自由视角的队友视锥并集）
+    bool IsVisibleToAnyObserver(const VisibilityQuery::Observer* observers, std::size_t count,
+                                float targetX, float targetY) const {
+        return vis_.IsVisibleToAnyObserver(observers, count, targetX, targetY);
     }
 
     int GetViewW() const { return viewW_; }
