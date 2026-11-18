@@ -86,6 +86,18 @@ float CS2DGame::GetCrosshairBloom() const {
     return player_.alive ? crosshairBloom_ : 0.0f;
 }
 
+// 开火后坐力造成的准星扩散：把「本武器累积散布」映射到 0..1。
+// inaccuracy 每次开火累加 Ballistics::Get(id).fire[...]，靠 Recover 指数衰减，
+// 因此连射时准星会持续张开、松手后逐步聚拢，与弹道完全同源。
+float CS2DGame::GetRecoilBloom() const {
+    if (!player_.alive) return 0.0f;
+    const float raw = player_.BallisticInaccuracy();
+    if (raw <= 0.0f) return 0.0f;
+    // 单发武器的 fire[] 增量是零点几到几，连射会累积到十几；
+    // 用 6 作为「明显扩散」的参考点，饱和到 1，避免准星无限张开。
+    return std::clamp(raw / 6.0f, 0.0f, 1.0f);
+}
+
 void CS2DGame::MoveWithCollision(Player& entity, float dt) {
     const float half = entity.size * 0.5f;
 
@@ -119,13 +131,9 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     if (player_.shootCooldown > 0.0f) player_.shootCooldown -= dt;
 
     // 拆包过程中双手占用：只允许转向，不能开枪/投掷
-    if (mode_ == MatchMode::BombDefusal && bombPlanted_) {
-        const float dxb = player_.x - bombX_;
-        const float dyb = player_.y - bombY_;
-        if (dxb * dxb + dyb * dyb <= Tuning::DefuseRadius * Tuning::DefuseRadius &&
-            defuseProgress_ > 0.0f) {
-            return;
-        }
+    if (mode_ == MatchMode::BombDefusal && bombPlanted_ &&
+        IsInDefuseRange(player_.x, player_.y) && defuseProgress_ > 0.0f) {
+        return;
     }
 
     const WeaponDef& def = player_.CurrentWeapon();
@@ -916,6 +924,29 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
         default:
             break;
     }
+}
+
+// 烟雾遮蔽程度 0..1：中心浓、边缘淡，并与「消散」同步变淡。
+// 与 SegmentBlockedBySmoke 用同一个有效半径（判定口径不变），
+// 但这里给出的是连续值，专供渲染做人物渐隐/渐显。
+float CS2DGame::SmokeOpacityAt(float x, float y) const {
+    if (smokes_.empty()) return 0.0f;
+    float best = 0.0f;
+    for (const auto& s : smokes_) {
+        const float radius = Tuning::SmokeEffectiveRadius(s.radius, s.age, s.expandTime, s.life);
+        if (radius <= 0.5f) continue;
+        const float d = std::hypot(x - s.x, y - s.y);
+        if (d >= radius) continue;
+        // 径向衰减：内侧 62% 视为「浓烟」，之后平滑收到边缘 0。
+        const float t = std::clamp((d / radius - 0.62f) / 0.38f, 0.0f, 1.0f);
+        const float radial = 1.0f - t * t * (3.0f - 2.0f * t);
+        // 生长期 + 消散期：与 DrawSmokeCloud 的 fadeIn/fadeOut 一致，
+        // 保证「烟快没了」时人物也同步渐显。
+        const float fadeIn = std::clamp(s.age / 0.28f, 0.0f, 1.0f);
+        const float fadeOut = std::clamp(s.life / std::min(2.0f, std::max(0.1f, s.maxLife)), 0.0f, 1.0f);
+        best = std::max(best, radial * fadeIn * fadeOut);
+    }
+    return std::clamp(best, 0.0f, 1.0f);
 }
 
 // 线段是否被任一烟雾云遮挡（用于视野判定）

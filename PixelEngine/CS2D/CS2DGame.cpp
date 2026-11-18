@@ -1088,6 +1088,16 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     UpdateReload(player_, dt);
     UpdateBombItem(dt);
 
+    // 不能移动的阶段（回合冻结 / 结算展示）：把移动模糊与准星扩散平滑收回到 0，
+    // 否则准备阶段会沿用上一回合跑动残留的模糊，瞄准线看起来发虚。
+    if (!canMove || !player_.alive) {
+        const float recover = 1.0f - std::exp(-12.0f * dt);
+        aimMotionBlur_ += (0.0f - aimMotionBlur_) * recover;
+        crosshairBloom_ += (0.0f - crosshairBloom_) * recover;
+        if (aimMotionBlur_ < 0.002f) aimMotionBlur_ = 0.0f;
+        if (crosshairBloom_ < 0.002f) crosshairBloom_ = 0.0f;
+    }
+
 
     if (canMove) {
         UpdateBOTs(dt, audio);
@@ -1446,6 +1456,13 @@ SpriteDrawParams CS2DGame::MakeActorDrawParams(const Player& actor, const Player
     sp.animTimer = view.animTimer;
     sp.deathTimer = actor.deathTimer;
     sp.alpha = 255;
+    // 烟雾遮蔽：人物进入烟雾时随烟的稀疏程度渐隐，烟散时同步渐显。
+    // 与烟雾自身的 fadeIn/fadeOut 及径向浓度一致（SmokeOpacityAt 与渲染同口径）。
+    if (const float smoke = SmokeOpacityAt(view.x, view.y); smoke > 0.001f) {
+        // 不完全隐藏：留一点轮廓，避免「人凭空消失」；最浓时约 12% 可见度。
+        const float keep = 1.0f - 0.88f * smoke;
+        sp.alpha = static_cast<Uint8>(std::clamp(255.0f * keep, 0.0f, 255.0f));
+    }
     // 契约 v1 第 5 节：沿用 Team，不建立第二份阵营状态。
     // 修复：死斗是一人成军——不区分队伍，所有人对观察者都是"非友军"（画红环），
     // team 传 None，避免 UI/渲染再按 T/CT 着色。
@@ -1501,6 +1518,13 @@ void CS2DGame::DrawWorldPass(bool lens) {
                                       : visibilityAt(x, y) > 0;
         return visible && !smokeBlocked(x, y);
     };
+    // 角色专用：烟雾**不参与**硬剔除。烟里的人要画出来，靠 SpriteDrawParams::alpha
+    // 做渐隐（见 MakeActorDrawParams → SmokeOpacityAt）。若这里也过 smokeBlocked，
+    // 角色会在进烟的瞬间整块消失，透明度过渡永远看不到。
+    const auto actorVisible = [&](float x, float y) {
+        return bombView ? visibility_.HasLineOfSight(observerX, observerY, x, y)
+                        : visibilityAt(x, y) > 0;
+    };
     const auto ownBodyVisible = [&](float x, float y) {
         return visibility_.HasLineOfSight(observerX, observerY, x, y) &&
                !SegmentBlockedBySmoke(observerX, observerY, x, y);
@@ -1517,13 +1541,18 @@ void CS2DGame::DrawWorldPass(bool lens) {
         if (!bot.alive && bot.deathTimer > 2.0f)
             continue;
         const SpriteDrawParams sp = MakeActorDrawParams(bot, observer);
+        // 角色用 actorVisible：烟雾只影响透明度，不做硬剔除。
         if (&bot == observer)
             renderer_->SetVisibilityFilter(ownBodyVisible, true);
+        else
+            renderer_->SetVisibilityFilter(actorVisible);
         renderer_->DrawCharacter(sp);
         if (ActorHasC4(bot))
-            renderer_->DrawBombCarrierMarker(sp.x, sp.y, sp.size, clockSec_);
+            renderer_->DrawBackpackC4(sp.x, sp.y, sp.size, sp.aimAngle, clockSec_);
         if (&bot == observer)
             renderer_->SetVisibilityFilter(worldVisible, false, true);
+        else
+            renderer_->SetVisibilityFilter(worldVisible);
     }
 
     // 玩家自己：镜内那一遍（lens）与 BOT 走同一套 MakeActorDrawParams，因此镜里镜外

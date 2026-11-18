@@ -196,7 +196,10 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
     float crosshairGap = crosshair.gap * g_uiScale;
     if (crosshair.dynamic) {
         // 动态准星：静止最紧，静步小扩散，跑动明显张开。
-        crosshairGap += game->GetCrosshairBloom() *
+        // 开火后坐力额外张开的量单独相加（与移动扩散互不覆盖）。
+        const float moveBloom = game->GetCrosshairBloom();
+        const float recoilBloom = game->GetRecoilBloom();
+        crosshairGap += (moveBloom + recoilBloom) *
                         Tuning::CrosshairBloomMaxPx * g_uiScale;
     }
     const bool localAimVisible = game->GetPlayer().alive && !game->IsSpectating();
@@ -206,7 +209,11 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
         const WeaponClass cls = player.CurrentWeapon().cls;
         if (crosshair.aimLine && player.alive && !game->IsSpectating() &&
             cls != WeaponClass::Sniper && cls != WeaponClass::Melee && cls != WeaponClass::Grenade && cls != WeaponClass::Bomb) {
-            renderer->DrawAimLine(playerView.x, playerView.y, game->GetRenderAimAngle(), aimLineStyle, g_uiScale, game->GetAimMotionBlur());
+            // 移动模糊只应对「真正在跑动」生效。回合开始前的准备/冻结阶段
+            // 玩家不能移动，但上一帧残留的 bloom 会让瞄准线看起来发虚，
+            // 这里按当前是否真的可动来决定是否传模糊量。
+            const float blur = game->IsMovementAllowed() ? game->GetAimMotionBlur() : 0.0f;
+            renderer->DrawAimLine(playerView.x, playerView.y, game->GetRenderAimAngle(), aimLineStyle, g_uiScale, blur);
         }
         renderer->DrawCrosshair(reticleX, reticleY,
                                 crosshair.r, crosshair.g, crosshair.b, crosshair.a,

@@ -682,6 +682,10 @@ public:
     }
     const std::vector<Grenade>& GetGrenades() const { return grenades_; }
     const std::vector<SmokeCloud>& GetSmokes() const { return smokes_; }
+    // 世界某点被烟雾遮蔽的程度 0..1（0=完全看得见，1=完全被烟盖住）。
+    // 与烟雾自身的稀疏程度匹配：中心浓、边缘淡、消散时整体变淡。
+    // 渲染层用它给人物做「进烟渐隐 / 出烟渐显」。
+    float SmokeOpacityAt(float x, float y) const;
     const std::vector<FireZone>& GetFires() const { return fires_; }
     const std::vector<KillFeedEntry>& GetKillFeed() const { return killFeed_; }
     std::vector<ScoreRow> BuildScoreboard() const;
@@ -693,6 +697,12 @@ public:
     void RequestSpectateToggle() { spectateTogglePending_ = true; }
     void QuickSwitchWeapon();
     float GetAimMotionBlur() const { return aimMotionBlur_; }
+    // 当前是否允许移动（回合冻结 / 结算展示等阶段为 false）。
+    // 表现层用它决定「移动模糊」是否该生效：不能动的时候瞄准线不该发虚。
+    bool IsMovementAllowed() const {
+        if (!player_.alive) return false;
+        return mode_ == MatchMode::DeathMatch || !round_.IsFrozen();
+    }
     enum class HitMarkerKind { Normal, Armor, Kill };
     HitMarkerKind GetHitMarkerKind() const { return hitMarkerKind_; }
     float GetHitMarkerTimer()   const { return hitMarkerTimer_; }
@@ -758,6 +768,15 @@ public:
     float GetBombY()        const { return bombY_; }
     float GetDefuseProgress() const { return defuseProgress_; }
     float GetDefuseRemaining() const { return defuseRemaining_; }
+    // 能否拆包：在 DefuseRadius 内，且拆包者到 C4 之间没有墙体遮挡。
+    // 拆包 / BOT 资格判定 / 下包中断共用这一处几何，避免三处漂移。
+    bool IsInDefuseRange(float x, float y) const {
+        if (!bombPlanted_) return false;
+        const float dx = x - bombX_, dy = y - bombY_;
+        if (dx * dx + dy * dy > Tuning::DefuseRadius * Tuning::DefuseRadius) return false;
+        // 中间存在遮挡物（挡弹瓦片）时不能拆包：隔着墙摸包不算数。
+        return visibility_.HasLineOfSight(x, y, bombX_, bombY_);
+    }
     // 累计触发过的步数（玩家本人）：只读统计，供回归断言与调试，不影响玩法
     std::uint64_t PlayerFootstepCount() const { return footstepCount_; }
     // 拆包进度对观看者是否可见：拆包者与观看者同阵营才可见。
@@ -809,6 +828,9 @@ public:
     float GetAimAngle()   const { return player_.EffectiveAim(); }
     // 0=静止，~0.42=静步，1=全速跑动。准星与弹道共用这一份移动扩散。
     float GetCrosshairBloom() const;
+    // 开火后坐力造成的准星扩散 0..1：取当前武器弹道累积散布（inaccuracy）归一化。
+    // 与移动扩散分开计算、在表现层相加，这样「边走边打」也不会互相吞掉。
+    float GetRecoilBloom() const;
 
     // ---- 阵营 / 回合 ----
     MatchMode  GetMatchMode()   const { return mode_; }

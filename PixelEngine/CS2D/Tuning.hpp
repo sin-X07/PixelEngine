@@ -27,6 +27,10 @@ constexpr float ScopeMoveMul = 0.6f;
 // 全地图共享的固定世界属性，按高清地图的全局空间基准校准。
 constexpr float PlayerSize = 14.0f;
 constexpr float SmokeRadius = 140.0f;
+// 烟雾视觉半径相对判定半径的倍率：判定用的有效半径不变，
+// 但渲染要盖住「看起来有烟」的全部区域，否则会出现
+// 「人物明明在烟里却完全没被遮」的判定/视觉错位。
+constexpr float SmokeVisualRadiusMul = 1.32f;
 constexpr float PlayerAcceleration = 1200.0f;
 constexpr float PlayerStopSpeed = 2.0f;
 constexpr float BulletHitPadding = 4.0f;
@@ -119,7 +123,7 @@ constexpr float TradeMinDist     = 80.0f;    // 太近不必补
 // ---------------- 手雷 ----------------
 constexpr float NadeBlastRadius  = 220.0f;  // 高爆雷爆炸半径（世界单位）
 constexpr float NadeMaxDamage    = 78.0f;   // 中心伤害（边缘按平方衰减到 0）
-constexpr float DefuseRadius     = 52.0f;   // 拆包半径：必须贴近包点
+constexpr float DefuseRadius     = 30.0f;   // 拆包半径：必须贴身靠近包点（且中间不能有墙）
 constexpr float BombHoldRing     = 170.0f;   // 下包后 T 守包的环形半径
 constexpr float DefuseCoverRing  = 180.0f;   // CT 拆包时其余人的掩护环半径
 constexpr float NadeBlastFxTime  = 0.35f;   // 爆炸特效持续

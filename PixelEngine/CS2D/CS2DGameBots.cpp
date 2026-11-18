@@ -191,9 +191,8 @@ bool CS2DGame::BotCanDefuse(size_t i, const Player& bot) const {
     if (mode_ != MatchMode::BombDefusal || !bombPlanted_) return false;
     if (!bot.alive || bot.team != Team::CT) return false;
 
-    const float dx = bot.x - bombX_;
-    const float dy = bot.y - bombY_;
-    if (dx * dx + dy * dy > Tuning::DefuseRadius * Tuning::DefuseRadius) return false;
+    // 距离 + 视线：太远或隔着墙都不能拆包。
+    if (!IsInDefuseRange(bot.x, bot.y)) return false;
     if (bombTimer_ <= 0.0f) return false;
 
     // 时间不够时没有"先反击"的余裕：必须拆。

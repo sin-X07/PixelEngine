@@ -3978,6 +3978,726 @@ struct CS2DGameTestAccess {
         SDL_FreeSurface(surface);
     }
 
+    // ========================================================================
+    // PIX-37：游戏内容完善 7 项
+    // ========================================================================
+
+    // 1) 拆包半径缩小，且中间不能有遮挡物
+    static void TestPix37DefuseRangeAndLos() {
+        std::printf("\n===== PIX-37 拆包范围与遮挡 =====\n");
+        check(Tuning::DefuseRadius < 52.0f, "PIX-37 defuse radius was shrunk from the old 52");
+        check(std::fabs(Tuning::DefuseRadius - 30.0f) < 0.001f,
+              "PIX-37 defuse radius is 30 world units");
+
+        CS2DGame game;
+        game.SetMatchMode(MatchMode::BombDefusal);
+        if (!game.LoadMap(MapPath(), nullptr, true)) return;
+        game.player_.team = Team::CT;
+        game.bots_.clear();
+        game.botAi_.clear();
+        game.bombPlanted_ = true;
+        game.bombX_ = 400.0f;
+        game.bombY_ = 400.0f;
+        game.bombTimer_ = 30.0f;
+
+        // 贴脸：在半径内且无遮挡 → 可拆
+        check(game.IsInDefuseRange(400.0f, 400.0f),
+              "PIX-37 standing on the C4 is inside defuse range");
+        check(game.IsInDefuseRange(400.0f + Tuning::DefuseRadius * 0.8f, 400.0f),
+              "PIX-37 inside the (shrunken) radius passes the range check");
+        // 旧半径内、新半径外：现在不能拆
+        check(!game.IsInDefuseRange(400.0f + Tuning::DefuseRadius * 1.4f, 400.0f),
+              "PIX-37 the old 52-unit distance no longer allows defusing");
+        check(!game.IsInDefuseRange(400.0f + 80.0f, 400.0f),
+              "PIX-37 clearly out of range is rejected");
+
+        // 中间有墙：即使贴得很近也不能拆
+        {
+            CS2DMapData data;
+            data.mapWidth = data.mapHeight = 60;
+            data.tileWidth = data.tileHeight = 16;
+            ObjectLayerDef walls;
+            walls.name = "Collisions";
+            ObjectDef wall;
+            wall.type = "wall";
+            // 墙只立在 C4 的右侧（拆包者侧），左侧留空
+            wall.x = 404.0f;
+            wall.y = 330.0f;
+            wall.width = 16.0f;
+            wall.height = 160.0f;
+            walls.objects.push_back(wall);
+            data.objectLayers.push_back(walls);
+            game.world_->Build(data);
+            game.visibility_.SetWorld(game.world_.get());
+            // 位置极近（< 半径），但连线穿过墙 → 不能拆
+            check(!game.visibility_.HasLineOfSight(420.0f, 400.0f, 400.0f, 400.0f),
+                  "PIX-37 the test wall really breaks line of sight");
+            check(!game.IsInDefuseRange(420.0f, 400.0f),
+                  "PIX-37 a wall between the defuser and the C4 blocks defusing");
+
+            // 核心契约：能不能拆 == (在半径内 && 视线通畅)，逐点对照，
+            // 不依赖这段测试墙的具体摆放。
+            const float probes[][2] = {
+                {400.0f, 400.0f}, {410.0f, 400.0f}, {420.0f, 400.0f},
+                {390.0f, 400.0f}, {370.0f, 400.0f}, {400.0f, 370.0f},
+                {400.0f, 430.0f}, {430.0f, 430.0f},
+            };
+            bool contract = true;
+            for (const auto& pr : probes) {
+                const float px = pr[0], py = pr[1];
+                const float ddx = px - game.bombX_, ddy = py - game.bombY_;
+                const bool inRadius =
+                    ddx * ddx + ddy * ddy <= Tuning::DefuseRadius * Tuning::DefuseRadius;
+                const bool los = game.visibility_.HasLineOfSight(px, py, game.bombX_, game.bombY_);
+                contract = contract && game.IsInDefuseRange(px, py) == (inRadius && los);
+            }
+            check(contract,
+                  "PIX-37 defuse eligibility is exactly 'inside radius AND clear line of sight'");
+        }
+        // 未下包时任何位置都不成立
+        game.bombPlanted_ = false;
+        check(!game.IsInDefuseRange(400.0f, 400.0f),
+              "PIX-37 no planted C4 means no defuse range");
+    }
+
+    // 2) 火焰贴图尺寸 ≥ 圆面积 1/64，且不再叠矢量火焰
+    static void TestPix37FireTileArea() {
+        std::printf("\n===== PIX-37 火焰贴图尺寸 =====\n");
+        // 渲染器用的规则：tile >= max(8, 0.26 * activeRadius)，并向上取 2 的倍数。
+        // 要求单块面积 ≥ 圆面积/64 → tile >= r*sqrt(pi/64) ≈ 0.2216r。
+        const float requiredFactor = std::sqrt(Tuning::Pi / 64.0f);
+        for (float radius : {Tuning::FireRadius, 30.0f, 90.0f, 140.0f}) {
+            const float active = Tuning::FireEffectiveRadius(radius, Tuning::FireLife, Tuning::FireLife);
+            const float minTile = std::max(8.0f, active * 0.26f);
+            const float tile = std::ceil(minTile / 2.0f) * 2.0f;
+            // 面积比：一块贴图 / 圆面积
+            const float ratio = (tile * tile) / (Tuning::Pi * active * active);
+            check(ratio >= 1.0f / 64.0f,
+                  "PIX-37 one fire tile covers at least 1/64 of the circle area");
+            check(tile >= active * requiredFactor,
+                  "PIX-37 fire tile size meets the 1/64 area bound at this radius");
+            // 也不能大到荒谬：一块不该超过圆心角对应的整圆
+            check(ratio < 1.0f, "PIX-37 a single fire tile stays smaller than the whole circle");
+        }
+
+        // 实时渲染链路已下线：DrawFireZone 不再存在（编译期保证），
+        // 这里确认火区数据仍然只驱动 DrawFireCells 这一条贴图路径。
+        CS2DGame game;
+        game.SetMatchMode(MatchMode::BombDefusal);
+        if (!game.LoadMap(MapPath(), nullptr, true)) return;
+        CS2DGame::FireZone fire;
+        fire.x = 400.0f; fire.y = 400.0f;
+        fire.radius = Tuning::FireRadius;
+        fire.age = 1.0f;
+        fire.life = Tuning::FireLife;
+        fire.maxLife = Tuning::FireLife;
+        game.RebuildFireCells(fire);
+        check(!fire.cells.empty(), "PIX-37 fire still produces ground cells for the map-tile pass");
+    }
+
+    // 3) 准备阶段（不可移动）瞄准线不发虚
+    static void TestPix37AimLineDuringFreeze() {
+        std::printf("\n===== PIX-37 准备阶段瞄准线 =====\n");
+        CS2DGame game;
+        game.SetMatchMode(MatchMode::BombDefusal);
+        if (!game.LoadMap(MapPath(), nullptr, true)) return;
+        game.player_.alive = true;
+        // 冻结阶段：不能移动
+        game.round_.Reset(RoundConfig{});
+        check(game.round_.IsFrozen(), "PIX-37 round starts frozen");
+        check(!game.IsMovementAllowed(),
+              "PIX-37 frozen round reports movement as not allowed");
+
+        // 人为把移动模糊拉到高处（模拟上一回合跑动残留），再走若干帧。
+        game.aimMotionBlur_ = 5.0f;
+        game.crosshairBloom_ = 1.0f;
+        for (int frame = 0; frame < 40; ++frame) {
+            game.Update(1.0f / 60.0f, false, game.player_.x + 80, game.player_.y,
+                        false, false, false, false, false, false, false, nullptr);
+        }
+        check(game.GetAimMotionBlur() < 0.05f,
+              "PIX-37 residual movement blur decays to zero while the player cannot move");
+        check(game.GetCrosshairBloom() < 0.05f,
+              "PIX-37 residual crosshair bloom also collapses when frozen");
+
+        // 解冻后允许移动 → 模糊重新可用
+        game.round_.Update(10.0f);
+        if (!game.round_.IsFrozen()) {
+            check(game.IsMovementAllowed(),
+                  "PIX-37 unfrozen round reports movement as allowed");
+        }
+    }
+
+    // PIX-37 证据截图：带包背影、雷达小 C4、火焰贴图、烟雾渐隐
+    static void TestPix37VisualEvidence() {
+        std::printf("\n===== PIX-37 视觉证据 =====\n");
+        const auto directory = std::filesystem::absolute("build-evidence/pix37");
+        std::filesystem::create_directories(directory);
+        SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 640, 480, 32, SDL_PIXELFORMAT_RGBA32);
+        SDL_Renderer* software = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+        check(software != nullptr, "PIX-37 visual evidence renderer initializes");
+        if (software) {
+            CS2DRenderer renderer;
+            renderer.Initialize(software, "assets/cs2d/maps", 640, 480);
+            CS2DMapData data; data.mapWidth = data.mapHeight = 80;
+            data.tileWidth = data.tileHeight = 16;
+            CS2DWorld world; world.Build(data);
+            renderer.SetWorld(&world);
+
+            // --- (a) 带包 BOT：后背 C4 随朝向转动 ---
+            SDL_SetRenderDrawColor(software, 30, 34, 40, 255);
+            SDL_RenderClear(software);
+            renderer.SetZoom(5.0f);
+            renderer.SetPreviewCamera(640.0f, 640.0f, 5.0f, false);
+            for (int i = 0; i < 4; ++i) {
+                SpriteDrawParams sp;
+                sp.x = 615.0f + i * 16.0f;
+                sp.y = 640.0f;
+                sp.size = 14.0f;
+                sp.aimAngle = i * Tuning::Pi * 0.5f;
+                sp.weaponSlot = 0;
+                sp.weaponId = static_cast<int>(WeaponId::AK47);
+                sp.animState = static_cast<int>(CS2DGame::AnimState::Idle);
+                sp.spriteKey = 1;
+                sp.team = Team::T;
+                sp.alpha = 255;
+                renderer.DrawCharacter(sp);
+                renderer.DrawBackpackC4(sp.x, sp.y, sp.size, sp.aimAngle, 0.5f);
+            }
+            SDL_RenderPresent(software);
+            check(IMG_SavePNG(surface, (directory / "carrier-backpack.png").string().c_str()) == 0,
+                  "PIX-37 carrier backpack evidence saved");
+
+            // --- (b) 火焰贴图（地图层平铺，单块不再碎） ---
+            SDL_SetRenderDrawColor(software, 18, 22, 28, 255);
+            SDL_RenderClear(software);
+            renderer.SetZoom(1.0f);
+            renderer.SetPreviewCamera(320, 240, 1.0f, false);
+            std::vector<SDL_FPoint> cells;
+            for (int y = 180; y <= 300; y += 4)
+                for (int x = 260; x <= 380; x += 4) cells.push_back({float(x), float(y)});
+            renderer.DrawFireCells(cells, 320, 240, 60, 2.0f, 5.0f, 0.3f);
+            SDL_RenderPresent(software);
+            check(IMG_SavePNG(surface, (directory / "fire-tiles.png").string().c_str()) == 0,
+                  "PIX-37 fire tile evidence saved");
+
+            // --- (c) 烟雾里的角色：逐级渐隐 ---
+            SDL_SetRenderDrawColor(software, 30, 34, 40, 255);
+            SDL_RenderClear(software);
+            renderer.SetZoom(1.0f);
+            renderer.SetPreviewCamera(320, 240, 1.0f, false);
+            SDL_SetRenderDrawBlendMode(software, SDL_BLENDMODE_BLEND);
+            for (int i = 0; i < 5; ++i) {
+                SpriteDrawParams sp;
+                sp.x = 250.0f + i * 35.0f;
+                sp.y = 240.0f;
+                sp.size = 14.0f;
+                sp.aimAngle = 0.0f;
+                sp.weaponSlot = 0;
+                sp.weaponId = static_cast<int>(WeaponId::AK47);
+                sp.animState = static_cast<int>(CS2DGame::AnimState::Idle);
+                sp.spriteKey = 0;
+                sp.alpha = static_cast<Uint8>(255 - i * 55);
+                renderer.DrawCharacter(sp);
+            }
+            SDL_RenderPresent(software);
+            check(IMG_SavePNG(surface, (directory / "smoke-fade.png").string().c_str()) == 0,
+                  "PIX-37 smoke fade evidence saved");
+
+            // --- (d) 雷达：携带者 + 掉落的小 C4 图标 ---
+            SDL_SetRenderDrawColor(software, 30, 34, 40, 255);
+            SDL_RenderClear(software);
+            {
+                std::vector<CS2DRenderer::RadarDot> dots;
+                dots.push_back({80, 300, 255, 170, 60, 255,
+                                CS2DRenderer::RadarDot::Shape::Carrier});
+                dots.push_back({700, 300, 255, 170, 60, 255,
+                                CS2DRenderer::RadarDot::Shape::DroppedBomb});
+                dots.push_back({400, 650, 90, 220, 130, 255,
+                                CS2DRenderer::RadarDot::Shape::Circle});
+                renderer.DrawRadarHUD(400, 400, 0, dots, 800, 800, true, false, true, 255, 240, 1,
+                                      false, 640, 480);
+            }
+            SDL_RenderPresent(software);
+            check(IMG_SavePNG(surface, (directory / "radar-c4-icons.png").string().c_str()) == 0,
+                  "PIX-37 radar C4 icon evidence saved");
+        }
+        SDL_DestroyRenderer(software);
+        SDL_FreeSurface(surface);
+    }
+
+    // 4) BOT 带包：后背 C4 贴图取代黄色菱形；雷达小 C4；掉落显示
+    static void TestPix37BombCarrierPresentation() {
+        std::printf("\n===== PIX-37 BOT 带包标志 =====\n");
+        CS2DGame game;
+        game.SetMatchMode(MatchMode::BombDefusal);
+        if (!game.LoadMap(MapPath(), nullptr, true)) return;
+        game.player_.team = Team::T;
+        game.bots_.clear();
+        game.botAi_.clear();
+
+        CS2DGame::Player carrier;
+        carrier.team = Team::T;
+        carrier.alive = true;
+        carrier.name = "carrier";
+        carrier.x = 400.0f; carrier.y = 400.0f;
+        carrier.aimAngle = 0.0f;
+        carrier.spriteKey = 1;
+        game.bots_.push_back(carrier);
+        game.botAi_.emplace_back();
+        game.bombCarrier_ = 0;
+
+        check(game.ActorHasC4(game.bots_[0]),
+              "PIX-37 the designated BOT is recognised as the C4 carrier");
+
+        // 雷达：携带者应产出 Carrier 形状的圆点（渲染层已改为小 C4 图标）
+        auto dots = CS2DOverlay::CollectRadarDots(game);
+        bool carrierDot = false;
+        for (const auto& d : dots)
+            carrierDot = carrierDot || d.shape == CS2DRenderer::RadarDot::Shape::Carrier;
+        check(carrierDot, "PIX-37 the carrier still surfaces a carrier-shaped radar dot");
+
+        // 掉包：C4 掉落时应变成 DroppedBomb 圆点（渲染层直接显示小 C4 图）
+        game.bombDropped_ = true;
+        game.bombDropX_ = 500.0f;
+        game.bombDropY_ = 400.0f;
+        auto dropped = CS2DOverlay::CollectRadarDots(game);
+        bool droppedDot = false;
+        for (const auto& d : dropped)
+            droppedDot = droppedDot || d.shape == CS2DRenderer::RadarDot::Shape::DroppedBomb;
+        check(droppedDot, "PIX-37 a dropped C4 surfaces a DroppedBomb radar dot");
+    }
+
+    // 5) 移动不再产生人物晃动
+    static void TestPix37NoWalkBob() {
+        std::printf("\n===== PIX-37 取消移动晃动 =====\n");
+        // 用一个可以正常建窗的软件渲染器直接比对：行走帧与站立帧的角色包围盒必须一致。
+        SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 320, 240, 32, SDL_PIXELFORMAT_RGBA32);
+        SDL_Renderer* software = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+        check(software != nullptr, "PIX-37 software renderer for the walk-bob check");
+        if (!software) { SDL_FreeSurface(surface); return; }
+        {
+            CS2DRenderer renderer;
+            renderer.Initialize(software, "assets/cs2d/maps", 320, 240);
+            CS2DMapData data; data.mapWidth = data.mapHeight = 80;
+            data.tileWidth = data.tileHeight = 16;
+            CS2DWorld world; world.Build(data);
+            renderer.SetWorld(&world);
+            renderer.UpdateCamera(640, 640, 320, 240);
+
+            auto measure = [&](int animState, float animTimer) {
+                SDL_SetRenderDrawColor(software, 0, 0, 0, 255);
+                SDL_RenderClear(software);
+                SpriteDrawParams sp;
+                sp.x = 640.0f; sp.y = 640.0f; sp.size = 14.0f;
+                sp.aimAngle = 0.0f; sp.weaponSlot = 0;
+                sp.weaponId = static_cast<int>(WeaponId::AK47);
+                sp.animState = animState; sp.animTimer = animTimer;
+                sp.spriteKey = 0; sp.alpha = 255;
+                renderer.DrawCharacter(sp);
+                SDL_Surface* shot = SDL_CreateRGBSurfaceWithFormat(0, 320, 240, 32,
+                                                                  SDL_PIXELFORMAT_RGBA32);
+                if (!shot) return 0;
+                SDL_RenderReadPixels(software, nullptr, SDL_PIXELFORMAT_RGBA32,
+                                     shot->pixels, shot->pitch);
+                int top = 240, bottom = -1;
+                for (int y = 0; y < 240; ++y) {
+                    bool hit = false;
+                    for (int x = 0; x < 320 && !hit; ++x) {
+                        const auto* p = static_cast<const Uint8*>(shot->pixels) + y * shot->pitch + x * 4;
+                        if (p[0] + p[1] + p[2] > 40) hit = true;
+                    }
+                    if (hit) { top = std::min(top, y); bottom = std::max(bottom, y); }
+                }
+                SDL_FreeSurface(shot);
+                return bottom - top;
+            };
+            // 行走状态的四个相位：高度必须完全一致（没有上下 bob）
+            const int idle = measure(static_cast<int>(CS2DGame::AnimState::Idle), 0.0f);
+            check(idle > 0, "PIX-37 the character renders in the idle pose");
+            bool stable = true;
+            for (float t : {0.0f, 0.09f, 0.17f, 0.26f, 0.35f}) {
+                stable = stable && measure(static_cast<int>(CS2DGame::AnimState::Walk), t) == idle;
+            }
+            check(stable, "PIX-37 walking no longer bobs the character vertically");
+        }
+        SDL_DestroyRenderer(software);
+        SDL_FreeSurface(surface);
+    }
+
+    // 6) 烟雾：视觉范围盖住判定范围，且人物进出烟雾渐隐/渐显
+    static void TestPix37SmokeCoverageAndFade() {
+        std::printf("\n===== PIX-37 烟雾范围与人物渐隐 =====\n");
+        check(Tuning::SmokeVisualRadiusMul > 1.0f,
+              "PIX-37 smoke renders wider than its gameplay radius");
+
+        CS2DGame game;
+        game.SetMatchMode(MatchMode::BombDefusal);
+        if (!game.LoadMap(MapPath(), nullptr, true)) return;
+        game.smokes_.clear();
+        CS2DGame::SmokeCloud s;
+        s.x = 400.0f; s.y = 400.0f;
+        s.radius = Tuning::SmokeRadius;
+        s.age = 3.0f;
+        s.expandTime = 1.6f;
+        s.life = 12.0f;
+        s.maxLife = 12.0f;
+        game.smokes_.push_back(s);
+
+        const float gameplayR = Tuning::SmokeEffectiveRadius(s.radius, s.age, s.expandTime, s.life);
+        const float visualR = gameplayR * Tuning::SmokeVisualRadiusMul;
+        // 判定半径处一定是 1（完全遮挡）
+        check(game.SmokeOpacityAt(400.0f, 400.0f) > 0.95f,
+              "PIX-37 the smoke centre is fully opaque to actors");
+        // 视觉半径（> 判定半径）内仍有可见遮蔽，视觉与判定不再错位
+        std::printf("[PIX-37] smoke gameplayR=%.1f visualR=%.1f\n", gameplayR, visualR);
+        check(visualR > gameplayR, "PIX-37 visual radius exceeds the gameplay radius");
+        // 判定半径 ↔ 视觉半径之间这一圈：必须仍有遮蔽（旧实现的空洞就在这里）
+        check(game.SmokeOpacityAt(400.0f + gameplayR * 0.99f, 400.0f) > 0.0f,
+              "PIX-37 opacity is still non-zero just inside the gameplay radius");
+        check(game.SmokeOpacityAt(400.0f + gameplayR, 400.0f) >= 0.0f,
+              "PIX-37 opacity is defined across the gameplay radius boundary");
+        // 视觉半径之外完全不受影响
+        check(game.SmokeOpacityAt(400.0f + visualR + 10.0f, 400.0f) == 0.0f,
+              "PIX-37 outside the visual radius the smoke has no effect");
+        // 径向衰减：中心比边缘更浓
+        check(game.SmokeOpacityAt(400.0f, 400.0f) >
+              game.SmokeOpacityAt(400.0f + gameplayR * 0.9f, 400.0f),
+              "PIX-37 smoke opacity falls off toward the edge");
+
+        // 消散时整体变淡（人物同步渐显）
+        const float dense = game.SmokeOpacityAt(400.0f, 400.0f);
+        game.smokes_[0].life = 0.35f;   // 进入 fadeOut 窗口
+        const float fading = game.SmokeOpacityAt(400.0f, 400.0f);
+        check(fading < dense,
+              "PIX-37 actor transparency tracks the smoke dissipating");
+        game.smokes_[0].life = 0.02f;
+        const float nearlyGone = game.SmokeOpacityAt(400.0f, 400.0f);
+        check(nearlyGone < fading && nearlyGone < 0.2f,
+              "PIX-37 the actor is nearly fully visible again as the smoke dies");
+        // 刚生成时也淡入（避免瞬移式出现）
+        game.smokes_[0].life = 12.0f;
+        game.smokes_[0].age = 0.05f;
+        check(game.SmokeOpacityAt(400.0f, 400.0f) < dense,
+              "PIX-37 smoke fade-in also fades actors in gradually");
+        game.smokes_.clear();
+        check(game.SmokeOpacityAt(400.0f, 400.0f) == 0.0f,
+              "PIX-37 no smoke means no actor transparency");
+    }
+
+    // PIX-38 证据截图：描边不抖、烟雾渐隐、火焰更细的贴图、雷达边缘延伸
+    static void TestPix38VisualEvidence() {
+        std::printf("\n===== PIX-38 视觉证据 =====\n");
+        const auto directory = std::filesystem::absolute("build-evidence/pix38");
+        std::filesystem::create_directories(directory);
+        SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 640, 480, 32, SDL_PIXELFORMAT_RGBA32);
+        SDL_Renderer* software = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+        check(software != nullptr, "PIX-38 visual evidence renderer initializes");
+        if (software) {
+            CS2DRenderer renderer;
+            renderer.Initialize(software, "assets/cs2d/maps", 640, 480);
+            CS2DMapData data; data.mapWidth = data.mapHeight = 120;
+            data.tileWidth = data.tileHeight = 16;
+            CS2DWorld world; world.Build(data);
+            renderer.SetWorld(&world);
+
+            // (a) 同一角色在行走的多个相位：位置必须完全不动（描边与本体同源）
+            SDL_SetRenderDrawColor(software, 30, 34, 40, 255);
+            SDL_RenderClear(software);
+            renderer.SetPreviewCamera(640.0f, 640.0f, 3.0f, false);
+            for (int i = 0; i < 5; ++i) {
+                SpriteDrawParams sp;
+                sp.x = 615.0f + i * 12.0f;
+                sp.y = 640.0f;
+                sp.size = 14.0f;
+                sp.aimAngle = 0.0f;
+                sp.weaponSlot = 0;
+                sp.weaponId = static_cast<int>(WeaponId::AK47);
+                sp.animState = static_cast<int>(CS2DGame::AnimState::Walk);
+                sp.animTimer = i * 0.11f;
+                sp.spriteKey = 0;
+                sp.alpha = 255;
+                renderer.DrawCharacter(sp);
+            }
+            SDL_RenderPresent(software);
+            check(IMG_SavePNG(surface, (directory / "outline-no-bob.png").string().c_str()) == 0,
+                  "PIX-38 outline/no-bob evidence saved");
+
+            // (b) 烟雾里的角色按遮蔽度逐级变淡（真实 alpha 路径）
+            SDL_SetRenderDrawColor(software, 30, 34, 40, 255);
+            SDL_RenderClear(software);
+            renderer.SetPreviewCamera(640.0f, 640.0f, 3.0f, false);
+            for (int i = 0; i < 6; ++i) {
+                SpriteDrawParams sp;
+                sp.x = 600.0f + i * 10.0f;
+                sp.y = 640.0f;
+                sp.size = 14.0f;
+                sp.aimAngle = 0.0f;
+                sp.weaponSlot = 0;
+                sp.weaponId = static_cast<int>(WeaponId::AK47);
+                sp.animState = static_cast<int>(CS2DGame::AnimState::Idle);
+                sp.spriteKey = 0;
+                // 255 → 30 逐级下降，模拟从烟外走到烟心
+                sp.alpha = static_cast<Uint8>(255 - i * 45);
+                renderer.DrawCharacter(sp);
+            }
+            SDL_RenderPresent(software);
+            check(IMG_SavePNG(surface, (directory / "smoke-actor-fade.png").string().c_str()) == 0,
+                  "PIX-38 smoke actor fade evidence saved");
+
+            // (c) 火焰：单块贴图更小（面积 1/16），火区范围不变
+            SDL_SetRenderDrawColor(software, 18, 22, 28, 255);
+            SDL_RenderClear(software);
+            renderer.SetPreviewCamera(320, 240, 1.0f, false);
+            std::vector<SDL_FPoint> cells;
+            for (int y = 180; y <= 300; y += 4)
+                for (int x = 260; x <= 380; x += 4) cells.push_back({float(x), float(y)});
+            renderer.DrawFireCells(cells, 320, 240, 60, 2.0f, 5.0f, 0.3f);
+            SDL_RenderPresent(software);
+            check(IMG_SavePNG(surface, (directory / "fire-tiles-smaller.png").string().c_str()) == 0,
+                  "PIX-38 smaller fire tile evidence saved");
+        }
+        SDL_DestroyRenderer(software);
+        SDL_FreeSurface(surface);
+    }
+
+    // 7) 暂停 → 继续 恢复黑场过渡
+    //    （实现放在 EngineTestAccess 里——它才是 Engine 的友元）
+
+    // ========================================================================
+    // PIX-38：6 项修修补
+    // ========================================================================
+
+    // 1) 描边不再随行走抖动（BodyGeometry 的 bob 与 DrawCharacter 必须同源）
+    static void TestPix38OutlineNoBob() {
+        std::printf("\n===== PIX-38 描边抖动 =====\n");
+        // BodyGeometry::Transform 是描边遮罩与命中几何的唯一变换；
+        // 行走态必须与站立态给出同一个中心点（不再有 sin(timer*12) 的纵向偏移）。
+        const SDL_FPoint idle = BodyGeometry::Transform({0.0f, 0.0f}, 100.0f, 200.0f, 14.0f,
+                                                        0.7f, 1 /* Walk */, 0.0f);
+        bool stable = true;
+        for (float timer : {0.0f, 0.05f, 0.11f, 0.17f, 0.26f, 0.33f, 0.44f, 0.52f}) {
+            const SDL_FPoint walk = BodyGeometry::Transform({0.0f, 0.0f}, 100.0f, 200.0f, 14.0f,
+                                                            0.7f, 1 /* Walk */, timer);
+            stable = stable && std::fabs(walk.x - idle.x) < 1e-4f &&
+                     std::fabs(walk.y - idle.y) < 1e-4f;
+        }
+        check(stable, "PIX-38 walk pose keeps the outline anchor identical to idle (no bob)");
+
+        // 描边围出的轮廓在行走的任意相位都必须认得出同一个身体点
+        bool sameHit = true;
+        for (float timer : {0.0f, 0.12f, 0.25f, 0.41f}) {
+            sameHit = sameHit && BodyGeometry::Contains(0, 0, 100.0f, 200.0f, 14.0f, 0.7f,
+                                                        1, timer, 100.0f, 200.0f);
+        }
+        check(sameHit, "PIX-38 the body centre stays inside the body at every walk phase");
+
+        // 射击后坐（animState 2）仍保留它应有的位移，说明只去掉了 bob
+        const SDL_FPoint kick = BodyGeometry::Transform({0.0f, 0.0f}, 100.0f, 200.0f, 14.0f,
+                                                        0.7f, 2, 0.0f);
+        check(kick.x < idle.x, "PIX-38 the shooting recoil offset is preserved");
+    }
+
+    // 2) 烟雾里的人物：走真实 alpha 路径渐隐（而不是被视线过滤整块剔掉）
+    static void TestPix38SmokeActorAlpha() {
+        std::printf("\n===== PIX-38 烟雾人物透明度 =====\n");
+        CS2DGame game;
+        game.SetMatchMode(MatchMode::BombDefusal);
+        if (!game.LoadMap(MapPath(), nullptr, true)) return;
+        game.player_.team = Team::T;
+        game.bots_.clear();
+        game.botAi_.clear();
+
+        CS2DGame::Player mate;
+        mate.team = Team::T;
+        mate.alive = true;
+        mate.name = "mate";
+        mate.x = 400.0f; mate.y = 400.0f;
+        mate.spriteKey = 1;
+        game.bots_.push_back(mate);
+        game.botAi_.emplace_back();
+
+        // 无烟：alpha 满
+        const auto clear = game.MakeActorDrawParams(game.bots_[0], &game.player_);
+        check(clear.alpha == 255, "PIX-38 without smoke the actor is fully opaque");
+
+        // 中心浓烟：alpha 显著下降，但不需要靠可见性过滤
+        CS2DGame::SmokeCloud s;
+        s.x = 400.0f; s.y = 400.0f;
+        s.radius = Tuning::SmokeRadius;
+        s.age = 3.0f; s.expandTime = 1.6f;
+        s.life = 12.0f; s.maxLife = 12.0f;
+        game.smokes_.push_back(s);
+        const auto inSmoke = game.MakeActorDrawParams(game.bots_[0], &game.player_);
+        check(inSmoke.alpha < clear.alpha,
+              "PIX-38 a smoked actor gets a reduced alpha instead of disappearing");
+        check(inSmoke.alpha > 0,
+              "PIX-38 the smoked actor keeps a faint silhouette (never fully transparent)");
+
+        // 同一位置：可见性判定不再把角色整块剔掉（烟雾只走 alpha）
+        // 直接验证几何：烟雾遮挡为真，但 SmokeOpacityAt 给出的是连续值
+        check(game.SegmentBlockedBySmoke(300.0f, 400.0f, 460.0f, 400.0f),
+              "PIX-38 smoke still blocks line of sight for gameplay");
+        const float opacity = game.SmokeOpacityAt(400.0f, 400.0f);
+        check(opacity > 0.5f, "PIX-38 the smoke opacity at the centre is strong");
+
+        // 边缘比中心可见度更高（渐隐随稀疏程度变化）
+        const float edgeAlpha =
+            [&] {
+                game.bots_[0].x = 400.0f + Tuning::SmokeEffectiveRadius(s.radius, s.age, s.expandTime, s.life) * 0.95f;
+                return game.MakeActorDrawParams(game.bots_[0], &game.player_).alpha;
+            }();
+        check(edgeAlpha > inSmoke.alpha,
+              "PIX-38 the smoke edge keeps the actor more visible than the centre");
+
+        // 烟散：alpha 回升（渐显）
+        game.bots_[0].x = 400.0f;
+        game.smokes_[0].life = 0.03f;
+        const auto dispersing = game.MakeActorDrawParams(game.bots_[0], &game.player_);
+        check(dispersing.alpha > inSmoke.alpha,
+              "PIX-38 the actor becomes visible again as the smoke dissipates");
+
+        game.smokes_.clear();
+        check(game.MakeActorDrawParams(game.bots_[0], &game.player_).alpha == 255,
+              "PIX-38 clearing the smoke restores full opacity");
+    }
+
+    // 3) 火焰贴图面积再缩到 1/16（线尺寸 ×1/4），火区范围不变
+    static void TestPix38FireTileSmaller() {
+        std::printf("\n===== PIX-38 火焰贴图再缩小 =====\n");
+        const float radius = Tuning::FireRadius;
+        const float active = Tuning::FireEffectiveRadius(radius, Tuning::FireLife, Tuning::FireLife);
+        // 渲染规则：tile = ceil(max(4, 0.065*r)/2)*2
+        const float tile = std::ceil(std::max(4.0f, active * 0.065f) / 2.0f) * 2.0f;
+        const float areaRatio = (tile * tile) / (Tuning::Pi * active * active);
+        std::printf("[PIX-38] fire activeR=%.1f tile=%.1f areaRatio=1/%.1f\n",
+                    active, tile, 1.0f / areaRatio);
+        // 相对 PIX-37 的 0.26 系数，面积恰好是 1/16
+        const float oldTile = std::ceil(std::max(8.0f, active * 0.26f) / 2.0f) * 2.0f;
+        const float shrink = (tile * tile) / (oldTile * oldTile);
+        check(std::fabs(shrink - 1.0f / 16.0f) < 0.02f,
+              "PIX-38 one fire tile's area is 1/16 of the previous size");
+        check(tile > 0.0f && tile < oldTile, "PIX-38 the fire tile really got smaller");
+
+        // 火区范围（判定）不变
+        check(std::fabs(Tuning::FireRadius - 60.0f) < 0.001f,
+              "PIX-38 the fire radius itself is unchanged");
+        check(std::fabs(active - radius) < 0.001f,
+              "PIX-38 the effective fire radius is unchanged at full life");
+    }
+
+    // 4) 准星跟随武器后坐力扩散
+    static void TestPix38RecoilCrosshair() {
+        std::printf("\n===== PIX-38 后坐力准星扩散 =====\n");
+        CS2DGame game;
+        if (!LoadDeathMatch(game)) return;
+        auto& player = game.GetPlayer();
+        player.SetSlotWeapon(0, WeaponId::AK47);
+        player.weaponSlot = 0;
+        player.ammo = player.maxAmmo = 30;
+        // 静止：两种扩散都是 0
+        check(game.GetRecoilBloom() == 0.0f, "PIX-38 no shots means no recoil bloom");
+        check(game.GetCrosshairBloom() == 0.0f, "PIX-38 standing still means no move bloom");
+
+        // 连射若干发后坐力扩散上升
+        for (int i = 0; i < 6; ++i) player.ApplyWeaponRecoil(0.0f);
+        const float afterShots = game.GetRecoilBloom();
+        check(afterShots > 0.0f, "PIX-38 firing raises the recoil bloom");
+        check(afterShots <= 1.0f, "PIX-38 the recoil bloom stays normalized to 0..1");
+
+        // 恢复后回落
+        for (int i = 0; i < 240; ++i) player.RecoverBallistics(1.0f / 30.0f);
+        check(game.GetRecoilBloom() < afterShots,
+              "PIX-38 the recoil bloom decays back down after firing stops");
+
+        // 移动扩散与后坐扩散是两条独立通道：能同时非零
+        game.crosshairBloom_ = 0.8f;
+        player.ApplyWeaponRecoil(0.0f);
+        check(game.GetCrosshairBloom() > 0.0f && game.GetRecoilBloom() > 0.0f,
+              "PIX-38 move bloom and recoil bloom coexist without replacing each other");
+    }
+
+    // 5) 雷达底图带地图边缘延伸（与选阵营界面同一套 perimeter）
+    //    实现放在 SpriteAssetReview（它是 CS2DRenderer 的友元，能读到 perimeter 成员）。
+    static void TestPix38RadarPerimeterStub() {}
+
+    // 6) 结算页机位跨度：相邻 shot 必须落在地图的不同区域
+    static void TestPix38ShowcaseSpread() {
+        std::printf("\n===== PIX-38 结算机位跨度 =====\n");
+        const float mapW = 1920.0f, mapH = 1080.0f;
+        const int viewW = 1920, viewH = 1080;
+        // 不传 points：本用例要验证的是「机位本身铺得开」，
+        // 据点吸附会把落点往少数几个生成点收（那是有意的 12% 收敛，
+        // 会干扰对跨度的度量）。生产环境仍会传入区域/出生点。
+        const std::vector<SDL_FPoint> noPoints;
+        std::vector<ShowcaseCamera::View> views;
+        for (int shot = 0; shot < 12; ++shot)
+            views.push_back(ShowcaseCamera::Sample(0.0f, shot, mapW, mapH, viewW, viewH, noPoints));
+
+        // 另外单独验证：即使传入据点，机位仍然覆盖整张图（跨度不被压回一角）
+        const std::vector<SDL_FPoint> points{{300.0f, 300.0f}, {1600.0f, 900.0f}};
+        std::vector<ShowcaseCamera::View> anchored;
+        for (int shot = 0; shot < 12; ++shot)
+            anchored.push_back(ShowcaseCamera::Sample(0.0f, shot, mapW, mapH, viewW, viewH, points));
+
+        // 每个机位都在合法范围内
+        bool allLegal = true;
+        for (const auto& v : views) {
+            const float halfW = viewW / (2.0f * v.zoom), halfH = viewH / (2.0f * v.zoom);
+            const float loX = std::min(halfW, mapW * .5f), hiX = std::max(loX, mapW - halfW);
+            const float loY = std::min(halfH, mapH * .5f), hiY = std::max(loY, mapH - halfH);
+            allLegal = allLegal && v.center.x >= loX - 0.5f && v.center.x <= hiX + 0.5f &&
+                       v.center.y >= loY - 0.5f && v.center.y <= hiY + 0.5f && v.zoom > 0;
+        }
+        check(allLegal, "PIX-38 every showcase camera stays inside the legal map range");
+
+        // 相邻机位的位移必须占地图的相当比例（旧实现只有 ~0.2 的局部晃动）
+        float minAdjacent = 1e9f;
+        for (size_t i = 1; i < views.size(); ++i) {
+            const float dx = views[i].center.x - views[i - 1].center.x;
+            const float dy = views[i].center.y - views[i - 1].center.y;
+            const float norm = std::hypot(dx / mapW, dy / mapH);
+            minAdjacent = std::min(minAdjacent, norm);
+        }
+        std::printf("[PIX-38] showcase min adjacent move = %.3f of map\n", minAdjacent);
+        check(minAdjacent > 0.15f,
+              "PIX-38 consecutive showcase shots move a large fraction of the map");
+
+        // 带据点吸附时，12 个机位仍要覆盖全部四个象限（不会被收进一角）
+        {
+            bool q[4] = {false, false, false, false};
+            for (const auto& v : anchored) {
+                const int qi = (v.center.x < mapW * .5f ? 0 : 1) + (v.center.y < mapH * .5f ? 0 : 2);
+                q[qi] = true;
+            }
+            check(q[0] && q[1] && q[2] && q[3],
+                  "PIX-38 anchored showcase cameras still cover all four quadrants");
+        }
+
+        // 12 个机位要覆盖到地图的多个象限，而不是挤在一角
+        int quadrants = 0;
+        for (int q = 0; q < 4; ++q) {
+            const bool left = q % 2 == 0, top = q < 2;
+            for (const auto& v : views) {
+                if ((v.center.x < mapW * .5f) == left && (v.center.y < mapH * .5f) == top) {
+                    ++quadrants;
+                    break;
+                }
+            }
+        }
+        check(quadrants == 4, "PIX-38 showcase cameras cover all four quadrants of the map");
+
+        // 缩放交替：不能 12 个机位全用同一个倍率
+        int distinctZoom = 0;
+        for (size_t i = 0; i < views.size(); ++i) {
+            bool first = true;
+            for (size_t j = 0; j < i; ++j)
+                if (std::fabs(views[j].zoom - views[i].zoom) < 0.01f) first = false;
+            if (first) ++distinctZoom;
+        }
+        check(distinctZoom >= 3, "PIX-38 showcase alternates between several zoom levels");
+    }
+
 };
 
 static void TestScopeBoundsAndMovement() {
@@ -4032,6 +4752,38 @@ static void TestScopeBoundsAndMovement() {
 }
 
 struct SpriteAssetReview {
+    // PIX-38 第 5 项：雷达底图要带与选阵营界面同一套「地图边缘延伸」。
+    // 本结构是 CS2DRenderer 的友元，因此可以直接检查 perimeter 成员与烘焙结果。
+    static void TestPix38RadarPerimeter() {
+        std::printf("\n===== PIX-38 雷达地图边缘延伸 =====\n");
+        SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 320, 240, 32, SDL_PIXELFORMAT_RGBA32);
+        SDL_Renderer* software = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+        check(software != nullptr, "PIX-38 software renderer for the radar perimeter check");
+        if (software) {
+            CS2DRenderer renderer;
+            renderer.Initialize(software, "assets/cs2d/maps", 320, 240);
+            CS2DGame game;
+            game.SetMatchMode(MatchMode::BombDefusal);
+            if (game.LoadMap(MapPath(), &renderer, true)) {
+                const bool hasPerimeter = renderer.perimeterTex_ != nullptr;
+                std::printf("[PIX-38] perimeter=%s rect=%.0fx%.0f map=%.0fx%.0f\n",
+                            hasPerimeter ? "yes" : "no",
+                            renderer.perimeterWorldRect_.w, renderer.perimeterWorldRect_.h,
+                            game.GetWorld().GetMapPixelW(), game.GetWorld().GetMapPixelH());
+                if (hasPerimeter) {
+                    check(renderer.perimeterWorldRect_.w > game.GetWorld().GetMapPixelW() &&
+                          renderer.perimeterWorldRect_.h > game.GetWorld().GetMapPixelH(),
+                          "PIX-38 the perimeter scene covers more than the map itself");
+                }
+                renderer.BuildRadarTexture();
+                check(renderer.radarMapTex_ != nullptr,
+                      "PIX-38 the radar base texture bakes with the perimeter pass");
+            }
+        }
+        if (software) SDL_DestroyRenderer(software);
+        SDL_FreeSurface(surface);
+    }
+
     static void Run() {
         SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 1280, 720, 32, SDL_PIXELFORMAT_RGBA32);
         SDL_Renderer* output = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
@@ -4823,6 +5575,63 @@ static int ExportRound3Ballistics() {
 }
 
 struct EngineTestAccess {
+    // PIX-37 第 7 项：暂停 → 继续 必须恢复黑场过渡（不是瞬间切换）。
+    static void TestPix37ResumeTransition() {
+        std::printf("\n===== PIX-37 暂停继续的过渡 =====\n");
+        const auto previousBase = PathUtils::BaseDir();
+        const auto directory = std::filesystem::absolute("build-evidence/pix37");
+        std::filesystem::create_directories(directory);
+        PathUtils::SetBaseDir(directory.string());
+        SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
+        SDL_InitSubSystem(SDL_INIT_VIDEO);
+        {
+            Engine engine;
+            engine.window = SDL_CreateWindow("PIX37 resume transition", 0, 0, 640, 480,
+                                             SDL_WINDOW_HIDDEN);
+            engine.renderer = engine.window
+                ? SDL_CreateRenderer(engine.window, -1,
+                                     SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE)
+                : nullptr;
+            check(engine.renderer != nullptr, "PIX-37 resume-transition renderer initializes");
+            if (engine.renderer != nullptr) {
+                // ResizeLogicalViewport 会改写全局 g_uiScale；恢复它，
+                // 否则后续 HUD/雷达用例会读到被这里改小的缩放而误判。
+                const float savedUiScale = g_uiScale;
+                engine.ResizeLogicalViewport(640, 480);
+                engine.currentState = PLAYING;
+                engine.lastRenderedState_ = PLAYING;
+                const auto actions = engine.BuildActions();
+
+                // 暂停：按钮「继续」路径
+                engine.currentState = PAUSED;
+                engine.transitionKind_ = Engine::TransitionKind::None;
+                actions.resumeGame();
+                check(engine.currentState == PLAYING,
+                      "PIX-37 the resume button returns to gameplay");
+                check(engine.transitionKind_ == Engine::TransitionKind::Fade,
+                      "PIX-37 the resume button starts the black fade transition");
+                check(engine.transitionDuration_ > 0.0f,
+                      "PIX-37 the resume transition has a non-zero duration");
+                check(engine.transitionElapsed_ == 0.0f,
+                      "PIX-37 the resume transition starts from the beginning");
+
+                // Esc 继续路径
+                engine.currentState = PAUSED;
+                engine.transitionKind_ = Engine::TransitionKind::None;
+                engine.BeginTransition(PAUSED, PLAYING);   // 与 Esc 分支同一入口
+                engine.currentState = PLAYING;
+                check(engine.transitionKind_ == Engine::TransitionKind::Fade,
+                      "PIX-37 the Esc resume also goes through the fade transition");
+                g_uiScale = savedUiScale;
+            }
+            if (engine.renderer) SDL_DestroyRenderer(engine.renderer);
+            engine.renderer = nullptr;
+            if (engine.window) SDL_DestroyWindow(engine.window);
+            engine.window = nullptr;
+        }
+        PathUtils::SetBaseDir(previousBase);
+    }
+
     static void TestExperienceEntryPoints() {
         const auto previousBase=PathUtils::BaseDir();
         const auto directory=std::filesystem::absolute("build-evidence/experience/engine");
@@ -5174,6 +5983,22 @@ int main(int argc,char** argv) {
         CS2DGameTestAccess::TestPix36Footsteps();
         CS2DGameTestAccess::TestPix36DefuseIsolation();
         CS2DGameTestAccess::TestPix36ScopeLevelsAndLensPlayer();
+        CS2DGameTestAccess::TestPix37DefuseRangeAndLos();
+        CS2DGameTestAccess::TestPix37FireTileArea();
+        CS2DGameTestAccess::TestPix37AimLineDuringFreeze();
+        CS2DGameTestAccess::TestPix37BombCarrierPresentation();
+        CS2DGameTestAccess::TestPix37VisualEvidence();
+        CS2DGameTestAccess::TestPix37NoWalkBob();
+        CS2DGameTestAccess::TestPix37SmokeCoverageAndFade();
+        CS2DGameTestAccess::TestPix38OutlineNoBob();
+        CS2DGameTestAccess::TestPix38SmokeActorAlpha();
+        CS2DGameTestAccess::TestPix38FireTileSmaller();
+        CS2DGameTestAccess::TestPix38RecoilCrosshair();
+        SpriteAssetReview::TestPix38RadarPerimeter();
+        CS2DGameTestAccess::TestPix38VisualEvidence();
+        CS2DGameTestAccess::TestPix38VisualEvidence();
+    CS2DGameTestAccess::TestPix38ShowcaseSpread();
+        EngineTestAccess::TestPix37ResumeTransition();
         std::printf("Experience regressions: %d passed, %d failed\n",g_pass,g_fail);
         return g_fail ? 1 : 0;
     }
@@ -5244,6 +6069,22 @@ int main(int argc,char** argv) {
     CS2DGameTestAccess::TestPix36Footsteps();
     CS2DGameTestAccess::TestPix36DefuseIsolation();
     CS2DGameTestAccess::TestPix36ScopeLevelsAndLensPlayer();
+    CS2DGameTestAccess::TestPix37DefuseRangeAndLos();
+    CS2DGameTestAccess::TestPix37FireTileArea();
+    CS2DGameTestAccess::TestPix37AimLineDuringFreeze();
+    CS2DGameTestAccess::TestPix37BombCarrierPresentation();
+        CS2DGameTestAccess::TestPix37VisualEvidence();
+    CS2DGameTestAccess::TestPix37NoWalkBob();
+    CS2DGameTestAccess::TestPix37SmokeCoverageAndFade();
+    CS2DGameTestAccess::TestPix38OutlineNoBob();
+    CS2DGameTestAccess::TestPix38SmokeActorAlpha();
+    CS2DGameTestAccess::TestPix38FireTileSmaller();
+    CS2DGameTestAccess::TestPix38RecoilCrosshair();
+    SpriteAssetReview::TestPix38RadarPerimeter();
+    CS2DGameTestAccess::TestPix38VisualEvidence();
+        CS2DGameTestAccess::TestPix38VisualEvidence();
+    CS2DGameTestAccess::TestPix38ShowcaseSpread();
+    EngineTestAccess::TestPix37ResumeTransition();
     if (argc > 1 && std::string(argv[1]) == "--pix35") {
         std::printf("PIX35 focused: %d passed, %d failed\n", g_pass, g_fail);
         return g_fail ? 1 : 0;

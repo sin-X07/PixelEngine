@@ -219,6 +219,10 @@ GameUI::Actions Engine::BuildActions() {
             sidePhaseStartMs_ += SDL_GetTicks64() - sidePauseStartMs_;
             sidePauseStartMs_ = 0;
         }
+        // 恢复对局走与其它页面切换同一套黑场软切：先压黑、再淡入战场。
+        // 之前的实现直接切 currentState，画面上就是「一黑到底然后突然出现」，
+        // 既没有过渡也看不到淡入，观感像卡了一下。
+        if (currentState != PLAYING) BeginTransition(PAUSED, PLAYING);
         currentState = PLAYING;
         SDL_SetRelativeMouseMode(sideChoicePending_ ? SDL_FALSE : SDL_TRUE);
         SDL_ShowCursor(sideChoicePending_ ? SDL_ENABLE : SDL_DISABLE);
@@ -932,6 +936,8 @@ void Engine::HandleInput() {
                 sidePhaseStartMs_ += SDL_GetTicks64() - sidePauseStartMs_;
                 sidePauseStartMs_ = 0;
             }
+            // Esc 继续同样走黑场软切，与按钮「继续」保持一致。
+            BeginTransition(PAUSED, PLAYING);
             currentState = PLAYING;
             SDL_SetRelativeMouseMode(sideChoicePending_ ? SDL_FALSE : SDL_TRUE);
             SDL_ShowCursor(sideChoicePending_ ? SDL_ENABLE : SDL_DISABLE);
@@ -1122,8 +1128,9 @@ void Engine::DrawMatchShowcase() {
         for (const auto &rect : area.rects)
             points.push_back({rect.x + rect.width * .5f, rect.y + rect.height * .5f});
     const float elapsed = (SDL_GetTicks64() - showcaseStarted_) * .001f;
-    const int shot = static_cast<int>(elapsed / 6.8f);
-    const float phase = std::fmod(elapsed, 6.8f);
+    const float shotSeconds = ShowcaseCamera::kShotSeconds;
+    const int shot = static_cast<int>(elapsed / shotSeconds);
+    const float phase = std::fmod(elapsed, shotSeconds);
     const auto current = ShowcaseCamera::Sample(phase, shot, world.GetMapPixelW(), world.GetMapPixelH(),
                                                 logicalW_, logicalH_, points);
     SDL_Texture *target = SDL_GetRenderTarget(renderer);
@@ -1144,7 +1151,7 @@ void Engine::DrawMatchShowcase() {
     if (showcaseTextures_[0] && showcaseTextures_[1]) {
         renderView(0, current);
         if (shot > 0 && phase < 1.2f)
-            renderView(1, ShowcaseCamera::Sample(phase + 6.8f, shot - 1, world.GetMapPixelW(),
+            renderView(1, ShowcaseCamera::Sample(phase + shotSeconds, shot - 1, world.GetMapPixelW(),
                                                  world.GetMapPixelH(), logicalW_, logicalH_, points));
         SDL_SetRenderTarget(renderer, target);
         SDL_RenderSetViewport(renderer, &viewport);

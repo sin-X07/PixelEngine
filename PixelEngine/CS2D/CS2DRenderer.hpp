@@ -119,7 +119,8 @@ public:
         Uint8 r = 255, g = 255, b = 255, alpha = 255;
         Shape shape = Shape::Circle;
     };
-    void DrawBombCarrierMarker(float worldX, float worldY, float size, float timeSec);
+    // C4 携带者后背的贴图（取代旧的黄色菱形标记）。angle 用于让背包随人物朝向转动。
+    void DrawBackpackC4(float worldX, float worldY, float size, float aimAngle, float timeSec);
 
     void SetConeAngleDeg(float angle) { vis_.SetConeAngleDeg(angle); }
     void DrawAimLine(float playerX, float playerY, float angle,
@@ -150,10 +151,8 @@ public:
     // 烟雾云 / 闪光致盲整屏覆盖
     void DrawSmokeCloud(float worldX, float worldY, float worldRadius,
                         float age, float expandTime, float life, float maxLife, float seed);
-    // 燃烧弹火区：焦黑地面 + 闪烁的橙色火团
+    // 燃烧弹火区：地面火焰贴图（火焰全部走地图贴图逻辑，不再叠矢量火焰）
     void DrawFireCells(const std::vector<SDL_FPoint>& cells,float x,float y,float radius,float age,float life,float seed);
-    void DrawFireZone(float worldX, float worldY, float worldRadius,
-                      float age, float life, float maxLife, float seed);
     void DrawFlashOverlay(Uint8 alpha);
 
     // 命中反馈（屏幕坐标，X 形准星）与受伤红色边缘

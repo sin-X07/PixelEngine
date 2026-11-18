@@ -698,8 +698,6 @@ void CS2DRenderer::DrawOverlay() {
 //   主武器 → 第1行第1列；副武器 → 第2行第2列；近战 → 第2行第1列
 // ============================================================================
 
-static constexpr float WALK_BOB_AMPLITUDE   = 1.2f;   // 世界单位（×zoom 后约 2.4px）
-
 void CS2DRenderer::MaskedCopy(SDL_Texture *texture, const SDL_Rect *source, const SDL_FRect &dst,
                               float angle) {
     if (!renderer_ || !texture || dst.w <= 0 || dst.h <= 0)
@@ -830,11 +828,9 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams &p) {
             return;
     }
 
-    // 行走 bobbing（世界单位，随缩放）
-    float yOff = 0.0f;
-    if (p.animState == 1) {
-        yOff = std::sin(p.animTimer * 12.0f) * WALK_BOB_AMPLITUDE * zoom_;
-    }
+    // 行走不再做上下 bobbing：角色与瞄准线共用同一个世界锚点，
+    // 任何纵向偏移都会让准星与人物不同步（玩家反馈的「人跟着晃」）。
+    const float yOff = 0.0f;
 
     // 射击后坐力（世界单位）
     float xOff = 0.0f;
@@ -1106,7 +1102,23 @@ void CS2DRenderer::BuildRadarTexture() {
     radarImgH_ = ih;
 
     if (backgroundTex_) {
-        // 有背景图：直接缩放填进内接矩形
+        // 雷达底图要和选阵营界面一样带上「地图边缘延伸」。
+        // perimeterTex_ 是同一套 perimeter 场景图，比地图本体大一圈；
+        // 但它不能超出 512 纹理，所以按「地图本体在该纹理里的缩放」等比缩放，
+        // 并以地图本体的左上角为锚点向外铺——延伸部分自然落在 letterbox 之外的留白上。
+        if (perimeterTex_) {
+            const float mapScale = iw / std::max(1.0f, mapW);   // 世界px → 雷达px
+            SDL_Rect dst = {
+                static_cast<int>(std::lround(radarImgX_ + perimeterWorldRect_.x * mapScale)),
+                static_cast<int>(std::lround(radarImgY_ + perimeterWorldRect_.y * mapScale)),
+                static_cast<int>(std::lround(perimeterWorldRect_.w * mapScale)),
+                static_cast<int>(std::lround(perimeterWorldRect_.h * mapScale)) };
+            SDL_SetTextureBlendMode(perimeterTex_, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureAlphaMod(perimeterTex_, 165);
+            SDL_RenderCopy(renderer_, perimeterTex_, nullptr, &dst);
+            SDL_SetTextureAlphaMod(perimeterTex_, 255);
+        }
+        // 地图本体压在延伸之上（本体不透明，延伸只在外圈可见）
         SDL_SetTextureBlendMode(backgroundTex_, SDL_BLENDMODE_BLEND);
         SDL_Rect dst = { static_cast<int>(radarImgX_), static_cast<int>(radarImgY_),
                          static_cast<int>(iw), static_cast<int>(ih) };
@@ -1684,7 +1696,10 @@ void CS2DRenderer::DrawSmokeCloud(float worldX, float worldY, float worldRadius,
     const float cy = (worldY - cameraY_) * zoom_;
     const float p = std::clamp(age / std::max(0.08f, expandTime), 0.0f, 1.0f);
     const float ease = 1.0f - (1.0f - p) * (1.0f - p);          // 先快后慢地扩散
-    const float r = Tuning::SmokeEffectiveRadius(worldRadius,age,expandTime,life)*zoom_;
+    // 视觉半径盖住判定半径之外的一圈：判定仍用原始有效半径，
+    // 这样「看得到的烟」一定覆盖「判定被挡住的区域」，不会出现判定/视觉错位。
+    const float r = Tuning::SmokeEffectiveRadius(worldRadius,age,expandTime,life) *
+                    Tuning::SmokeVisualRadiusMul * zoom_;
     if (r < 1.5f) return;
 
     // 出现时快速淡入，最后 2 秒淡出
@@ -1747,156 +1762,64 @@ void CS2DRenderer::EnsureFireTiles() {
 
 void CS2DRenderer::DrawFireCells(const std::vector<SDL_FPoint> &cells, float x, float y, float radius,
                                  float age, float life, float seed) {
-    std::vector<SDL_Vertex> vertices;
-    std::vector<int> indices;
     const float activeRadius = Tuning::FireEffectiveRadius(radius, age, life);
     const float fade = std::clamp(life / .6f, 0.0f, 1.0f);
-    // 地面火池：三张无缝火焰贴图按 32 世界单位拼贴（火区地面层，火焰舌之下）。
-    // 贴图加载失败时静默退回纯程序火焰舌，不影响现有表现。
+    if (activeRadius <= 0.5f || fade <= 0.01f) return;
+
+    // 火区地面层：三张无缝火焰贴图拼贴。
+    // 「一整套火焰舌」的实时程序化渲染已下线——现在火焰完全走地图贴图逻辑
+    // （贴图只用地图层的方式平铺在地面，不再叠一层矢量火焰与火星）。
     EnsureFireTiles();
-    if (fireTileTex_[0] && fireTileTex_[1] && fireTileTex_[2]) {
-        constexpr float kFireTileWorld = 32.0f;
-        const float fadeIn = std::clamp(age / 0.30f, 0.0f, 1.0f);
-        // 先按 cell 收集有火的格子（只画 activeRadius 内且可见的格子，与火焰舌一致）
-        struct FireTileSlot { int tx = 0, ty = 0; bool visible = false; };
-        std::vector<FireTileSlot> tiles;
-        for (const auto cell : cells) {
-            if (std::hypot(cell.x - x, cell.y - y) > activeRadius) continue;
-            const int tx = static_cast<int>(std::floor(cell.x / kFireTileWorld));
-            const int ty = static_cast<int>(std::floor(cell.y / kFireTileWorld));
-            int slotIdx = -1;
-            for (int i = 0; i < static_cast<int>(tiles.size()); ++i) {
-                if (tiles[i].tx == tx && tiles[i].ty == ty) { slotIdx = i; break; }
-            }
-            if (slotIdx < 0) { tiles.push_back({tx, ty, false}); slotIdx = static_cast<int>(tiles.size()) - 1; }
-            if (!visibilityFilter_ || visibilityFilter_(cell.x, cell.y)) tiles[slotIdx].visible = true;
-        }
-        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-        for (const auto& t : tiles) {
-            if (!t.visible) continue;
-            const float wx = t.tx * kFireTileWorld, wy = t.ty * kFireTileWorld;
-            const float sx = (wx - cameraX_) * zoom_, sy = (wy - cameraY_) * zoom_;
-            const float sw = kFireTileWorld * zoom_;
-            if (sx + sw < -8 * zoom_ || sx > viewW_ + 8 * zoom_ ||
-                sy + sw < -4 * zoom_ || sy > viewH_ + 26 * zoom_) continue;
-            const int variant = ((t.tx * 7 + t.ty * 13 + static_cast<int>(seed)) % 3 + 3) % 3;
-            const float flicker = 0.8f + 0.2f * std::sin(age * 9.0f + t.tx * 2.1f + t.ty * 1.7f + seed);
-            const Uint8 alpha = static_cast<Uint8>(std::clamp(fade * fadeIn * flicker, 0.0f, 1.0f) * 255.0f);
-            if (alpha == 0) continue;
-            SDL_Texture* tex = fireTileTex_[variant];
-            SDL_SetTextureAlphaMod(tex, alpha);
-            const SDL_FRect dst{sx, sy, sw, sw};
-            SDL_RenderCopyF(renderer_, tex, nullptr, &dst);
-        }
-    }
-    for (const auto cell : cells) {
-        if (std::hypot(cell.x - x, cell.y - y) > activeRadius ||
-            (visibilityFilter_ && !visibilityFilter_(cell.x, cell.y)))
-            continue;
-        const float cx = (cell.x - cameraX_) * zoom_, cy = (cell.y - cameraY_) * zoom_;
-        if (cx < -8*zoom_ || cx > viewW_+8*zoom_ || cy < -4*zoom_ || cy > viewH_+26*zoom_) continue;
-        const float phase = cell.x * 1.37f + cell.y * 2.19f + seed * 7.0f;
-        const float cycle = age * (1.7f + .3f * std::sin(phase)) + phase;
-        const float pulse = .65f + .35f * std::sin(cycle * 6.2831853f);
-        const float height = (7.0f + 7.0f * pulse) * zoom_;
-        // Nested tapered ribbons bend independently as hot gas rises.
-        for (int layer = 0; layer < 3; ++layer) {
-            const float width = (3.7f - layer * .9f) * zoom_;
-            const float tall = height * (1.0f - layer * .24f);
-            const int base = static_cast<int>(vertices.size());
-            for (int step = 0; step <= 4; ++step) {
-                const float t = step / 4.0f;
-                const float bend = std::sin(cycle * 5.0f - t * 5.5f) * t * 3.2f * zoom_;
-                const float half = width * std::pow(1.0f - t, .8f);
-                const float py = cy + 2 * zoom_ - t * tall;
-                const float opacity = fade * (1.0f - t) * (.65f + .25f * pulse);
-                const SDL_Color color{255, static_cast<Uint8>(layer == 0 ? 65 + 70 * (1-t) : layer == 1 ? 145 + 65 * (1-t) : 220 + 30 * (1-t)),
-                    static_cast<Uint8>(layer == 2 ? 130 : 15), static_cast<Uint8>(210 * opacity)};
-                vertices.push_back({{cx + bend - half, py}, color, {0,0}});
-                vertices.push_back({{cx + bend + half, py}, color, {0,0}});
-                if (step < 4) {
-                    const int n = base + step * 2;
-                    const int quad[] = {n,n+1,n+3,n,n+3,n+2};
-                    indices.insert(indices.end(), std::begin(quad), std::end(quad));
-                }
-            }
-        }
-        const float ember = cycle - std::floor(cycle);
-        const float ex = cx + std::sin(phase + ember * 4) * 4 * zoom_;
-        const float ey = cy - ember * 24 * zoom_;
-        const float size = .7f * zoom_;
-        const int base = static_cast<int>(vertices.size());
-        const SDL_Color spark{255,210,105,static_cast<Uint8>(150 * fade * (1-ember))};
-        vertices.push_back({{ex-size,ey},spark,{}});
-        vertices.push_back({{ex+size,ey},spark,{}});
-        vertices.push_back({{ex,ey-2*size},spark,{}});
-        indices.insert(indices.end(), {base,base+1,base+2});
-    }
-    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-    if (!vertices.empty())
-        SDL_RenderGeometry(renderer_, nullptr, vertices.data(), static_cast<int>(vertices.size()),
-                           indices.data(), static_cast<int>(indices.size()));
-}
+    const bool haveTiles = fireTileTex_[0] && fireTileTex_[1] && fireTileTex_[2];
 
-void CS2DRenderer::DrawFireZone(float worldX, float worldY, float worldRadius,
-                                float age, float life, float maxLife, float seed) {
-    if (!renderer_) return;
-    const float r = worldRadius * zoom_;
-    if (r < 2.0f) return;
-
-    const float fadeIn  = std::clamp(age / 0.30f, 0.0f, 1.0f);
-    const float fadeOut = std::clamp(life / std::min(1.0f, std::max(0.1f, maxLife)), 0.0f, 1.0f);
-    const float k = fadeIn * fadeOut;
+    const float fadeIn = std::clamp(age / 0.30f, 0.0f, 1.0f);
+    const float k = fade * fadeIn;
     if (k <= 0.01f) return;
 
-    const float t = static_cast<float>(SDL_GetTicks()) / 1000.0f;
+    // 单块贴图的世界尺寸：既不能碎成满屏小块，也不能大到只剩几块巨型贴图。
+    // 面积下限：(π·r²)/64  →  tile >= r·√(π/64) ≈ 0.2216·r。
+    // 在此基础上再按 PIX-38 要求把面积缩到 1/16（线尺寸 ×1/4）：
+    //   0.26·r / 4 = 0.065·r，面积约为圆面积的 1/(64·16) ≈ 1/1024。
+    // 火区判定半径（FireRadius / FireEffectiveRadius）完全不变。
+    const float minTile = activeRadius * 0.065f;
+    float tile = std::max(4.0f, minTile);
+    tile = std::ceil(tile / 2.0f) * 2.0f;
 
-    auto blob = [&](float ox, float oy, float rad, int rr, int gg, int bb, float a) {
-        DrawCircleFilled(worldX + ox / zoom_, worldY + oy / zoom_, rad / zoom_,
-                         rr, gg, bb,
-                         static_cast<Uint8>(std::clamp(a * k * 255.0f, 0.0f, 255.0f)));
-    };
-
-    // 外层：橙红色火焰团（大量交叠的圆，形成不规则的火焰轮廓）
-    for (int i = 0; i < 24; ++i) {
-        const float ang = seed * 6.2831853f + static_cast<float>(i) * 2.39996f;
-        const float d   = r * 0.42f * std::fmod(static_cast<float>(i) * 0.37f + seed, 1.0f);
-        const float ph  = t * (3.0f + 0.25f * (i % 5)) + static_cast<float>(i) * 1.7f;
-        const float fl  = 0.5f + 0.5f * std::sin(ph);
-        const float rad = r * (0.10f + 0.07f * fl);
-        const float ox  = std::cos(ang) * d;
-        const float oy  = std::sin(ang) * d * 0.6f - r * 0.05f * fl;
-        blob(ox, oy, rad, 255, 85 + static_cast<int>(55.0f * fl), 18, 0.55f + 0.25f * fl);
+    // 按 cell 收集有火的格子，再归并到 tile 网格（一格贴图可覆盖多个 cell）
+    struct FireTileSlot { int tx = 0, ty = 0; bool visible = false; };
+    std::vector<FireTileSlot> tiles;
+    for (const auto cell : cells) {
+        if (std::hypot(cell.x - x, cell.y - y) > activeRadius) continue;
+        const int tx = static_cast<int>(std::floor(cell.x / tile));
+        const int ty = static_cast<int>(std::floor(cell.y / tile));
+        int slotIdx = -1;
+        for (int i = 0; i < static_cast<int>(tiles.size()); ++i) {
+            if (tiles[i].tx == tx && tiles[i].ty == ty) { slotIdx = i; break; }
+        }
+        if (slotIdx < 0) {
+            tiles.push_back({tx, ty, false});
+            slotIdx = static_cast<int>(tiles.size()) - 1;
+        }
+        if (!visibilityFilter_ || visibilityFilter_(cell.x, cell.y)) tiles[slotIdx].visible = true;
     }
+    if (!haveTiles || tiles.empty()) return;
 
-    // 中层：橙黄色
-    for (int i = 0; i < 14; ++i) {
-        const float ang = seed * 6.2831853f + static_cast<float>(i) * 1.7f;
-        const float d   = r * 0.24f * std::fmod(static_cast<float>(i) * 0.53f + seed, 1.0f);
-        const float ph  = t * (4.0f + 0.3f * (i % 4)) + static_cast<float>(i) * 2.1f;
-        const float fl  = 0.5f + 0.5f * std::sin(ph);
-        const float rad = r * (0.07f + 0.05f * fl);
-        blob(std::cos(ang) * d, std::sin(ang) * d * 0.6f, rad,
-             255, 175 + static_cast<int>(45.0f * fl), 55, 0.60f + 0.25f * fl);
-    }
-
-    // 内层：黄白色火心
-    for (int i = 0; i < 8; ++i) {
-        const float ang = seed * 6.2831853f + static_cast<float>(i) * 1.1f;
-        const float d   = r * 0.12f * std::fmod(static_cast<float>(i) * 0.71f + seed, 1.0f);
-        const float fl  = 0.5f + 0.5f * std::sin(t * 5.0f + static_cast<float>(i) * 2.3f + seed * 8.0f);
-        blob(std::cos(ang) * d, std::sin(ang) * d * 0.6f, r * (0.05f + 0.03f * fl),
-             255, 228, 150, 0.70f + 0.25f * fl);
-    }
-
-    // 火星：向上飘散
-    for (int i = 0; i < 8; ++i) {
-        const float ph = t * (1.4f + 0.22f * i) + static_cast<float>(i) * 2.3f + seed * 7.0f;
-        const float lifeT = std::fmod(ph, 1.0f);
-        const float ang = seed * 6.2831853f + static_cast<float>(i) * 1.1f;
-        const float ox = std::cos(ang) * r * 0.32f * (0.4f + 0.6f * lifeT);
-        const float oy = -lifeT * r * 0.70f + std::sin(ang) * r * 0.10f;
-        blob(ox, oy, r * 0.016f * (1.0f - lifeT), 255, 225, 140, (1.0f - lifeT) * 0.9f);
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    for (const auto& t : tiles) {
+        if (!t.visible) continue;
+        const float wx = t.tx * tile, wy = t.ty * tile;
+        const float sx = (wx - cameraX_) * zoom_, sy = (wy - cameraY_) * zoom_;
+        const float sw = tile * zoom_;
+        if (sx + sw < -8 * zoom_ || sx > viewW_ + 8 * zoom_ ||
+            sy + sw < -4 * zoom_ || sy > viewH_ + 26 * zoom_) continue;
+        const int variant = ((t.tx * 7 + t.ty * 13 + static_cast<int>(seed)) % 3 + 3) % 3;
+        const float flicker = 0.8f + 0.2f * std::sin(age * 9.0f + t.tx * 2.1f + t.ty * 1.7f + seed);
+        const Uint8 alpha = static_cast<Uint8>(std::clamp(k * flicker, 0.0f, 1.0f) * 255.0f);
+        if (alpha == 0) continue;
+        SDL_Texture* tex = fireTileTex_[variant];
+        SDL_SetTextureAlphaMod(tex, alpha);
+        const SDL_FRect dst{sx, sy, sw, sw};
+        SDL_RenderCopyF(renderer_, tex, nullptr, &dst);
     }
 }
 
@@ -1907,21 +1830,39 @@ void CS2DRenderer::DrawFlashOverlay(Uint8 alpha) {
     SDL_RenderFillRect(renderer_, &full);
 }
 
-void CS2DRenderer::DrawBombCarrierMarker(float worldX, float worldY, float size, float timeSec) {
+void CS2DRenderer::DrawBackpackC4(float worldX, float worldY, float size, float aimAngle,
+                                  float timeSec) {
     if (!renderer_ || (visibilityFilter_ && !visibilityFilter_(worldX, worldY))) return;
-    const float x = (worldX - cameraX_) * zoom_;
-    const float y = (worldY - cameraY_) * zoom_ - size * zoom_ * .7f -
-        (8.0f + 2.0f * std::sin(timeSec * 3.0f)) * g_uiScale;
-    const float radius = 6 * g_uiScale;
-    const SDL_Color color{255, 181, 72, 245};
-    const SDL_Vertex vertices[] = {{{x, y-radius}, color, {}}, {{x+radius, y}, color, {}},
-        {{x, y+radius}, color, {}}, {{x-radius, y}, color, {}}};
-    const int indices[] = {0, 1, 2, 0, 2, 3};
-    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-    SDL_RenderGeometry(renderer_, nullptr, vertices, 4, indices, 6);
-    SDL_SetRenderDrawColor(renderer_, 48, 33, 18, 245);
-    const SDL_FPoint border[] = {{x,y-radius},{x+radius,y},{x,y+radius},{x-radius,y},{x,y-radius}};
-    SDL_RenderDrawLinesF(renderer_, border, 5);
+    const int c4Id = static_cast<int>(WeaponId::C4);
+    SDL_Texture* tex = nullptr;
+    if (c4Id < static_cast<int>(weaponIcons_.size())) tex = weaponIcons_[c4Id];
+    if (!tex && c4Id < static_cast<int>(weaponSprites_.size())) tex = weaponSprites_[c4Id];
+    if (!tex) return;
+    int tw = 0, th = 0;
+    if (SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th) != 0 || tw <= 0 || th <= 0) return;
+
+    // 背在身后：沿朝向的反方向偏移到人物背部。
+    // 尺寸刻意小于人物盒（0.62），否则背包会把整个角色盖住，看不出是谁在带包。
+    const float cx = (worldX - cameraX_) * zoom_;
+    const float cy = (worldY - cameraY_) * zoom_;
+    const float back = size * zoom_ * 0.34f;
+    const float px = cx - std::cos(aimAngle) * back;
+    const float py = cy - std::sin(aimAngle) * back;
+    const float box = size * zoom_ * 0.62f;
+    float dw = box, dh = box;
+    if (tw >= th) dh = box * static_cast<float>(th) / static_cast<float>(tw);
+    else          dw = box * static_cast<float>(tw) / static_cast<float>(th);
+    // 轻微呼吸感，提示这是「活的携带者」而不是地面贴图
+    const float breathe = 1.0f + 0.04f * std::sin(timeSec * 3.0f);
+    dw *= breathe;
+    dh *= breathe;
+    const SDL_FRect dst{px - dw * 0.5f, py - dh * 0.5f, dw, dh};
+    // 背包随人物朝向转动（素材原生朝上，与角色同一套 90° 偏移）。
+    // 刻意不用 MaskedCopy：那条路径按人物 alpha 几何逐像素剔除，
+    // 会把背包切出一堆方块缺口（背包比角色剪影宽）。整块贴图随可见性即可。
+    const float deg = aimAngle * 180.0f / 3.14159265f + 90.0f;
+    const SDL_FPoint pivot{dw * 0.5f, dh * 0.5f};
+    SDL_RenderCopyExF(renderer_, tex, nullptr, &dst, deg, &pivot, SDL_FLIP_NONE);
 }
 
 // 命中反馈：准星处画一个 X（四条短斜线）
@@ -2124,16 +2065,39 @@ void CS2DRenderer::DrawRadarHUD(float playerX, float playerY, float playerAngle,
             continue;
         }
         const float radius = std::max(3.5f, 5.0f*hudScale);
-        SDL_SetRenderDrawColor(renderer_,d.r,d.g,d.b,d.alpha);
-        if (d.shape == RadarDot::Shape::Carrier) {
-            const SDL_Color color{d.r,d.g,d.b,d.alpha};
-            const SDL_Vertex vertices[] = {{{p.x,p.y-radius},color,{}},{{p.x+radius,p.y},color,{}},
-                {{p.x,p.y+radius},color,{}},{{p.x-radius,p.y},color,{}}};
-            const int indices[] = {0,1,2,0,2,3};
-            SDL_RenderGeometry(renderer_,nullptr,vertices,4,indices,6);
-        } else {
-            const SDL_FRect rect{p.x-radius*.8f,p.y-radius*.8f,radius*1.6f,radius*1.6f};
-            SDL_RenderFillRectF(renderer_,&rect);
+        // 携带者与掉落的 C4 都用真实 C4 素材的小图标表示（取代旧的菱形/方块标记）。
+        // 携带者图标叠在本方小圆点之上，掉落物则单独一枚略大的图标。
+        if (d.shape == RadarDot::Shape::Carrier || d.shape == RadarDot::Shape::DroppedBomb) {
+            const int c4Id = static_cast<int>(WeaponId::C4);
+            SDL_Texture* icon = nullptr;
+            if (c4Id < static_cast<int>(weaponIcons_.size())) icon = weaponIcons_[c4Id];
+            if (!icon && c4Id < static_cast<int>(weaponSprites_.size())) icon = weaponSprites_[c4Id];
+            const bool dropped = d.shape == RadarDot::Shape::DroppedBomb;
+            if (dropped) {
+                dot(p, dotRadius + 1, {8, 12, 16, d.alpha});
+                dot(p, dotRadius, {255, 170, 60, d.alpha});
+            }
+            if (icon) {
+                int tw = 0, th = 0;
+                if (SDL_QueryTexture(icon, nullptr, nullptr, &tw, &th) == 0 && tw > 0 && th > 0) {
+                    // 「非常小」：携带者约 7px，掉落物约 10px（随 HUD 缩放）
+                    const float box = (dropped ? 10.0f : 7.0f) * std::max(.75f, hudScale);
+                    float dw = box, dh = box;
+                    if (tw >= th) dh = box * static_cast<float>(th) / static_cast<float>(tw);
+                    else          dw = box * static_cast<float>(tw) / static_cast<float>(th);
+                    SDL_SetTextureBlendMode(icon, SDL_BLENDMODE_BLEND);
+                    SDL_SetTextureAlphaMod(icon, d.alpha);
+                    const SDL_FRect dst{p.x - dw * 0.5f, p.y - dh * 0.5f, dw, dh};
+                    SDL_RenderCopyF(renderer_, icon, nullptr, &dst);
+                    SDL_SetTextureAlphaMod(icon, 255);
+                }
+            } else {
+                // 素材缺失兜底：保留一个橙色小方块，绝不回退成旧菱形
+                const SDL_FRect rect{p.x-radius*.6f,p.y-radius*.6f,radius*1.2f,radius*1.2f};
+                SDL_SetRenderDrawColor(renderer_,d.r,d.g,d.b,d.alpha);
+                SDL_RenderFillRectF(renderer_,&rect);
+            }
+            if (!dropped) continue;
         }
         const float pulse = d.shape == RadarDot::Shape::DroppedBomb ?
             1.5f + 2.0f*(.5f+.5f*std::sin(SDL_GetTicks()*0.005f)) : 2.0f;

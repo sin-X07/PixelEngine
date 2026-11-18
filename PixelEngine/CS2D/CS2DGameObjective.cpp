@@ -190,9 +190,8 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
                     defuseRemaining_ = remaining;
                 }
             };
-            const float pdx=player_.x-bombX_, pdy=player_.y-bombY_;
             const bool playerDefusing = player_.alive && player_.team == Team::CT && interactHeld &&
-                pdx*pdx+pdy*pdy <= Tuning::DefuseRadius*Tuning::DefuseRadius;
+                IsInDefuseRange(player_.x, player_.y);
             updateDefuser(player_,-1,playerDefusing);
             for (size_t i=0;i<bots_.size();++i) {
                 const bool eligible = BotCanDefuse(i,bots_[i]);
