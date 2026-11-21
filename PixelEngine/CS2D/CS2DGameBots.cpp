@@ -904,9 +904,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                           << (ai.goalArea.empty() ? "" : (" " + ai.goalArea)) << std::endl;
                 ai.hasPlanHold = false;
             } else {
-                const float planMul = (order.role == BotRole::Entry)   ? Tuning::SpeedMulEntry
-                                    : (order.role == BotRole::Anchor)  ? Tuning::SpeedMulAnchor
-                                                                       : Tuning::SpeedMulSupport;
+                const float planMul = RoleSpeedMul(i, order.role);   // T26/T27：含 Lurk/Awper 与过渡插值
                 if (FollowPathTo(bot, ai, ai.planHoldX, ai.planHoldY, dt, planMul)) {
                     continue;
                 }
@@ -1011,9 +1009,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // ---- 目标引导：A* 寻路推进 ----
         // 角色行进速度：突破手全速、支援略慢、断后明显靠后
         const float aggr = TempoAggression(GetCoachPlan(bot.team).tempo);
-        const float roleMul = (order.role == BotRole::Entry)   ? Tuning::SpeedMulEntry
-                              : (order.role == BotRole::Anchor)  ? Tuning::SpeedMulAnchor
-                              :                                    Tuning::SpeedMulSupport;
+        const float roleMul = RoleSpeedMul(i, order.role);   // T26/T27：含 Lurk/Awper 与过渡插值
         // 本帧是否已由寻路接管移动（否则交给下方交火机动处理）
         bool pathTookMove = false;
         {

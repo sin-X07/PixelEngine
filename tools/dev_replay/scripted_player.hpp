@@ -34,6 +34,9 @@ public:
     ScriptedPlayer() = default;
     explicit ScriptedPlayer(const Params& p) : params_(p) {}
 
+    // T20 验收场景：脚本玩家（CT）每回合购买拆包钳。默认关闭，保持基准可比。
+    void SetBuyKit(bool on) { buyKit_ = on; }
+
     struct Inputs {
         bool  mouseDown = false;
         float aimX = 0.0f;
@@ -44,6 +47,7 @@ public:
         // 本 tick 的"动作"：购买。同样是输入的一部分，必须进日志才能复现。
         int   buyWeapon = 0;      // WeaponId 数值，0 = 不购买
         int   buyArmorTier = 0;   // 1/2，0 = 不购买
+        bool  buyKit = false;     // 购买拆包钳（CT）
     };
 
     // 每 tick 调用一次：读取只读状态 → 产出本帧输入
@@ -203,8 +207,12 @@ private:
             return;
         }
         if (me.armor < 50 && money >= 650) in.buyArmorTier = 1;
+        // CT 购买拆包钳（T20 验收场景：runner --buy-kit 打开，默认关闭以保持基准可比）。
+        if (buyKit_ && team == Team::CT && !me.hasDefuseKit && money >= 400) in.buyKit = true;
     }
     static constexpr float kEngageRange = 520.0f;   // 视野内可交战距离上限
+
+    bool buyKit_ = false;
 
     const CS2DGame::Player* lastTarget_ = nullptr;
     int   seenTicks_ = 0;

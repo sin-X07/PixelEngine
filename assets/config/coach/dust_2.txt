@@ -202,7 +202,7 @@ slots:
 3 Support Ramp | look=A_Site | hold=offangle
 4 Lurk CT_Spawn | look=Cat | hold=passive
 fallback: default
-# [advisory] 拆包需 5s：先清近点、两人互相掩护，最后 6s 才强拆
+# [advisory] 拆包耗时：有钳 4s / 无钳 10s；先清近点、两人互相掩护，无钳最后 11s 才强拆
 
 [card] id=dust2_CT_retake_b
 when: 已下包@B
@@ -231,3 +231,12 @@ T 满钱 未下包 敌未知 回合开始
 
 CT 已下包@B_Site
 {"intent":"retake_b","target":"B","tempo":"fast","ttl_s":12,"reason":"回防B先集结","slots":[{"slot":0,"role":"entry","area":"Door","look":"B_Site","util":"flash:B_Site"},{"slot":1,"role":"entry","area":"Tunnel","look":"Upper"},{"slot":2,"role":"support","area":"B_Site","hold":"anchor"},{"slot":3,"role":"support","area":"Car_B","look":"Fence"},{"slot":4,"role":"lurk","area":"Mid","look":"Top_Mid"}]}
+
+T 满起 Mid 已控 敌B<=2 未下包
+{"intent":"split_b","target":"B","tempo":"fast","ttl_s":15,"reason":"中路夹B","slots":[{"slot":0,"role":"entry","area":"Tunnel","look":"Upper","util":"flash:B_Site"},{"slot":1,"role":"entry","area":"Mid","look":"Lower"},{"slot":2,"role":"support","area":"B_Site","look":"Door","hold":"anchor"},{"slot":3,"role":"support","area":"Door","look":"B_Site"},{"slot":4,"role":"lurk","area":"Lower","look":"Tunnel"}]}
+
+T 上回合主攻A 敌A>=2 未下包
+{"intent":"fake","target":"B","tempo":"normal","ttl_s":18,"reason":"佯攻A转B","slots":[{"slot":0,"role":"entry","area":"Tunnel","look":"Upper","util":"he:Upper"},{"slot":1,"role":"support","area":"Tunnel","look":"B_Site"},{"slot":2,"role":"entry","area":"Long","look":"Long_Door"},{"slot":3,"role":"support","area":"Outside_Long","look":"Long"},{"slot":4,"role":"lurk","area":"Top_Mid","look":"Mid"}]}
+
+T 穷 敌富 未下包 回合开始
+{"intent":"save","target":"","tempo":"slow","ttl_s":20,"reason":"经济崩保枪","slots":[{"slot":0,"role":"anchor","area":"T_Spawn","hold":"passive"},{"slot":1,"role":"support","area":"T_Spawn","hold":"passive"},{"slot":2,"role":"lurk","area":"Outside","look":"Long_Door"},{"slot":3,"role":"support","area":"Suicide","look":"Mid"},{"slot":4,"role":"anchor","area":"T_Spawn","look":"Tunnel"}]}

@@ -60,7 +60,7 @@ std::string TruncateUtf8(const std::string& in, size_t maxChars) {
 const char* kCoachSchema = R"JSON({"type":"object","additionalProperties":false,
 "required":["intent","target","tempo","ttl_s","reason"],
 "properties":{
- "intent":{"enum":["default","rush_a","rush_b","split_a","split_b","stack_a","stack_b","retake_a","retake_b","save","fake"]},
+ "intent":{"enum":["default","rush_a","rush_b","split_a","split_b","stack_a","stack_b","retake_a","retake_b","save","fake","rotate_a","rotate_b"]},
  "target":{"enum":["A","B","MID",""]},
  "tempo":{"enum":["slow","normal","fast"]},
  "ttl_s":{"type":"integer","minimum":3,"maximum":30},
@@ -533,7 +533,7 @@ std::string BuildSystemPrompt(const CS2DWorld* world,
       << " ttl_s: 指令有效秒数（3~30），场面易变给小值\n"
       << " slots: 最多 5 个，slot 0~4，area 必须是下面「可选区域」之一；"
          "尽量给满 5 个，不要用 *_Spawn（出生点不是战术位置）\n"
-      << " reason: 不超过 20 个汉字，只用于日志\n"
+      << " reason: 不超过 60 字符（schema 上限为准），只用于日志\n"
       << "当前地图: " << mapId << "\n";
     if (world) {
         o << "可选区域:";
@@ -579,7 +579,7 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
                                        : std::string();
         o << "已下@" << (site.empty() ? "未知" : site)
           << " 倒计时" << static_cast<int>(game.GetBombTimer()) << "s"
-          << " 拆包需5s";
+          << " 拆包有钳4s/无钳10s";
     } else if (game.PlayerHasC4()) {
         o << "未下(玩家携带)";
     } else {

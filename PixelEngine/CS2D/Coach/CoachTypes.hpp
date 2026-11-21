@@ -108,6 +108,7 @@ struct RoundMemo {
     bool        bombPlanted = false;
     std::string plantSite;
     std::string firstContactArea;
+    std::string enemyAttackSide;   // 敌方最近主攻侧（T13：CT 读敌方习惯，此前缺失）
     std::vector<Death> deaths;
 };
 

@@ -95,7 +95,8 @@ struct TacticsTable {
         static const char* kTeams[]   = {"T", "CT"};
         static const char* kIntents[] = {
             "Default", "RushA", "RushB", "SplitA", "SplitB",
-            "StackA", "StackB", "RetakeA", "RetakeB", "Save", "Fake"
+            "StackA", "StackB", "RetakeA", "RetakeB", "Save", "Fake",
+            "RotateA", "RotateB"
         };
         for (const char* team : kTeams) {
             for (const char* intent : kIntents) {
@@ -111,6 +112,22 @@ struct TacticsTable {
                 }
                 if (any) slots[std::string(team) + "." + intent] = arr;
             }
+        }
+        // T04：加载 `[slots.<Team>.<Intent>@<Target>]` 段（materialize_cards.py 落成的 @ 模板）。
+        // key 保留 `@Target` 后缀，与 ApplySlotTemplate 的优先查找（intentKey + "@" + target）对齐。
+        for (const auto& [section, sec] : ini.GetAll()) {
+            if (section.rfind("slots.", 0) != 0) continue;
+            const size_t at = section.find('@');
+            if (at == std::string::npos) continue;   // plain 段已在上面登记
+            const std::string key = section.substr(6);   // 去掉 "slots." 前缀 → "T.SplitA@A"
+            std::array<SlotOrder, 5> arr;
+            bool any = false;
+            for (int i = 0; i < 5; ++i) {
+                auto it = sec.find(std::to_string(i));
+                if (it == sec.end()) continue;
+                if (ParseSlot(StripInlineComment(it->second), arr[static_cast<size_t>(i)])) any = true;
+            }
+            if (any) slots[key] = arr;
         }
         // [look.<区域>]  0 = 角度(度)，可写多条（守点时轮流看）
         for (const auto& [section, sec] : ini.GetAll()) {

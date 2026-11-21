@@ -54,7 +54,9 @@ struct WeaponSlotParams {
 enum class BotRole {
     Entry,      // 突破手：最靠前，主动接敌
     Support,    // 支援：居中跟进
-    Anchor      // 断后/守点：靠后，倾向保持位置
+    Anchor,     // 断后/守点：靠后，倾向保持位置
+    Lurk,       // 绕后/断后：不参与正面，游走/静步（T26）
+    Awper       // 架狙：慢速、开镜优先（T26）
 };
 
 // 每名 BOT 的小队指令
@@ -628,6 +630,18 @@ public:
     void ClosePlanTrace();
     void TraceCoachPlan(Team t);
     void TraceCoachAdvisory(Team t, const TeamPlan& plan);   // 顾问计划（只记录）
+    // ---- T01 结构化教练决策日志（JSONL）：每次下发规则计划写一行 ----
+    void EnableWiringLog(const std::string& path);
+    void CloseWiringLog();
+    void TraceWiring(Team t, const char* guard, const char* sanitized, const char* templateKey);
+    // ---- T36 coach_rounds.jsonl：每回合每队写一行（老师数据，写盘点不动）----
+    void EnableCoachRoundsLog(const std::string& path);
+    void CloseCoachRoundsLog();
+    void TraceCoachRound(Team t);
+    // ---- 角色速度倍率（含 T27 过渡插值）----
+    float RoleSpeedMul(size_t botIdx, BotRole role);
+    // 换角色时记录旧倍率与切换时刻（T27：3 秒插值过渡起点）
+    void SetRoleWithTransition(size_t botIdx, BotRole role);
     // 计划自洽：target 与槽位是否匹配（A/B 至少 2 个槽位在同侧；MID 至少 1 个）
     char AreaSideOf(const std::string& area) const;   // 区域属于哪一侧 A/B/M/?
     bool PlanTargetConsistent(Team t, const TeamPlan& plan) const;
@@ -639,6 +653,8 @@ public:
     void TraceCoachDecision(Team t, const char* status);
     std::FILE* decisionLog_ = nullptr;
     std::FILE* planTrace_ = nullptr;
+    std::FILE* wiringLog_ = nullptr;   // T01：结构化教练决策日志（JSONL）
+    std::FILE* coachRoundsLog_ = nullptr;   // T36：老师数据（一行一队一回合）
     std::string planTraceKey_;   // 去重：同一条计划只写一次
     std::string planTraceAdvKey_; // 顾问计划去重键
 
@@ -1170,6 +1186,7 @@ private:
     DebugCounters counters_;
     // 角色动态重算（带冷却与滞回）
     std::vector<float> roleChangedAt_;   // 每个 BOT 上次换角色时刻
+    std::vector<float> roleFromMul_;     // 每个 BOT 换角色那一刻的旧倍率（T27 过渡起点）
     float roleRefreshTimer_ = 0.0f;
     int   roleAliveSnapshot_ = -1;
     // 搜点白名单：每个区域最近一次被确认"已搜"的回合时刻（-100=未搜）
@@ -1247,6 +1264,8 @@ private:
         int   changesThisRound = 0;          // 本回合意图变更次数（变更预算）
         int   sameSideStreak = 0;            // 连续打同一侧的次数（防重复但不至于一次就换）
         float lastIntentChangeSec = -100.0f; // 上次意图变更时刻（变更预算用）
+        BuyPlan lastBuyPlan = BuyPlan::Full; // 上一回合买档（T18 跨回合经济状态机）
+        bool  lastBuyWon = false;            // 上一回合是否赢（T18）
 
         // 本回合统计（回合结束写入 memory）
         std::vector<RoundMemo::Death> deaths;

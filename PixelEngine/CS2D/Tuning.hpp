@@ -95,6 +95,8 @@ constexpr float BotMoveSpeed      = 120.0f;   // BOT 基础移动速度
 constexpr float SpeedMulEntry     = 1.00f;   // 突破手
 constexpr float SpeedMulSupport   = 0.80f;   // 支援
 constexpr float SpeedMulAnchor    = 0.55f;   // 断后
+constexpr float SpeedMulLurk      = 0.70f;   // 绕后/断后（静步慢走，T26）
+constexpr float SpeedMulAwper     = 0.60f;   // 架狙（慢速，T26）
 constexpr float SpeedMulMin       = 0.30f;   // 速度倍率下限（防止不移动）
 
 // ---------------- 局部避障 ----------------
@@ -293,6 +295,14 @@ constexpr float IntentChangeCooldown = 6.0f;   // 两次变更最短间隔
 constexpr float IntentRenewSec      = 8.0f;    // 到期续期时长
 constexpr float SilentSeconds       = 30.0f;   // 无接触多久算"沉默期"
 constexpr int   SameSideStreakLimit = 3;      // 连续同一侧打几次才强制换边（1=每两次必换）
+
+// 规则教练意图打分权重（T10；只用确定性输入，不碰 rng_ 主链）
+constexpr float ScoreHeatDelta      = 1.0f;   // 情报热度差：冷侧主攻加分（T15）
+constexpr float ScoreRepeatPenalty  = 2.5f;   // 连续同 intent+target 失败 → 换点（T10）
+constexpr float ScoreControlMul     = 1.0f;   // "已控"信号（T31）
+constexpr float ScoreSmokeMul       = 1.0f;   // 烟 ≥1 才能道具开点（T14）
+constexpr float ScoreEconomyMul     = 0.5f;   // 满起/半起对 rush/split 的加分（T12）
+constexpr float ScoreContactMul     = 1.0f;   // 最新接触区域定侧（T14）
 
 }  // namespace ai
 

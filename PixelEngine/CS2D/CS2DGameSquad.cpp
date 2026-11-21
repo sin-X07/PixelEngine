@@ -429,6 +429,20 @@ void CS2DGame::RefreshRolesForTeam(Team t) {
     if (!world_ || bots_.empty()) return;
     if (roleChangedAt_.size() != bots_.size()) roleChangedAt_.assign(bots_.size(), -100.0f);
 
+    // T25：护栏——补断档前先问教练计划。教练计划缺 Entry/Anchor 是有意的
+    // （如全员 Anchor 的 Save/守包计划）时，不把 Support 提上去。
+    const TeamPlan& coachPlan = CoachFor(t).plan;
+    if (coachPlan.valid) {
+        bool planWantsEntry = false, planWantsAnchor = false;
+        for (const auto& so : coachPlan.slots) {
+            if (so.role == CoachRole::Entry)  planWantsEntry = true;
+            if (so.role == CoachRole::Anchor) planWantsAnchor = true;
+        }
+        // 计划里明确没有任何 Entry 槽位 → 缺 Entry 是有意的，不补。
+        // 计划里明确没有任何 Anchor 槽位 → 缺 Anchor 是有意的，不补。
+        if (!planWantsEntry && !planWantsAnchor) return;
+    }
+
     int entries = 0, anchors = 0;
     for (size_t i = 0; i < bots_.size() && i < squad_.size(); ++i) {
         if (!bots_[i].alive || bots_[i].team != t) continue;
@@ -451,6 +465,26 @@ void CS2DGame::RefreshRolesForTeam(Team t) {
         const float d2 = dx * dx + dy * dy;
         if (d2 < bestEntryD2)  { bestEntryD2 = d2;  bestEntry = static_cast<int>(i); }
         if (d2 > bestAnchorD2) { bestAnchorD2 = d2; bestAnchor = static_cast<int>(i); }
+    }
+
+    // T25：只补教练计划本身要求的角色（缺 Entry 且计划要 Entry 才补）。
+    if (coachPlan.valid) {
+        bool planWantsEntry = false, planWantsAnchor = false;
+        for (const auto& so : coachPlan.slots) {
+            if (so.role == CoachRole::Entry)  planWantsEntry = true;
+            if (so.role == CoachRole::Anchor) planWantsAnchor = true;
+        }
+        if (entries == 0 && bestEntry >= 0 && planWantsEntry) {
+            squad_[static_cast<size_t>(bestEntry)].role = BotRole::Entry;
+            roleChangedAt_[static_cast<size_t>(bestEntry)] = clockSec_;
+            ++counters_.roleSwitches;
+        }
+        if (anchors == 0 && bestAnchor >= 0 && bestAnchor != bestEntry && planWantsAnchor) {
+            squad_[static_cast<size_t>(bestAnchor)].role = BotRole::Anchor;
+            roleChangedAt_[static_cast<size_t>(bestAnchor)] = clockSec_;
+            ++counters_.roleSwitches;
+        }
+        return;
     }
 
     if (entries == 0 && bestEntry >= 0) {

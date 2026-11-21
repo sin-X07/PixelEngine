@@ -72,8 +72,12 @@ struct Options {
     bool coachNoLaunch = false;       // 不自动拉起 llama-server（要求外部已运行）
     std::string planPath;             // 单局：计划 trace 输出路径
     std::string decisionPath;         // 单局：决策对比日志（规则 vs LLM）
+    std::string wiringPath;           // 单局：T01 结构化教练决策日志（coach_wiring.jsonl）
+    std::string coachRoundsPath;      // 单局：T36 老师数据日志（coach_rounds.jsonl）
     int   jobs = 1;                   // 并行局数（LLM 评估用它吃满服务端并行槽）
     bool  llmRoundStartOnly = false;  // 只在回合开始请求 LLM（请求数减半）
+    bool  noHash = false;             // 批量模式不写逐 tick hash（快跑，验收用）
+    bool  buyKit = false;             // 脚本玩家（CT）每回合购买拆包钳（T20 验收场景用）
     int   coachWaitMs = 30000;        // 单次等待 LLM 回包的上限
     std::string llmModel;             // 覆盖 llm.ini 的模型（评估加速可用 3B）
     int   llmParallel = 0;            // 覆盖并行槽数（0=用配置）
@@ -99,12 +103,16 @@ Options ParseArgs(int argc, char** argv) {
         else if (a.rfind("--coach-url=", 0) == 0) o.coachUrl = a.substr(12);
         else if (a == "--coach-no-launch") o.coachNoLaunch = true;
         else if (a == "--llm-roundstart-only") o.llmRoundStartOnly = true;
+        else if (a == "--no-hash") o.noHash = true;
+        else if (a == "--buy-kit") o.buyKit = true;
         else if (a.rfind("--jobs=", 0) == 0) o.jobs = std::max(1, std::atoi(a.c_str() + 7));
         else if (a.rfind("--coach-wait-ms=", 0) == 0) o.coachWaitMs = std::atoi(a.c_str() + 16);
         else if (a.rfind("--llm-model=", 0) == 0) o.llmModel = a.substr(12);
         else if (a.rfind("--llm-parallel=", 0) == 0) o.llmParallel = std::atoi(a.c_str() + 15);
         else if (a.rfind("--plans=", 0) == 0) o.planPath = a.substr(8);
         else if (a.rfind("--decisions=", 0) == 0) o.decisionPath = a.substr(12);
+        else if (a.rfind("--wiring=", 0) == 0) o.wiringPath = a.substr(9);
+        else if (a.rfind("--coach-rounds=", 0) == 0) o.coachRoundsPath = a.substr(15);
         else if (a == "--noisy-conflicts") o.enableNoisyConflicts = true;
         else if (a.rfind("--conflict-ignore=", 0) == 0) {
             const std::string rest = a.substr(18);
@@ -220,7 +228,7 @@ void DumpTick(std::FILE* f, const CS2DGame& game, uint64_t tick) {
                  game.GetFires().size(), p.aimAngle);
 }
 // 执行"购买动作"：录制与回放共用，保证两边时序完全一致
-void ApplyBuy(CS2DGame& game, int weapon, int armorTier) {
+void ApplyBuy(CS2DGame& game, int weapon, int armorTier, bool buyKit) {
     if (weapon > 0) {
         Presentation::BuyRequest r;
         r.kind = Presentation::BuyKind::Weapon;
@@ -232,13 +240,20 @@ void ApplyBuy(CS2DGame& game, int weapon, int armorTier) {
         r.armorTier = armorTier;
         game.ExecutePurchase(r, nullptr);
     }
+    if (buyKit) {
+        Presentation::BuyRequest r;
+        r.kind = Presentation::BuyKind::DefuseKit;
+        game.ExecutePurchase(r, nullptr);
+    }
 }
 
 // 跑一局：固定 1/60 步长、renderer=nullptr、audio=nullptr
 Summary RunOne(const Options& opt, const std::string& map, int seed,
                const std::string& hashPath, const std::string& roundsCsv,
                const std::string& planPath = std::string(),
-               const std::string& decisionPath = std::string()) {
+               const std::string& decisionPath = std::string(),
+               const std::string& wiringPath = std::string(),
+               const std::string& coachRoundsPath = std::string()) {
     Summary s;
     s.map = map;
     s.seed = seed;
@@ -262,6 +277,7 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
     sp.reactionTicks = opt.reactionTicks;
     sp.aimErrorDeg = opt.aimErrorDeg;
     dev_replay::ScriptedPlayer script(sp);
+    script.SetBuyKit(opt.buyKit);
 
     if (!opt.tracePath.empty()) game.EnableDecisionTrace(opt.tracePath);
 
@@ -277,6 +293,8 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
     }
     if (!planPath.empty()) game.EnablePlanTrace(planPath);
     if (!decisionPath.empty()) game.EnableDecisionLog(decisionPath);
+    if (!wiringPath.empty()) game.EnableWiringLog(wiringPath);
+    if (!coachRoundsPath.empty()) game.EnableCoachRoundsLog(coachRoundsPath);
     dev_replay::RoundTracker tracker;
     tracker.Begin(game, 0);
 
@@ -322,9 +340,10 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
             fr.switchSlot = 0;
             fr.buyWeapon = in.buyWeapon;
             fr.buyArmorTier = in.buyArmorTier;
+            fr.buyKit = in.buyKit;
             journalFrames.push_back(fr);
         }
-        ApplyBuy(game, in.buyWeapon, in.buyArmorTier);
+        ApplyBuy(game, in.buyWeapon, in.buyArmorTier, in.buyKit);
         game.Update(dt, in.mouseDown, in.aimX, in.aimY,
                     in.w, in.a, in.s, in.d,
                     in.shift, in.reload, false,
@@ -367,6 +386,8 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
     game.CloseDecisionTrace();
     game.ClosePlanTrace();
     game.CloseDecisionLog();
+    game.CloseWiringLog();
+    game.CloseCoachRoundsLog();
     s.conflicts = conflicts.Total();
     tracker.Finish(game, static_cast<uint64_t>(lastTick_ + 1));
 
@@ -495,7 +516,7 @@ int RunReplay(const Options& opt) {
     uint64_t finalHash = 0;
     for (const auto& fr : frames) {
         if (fr.switchSlot > 0) game.SwitchWeaponSlot(fr.switchSlot);
-        ApplyBuy(game, fr.buyWeapon, fr.buyArmorTier);
+        ApplyBuy(game, fr.buyWeapon, fr.buyArmorTier, fr.buyKit);
         if (fr.scopeToggle) game.UpdateScopeInput(true, true);
         game.SetEdgeZoomRequested(fr.edgeZoom);
         game.SetAimTarget(fr.aimX, fr.aimY, fr.relativeAim);
@@ -566,7 +587,7 @@ int main(int argc, char** argv) {
         const std::string roundsCsv = opt.hashPath.empty() ? std::string()
                                                           : opt.hashPath + ".rounds.csv";
         const Summary s = RunOne(opt, opt.map, opt.seed, opt.hashPath, roundsCsv,
-                                 opt.planPath, opt.decisionPath);
+                                 opt.planPath, opt.decisionPath, opt.wiringPath, opt.coachRoundsPath);
         if (!s.ok) return 1;
         std::printf("[dev_replay] map=%s seed=%d ticks=%d aimTurn=%.2f aimErr=%.1f reaction=%d\n",
                     s.map.c_str(), s.seed, s.ticks, opt.aimTurnRate, opt.aimErrorDeg,
@@ -640,9 +661,11 @@ int main(int argc, char** argv) {
             const size_t i = nextJob.fetch_add(1);
             if (i >= jobs.size()) break;
             Job& j = jobs[i];
-            j.s = RunOne(opt, j.map, j.seed, j.base + ".hash.txt",
+            const std::string hashP = opt.noHash ? std::string() : j.base + ".hash.txt";
+            j.s = RunOne(opt, j.map, j.seed, hashP,
                          j.base + ".rounds.csv", j.base + ".plans.csv",
-                         j.base + ".decisions.csv");
+                         j.base + ".decisions.csv", j.base + ".wiring.jsonl",
+                         j.base + ".coach_rounds.jsonl");
             std::lock_guard<std::mutex> lk(printMutex);
             std::printf("[dev_replay] done %s seed=%d ok=%d winner=%s rounds=%d\n",
                         j.map.c_str(), j.seed, j.s.ok ? 1 : 0,
