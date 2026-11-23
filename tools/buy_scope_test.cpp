@@ -3855,13 +3855,6 @@ struct CS2DGameTestAccess {
               "PIX-36 follow target index survives the free-mode round trip");
     }
 
-    static CS2DMapData OpenTestMap() {
-        CS2DMapData data;
-        data.mapWidth = data.mapHeight = 60;
-        data.tileWidth = data.tileHeight = 16;
-        return data;
-    }
-
     // 脚步：按实际位移触发，玩家与 BOT 同一套
     static void TestPix36Footsteps() {
         std::printf("\n===== PIX-36 脚步 =====\n");
@@ -3942,8 +3935,6 @@ struct CS2DGameTestAccess {
         player.stealth = false;
 
         // ---- 开镜步频慢于不开镜：同样的时间窗内走的距离更短 ----
-        game.world_->Build(OpenTestMap());
-        game.visibility_.SetWorld(game.world_.get());
         auto walkDistance = [&](bool scoped, float seconds) {
             player.x = 400.0f; player.y = 400.0f;
             player.vx = player.vy = 0.0f;
@@ -4200,8 +4191,6 @@ struct CS2DGameTestAccess {
         game.bombX_ = 400.0f;
         game.bombY_ = 400.0f;
         game.bombTimer_ = 30.0f;
-        game.world_->Build(OpenTestMap());
-        game.visibility_.SetWorld(game.world_.get());
 
         // 贴脸：在半径内且无遮挡 → 可拆
         check(game.IsInDefuseRange(400.0f, 400.0f),
@@ -4216,7 +4205,9 @@ struct CS2DGameTestAccess {
 
         // 中间有墙：即使贴得很近也不能拆
         {
-            auto data = OpenTestMap();
+            CS2DMapData data;
+            data.mapWidth = data.mapHeight = 60;
+            data.tileWidth = data.tileHeight = 16;
             ObjectLayerDef walls;
             walls.name = "Collisions";
             ObjectDef wall;
@@ -4286,8 +4277,6 @@ struct CS2DGameTestAccess {
         CS2DGame game;
         game.SetMatchMode(MatchMode::BombDefusal);
         if (!game.LoadMap(MapPath(), nullptr, true)) return;
-        game.world_->Build(OpenTestMap());
-        game.visibility_.SetWorld(game.world_.get());
         CS2DGame::FireZone fire;
         fire.x = 400.0f; fire.y = 400.0f;
         fire.radius = Tuning::FireRadius;
@@ -5238,6 +5227,7 @@ static void TestPix34Input() {
     saved.MutableSettings().botDifficulty = 3;
     saved.MutableSettings().combatHintsVisible = false;
     saved.MutableSettings().teammateXRay = true;
+    saved.MutableSettings().radarHudSize = 230;
     const auto xray = static_cast<int>(GameAction::TeammateXRay);
     saved.MutableSettings().bindings.keys[xray] = SDL_SCANCODE_F8;
     input.bindings.keys[xray] = SDL_SCANCODE_F8;
@@ -5250,6 +5240,7 @@ static void TestPix34Input() {
           "X-ray state and custom key survive restart");
     check(loaded.GetSettings().botDifficulty == 3, "PIX-34 difficulty survives restart");
     check(!loaded.GetSettings().combatHintsVisible, "round2 combat help preference survives restart");
+    check(loaded.GetSettings().radarHudSize == 230, "saved custom radar size survives restart");
     const auto savePath = directory / (std::string("cs2d_save") + std::string(BuildInfo::SaveSuffix()) + ".ini");
     IniFile legacy;
     legacy.SetInt("bindings", "0", SDL_SCANCODE_Q);
@@ -5258,6 +5249,7 @@ static void TestPix34Input() {
     legacy.Save(savePath.string());
     SaveManager migrated;
     migrated.Load();
+    check(migrated.GetSettings().radarHudSize == 180, "a save with no radar size uses the larger default");
     const auto& legacyBindings = migrated.GetSettings().bindings;
     check(legacyBindings.keys[0] == InputBinding(SDL_SCANCODE_Q) && legacyBindings.keys[1] == InputBinding(SDL_SCANCODE_F1),
           "round2 legacy keyboard bindings keep their original actions");
@@ -5945,7 +5937,9 @@ struct EngineTestAccess {
             actions.resetSettingsSection(GameUI::SettingsSection::VisionScope);
             check(settings.fogOpacityPct==100 && settings.scopeSensitivity==1,"experience vision reset applies default values");
             actions.setRadarHudSize(300);actions.resetSettingsSection(GameUI::SettingsSection::Radar);
-            check(settings.radarHudSize==120 && engine.cs2dOverlay.radar.hudSize==120,"experience radar reset updates the active overlay");
+            check(settings.radarHudSize==Tuning::RadarHudDefaultSize &&
+                  engine.cs2dOverlay.radar.hudSize==Tuning::RadarHudDefaultSize,
+                  "experience radar reset updates the active overlay");
             engine.audioManager->SetMusicVolume(7);engine.audioManager->SetMuted(true);
             actions.resetSettingsSection(GameUI::SettingsSection::Audio);
             check(engine.audioManager->GetMusicVolume()==40 && !engine.audioManager->IsMuted(),"experience audio reset applies default volume and unmute");

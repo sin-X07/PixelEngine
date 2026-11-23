@@ -48,7 +48,7 @@ struct GameSettings {
     bool  radarRotateWithPlayer = false;
     bool  radarBlendBg          = false;
     int   radarBgAlpha          = 160;
-    int   radarHudSize          = 120;
+    int   radarHudSize          = Tuning::RadarHudDefaultSize;
     float radarMapZoom          = 1.0f;
 
     // 主菜单 3D 自定义（索引 0=T, 1=CT, 2..4=三只小鸡）

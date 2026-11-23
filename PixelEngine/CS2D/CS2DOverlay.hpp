@@ -29,7 +29,7 @@ struct RadarCfg {
     bool  rotateWithPlayer    = false;
     bool  blendBg             = false;
     int   bgAlpha             = 160;
-    int   hudSize             = 120;
+    int   hudSize             = Tuning::RadarHudDefaultSize;
     float mapZoom             = 1.0f;    // 1 = 整张地图铺满雷达，>1 放大
 };
 

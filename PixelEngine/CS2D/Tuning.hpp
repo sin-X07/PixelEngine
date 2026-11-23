@@ -51,6 +51,7 @@ constexpr Uint8 TeammateXRayOutlineAlpha = 225;
 constexpr SDL_Color TeammateXRayLabelColor{149, 255, 236, 255};
 constexpr int TeammateXRayLabelSize = 14;
 constexpr float TeammateXRayLabelGap = 4.0f;
+constexpr int RadarHudDefaultSize = 180; // 1080p 逻辑尺寸
 constexpr float RadarAllyHeadingLength = 3.0f;
 constexpr SDL_Color RadarAllyColor{100, 245, 170, 255};
 constexpr float RadarAllyArrowMinRadius = 3.5f;

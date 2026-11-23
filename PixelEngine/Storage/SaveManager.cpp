@@ -96,7 +96,7 @@ void SaveManager::Load() {
     settings_.radarRotateWithPlayer = ini.GetBool ("radar", "rotate_with_player", false);
     settings_.radarBlendBg          = ini.GetBool ("radar", "blend_bg", false);
     settings_.radarBgAlpha          = ini.GetInt  ("radar", "bg_alpha", 160);
-    settings_.radarHudSize          = ini.GetInt  ("radar", "hud_size", 120);
+    settings_.radarHudSize          = ini.GetInt  ("radar", "hud_size", Tuning::RadarHudDefaultSize);
     settings_.radarMapZoom          = ini.GetFloat("radar", "map_zoom", 1.0f);
     if (settings_.radarMapZoom < .5f || settings_.radarMapZoom > 8) settings_.radarMapZoom = 1;
     settings_.radarHudSize = std::clamp(settings_.radarHudSize,60,400);
