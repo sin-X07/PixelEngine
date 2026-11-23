@@ -23,6 +23,8 @@ import json
 import os
 import statistics
 import sys
+from collections import Counter
+from math import comb, log2
 
 
 def load_summary(path):
@@ -88,6 +90,7 @@ def main():
     ap.add_argument("--rule", required=True, help="规则组输出目录")
     ap.add_argument("--llm", required=True, help="LLM 组输出目录")
     ap.add_argument("--json", default="", help="可选：把结果写成 JSON")
+    ap.add_argument("--pix37", action="store_true", help="校验 PIX-37 的 30 局配对和百分之十拒绝率门槛")
     args = ap.parse_args()
 
     rule_rows = load_summary(args.rule)
@@ -179,6 +182,83 @@ def main():
     plans = dedupe(plans)
     rule_plans = dedupe(rule_plans)
 
+    pix37_result = None
+    if args.pix37:
+        paired_keys = {(l["map"], l["seed"]) for _, l in pairs}
+        expected = {(m, str(s)) for m in ("dust_2", "mirage", "ancient_ruins") for s in range(1, 11)}
+        statuses = Counter()
+        by_event = {}
+        applied_rotations = 0
+        files_read = 0
+        for map_name, seed in sorted(paired_keys):
+            path = os.path.join(args.llm, f"{map_name}-s{seed}.decisions.csv")
+            if not os.path.isfile(path):
+                continue
+            with open(path, encoding="utf-8", errors="replace", newline="") as stream:
+                decisions = [row for row in csv.DictReader(stream) if row.get("status")]
+            if not decisions:
+                continue
+            files_read += 1
+            statuses.update(row["status"] for row in decisions)
+            for row in decisions:
+                by_event.setdefault(row["event"], Counter())[row["status"]] += 1
+            applied_rotations += sum(
+                row["status"] == "applied" and row.get("applied_source") == "llm"
+                and row.get("applied_intent") in ("rotate_a", "rotate_b")
+                for row in decisions
+            )
+        rejects = statuses["invalid"] + statuses["invalid_consistency"]
+        # 与 V2 报告的四类回包口径对齐，另列空回包、延迟和顾问以外的状态。
+        eligible = rejects + statuses["applied"] + statuses["advisory"]
+        reject_rate = rejects / eligible if eligible else None
+        event_rejection = {}
+        for event, counts in sorted(by_event.items()):
+            rejected = counts["invalid"] + counts["invalid_consistency"]
+            samples = rejected + counts["applied"] + counts["advisory"]
+            event_rejection[event] = {
+                "rejected": rejected,
+                "eligible": samples,
+                "rate": rejected / samples if samples else None,
+            }
+        t_to_ct = sum(r["winner"] == "T" and l["winner"] == "CT" for r, l in pairs)
+        ct_to_t = sum(r["winner"] == "CT" and l["winner"] == "T" for r, l in pairs)
+        discordant = t_to_ct + ct_to_t
+        p_value = min(1.0, 2 * sum(comb(discordant, k) for k in range(min(t_to_ct, ct_to_t) + 1))
+                      / 2**discordant)
+
+        rule_intents = Counter(p["intent"] for p in rule_plans
+                               if (p["_map"], p["_seed"]) in paired_keys and p["source"] == "rule")
+        plan_count = sum(rule_intents.values())
+        rule_entropy = -sum((n / plan_count) * log2(n / plan_count) for n in rule_intents.values())
+        split = rule_intents["split_a"] + rule_intents["split_b"]
+        fake = rule_intents["fake"]
+        complete = (
+            paired_keys == expected and len(rule_rows) == len(llm_rows) == len(expected)
+            and files_read == len(expected)
+            and all(r["winner"] in ("T", "CT") and l["winner"] in ("T", "CT") for r, l in pairs)
+        )
+        pix37_result = {
+            "complete": complete,
+            "statuses": dict(statuses),
+            "reject_rate_v2": reject_rate,
+            "reject_by_event": event_rejection,
+            "applied_rotations": applied_rotations,
+            "mcnemar_exact_p": p_value,
+            "rule_intent_entropy": rule_entropy,
+            "rule_split": split,
+            "rule_fake": fake,
+            "passed": complete and reject_rate is not None and reject_rate <= 0.10 and split > 0 and fake > 0,
+        }
+        print(f"PIX-37 完整配对：{len(paired_keys)}/{len(expected)}，有效决策文件：{files_read}/{len(expected)}")
+        print(f"V2 同口径拒绝率：{rejects}/{eligible} = {reject_rate:.2%}" if reject_rate is not None
+              else "V2 同口径拒绝率：无有效样本")
+        print(f"LLM 状态：{dict(statuses)}，模型实际下发转点：{applied_rotations}")
+        for event, result in event_rejection.items():
+            if result["rate"] is not None:
+                print(f"  {event}: {result['rejected']}/{result['eligible']} = {result['rate']:.2%}")
+        print(f"规则意图熵：{rule_entropy:.3f}，Split={split}，Fake={fake}")
+        print(f"McNemar 精确双尾：T→CT={t_to_ct}, CT→T={ct_to_t}, p={p_value:.4f}")
+
     if plans:
         print()
         print("== LLM 计划（LLM 组，已按回合同队去重） ==")
@@ -243,11 +323,13 @@ def main():
             "t_win_llm": llm_t / len(pairs),
             "metrics": {f: delta(f)[0] for f, _, _ in numeric},
         }
+        if pix37_result is not None:
+            payload["pix37"] = pix37_result
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, ensure_ascii=False, indent=2)
         print(f"\n[eval] JSON → {args.json}")
 
-    return 0
+    return 1 if pix37_result is not None and not pix37_result["passed"] else 0
 
 
 if __name__ == "__main__":

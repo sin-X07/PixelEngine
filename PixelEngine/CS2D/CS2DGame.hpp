@@ -1297,6 +1297,7 @@ private:
         TeamPlan llmSnapshot;           // LLM 解析后的计划（未整形前的原意）
         bool  hasRuleSnapshot = false;
         bool  llmBombPlanted = false;
+        std::string llmPlantTarget;
         float lastThinkAt = 0.0f;
         // true = plan from LLM; RuleCoach must not overwrite until expiry/critical.
         bool  stickyLlm = false;

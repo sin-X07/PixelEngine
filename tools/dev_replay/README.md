@@ -285,7 +285,7 @@ LLM 评估的墙钟时间 ≈ **决策次数 × 单次回包延迟 / 并行度**
 | `PE_COACH_HYBRID` | 1 | 顾问模式：无情报优势时 LLM 只记录不执行 |
 | `PE_COACH_STALE` | 1 | 时效硬闸：期间有减员且延迟超阈值 → 丢弃 |
 | `PE_COACH_STALE_MS` | 2500 | 硬闸延迟阈值（毫秒） |
-| `PE_COACH_MAXTOK` | 120 | LLM 输出 token 上限 |
+| `PE_COACH_MAXTOK` | 未下包 192，下包后 80 | LLM 输出 token 上限 |
 | `PE_COACH_REASON_CHARS` | 20 | `reason` 截断字符数 |
 | `PE_COACH_PLAYBOOK` | 4000 | 战术库总字节上限 |
 | `PE_COACH_EVENTS` | high | `high`=回合开始+下包；`all`=旧行为（含拆包/时间不足/赛点） |

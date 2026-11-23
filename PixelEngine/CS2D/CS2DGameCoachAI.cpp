@@ -56,21 +56,6 @@ std::string TruncateUtf8(const std::string& in, size_t maxChars) {
 }
 
 
-// llama-server 结构化输出 schema（与游戏侧枚举一一对应）
-const char* kCoachSchema = R"JSON({"type":"object","additionalProperties":false,
-"required":["intent","target","tempo","ttl_s","reason"],
-"properties":{
- "intent":{"enum":["default","rush_a","rush_b","split_a","split_b","stack_a","stack_b","retake_a","retake_b","save","fake","rotate_a","rotate_b"]},
- "target":{"enum":["A","B","MID",""]},
- "tempo":{"enum":["slow","normal","fast"]},
- "ttl_s":{"type":"integer","minimum":3,"maximum":30},
- "reason":{"type":"string","maxLength":60},
- "slots":{"type":"array","maxItems":5,"items":{"type":"object","additionalProperties":false,
-   "required":["slot","role"],
-   "properties":{"slot":{"type":"integer","minimum":0,"maximum":4},
-                 "role":{"enum":["entry","support","lurk","anchor","awper"]},
-                 "area":{"type":"string"}}}}}})JSON";
-
 const char* IntentLabel(PlanIntent i) {
     switch (i) {
         case PlanIntent::RushA:   return "rush_a";
@@ -133,6 +118,9 @@ struct CoachAllowSet {
     std::vector<std::string> intents;   // 小写标签，与 IntentLabel 一致
     std::vector<std::string> targets;   // "A","B","MID" 的子集（可含空串）
     std::vector<std::string> areas;     // 地图区域名
+    std::string plantTarget;
+    PlanIntent plantIntent = PlanIntent::Default;
+    bool saveRequired = false;
 };
 
 bool ContainsCI(const std::vector<std::string>& v, const std::string& s) {
@@ -143,38 +131,36 @@ bool ContainsCI(const std::vector<std::string>& v, const std::string& s) {
     return false;
 }
 
-// 区域名 → "A" / "B" / ""（与规则教练同样的大小写/子串判断）
-std::string SiteSideFromArea(const std::string& area) {
-    if (area.empty()) return std::string();
-    std::string lower = Lower(area);
-    if (lower.find("b_") != std::string::npos ||
-        lower.find("b site") != std::string::npos) {
-        return "B";
-    }
-    return "A";
+std::string CoachBombSite(const CS2DWorld* world, float x, float y) {
+    const auto* site = world ? world->FindBombSiteAt(x, y) : nullptr;
+    return site && (site->name == "A" || site->name == "B") ? site->name : "";
 }
 
 // 根据阵营 / 炸弹 / 经济，算出「当前允许的战术闭集」
-CoachAllowSet BuildAllowSet(Team team, bool bombPlanted, bool lowEconomy,
+CoachAllowSet BuildAllowSet(Team team, const std::string& plantTarget, bool saveRequired, bool rotateAllowed,
                             const CS2DWorld* world) {
     CoachAllowSet a;
-
-    if (team == Team::CT) {
-        a.intents = { "default", "stack_a", "stack_b" };
-        if (bombPlanted) {
-            a.intents.push_back("retake_a");
-            a.intents.push_back("retake_b");
-        } else if (lowEconomy) {
-            a.intents.push_back("save");
-        }
-    } else {   // T
-        if (bombPlanted) {
-            // 已下包：叠点守包（交叉火力）或默认守包
-            a.intents = { "default", "stack_a", "stack_b" };
-        } else {
-            a.intents = { "default", "rush_a", "rush_b",
-                          "split_a", "split_b", "fake" };
-            if (lowEconomy) a.intents.push_back("save");
+    if (!plantTarget.empty()) {
+        const bool onB = plantTarget == "B";
+        a.plantTarget = plantTarget;
+        a.plantIntent = team == Team::CT ? (onB ? PlanIntent::RetakeB : PlanIntent::RetakeA)
+                                        : (onB ? PlanIntent::StackB : PlanIntent::StackA);
+        a.intents = {IntentLabel(a.plantIntent)};
+        a.targets = {plantTarget};
+        return a;
+    }
+    a.saveRequired = saveRequired;
+    if (saveRequired) {
+        a.intents = {"save"};
+        a.targets = {""};
+        return a;
+    } else if (team == Team::CT) {
+        a.intents = {"default", "stack_a", "stack_b"};
+    } else {
+        a.intents = {"default", "rush_a", "rush_b", "split_a", "split_b", "fake"};
+        if (rotateAllowed) {
+            a.intents.push_back("rotate_a");
+            a.intents.push_back("rotate_b");
         }
     }
 
@@ -189,6 +175,9 @@ CoachAllowSet BuildAllowSet(Team team, bool bombPlanted, bool lowEconomy,
 // 固定前缀：角色 + 词表 + 区域表 + 输出契约
 // 按允许集合动态生成 json_schema 的 enum
 std::string BuildCoachSchema(const CoachAllowSet& allow) {
+    if (!allow.plantTarget.empty()) {
+        return R"({"type":"object","additionalProperties":false,"required":["tempo","ttl_s","reason"],"properties":{"tempo":{"enum":["slow","normal","fast"]},"ttl_s":{"type":"integer","minimum":3,"maximum":30},"reason":{"type":"string","maxLength":20}}})";
+    }
     std::ostringstream o;
     o << "{\"type\":\"object\",\"additionalProperties\":false,"
          "\"required\":[\"intent\",\"target\",\"tempo\",\"ttl_s\",\"reason\"],"
@@ -206,7 +195,7 @@ std::string BuildCoachSchema(const CoachAllowSet& allow) {
     o << "]},"
          "\"tempo\":{\"enum\":[\"slow\",\"normal\",\"fast\"]},"
          "\"ttl_s\":{\"type\":\"integer\",\"minimum\":3,\"maximum\":30},"
-         "\"reason\":{\"type\":\"string\",\"maxLength\":60},"
+         "\"reason\":{\"type\":\"string\",\"maxLength\":20},"
          "\"slots\":{\"type\":\"array\",\"maxItems\":5,"
          "\"items\":{\"type\":\"object\",\"additionalProperties\":false,"
          "\"required\":[\"slot\",\"role\"],"
@@ -531,9 +520,9 @@ std::string BuildSystemPrompt(const CS2DWorld* world,
       << " target: A / B / MID / 空；已下包时必须是包点侧\n"
       << " tempo: slow/normal/fast\n"
       << " ttl_s: 指令有效秒数（3~30），场面易变给小值\n"
-      << " slots: 最多 5 个，slot 0~4，area 必须是下面「可选区域」之一；"
-         "尽量给满 5 个，不要用 *_Spawn（出生点不是战术位置）\n"
-      << " reason: 不超过 60 字符（schema 上限为准），只用于日志\n"
+      << " slots: 可省略，由引擎补足默认槽位。需要指定时最多 5 个，slot 0~4，"
+         "area 必须来自可选区域，且不能是出生点\n"
+      << " reason: 用一句 20 字以内的短句，仅用于日志\n"
       << "当前地图: " << mapId << "\n";
     if (world) {
         o << "可选区域:";
@@ -747,14 +736,13 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
 
 // 解析 + 游戏侧二次校验
 bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* world,
-                    bool bombPlanted, bool teamIsCT, bool saveAllowed,
-                    bool rotateAllowed,
-                    const std::string& plantSiteArea,
-                    const CoachAllowSet& allow, float& ttlOut) {
+                    const CoachAllowSet& allow, float& ttlOut, const char*& rejection) {
+    rejection = "json_incomplete";
     const auto bo = raw.find('{');
     const auto bc = raw.rfind('}');
     if (bo == std::string::npos || bc == std::string::npos || bc <= bo) return false;
 
+    rejection = "json_parse";
     MiniJSON::Value root;
     try {
         root = MiniJSON::parse(raw.substr(bo, bc - bo + 1));
@@ -764,26 +752,36 @@ bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* worl
     if (!root.is_object()) return false;
 
     TeamPlan plan;
-    if (!ParseIntent(Lower(root.value<std::string>("intent", "")), plan.intent)) {
-        return false;
-    }
-
-    // ---- 闭集硬过滤：越界整份拒绝（沿用规则计划）----
-    if (!ContainsCI(allow.intents, IntentLabel(plan.intent))) {
-        return false;
-    }
-
+    const bool postPlant = !allow.plantTarget.empty();
+    rejection = "field_type";
+    if ((root.contains("intent") && !root["intent"].is_string()) ||
+        (root.contains("target") && !root["target"].is_string())) return false;
+    const auto intent = root.value<std::string>("intent", "");
     plan.target = root.value<std::string>("target", "");
-    if (!plan.target.empty() && !ContainsCI(allow.targets, plan.target)) {
-        return false;
+    if (postPlant) {
+        rejection = "plant_target";
+        if (!plan.target.empty() && plan.target != allow.plantTarget) return false;
+        rejection = "plant_intent";
+        if (!intent.empty() && !ContainsCI(allow.intents, intent) && Lower(intent) != "default")
+            return false;
+        plan.intent = allow.plantIntent;
+        plan.target = allow.plantTarget;
+        plan.reshaped = true;
+    } else {
+        rejection = allow.saveRequired ? "economy_guard" : "intent_not_allowed";
+        if (!ParseIntent(Lower(intent), plan.intent) ||
+            !ContainsCI(allow.intents, IntentLabel(plan.intent))) return false;
+        rejection = "target_not_allowed";
+        if (!ContainsCI(allow.targets, plan.target)) return false;
     }
-    ParseTempo(Lower(root.value<std::string>("tempo", "normal")), plan.tempo);
+    rejection = "tempo_not_allowed";
+    if (!ParseTempo(Lower(root.value<std::string>("tempo", "")), plan.tempo)) return false;
     plan.reason = root.value<std::string>("reason", "");
 
     ttlOut = static_cast<float>(root.value<double>("ttl_s", 12.0));
     ttlOut = std::clamp(ttlOut, 3.0f, 30.0f);
 
-    if (root.contains("slots") && root["slots"].is_array()) {
+    if (!postPlant && root.contains("slots") && root["slots"].is_array()) {
         const auto& arr = root["slots"];
         const size_t n = std::min<size_t>(arr.size(), 5);
         std::array<bool, 5> filled{};
@@ -826,70 +824,11 @@ bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* worl
         }
     }
 
-    // 语义校验
-    if (!bombPlanted && (plan.intent == PlanIntent::RetakeA ||
-                         plan.intent == PlanIntent::RetakeB)) {
-        plan.intent = PlanIntent::Default;
-    }
-    // save 只允许「经济确实穷」且「还没下包」时使用；否则会变成消极送分
-    if (plan.intent == PlanIntent::Save && (!saveAllowed || bombPlanted)) {
-        plan.intent = bombPlanted ? PlanIntent::RetakeA : PlanIntent::Default;
-    }
-    if (teamIsCT) {
-        if (plan.intent == PlanIntent::RushA || plan.intent == PlanIntent::SplitA) {
-            plan.intent = PlanIntent::StackA;
-        } else if (plan.intent == PlanIntent::RushB || plan.intent == PlanIntent::SplitB) {
-            plan.intent = PlanIntent::StackB;
-        } else if (plan.intent == PlanIntent::FakeThenOther) {
-            plan.intent = PlanIntent::Default;
-        }
-    } else if (plan.intent == PlanIntent::RetakeA || plan.intent == PlanIntent::RetakeB) {
-        // T 侧不能"重夺"（那是 CT 的战术），也别用 stack 这种防守站位
-        plan.intent = PlanIntent::Default;
-    } else if (plan.intent == PlanIntent::StackA || plan.intent == PlanIntent::StackB) {
-        plan.intent = PlanIntent::Default;   // stack 仅 CT 有效
-    }
-
-    // ---- 硬规则 1：已下包必须锁在包点一侧 ----
-    if (bombPlanted) {
-        const std::string side = SiteSideFromArea(plantSiteArea);
-        if (!side.empty()) {
-            const bool onB = (side == "B");
-            if (teamIsCT) {
-                const bool okIntent = onB ? (plan.intent == PlanIntent::RetakeB)
-                                          : (plan.intent == PlanIntent::RetakeA);
-                const bool okTarget = onB ? (plan.target == "B") : (plan.target == "A");
-                if (!okIntent || !okTarget) return false;
-            } else {
-                const bool okIntent = onB
-                    ? (plan.intent == PlanIntent::StackB || plan.intent == PlanIntent::Default)
-                    : (plan.intent == PlanIntent::StackA || plan.intent == PlanIntent::Default);
-                const bool okTarget = onB ? (plan.target == "B") : (plan.target == "A");
-                if (!okIntent || !okTarget) return false;
-            }
-        }
-    }
-
-    // ---- 硬规则 1.5：转点必须有证据 + 时间允许 ----
+    // 转点意图已受当前局面白名单约束，目标还必须与意图一致。
     if (plan.intent == PlanIntent::RotateA || plan.intent == PlanIntent::RotateB) {
-        if (!rotateAllowed) return false;
+        rejection = "rotate_target";
         const std::string side = (plan.intent == PlanIntent::RotateA) ? "A" : "B";
         if (plan.target != side) return false;
-    }
-
-    // ---- 硬规则 2：穷局不许主动进攻 ----
-    if (saveAllowed && !bombPlanted) {
-        if (teamIsCT) {
-            if (plan.intent != PlanIntent::Save &&
-                plan.intent != PlanIntent::Default &&
-                plan.intent != PlanIntent::StackA &&
-                plan.intent != PlanIntent::StackB) {
-                return false;
-            }
-        } else if (plan.intent != PlanIntent::Save &&
-                   plan.intent != PlanIntent::Default) {
-            return false;
-        }
     }
 
     out = plan;
@@ -941,8 +880,9 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
     // 评估加速：只保留回合开始这一次决策（请求数约减半）
     if (coachLlmRoundStartOnly_ && ev.type != CoachEventType::RoundStart) return;
 
-    const bool lowEco = LowEconomyAverage(t);
-    const CoachAllowSet allow = BuildAllowSet(t, bombPlanted_, lowEco, world_.get());
+    const std::string plantTarget = bombPlanted_ ? CoachBombSite(world_.get(), bombX_, bombY_) : "";
+    if (bombPlanted_ && plantTarget.empty()) return;
+    const CoachAllowSet allow = BuildAllowSet(t, plantTarget, ShouldSaveNow(t), CanRotateNow(t), world_.get());
     const std::string user = BuildStateDigest(*this, t, ev, st.notes,
                                               st.lastOrder, world_.get(),
                                               st.memory, allow);
@@ -960,6 +900,7 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
     st.llmEventType   = static_cast<int>(ev.type);
     st.llmRoundNo     = round_.RoundNumber();
     st.llmBombPlanted = bombPlanted_;
+    st.llmPlantTarget  = plantTarget;
     st.llmAliveT      = AliveCount(Team::T);
     st.llmAliveCT     = AliveCount(Team::CT);
 
@@ -974,8 +915,13 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
         std::cout << "[CoachRawReq] " << TeamName(t) << " user_len=" << user.size()
                   << std::endl;
     }
-    coachLlm_(BuildSystemPrompt(world_.get(), mapId_, playbookId_), user,
-                  CoachEnvInt("PE_COACH_MAXTOK", 120),
+    const std::string system = plantTarget.empty()
+        ? BuildSystemPrompt(world_.get(), mapId_, playbookId_)
+        : "你是游戏战术教练。炸弹已安装，引擎已确定包点与队员槽位。"
+          "仅输出 JSON：tempo（slow/normal/fast）、ttl_s（3–30 的整数）、"
+          "reason（20 字以内）。结合剩余时间、队员与拆包状态选择节奏。";
+    const int tokenBudget = CoachEnvInt("PE_COACH_MAXTOK", plantTarget.empty() ? 192 : 80);
+    coachLlm_(system, user, tokenBudget,
               BuildCoachSchema(allow),
               [this, t, gen](const std::string& raw) {
                   if (std::getenv("PIXEL_LOG_COACH_RAW")) {
@@ -1071,7 +1017,9 @@ void CS2DGame::CoachDrainLlm() {
             std::cout << "[Coach] " << TeamName(r.team) << " LLM 回包过期(gen)，丢弃" << std::endl;
             continue;
         }
-        if (st.llmRoundNo != round_.RoundNumber() || st.llmBombPlanted != bombPlanted_) {
+        const std::string plantTarget = bombPlanted_ ? CoachBombSite(world_.get(), bombX_, bombY_) : "";
+        if (st.llmRoundNo != round_.RoundNumber() || st.llmBombPlanted != bombPlanted_ ||
+            st.llmPlantTarget != plantTarget) {
             std::cout << "[Coach] " << TeamName(r.team) << " LLM 回包状态已变，丢弃" << std::endl;
             TraceCoachDecision(r.team, "stale_state");
             continue;
@@ -1098,23 +1046,15 @@ void CS2DGame::CoachDrainLlm() {
         }
 
         // 回包时用「当前」局面重建闭集（发请求后局面可能已变）
-        const CoachAllowSet allow = BuildAllowSet(r.team, bombPlanted_,
-                                                  LowEconomyAverage(r.team), world_.get());
-
-        std::string plantArea;
-        if (bombPlanted_ && world_) plantArea = world_->FindAreaAt(bombX_, bombY_);
-
-        const bool lowEco = LowEconomyAverage(r.team);
-        const bool saveAllowed = ShouldSaveNow(r.team);
-        const bool rotateAllowed = CanRotateNow(r.team);
+        const CoachAllowSet allow = BuildAllowSet(r.team, plantTarget, ShouldSaveNow(r.team),
+                                                  CanRotateNow(r.team), world_.get());
 
         TeamPlan plan;
         float ttl = 12.0f;
-        if (!ParseCoachPlan(r.raw, plan, world_.get(), bombPlanted_,
-                            r.team == Team::CT, saveAllowed, rotateAllowed, plantArea, allow, ttl)) {
-            std::cout << "[Coach] " << TeamName(r.team)
-                      << " LLM 计划非法(硬规则:plant/save)，沿用规则 | "
-                      << r.raw.substr(0, 100) << std::endl;
+        const char* rejection = "";
+        if (!ParseCoachPlan(r.raw, plan, world_.get(), allow, ttl, rejection)) {
+            std::cout << "[CoachReject] team=" << TeamName(r.team) << " event=" << st.llmEventType
+                      << " reason=" << rejection << " bytes=" << r.raw.size() << std::endl;
             TraceCoachDecision(r.team, "invalid");
             continue;
         }
@@ -1125,40 +1065,20 @@ void CS2DGame::CoachDrainLlm() {
             if (maxChars > 0) plan.reason = TruncateUtf8(plan.reason, static_cast<size_t>(maxChars));
         }
 
-        // 双保险：穷局且未下包，只接受 save（其余一律丢弃）
-        if (saveAllowed && !bombPlanted_ && plan.intent != PlanIntent::Save) {
-            std::cout << "[Coach] " << TeamName(r.team)
-                      << " 穷局拒绝进攻性 LLM 计划，沿用规则计划" << std::endl;
-            TraceCoachDecision(r.team, "rejected_save");
-            continue;
+        if (!plantTarget.empty() && !ApplySlotTemplate(r.team, plan)) {
+            // 地图的 T 方守包卡使用 Default@A/B 键。
+            TeamPlan siteTemplate = plan;
+            siteTemplate.intent = PlanIntent::Default;
+            if (r.team != Team::T || !ApplySlotTemplate(r.team, siteTemplate)) {
+                std::cout << "[CoachReject] team=" << TeamName(r.team)
+                          << " reason=missing_plant_template site=" << plantTarget << std::endl;
+                TraceCoachDecision(r.team, "invalid_consistency");
+                continue;
+            }
+            plan.slots = std::move(siteTemplate.slots);
         }
 
-        // ---- 下包/回防：槽位必须来自战术模板（LLM 只决定意图/节奏）----
-        if (st.llmEventType == static_cast<int>(CoachEventType::BombPlanted)) {
-            // 语义修复：模型常在下包后返回 default→包点。这在引擎里等价于"没有守包计划"，
-            // 直接规范成 stack_<site>(T) / retake_<site>(CT)，再套模板，
-            // 避免"计划被拒 → 回退规则"这种既没执行也没信息量的结果。
-            // 目标缺失时用包点区域补出来（否则硬规则会判"下包后 target 必须等于包点侧"）
-            if (plan.target.empty() && !plantArea.empty()) {
-                const char side = AreaSideOf(plantArea);
-                if (side == 'A' || side == 'B') {
-                    plan.target = std::string(1, side);
-                    plan.reshaped = true;
-                }
-            }
-            if (plan.intent == PlanIntent::Default &&
-                (plan.target == "A" || plan.target == "B")) {
-                const bool aSide = (plan.target == "A");
-                if (r.team == Team::T) {
-                    plan.intent = aSide ? PlanIntent::StackA : PlanIntent::StackB;
-                } else {
-                    plan.intent = aSide ? PlanIntent::RetakeA : PlanIntent::RetakeB;
-                }
-                plan.reshaped = true;
-                std::cout << "[Coach] " << TeamName(r.team)
-                          << " 下包后 default→" << plan.target
-                          << " 规范化为守包/回防意图" << std::endl;
-            }
+        if (plan.intent == PlanIntent::RotateA || plan.intent == PlanIntent::RotateB) {
             if (ApplySlotTemplate(r.team, plan)) plan.reshaped = true;
         }
 
@@ -1237,6 +1157,14 @@ void CS2DGame::CoachDrainLlm() {
         plan.createdAt = clockSec_;
         plan.expiresAt = clockSec_ + ttl;      // 由模型给的 ttl_s 决定
         plan.valid     = true;
+        if (plan.intent == PlanIntent::RotateA || plan.intent == PlanIntent::RotateB) {
+            const std::string& previous = st.plan.target;
+            st.rotateFrom = (previous == "A" || previous == "B")
+                ? previous : (plan.target == "A" ? "B" : "A");
+            st.rotateTo = plan.target;
+            st.rotateAt = lastRotateAt_ = clockSec_;
+            st.lastAttackSide = plan.target;
+        }
         st.planExpiresAt = plan.expiresAt;
         st.plan   = plan;
         st.reason = plan.reason;

@@ -475,26 +475,22 @@ void CS2DGame::RefreshRolesForTeam(Team t) {
             if (so.role == CoachRole::Anchor) planWantsAnchor = true;
         }
         if (entries == 0 && bestEntry >= 0 && planWantsEntry) {
-            squad_[static_cast<size_t>(bestEntry)].role = BotRole::Entry;
-            roleChangedAt_[static_cast<size_t>(bestEntry)] = clockSec_;
+            SetRoleWithTransition(static_cast<size_t>(bestEntry), BotRole::Entry);
             ++counters_.roleSwitches;
         }
         if (anchors == 0 && bestAnchor >= 0 && bestAnchor != bestEntry && planWantsAnchor) {
-            squad_[static_cast<size_t>(bestAnchor)].role = BotRole::Anchor;
-            roleChangedAt_[static_cast<size_t>(bestAnchor)] = clockSec_;
+            SetRoleWithTransition(static_cast<size_t>(bestAnchor), BotRole::Anchor);
             ++counters_.roleSwitches;
         }
         return;
     }
 
     if (entries == 0 && bestEntry >= 0) {
-        squad_[static_cast<size_t>(bestEntry)].role = BotRole::Entry;
-        roleChangedAt_[static_cast<size_t>(bestEntry)] = clockSec_;
+        SetRoleWithTransition(static_cast<size_t>(bestEntry), BotRole::Entry);
         ++counters_.roleSwitches;
     }
     if (anchors == 0 && bestAnchor >= 0 && bestAnchor != bestEntry) {
-        squad_[static_cast<size_t>(bestAnchor)].role = BotRole::Anchor;
-        roleChangedAt_[static_cast<size_t>(bestAnchor)] = clockSec_;
+        SetRoleWithTransition(static_cast<size_t>(bestAnchor), BotRole::Anchor);
         ++counters_.roleSwitches;
     }
 }
@@ -625,7 +621,7 @@ void CS2DGame::AssignSquadRoles(bool dynamic) {
                 continue;
             }
             if (squad_[bi].role != role) {
-                squad_[bi].role = role;
+                SetRoleWithTransition(bi, role);
                 if (dynamic) ++counters_.roleSwitches;
             }
             if (bi < roleChangedAt_.size()) roleChangedAt_[bi] = clockSec_;

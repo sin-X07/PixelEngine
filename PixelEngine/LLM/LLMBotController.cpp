@@ -654,6 +654,10 @@ bool LLMBotController::DoHttpRequest(const std::string& requestBody,
     const MiniJSON::Value& choices = root["choices"];
     if (!choices.is_array() || choices.size() == 0) return false;
 
+    if (choices[0].value<std::string>("finish_reason", "") == "length") {
+        std::cerr << "[LLM] finish_reason=length tag=" << (tag.empty() ? "-" : tag.c_str())
+                  << std::endl;
+    }
     std::string content = choices[0]["message"].value<std::string>("content", "");
     if (content.empty()) {
         std::cerr << "[LLM] 空回复 (" << (tag.empty() ? "-" : tag.c_str()) << ")" << std::endl;

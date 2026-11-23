@@ -1542,7 +1542,7 @@ void CS2DGame::SetRoleWithTransition(size_t botIdx, BotRole role) {
     if (roleChangedAt_.size() != bots_.size()) roleChangedAt_.assign(bots_.size(), -100.0f);
     if (roleFromMul_.size() != bots_.size()) roleFromMul_.assign(bots_.size(), Tuning::SpeedMulSupport);
     if (squad_[botIdx].role != role) {
-        roleFromMul_[botIdx] = RoleSpeedMulRaw(squad_[botIdx].role);   // 旧倍率作为过渡起点
+        roleFromMul_[botIdx] = RoleSpeedMul(botIdx, squad_[botIdx].role);
         roleChangedAt_[botIdx] = clockSec_;
     }
     squad_[botIdx].role = role;
@@ -1764,38 +1764,44 @@ void CS2DGame::CoachApplyPlan(Team t) {
     for (size_t i = 0; i < bots_.size(); ++i) {
         if (bots_[i].alive && bots_[i].team == t) alive.push_back(i);
     }
-    auto botHasAWP = [&](size_t i) {
+    auto hasSniper = [&](size_t i) {
         for (int w = 0; w <= 1; ++w) {
             const WeaponId wid = bots_[i].weapons[w];
             if (wid != WeaponId::None && WeaponDB::Get(wid).cls == WeaponClass::Sniper) return true;
         }
         return false;
     };
-    // 排序：拿狙的排前面（会被 Awper 槽位优先选中）；否则按金钱升序（钱少的分防守/保枪位）；
-    // 再按难度降序（枪法好的分 Entry）。稳定、确定性，不碰 rng_。
+    // 保枪时优先低余额；其余计划按难度优先分配前置岗位。
     std::sort(alive.begin(), alive.end(), [&](size_t a, size_t b) {
-        const bool awpA = botHasAWP(a), awpB = botHasAWP(b);
-        if (awpA != awpB) return awpA;                       // 拿 AWP 的靠前
-        if (bots_[a].money != bots_[b].money) return bots_[a].money < bots_[b].money;
+        if (st.plan.intent == PlanIntent::Save && bots_[a].money != bots_[b].money)
+            return bots_[a].money < bots_[b].money;
         if (AiAt(a).difficulty != AiAt(b).difficulty) return AiAt(a).difficulty > AiAt(b).difficulty;
         return a < b;
     });
-    std::vector<bool> used(bots_.size(), false);
-
-    for (int si = 0; si < 5 && !alive.empty(); ++si) {
-        const SlotOrder& so = st.plan.slots[static_cast<size_t>(si)];
-        // T22：Awper 槽位优先分给拿狙者；其余槽位按排好的顺序依次取。
-        size_t pick = alive.front();
-        if (so.role == CoachRole::Awper) {
-            for (size_t cand : alive) {
-                if (botHasAWP(cand)) { pick = cand; break; }
-            }
+    const size_t unassigned = bots_.size();
+    std::array<size_t, 5> assigned;
+    assigned.fill(unassigned);
+    if (st.plan.intent != PlanIntent::Save) {
+        for (size_t si = 0; si < assigned.size(); ++si) {
+            if (st.plan.slots[si].role != CoachRole::Awper) continue;
+            auto sniper = std::find_if(alive.begin(), alive.end(), [&](size_t i) {
+                return bots_[i].weapons[0] == WeaponId::AWP;
+            });
+            if (sniper == alive.end()) sniper = std::find_if(alive.begin(), alive.end(), hasSniper);
+            if (sniper == alive.end()) break;
+            assigned[si] = *sniper;
+            alive.erase(sniper);
         }
-        // 从 alive 中移除 pick
-        alive.erase(std::remove(alive.begin(), alive.end(), pick), alive.end());
-        used[pick] = true;
-        const size_t i = pick;
+    }
+    auto next = alive.begin();
+    for (size_t& assignedBot : assigned) {
+        if (assignedBot == unassigned && next != alive.end()) assignedBot = *next++;
+    }
 
+    for (size_t si = 0; si < assigned.size(); ++si) {
+        const size_t i = assigned[si];
+        if (i == unassigned) continue;
+        const SlotOrder& so = st.plan.slots[si];
         auto& bot = bots_[i];
         auto& ai = AiAt(i);
 
@@ -1888,7 +1894,6 @@ void CS2DGame::CoachApplyPlan(Team t) {
         squad_[i].canRotate = so.canRotate;
         ++slot;
     }
-    (void)used;
     // C4 携带者必须跟主攻侧走：否则他可能被分到另一侧/中路，
     // 队友在 A 打，他一个人在中路或 B 转，永远没人下包。
     if (t == Team::T && !bombPlanted_ && !bombDropped_ &&
@@ -2256,6 +2261,7 @@ void CS2DGame::CoachTryRotate(Team t) {
     plan.slots[2] = { CoachRole::Anchor,  othSite, true, false };
     plan.slots[3] = { CoachRole::Lurk,    midArea, true, true };
     plan.slots[4] = { CoachRole::Support, midArea, true, false };
+    ApplySlotTemplate(t, plan);
 
     st.plan        = plan;
     st.reason      = plan.reason;

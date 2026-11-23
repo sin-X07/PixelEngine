@@ -3983,6 +3983,276 @@ struct CS2DGameTestAccess {
     // ========================================================================
 
     // 1) 拆包半径缩小，且中间不能有遮挡物
+    static void TestPix37CoachWiring() {
+        CS2DGame game;
+        game.SetMatchMode(MatchMode::BombDefusal);
+        game.SetRngSeed(37);
+        const bool loaded = game.LoadMap(
+            PathUtils::ResolveAppPath("assets/cs2d/maps/mirage.tmj"), nullptr, true);
+        check(loaded, "PIX-37 coach fixture loads Mirage");
+        if (!loaded) return;
+
+        auto& ct = game.CoachFor(Team::CT);
+        game.CoachResetRound();
+        ct.plan.valid = true;
+        for (const auto intent : {PlanIntent::Default, PlanIntent::StackA, PlanIntent::StackB}) {
+            game.clockSec_ += 20.0f;
+            ct.plan.intent = intent;
+            ct.plan.createdAt = game.clockSec_;
+            game.CoachApplyPlan(Team::CT);
+        }
+        check(ct.changesThisRound == 2, "PIX-37 T05 counts exactly two actual changes");
+        game.clockSec_ += 40.0f;
+        ct.planExpiresAt = game.clockSec_ - 1.0f;
+        const int renewals = game.counters_.renewals;
+        const int generation = ct.gen;
+        game.CoachThink(Team::CT, CoachEvent{CoachEventType::Heartbeat});
+        check(ct.gen == generation && ct.plan.intent == PlanIntent::StackB &&
+              ct.changesThisRound == 2 && game.counters_.renewals == renewals + 1 &&
+              ct.planExpiresAt > game.clockSec_, "PIX-37 T05 third replan hits budget after hold and cooldown");
+        game.CoachResetRound();
+        check(ct.changesThisRound == 0, "PIX-37 T05 new round clears intent budget");
+
+        std::vector<size_t> teammates;
+        for (size_t i = 0; i < game.bots_.size(); ++i) {
+            auto& bot = game.bots_[i];
+            if (bot.team != Team::CT || !bot.alive) continue;
+            teammates.push_back(i);
+            bot.SetSlotWeapon(0, WeaponId::AK47);
+            bot.money = 4000;
+            game.AiAt(i).difficulty = 0;
+        }
+        check(teammates.size() >= 3, "PIX-37 fixture has at least three CT bots");
+        if (teammates.size() < 3) return;
+        const size_t sniper = teammates.front(), poorest = teammates.back(), entry = teammates[1];
+        game.bots_[sniper].SetSlotWeapon(0, WeaponId::AWP);
+        game.bots_[entry].SetSlotWeapon(0, WeaponId::SSG08);
+        game.AiAt(sniper).difficulty = 2;
+        game.AiAt(entry).difficulty = 3;
+        game.bots_[poorest].money = 0;
+        ct.plan = {};
+        ct.plan.valid = true;
+        ct.plan.slots[0].role = CoachRole::Entry;
+        ct.plan.slots[2].role = CoachRole::Awper;
+        game.CoachApplyPlan(Team::CT);
+        check(game.squad_[sniper].role == BotRole::Awper && game.squad_[entry].role == BotRole::Entry,
+              "PIX-37 T22 reserves the only AWP holder for a later Awper slot");
+        ct.plan.intent = PlanIntent::Save;
+        game.CoachApplyPlan(Team::CT);
+        check(game.squad_[poorest].role == BotRole::Entry && !game.squad_[poorest].canTrade &&
+              game.AiAt(poorest).hasPlanHold, "PIX-37 T22 lowest balance gets first Save assignment");
+
+        const auto* slots = game.tactics_.Slots("CT", "StackA@A");
+        const auto* anchor = game.tactics_.Anchor("CT.Palace");
+        check(slots && anchor, "PIX-37 Mirage rule flank template and Palace anchor load");
+        if (!slots || !anchor) return;
+        // Keep a single active BOT so the trace measures the rule route without enemy contact.
+        for (size_t i = 0; i < game.bots_.size(); ++i) game.bots_[i].alive = i == sniper;
+        game.player_.alive = false;
+        ct.plan = {};
+        ct.plan.valid = true;
+        ct.plan.intent = PlanIntent::StackA;
+        ct.plan.target = "A";
+        ct.plan.slots = *slots;
+        const auto lurk = std::find_if(slots->begin(), slots->end(), [](const SlotOrder& slot) {
+            return slot.role == CoachRole::Lurk;
+        });
+        check(lurk != slots->end() && lurk->area == "Palace", "PIX-37 rule assigns Lurk to the Palace flank");
+        if (lurk == slots->end()) return;
+        ct.plan.slots[0] = *lurk;
+        game.CoachApplyPlan(Team::CT);
+        auto& bot = game.bots_[sniper];
+        auto& ai = game.AiAt(sniper);
+        auto distance = [&] { return std::hypot(bot.x - anchor->first, bot.y - anchor->second); };
+        check(ai.hasPlanHold && ai.planHoldX == anchor->first && ai.planHoldY == anchor->second,
+              "PIX-37 T24 rule plan uses the configured flank anchor");
+        check(game.squad_[sniper].role == BotRole::Lurk && ai.goalArea == "Palace" &&
+              ai.holdStyle == static_cast<int>(HoldStyle::Passive), "PIX-37 T26 Lurk receives passive flank order");
+        const float initialDistance = distance();
+        game.lastDeathTeam_ = Team::CT;
+        game.lastDeathTimer_ = 1.0f;
+        game.lastDeathX_ = bot.x + 150.0f;
+        game.lastDeathY_ = bot.y;
+        game.UpdateBOTs(1.0f / 60.0f, nullptr);
+        check(!ai.tradePushed && ai.goalArea == "Palace",
+              "PIX-37 T26 Lurk stays on the flank after a nearby ally dies");
+        game.lastDeathTimer_ = 0.0f;
+        for (int frame = 0; frame < 1800 && distance() >= 32.0f; ++frame) {
+            game.clockSec_ += 1.0f / 60.0f;
+            game.UpdateBOTs(1.0f / 60.0f, nullptr);
+        }
+        std::printf("PIX-37 Palace anchor distance %.2f -> %.2f\n", initialDistance, distance());
+        check(initialDistance > 64.0f && distance() < 32.0f,
+              "PIX-37 T24/T26 BOT traverses Mirage to its flank anchor");
+
+        bot.weaponSlot = 0;
+        const auto* awperSlot = game.tactics_.Slots("CT", "Default@-");
+        check(awperSlot && (*awperSlot)[1].role == CoachRole::Awper,
+              "PIX-37 Mirage rule template includes the Jungle Awper");
+        if (!awperSlot) return;
+        const auto hold = (*awperSlot)[1];
+        const auto* awperAnchor = game.tactics_.Anchor("CT." + hold.area);
+        check(awperAnchor != nullptr, "PIX-37 Jungle Awper anchor loads");
+        if (!awperAnchor) return;
+        game.clockSec_ += 4.0f;
+        ct.plan.slots[0] = hold;
+        game.CoachApplyPlan(Team::CT);
+        const float start = game.RoleSpeedMul(sniper, BotRole::Awper);
+        game.clockSec_ += 1.5f;
+        const float half = game.RoleSpeedMul(sniper, BotRole::Awper);
+        game.clockSec_ += 1.5f;
+        const float end = game.RoleSpeedMul(sniper, BotRole::Awper);
+        const auto closeEnough = [](float a, float b) { return std::abs(a - b) < 0.001f; };
+        std::printf("PIX-37 Lurk to Awper multiplier %.3f -> %.3f -> %.3f\n", start, half, end);
+        check(closeEnough(start, Tuning::SpeedMulLurk) && closeEnough(end, Tuning::SpeedMulAwper) &&
+              closeEnough(half, (start + end) * 0.5f), "PIX-37 T26/T27 Awper speed settles linearly in three seconds");
+        game.UpdateBOTs(1.0f / 60.0f, nullptr);
+        const float actualSpeed = std::hypot(bot.vx, bot.vy);
+        const float expectedSpeed = Tuning::BotMoveSpeed * bot.CurrentWeapon().moveSpeedMul * end;
+        std::printf("PIX-37 Jungle Awper velocity %.2f (expected %.2f)\n", actualSpeed, expectedSpeed);
+        check(ai.goalArea == hold.area && ai.planHoldX == awperAnchor->first &&
+              ai.planHoldY == awperAnchor->second && std::abs(actualSpeed - expectedSpeed) < 0.1f,
+              "PIX-37 T26 BOT movement uses the Awper cap en route to Jungle");
+        game.SetRoleWithTransition(sniper, BotRole::Entry);
+        game.clockSec_ += 0.75f;
+        const float before = game.RoleSpeedMul(sniper, BotRole::Entry);
+        game.SetRoleWithTransition(sniper, BotRole::Lurk);
+        check(closeEnough(before, game.RoleSpeedMul(sniper, BotRole::Lurk)),
+              "PIX-37 T27 mid-transition reassignment preserves current speed");
+    }
+
+    static void TestPix37RotateSchema() {
+        CS2DGame game;
+        game.SetMatchMode(MatchMode::BombDefusal);
+        const bool loaded = game.LoadMap(MapPath(), nullptr, true);
+        check(loaded, "PIX-37 T09 rotate fixture loads");
+        if (!loaded || game.world_->GetBombSites().empty()) return;
+        std::string schema;
+        std::function<void(const std::string&)> reply;
+        game.SetCoachLlmEnabled(true);
+        game.SetCoachLlm([&](const std::string&, const std::string&, int,
+                            const std::string& requestSchema, auto callback) {
+            schema = requestSchema;
+            reply = std::move(callback);
+        });
+        const CoachEvent event{CoachEventType::RoundStart};
+        game.CoachTryLlm(Team::T, event);
+        check(reply && schema.find("rotate_b") == std::string::npos,
+              "PIX-37 T09 schema excludes rotation during freeze");
+        if (!reply) return;
+        reply("");
+        game.PumpCoach();
+
+        game.round_.Update(game.round_.Config().freezeTime);
+        game.round_.Update(game.round_.Config().buyTime);
+        game.clockSec_ = 25.0f;
+        game.bombCarrier_ = -1;
+        game.bombDropped_ = false;
+        const auto& site = game.world_->GetBombSites().front();
+        game.intel_.OnEnemySeen(site.cx, site.cy, game.clockSec_);
+        game.intel_.OnEnemySeen(site.cx, site.cy, game.clockSec_);
+        auto& state = game.CoachFor(Team::T);
+        state.plan = {};
+        state.plan.valid = true;
+        state.plan.target = "A";
+        state.planExpiresAt = 40.0f;
+        const bool allowed = game.CanRotateNow(Team::T);
+        check(allowed, "PIX-37 T09 live fixture satisfies rotation guards");
+        if (!allowed) return;
+        reply = {};
+        game.CoachTryLlm(Team::T, event);
+        check(reply && schema.find("rotate_a") != std::string::npos &&
+              schema.find("rotate_b") != std::string::npos,
+              "PIX-37 T09 live request exposes both rotation intents");
+        if (!reply) return;
+        reply(R"({"intent":"rotate_b","target":"B","tempo":"fast","ttl_s":18,"reason":"rotate"})");
+        game.PumpCoach();
+        check(state.plan.intent == PlanIntent::RotateB && state.plan.source == "llm" &&
+              state.rotateFrom == "A" && state.rotateTo == "B" && game.lastRotateAt_ == game.clockSec_,
+              "PIX-37 T09 accepts an eligible rotate reply through the coach pipeline");
+        game.clockSec_ += 25.0f;
+        state.plan.intent = PlanIntent::Default;
+        state.plan.target = "A";
+        game.CoachTryRotate(Team::T);
+        const auto* rotate = game.tactics_.Slots("T", "RotateB");
+        check(rotate && state.plan.intent == PlanIntent::RotateB && state.plan.source == "rule" &&
+              state.plan.slots[3].area == (*rotate)[3].area && state.plan.slots[3].role == (*rotate)[3].role,
+              "PIX-37 T09 rule rotation uses the map template");
+    }
+
+    static void TestT35PostPlant() {
+        for (const char* map : {"dust_2", "mirage", "ancient_ruins"}) {
+            CS2DGame game;
+            game.SetMatchMode(MatchMode::BombDefusal);
+            const bool loaded = game.LoadMap(
+                PathUtils::ResolveAppPath(std::string("assets/cs2d/maps/") + map + ".tmj"), nullptr, true);
+            check(loaded, "T35 post-plant fixture loads tactical map");
+            if (!loaded) continue;
+            std::string schema;
+            std::function<void(const std::string&)> reply;
+            game.SetCoachLlmEnabled(true);
+            game.SetCoachLlm([&](const std::string&, const std::string&, int,
+                                const std::string& requestSchema, auto callback) {
+                schema = requestSchema;
+                reply = std::move(callback);
+            });
+            const CoachEvent event{CoachEventType::BombPlanted};
+            for (const auto& site : game.world_->GetBombSites()) {
+                game.bombPlanted_ = true;
+                game.bombX_ = site.cx;
+                game.bombY_ = site.cy;
+                game.intel_.OnEnemySeen(game.bombX_, game.bombY_, game.clockSec_);
+                game.intel_.OnEnemySeen(game.bombX_, game.bombY_, game.clockSec_);
+                for (Team team : {Team::T, Team::CT}) {
+                    auto& state = game.CoachFor(team);
+                    state.plan = {};
+                    state.hasRuleSnapshot = false;
+                    reply = {};
+                    game.CoachTryLlm(team, event);
+                    check(reply && schema.find("\"tempo\"") != std::string::npos &&
+                          schema.find("\"target\"") == std::string::npos &&
+                          schema.find("\"slots\"") == std::string::npos,
+                          "T35 post-plant schema requests tempo without model target or slots");
+                    if (!reply) continue;
+                    reply(R"({"tempo":"slow","ttl_s":18,"reason":"hold"})");
+                    game.PumpCoach();
+                    const bool siteA = site.name == "A";
+                    const auto intent = team == Team::T
+                        ? (siteA ? PlanIntent::StackA : PlanIntent::StackB)
+                        : (siteA ? PlanIntent::RetakeA : PlanIntent::RetakeB);
+                    check(state.plan.source == "llm" && state.plan.target == site.name &&
+                          state.plan.intent == intent && state.plan.tempo == Tempo::Slow &&
+                          !state.plan.slots.front().area.empty(),
+                          "T35 post-plant keeps model tempo and fills the correct map template");
+
+                    game.CoachTryLlm(team, event);
+                    reply(R"({"intent":"default","target":"","tempo":"fast","ttl_s":18,"reason":"legacy"})");
+                    game.PumpCoach();
+                    check(state.plan.target == site.name && state.plan.intent == intent &&
+                          state.plan.tempo == Tempo::Fast, "T35 legacy empty target resolves before validation");
+
+                    game.CoachTryLlm(team, event);
+                    const std::string wrong = siteA ? "B" : "A";
+                    reply("{\"intent\":\"default\",\"target\":\"" + wrong + "\",\"tempo\":\"normal\"}");
+                    game.PumpCoach();
+                    check(state.plan.tempo == Tempo::Fast, "T35 explicitly wrong site is rejected");
+
+                    game.CoachTryLlm(team, event);
+                    game.bombPlanted_ = false;
+                    reply(R"({"tempo":"normal","ttl_s":18,"reason":"stale"})");
+                    game.PumpCoach();
+                    check(state.plan.tempo == Tempo::Fast, "T35 stale bomb-state reply is rejected");
+                    game.bombPlanted_ = true;
+
+                    game.CoachTryLlm(team, event);
+                    reply(R"({"tempo":42,"ttl_s":18,"reason":"wrong_type"})");
+                    game.PumpCoach();
+                    check(state.plan.tempo == Tempo::Fast, "T35 invalid model tempo cannot replace the plan");
+                }
+            }
+        }
+    }
+
     static void TestPix37DefuseRangeAndLos() {
         std::printf("\n===== PIX-37 拆包范围与遮挡 =====\n");
         check(Tuning::DefuseRadius < 52.0f, "PIX-37 defuse radius was shrunk from the old 52");
@@ -5969,6 +6239,13 @@ static void TestExperienceRendering(bool gpu) {
 }
 
 int main(int argc,char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "--pix37-coach") {
+        CS2DGameTestAccess::TestPix37CoachWiring();
+        CS2DGameTestAccess::TestPix37RotateSchema();
+        CS2DGameTestAccess::TestT35PostPlant();
+        std::printf("PIX-37 coach: %d passed, %d failed\n", g_pass, g_fail);
+        return g_fail ? 1 : 0;
+    }
     if (argc>1 && std::string(argv[1])=="--experience") {
         CS2DGameTestAccess::TestExperienceStates();
         EngineTestAccess::TestExperienceEntryPoints();

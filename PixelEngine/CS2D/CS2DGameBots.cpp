@@ -582,7 +582,8 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
         // ---- 补枪（trade）：队友刚在附近阵亡 → 冲过去换人 ----
         if (lastDeathTimer_ > 0.0f && lastDeathTeam_ == bot.team &&
-            !ai.tradePushed && order.role != BotRole::Anchor && order.canTrade) {
+            !ai.tradePushed && order.role != BotRole::Anchor &&
+            order.role != BotRole::Lurk && order.canTrade) {
             const float dx = lastDeathX_ - bot.x;
             const float dy = lastDeathY_ - bot.y;
             const float d2 = dx * dx + dy * dy;
@@ -787,7 +788,8 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         // 比死后补枪更主动：队友要顶不住了才去，避免全员排队送；Anchor 与无补枪许可者不去。
         if (ai.assistCooldown > 0.0f) ai.assistCooldown -= dt;
         if (!target && !ai.defusing && order.role != BotRole::Anchor &&
-            ai.holdStyle == 0 && order.canTrade && ai.assistCooldown <= 0.0f) {
+            ai.holdStyle == 0 && order.role != BotRole::Lurk &&
+            order.canTrade && ai.assistCooldown <= 0.0f) {
             int   bestMate = -1;
             float bestD2 = Tuning::ai::AssistPushRadius * Tuning::ai::AssistPushRadius;
             for (size_t j = 0; j < bots_.size(); ++j) {
