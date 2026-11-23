@@ -75,6 +75,7 @@ public:
         std::function<void(bool)>        setFullscreen;
         // 视野 / 开镜（契约 v1.2）
         std::function<void(int)>   setFogOpacity;              // 迷雾透明度 0..100
+        std::function<void(bool)>  setTeammateXRay;
         std::function<void(bool)>  setSniperDelayedScopeClose; // 开镜开枪后按住扳机延迟关镜
         // 开镜准星（契约 v1.3）
         std::function<void(float)> setScopeCrossThickness;     // 大十字线宽
@@ -133,6 +134,7 @@ public:
 
         // 视野 / 开镜（契约 v1.2）
         int   fogOpacityPct = 100;            // 迷雾透明度 0..100
+        bool  teammateXRay = false;
         bool  sniperDelayedScopeClose = false; // 开枪后按住扳机延迟关镜
         float scopeSensitivity    = 1.0f;      // 开镜灵敏度倍率
         float scopeCrossThickness = 2.0f;      // 开镜大十字线宽
@@ -236,8 +238,10 @@ public:
             Team killerTeam = Team::None, victimTeam = Team::None;
             float life = 4;
             bool personal = false;
+            bool headshot = false;
         };
         std::vector<KillView> killFeed;
+        std::vector<Presentation::TeammateXRayLabel> teammateXRayLabels;
         struct EquipmentView {
             std::string name, icon, binding;
             int count = 1;

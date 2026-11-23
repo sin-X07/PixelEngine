@@ -25,6 +25,7 @@ enum class SoundEffect {
     CLICK,
     DAGGER_FIRE,
     HIT,          // 命中
+    HEADSHOT,     // 爆头
     KILL,         // 击杀
     KATANA_SWING, // 武士刀挥砍
 
@@ -107,6 +108,7 @@ private:
     int musicTrack_ = 0;
     Mix_Chunk* daggerSound = nullptr;
     Mix_Chunk* hitSound = nullptr;
+    Mix_Chunk* headshotSound = nullptr;
     Mix_Chunk* killSound = nullptr;
 
     // 战局事件音效

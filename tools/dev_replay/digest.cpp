@@ -122,8 +122,9 @@ uint64_t SnapshotTick(const CS2DGame& game, uint64_t tick) {
         h.MixFloat(b.vx);
         h.MixFloat(b.vy);
         h.MixFloat(b.traveled);
-        h.Mix(b.damage);
+        h.MixFloat(b.damage);
         h.Mix(b.ownerIdx);
+        h.Mix(b.crosshairTarget);
         h.Mix(static_cast<int>(b.ownerTeam));
         h.Mix(static_cast<int>(b.weapon));
     }

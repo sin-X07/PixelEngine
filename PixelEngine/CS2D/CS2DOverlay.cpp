@@ -151,11 +151,13 @@ std::vector<CS2DRenderer::RadarDot> CS2DOverlay::CollectRadarDots(const CS2DGame
     const Team myTeam = game.GetPlayer().team;
     const auto& bots = game.GetBOTs();
     const int carrier = game.GetBombCarrierId();
+    const auto c4Color = Tuning::RadarC4Color;
     for (size_t i = 0; i < bots.size(); ++i) {
         const auto& bot = bots[i];
         if (!bot.alive || bot.team != myTeam) continue;
         if (static_cast<int>(i) != carrier)
-            dots.push_back({bot.x, bot.y, 90, 220, 130});
+            dots.push_back({bot.x, bot.y, Tuning::RadarAllyColor.r, Tuning::RadarAllyColor.g,
+                            Tuning::RadarAllyColor.b, 255, Shape::Circle, bot.EffectiveAim(), true});
     }
     for (const auto& contact : game.GetContactsOfTeam(myTeam)) {
         if (contact.age > Tuning::RadarFadeEnd) continue;
@@ -163,17 +165,24 @@ std::vector<CS2DRenderer::RadarDot> CS2DOverlay::CollectRadarDots(const CS2DGame
             (Tuning::RadarFadeEnd - contact.age) / (Tuning::RadarFadeEnd - Tuning::RadarFadeStart), 0.0f, 1.0f));
         if (carrier != -2 && contact.id == carrier) {
             // 使用上次目击坐标和同一衰减，不通过持包标记跟踪失去视野的敌人。
-            dots.push_back({contact.x, contact.y, 255, 170, 60, alpha, Shape::Carrier});
+            dots.push_back({contact.x, contact.y, c4Color.r, c4Color.g, c4Color.b, alpha, Shape::Carrier});
         } else {
             dots.push_back({contact.x, contact.y, 235, 75, 70, alpha});
         }
     }
     if (myTeam == Team::T) {
-        if (const auto pos = game.GetBombCarrierPos())
-            dots.push_back({pos->x, pos->y, 255, 170, 60, 255, Shape::Carrier});
+        if (const auto pos = game.GetBombCarrierPos()) {
+            const float heading = carrier >= 0 ? bots[carrier].EffectiveAim() : game.GetPlayer().EffectiveAim();
+            dots.push_back({pos->x, pos->y, c4Color.r, c4Color.g, c4Color.b, 255, Shape::Carrier, heading, carrier >= 0});
+        }
     }
-    if (game.IsBombDropped() && (myTeam == Team::T || (myTeam == Team::CT && game.HasBombIntel())))
-        dots.push_back({game.BombDropX(), game.BombDropY(), 255, 170, 60, 255, Shape::DroppedBomb});
+    if (game.IsBombPlanted()) {
+        // 安装位置已由下包事件告知双方。
+        const auto planted = Tuning::RadarPlantedC4Color;
+        dots.push_back({game.GetBombX(), game.GetBombY(), planted.r, planted.g, planted.b, 255, Shape::PlantedBomb});
+    } else if (game.IsBombDropped() && (myTeam == Team::T || (myTeam == Team::CT && game.HasBombIntel()))) {
+        dots.push_back({game.BombDropX(), game.BombDropY(), c4Color.r, c4Color.g, c4Color.b, 255, Shape::DroppedBomb});
+    }
     return dots;
 }
 
@@ -228,11 +237,13 @@ void CS2DOverlay::Render(CS2DRenderer* renderer, CS2DGame* game, int viewW, int 
         const float hm = game->GetHitMarkerTimer();
         if (hm > 0.0f && localAimVisible) {
             const auto kind = game->GetHitMarkerKind();
-            const bool kill = kind == CS2DGame::HitMarkerKind::Kill;
-            const SDL_Color color = kill ? SDL_Color{244, 83, 72, 255} :
+            const bool kill = kind == CS2DGame::HitMarkerKind::Kill || kind == CS2DGame::HitMarkerKind::HeadshotKill;
+            const bool headshot = kind == CS2DGame::HitMarkerKind::Headshot || kind == CS2DGame::HitMarkerKind::HeadshotKill;
+            const SDL_Color color = headshot ? Tuning::HeadshotColor : kill ? SDL_Color{244, 83, 72, 255} :
                 kind == CS2DGame::HitMarkerKind::Armor ? SDL_Color{110, 193, 255, 255} : SDL_Color{255, 255, 255, 255};
-            const float k = std::min(1.0f, hm / (kill ? 0.30f : 0.18f));
-            renderer->DrawHitMarker(reticleX, reticleY, g_uiScale * (kill ? 1.5f : 1.0f),
+            const float k = std::min(1.0f, hm / (headshot ? Tuning::HeadshotMarkerSeconds : kill ? 0.30f : 0.18f));
+            const float scale = (kill ? 1.5f : 1.0f) * (headshot ? Tuning::HeadshotMarkerScale : 1.0f);
+            renderer->DrawHitMarker(reticleX, reticleY, g_uiScale * scale,
                                     static_cast<Uint8>(220.0f * k), color);
         }
     }

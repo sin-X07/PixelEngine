@@ -27,6 +27,7 @@ struct GameSettings {
 
     // 视野 / 开镜（契约 v1.2）
     int   fogOpacityPct          = 100;   // 迷雾透明度 0..100%，只影响视觉，不改可见性
+    bool  teammateXRay           = false;
     bool  sniperDelayedScopeClose = false; // 开镜开枪后：开启则按住扳机可延迟关镜
     float scopeSensitivity        = 1.0f;  // 开镜时的鼠标灵敏度倍率（CS2 zoom_sensitivity_ratio）
     float scopeCrossThickness     = 2.0f;  // 开镜大十字线宽（逻辑像素）

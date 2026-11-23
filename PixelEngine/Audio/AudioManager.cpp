@@ -196,6 +196,7 @@ bool AudioManager::Initialize() {
 
     // ---- 通用反馈 ----
     hitSound = loadChunk("assets/audio/sfx_hit.wav", "命中");
+    headshotSound = loadChunk("assets/audio/sfx_headshot.wav", "爆头");
     killSound = loadChunk("assets/audio/sfx_kill.mp3", "击杀");
     armorHitSound = loadChunk("assets/audio/sfx_armor_hit.wav", "护甲受击");
     dryFireSound = loadChunk("assets/audio/sfx_dryfire.wav", "空仓");
@@ -271,6 +272,7 @@ void AudioManager::Clean() {
     }
     if (daggerSound) { Mix_FreeChunk(daggerSound); daggerSound = nullptr; }
     if (hitSound) { Mix_FreeChunk(hitSound); hitSound = nullptr; }
+    if (headshotSound) { Mix_FreeChunk(headshotSound); headshotSound = nullptr; }
     if (killSound) { Mix_FreeChunk(killSound); killSound = nullptr; }
 
     // 战局事件
@@ -407,6 +409,7 @@ Mix_Chunk* AudioManager::ChunkFor(SoundEffect effect) const {
         case SoundEffect::DAGGER_FIRE:      return daggerSound;
         case SoundEffect::KATANA_SWING:     return daggerSound;
         case SoundEffect::HIT:              return hitSound;
+        case SoundEffect::HEADSHOT:         return headshotSound;
         case SoundEffect::KILL:             return killSound;
 
         case SoundEffect::GRENADE_THROW:   return grenadeThrowSound;

@@ -328,7 +328,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         const float itemSpacing = ImGui::GetStyle().ItemSpacing.y;
         const int   nBtn = 6;
 
-        const float titleH = UI(46.0f);
+        const float titleH = UI(54.0f);
         const float subH   = UI(30.0f);
         const float gap1   = UI(26.0f);
         const float blockH = titleH + subH + gap1 + nBtn * buttonH +
@@ -629,7 +629,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
             }) + UI(16.0f);
 
             if (!twoColumns) rightY = leftY;
-            rightY += drawCard(rightX, rightY, "视野 / 开镜", "VISION & SCOPE", 5, 0.0f,
+            rightY += drawCard(rightX, rightY, "视野 / 开镜", "VISION & SCOPE", 6, 0.0f,
                                IM_COL32(150, 170, 220, 255), SettingsSection::VisionScope, [&](float x, float y) {
                 rowLabel(x, y, 0, "迷雾透明度");
                 ImGui::SetCursorScreenPos(rowPos(x, y, 0));
@@ -665,6 +665,12 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 bool crossDyn = ctx.scopeCrossDynamic;
                 if (ImGui::Checkbox("开镜准星随移动扩散", &crossDyn)) {
                     actions.setScopeCrossDynamic(crossDyn);
+                }
+
+                ImGui::SetCursorScreenPos(rowPos(x, y, 5));
+                bool teammateXRay = ctx.teammateXRay;
+                if (ImGui::Checkbox("队友透视（X 光）", &teammateXRay)) {
+                    actions.setTeammateXRay(teammateXRay);
                 }
 
             }) + UI(16.0f);
@@ -2405,6 +2411,20 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
     const float vpH = ImGui::GetIO().DisplaySize.y;
     ImDrawList *fg = ImGui::GetWindowDrawList();
 
+    if (!ctx.teammateXRayLabels.empty()) {
+        ImFont* font = imGuiUI ? imGuiUI->GetFont(Tuning::TeammateXRayLabelSize) : nullptr;
+        if (!font) font = ImGui::GetFont();
+        const float fontSize = UI(Tuning::TeammateXRayLabelSize);
+        const auto color = Tuning::TeammateXRayLabelColor;
+        for (const auto& label : ctx.teammateXRayLabels) {
+            const char* name = label.name.c_str();
+            const float width = font->CalcTextSizeA(fontSize, FLT_MAX, 0, name).x;
+            const ImVec2 position(label.x - width * .5f, label.y - fontSize - UI(Tuning::TeammateXRayLabelGap));
+            fg->AddText(font, fontSize, ImVec2(position.x + UI(1), position.y + UI(1)), IM_COL32(0, 0, 0, 200), name);
+            fg->AddText(font, fontSize, position, IM_COL32(color.r, color.g, color.b, color.a), name);
+        }
+    }
+
     // Weapon images retain their native aspect ratio in every HUD surface.
     auto weaponImage = [&](const std::string &path, float x, float y, float w, float h, int alpha) {
         SDL_Texture *texture = weaponIconCache_ ? weaponIconCache_->GetHud(path) : nullptr;
@@ -2549,15 +2569,21 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
     }
 
     // ---- 目标物状态 ----
-    // 目标状态背板（没下包时不显示，避免空条）
-    if ((ctx.objective == 1 && ctx.bombPlanted) || ctx.objective == 2) {
+    const bool showC4Carrier = ctx.objective == 1 && ctx.playerTeam == Team::T &&
+        !ctx.bombPlanted && !ctx.bombDropped && !ctx.c4CarrierName.empty();
+    if (showC4Carrier || (ctx.objective == 1 && ctx.bombPlanted) || ctx.objective == 2) {
         const float pw = UI(260.0f);
-        const float ph = UI(48.0f);
+        const float ph = UI(showC4Carrier ? 34.0f : 48.0f);
         const float px = (vpW - pw) * 0.5f;
         const float py = UI(98.0f);
         Palette::DrawGlassPanel(fg, ImVec2(px, py), ImVec2(px + pw, py + ph), Palette::GlassTint(IM_COL32(15, 19, 25, 220)), UI(8.0f));
-        fg->AddRect(ImVec2(px, py), ImVec2(px + pw, py + ph), IM_COL32(220, 80, 70, 140), UI(8.0f), 0,
+        const ImU32 border = showC4Carrier ? IM_COL32(255, 181, 72, 140) : IM_COL32(220, 80, 70, 140);
+        fg->AddRect(ImVec2(px, py), ImVec2(px + pw, py + ph), border, UI(8.0f), 0,
                     std::max(1.0f, UI(1.5f)));
+        if (showC4Carrier) {
+            const auto label = FitHudText(imGuiUI, "C4 携带者：" + ctx.c4CarrierName, pw - UI(20.0f), 20);
+            DrawImGuiTextCentered(imGuiUI, label.c_str(), py + UI(6.0f), 255, 210, 100, 255, 20);
+        }
     }
 
     if (ctx.objective == 1) { // 爆破
@@ -2608,6 +2634,16 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
             };
             name(entry.killer, entry.killerTeam, x + UI(12));
             weaponImage(entry.icon, x + UI(132), y + UI(5), UI(76), UI(24), alpha);
+            if (entry.headshot) {
+                const ImVec2 center(x + UI(214), y + UI(17));
+                const float radius = UI(Tuning::HeadshotFeedIconRadius);
+                const float stroke = UI(Tuning::HeadshotFeedIconStroke);
+                const auto color = Tuning::HeadshotColor;
+                const ImU32 ink = IM_COL32(color.r, color.g, color.b, alpha);
+                fg->AddCircle(center, radius * .72f, ink, 12, stroke);
+                fg->AddLine(ImVec2(center.x - radius, center.y), ImVec2(center.x + radius, center.y), ink, stroke);
+                fg->AddLine(ImVec2(center.x, center.y - radius), ImVec2(center.x, center.y + radius), ink, stroke);
+            }
             name(entry.victim, entry.victimTeam, x + UI(222));
             nextKillY = targetY + UI(40);
         }
@@ -2880,10 +2916,6 @@ void GameUI::DrawInGame(const InGameCtx &ctx, ImGuiUI *imGuiUI) {
     // 观察者 / C4 底部提示
     {
         const float yBase = ImGui::GetIO().DisplaySize.y - UI(96.0f);
-        if (!ctx.c4CarrierName.empty()) {
-            const std::string carrierText = "C4 携带者：" + ctx.c4CarrierName;
-            DrawImGuiTextCentered(imGuiUI, carrierText.c_str(), yBase - UI(30.0f), 255, 210, 100, 255, 20);
-        }
         if (ctx.death.active) {
             // The death card occupies this area until the spectator handoff.
         } else if (ctx.bombSpectating) {

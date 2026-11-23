@@ -2026,6 +2026,163 @@ static void TestHdMapNavigation() {
 }
 
 struct CS2DGameTestAccess {
+    static void TestHeadshotAndTeammateXRay() {
+        CS2DGame game;
+        game.mode_ = MatchMode::TeamElimination;
+        game.player_.team = Team::CT;
+        game.bots_.resize(2);
+        game.botAi_.resize(2);
+        auto& target = game.bots_.front();
+        target.team = Team::T;
+        target.x = 360;
+        target.y = 240;
+        target.aimAngle = -Tuning::Pi * .5f;
+        target.spriteKey = 0;
+        target.weaponSlot = 0;
+        target.size = 40;
+        auto weapon = WeaponDB::Get(WeaponId::Glock18);
+        weapon.damage = 20;
+        weapon.range = 1000;
+        using Marker = CS2DGame::HitMarkerKind;
+        auto fire = [&](float frameY, int health = 100, int armor = 0, bool helmet = false,
+                        float traveled = 0, int crosshairTarget = -1) {
+            target.alive = true;
+            target.health = health;
+            target.armor = armor;
+            target.helmet = helmet;
+            target.animState = CS2DGame::AnimState::Idle;
+            game.hitMarkerTimer_ = 0;
+            game.bullets_.clear();
+            const float angle = target.EffectiveAim() + Tuning::Pi * .5f;
+            const auto start = BodyGeometry::Transform({-.85f, frameY - .5f}, target.x, target.y,
+                target.size, target.EffectiveAim(), static_cast<int>(target.animState), target.animTimer);
+            game.FireBullet(start.x, start.y, angle, weapon, -1, Team::CT, crosshairTarget);
+            game.bullets_.back().traveled = traveled;
+            for (int i = 0; i < 25 && !game.bullets_.empty(); ++i) game.UpdateBullets(.004f, nullptr);
+            return health - target.health;
+        };
+        const auto& layout = BodyGeometry::Regions[0][0];
+        const float legY = .94f;
+        const auto legPoint = BodyGeometry::Transform({0, legY - .5f}, target.x, target.y, target.size,
+            target.EffectiveAim(), static_cast<int>(target.animState), target.animTimer);
+        game.player_.x = legPoint.x - 40.0f;
+        game.player_.y = legPoint.y;
+        game.player_.SetSlotWeapon(1, WeaponId::Glock18);
+        game.player_.weaponSlot = 1;
+        game.player_.ammo = 1;
+        target.health = 1000;
+        game.rng_.seed(12);
+        game.UpdatePlayerShooting(.001f, true, legPoint.x, legPoint.y, nullptr);
+        check(game.bullets_.size() == 1 && game.bullets_.front().crosshairTarget == 0,
+              "firing over an enemy's leg records the enemy under the crosshair");
+        game.SetAimTarget(40, 40, false);
+        for (int i = 0; i < 25 && !game.bullets_.empty(); ++i) game.UpdateBullets(.004f, nullptr);
+        check(target.health < 1000 && game.GetHitMarkerKind() == Marker::Headshot,
+              "hitting the enemy counts as a headshot even if the crosshair moved after firing");
+        check(fire(legY, 100, 0, false, 0, 0) == 80 && game.GetHitMarkerKind() == Marker::Headshot,
+              "hitting the selected enemy's leg applies 4x headshot damage");
+        game.bots_[1].team = Team::T;
+        check(fire(.36f, 100, 0, false, 0, 1) == 20 && game.GetHitMarkerKind() == Marker::Normal,
+              "hitting a different enemy does not inherit the selected enemy's headshot");
+        const auto headPoint = BodyGeometry::Transform({layout.headX - .5f, layout.headY - .5f},
+            target.x, target.y, target.size, target.EffectiveAim(), static_cast<int>(target.animState), target.animTimer);
+        target.health = 100;
+        game.hitMarkerTimer_ = 0;
+        game.FireBullet(headPoint.x, headPoint.y, 0, weapon, -1, Team::CT);
+        game.UpdateBullets(.004f, nullptr);
+        check(target.health == 80 && game.GetHitMarkerKind() == Marker::Normal,
+              "a player shot fired without an enemy under the crosshair does not trigger a headshot");
+        target.health = 100;
+        game.bots_[1].team = Team::CT;
+        game.FireBullet(headPoint.x, headPoint.y, 0, weapon, 1, Team::CT);
+        game.UpdateBullets(.004f, nullptr);
+        check(target.health == 20, "BOT shots still use the physical head hit region");
+        const int arm = fire(.36f);
+        const int abdomen = fire(.87f);
+        const int leg = fire(.94f);
+        check(arm == 20 && abdomen == 25 && leg == 15, "bullet damage uses 1x arm, 1.25x abdomen and .75x leg");
+        check(fire(.36f, 100, 0, false, 800) == 17, "bullet damage attenuates with actual travel distance");
+        check(fire(layout.headY, 100, 100, false, 0, 0) == 80 && target.armor == 100,
+              "a vest alone cannot absorb head damage");
+        const auto helmetDamage = CS2DGame::ResolveArmorDamage(80, WeaponDB::ArmorPen(weapon.id), 100);
+        check(fire(legY, 100, 100, true, 0, 0) == helmetDamage.healthDamage &&
+              target.armor == 100 - helmetDamage.armorLoss, "helmet uses the bullet's weapon armor penetration");
+        target.aimAngle = .63f;
+        check(fire(layout.headY, 50, 0, false, 0, 0) == 50 && game.GetHitMarkerKind() == Marker::HeadshotKill &&
+              !game.killFeed_.empty() && game.killFeed_.front().headshot, "rotated head hit propagates to the kill feed");
+
+        SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 640, 480, 32, SDL_PIXELFORMAT_RGBA32);
+        SDL_Renderer* output = surface ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+        check(output != nullptr, "X-ray regression renderer initializes");
+        if (output) {
+            CS2DMapData map;
+            map.mapWidth = map.mapHeight = 100;
+            map.tileWidth = map.tileHeight = 8;
+            map.objectLayers.push_back({});
+            auto& collisions = map.objectLayers.back();
+            collisions.name = "Collisions";
+            collisions.objects.push_back({});
+            auto& wall = collisions.objects.back();
+            wall.x = 312;
+            wall.y = 120;
+            wall.width = 8;
+            wall.height = 240;
+            game.world_->Build(map);
+            game.visibility_.SetWorld(game.world_.get());
+            game.player_.x = 260;
+            game.player_.y = 240;
+            game.player_.aimAngle = 0;
+            game.SetAimTarget(410, 240, false);
+            target.alive = true;
+            target.health = 100;
+            target.animState = CS2DGame::AnimState::Idle;
+            target.aimAngle = -Tuning::Pi * .5f;
+            target.x = 360;
+            target.y = 208;
+            auto& ally = game.bots_.back();
+            ally.team = Team::CT;
+            ally.name = "Ally";
+            ally.x = 360;
+            ally.y = 256;
+            ally.size = 32;
+
+            const float bulletY = target.y + (.64f - .5f) * target.size;
+            game.FireBullet(game.player_.x, bulletY, 0, weapon, -1, Team::CT, 0);
+            const int beforeWallHit = target.health;
+            game.UpdateBullets(.2f, nullptr);
+            check(target.health == beforeWallHit && game.bullets_.empty(), "a wall blocks the bullet before the head hit");
+
+            CS2DRenderer renderer;
+            renderer.Initialize(output, "assets/cs2d/maps", 640, 480);
+            renderer.SetWorld(game.world_.get());
+            renderer.SetPreviewCamera(320, 240, 1, false);
+            game.renderer_ = &renderer;
+            auto draw = [&] {
+                game.teammateXRayLabels_.clear();
+                game.DrawWorldPass();
+            };
+            draw();
+            check(game.GetTeammateXRayLabels().empty(), "X-ray starts disabled");
+            game.SetTeammateXRay(true);
+            draw();
+            const auto& labels = game.GetTeammateXRayLabels();
+            check(labels.size() == 1 && labels.front().name == ally.name,
+                  "a wall-hidden ally gets a silhouette and label; a wall-hidden enemy does not");
+            const auto dots = CS2DOverlay::CollectRadarDots(game);
+            ally.x = 292;
+            draw();
+            check(labels.empty(), "a visible ally is not drawn in the X-ray pass");
+            game.SetTeammateXRay(false);
+            const auto movedDots = CS2DOverlay::CollectRadarDots(game);
+            check(dots.size() == 1 && movedDots.size() == 1 && dots.front().x != movedDots.front().x &&
+                  movedDots.front().x == ally.x && movedDots.front().heading.has_value() && movedDots.front().teammate,
+                  "radar tracks living ally position and direction independently of X-ray");
+            game.renderer_ = nullptr;
+        }
+        SDL_DestroyRenderer(output);
+        SDL_FreeSurface(surface);
+    }
+
     static void EquipExperienceActor(CS2DGame& game) {
         game.bots_.clear();game.botAi_.clear();
         game.player_.SetSlotWeapon(0,WeaponId::AWP);
@@ -2549,16 +2706,19 @@ struct CS2DGameTestAccess {
         game.bombPlanted_ = game.bombDropped_ = false;
         auto dots = CS2DOverlay::CollectRadarDots(game);
         using Shape = CS2DRenderer::RadarDot::Shape;
+        check(game.GetFriendlyC4CarrierName() == "你", "HUD identifies the local T player holding C4");
         check(game.GetBombCarrierPos() && dots.size() == 1 && dots[0].shape == Shape::Carrier,
               "PIX35 self T carrier has orange radar marker");
         game.bots_.resize(1);
         auto& bot = game.bots_[0];
         bot.alive = true;
         bot.team = Team::T;
+        bot.name = "铁壁";
         bot.x = player.x + 80;
         bot.y = player.y;
         game.bombCarrier_ = 0;
         player.team = Team::CT;
+        check(game.GetFriendlyC4CarrierName().empty(), "CT HUD does not reveal the enemy C4 carrier's name");
         check(CS2DOverlay::CollectRadarDots(game).empty(), "PIX35 CT cannot discover unknown carrier through radar");
         game.contactsCT_ = {{0, bot.x - 30, bot.y - 20, 5}};
         dots = CS2DOverlay::CollectRadarDots(game);
@@ -2567,6 +2727,7 @@ struct CS2DGameTestAccess {
         game.contactsCT_[0].age = 7;
         check(CS2DOverlay::CollectRadarDots(game).empty(), "PIX35 expired carrier contact disappears");
         player.team = Team::T;
+        check(game.GetFriendlyC4CarrierName() == bot.name, "HUD resolves the current T teammate's name");
         dots = CS2DOverlay::CollectRadarDots(game);
         check(dots.size() == 1 && dots[0].x == bot.x && dots[0].shape == Shape::Carrier,
               "PIX35 T teammate carrier remains known");
@@ -2574,13 +2735,26 @@ struct CS2DGameTestAccess {
         game.bombCarrier_ = -2;
         dots = CS2DOverlay::CollectRadarDots(game);
         check(!game.GetBombCarrierPos() && dots.back().shape == Shape::DroppedBomb,
-              "PIX35 dropped C4 changes to square marker");
+              "PIX35 dropped C4 changes to a map marker at the drop location");
         player.team = Team::CT;
         game.bombIntel_ = false;
         check(CS2DOverlay::CollectRadarDots(game).empty(), "PIX35 unknown dropped C4 stays hidden from CT");
         game.bombIntel_ = true;
         check(CS2DOverlay::CollectRadarDots(game).back().shape == Shape::DroppedBomb,
               "PIX35 known dropped C4 appears for CT");
+        game.bombDropped_ = false;
+        game.bombIntel_ = false;
+        game.bombPlanted_ = true;
+        game.bombX_ = 122;
+        game.bombY_ = 362;
+        for (Team team : {Team::T, Team::CT}) {
+            player.team = team;
+            dots = CS2DOverlay::CollectRadarDots(game);
+            check(!dots.empty() && dots.back().shape == Shape::PlantedBomb &&
+                  dots.back().x == 122 && dots.back().y == 362,
+                  "planted C4 is marked at its installed position for both teams");
+        }
+        game.bombPlanted_ = false;
         game.mode_ = MatchMode::DeathMatch;
         check(CS2DOverlay::CollectRadarDots(game).empty(), "PIX35 deathmatch radar remains empty");
 
@@ -2606,7 +2780,12 @@ struct CS2DGameTestAccess {
             game.hitMarkerTimer_ = 0;
             game.bullets_.clear();
             const auto& samples = BodyGeometry::Get(bot.spriteKey, game.ActorPoseSlot(bot)).samples;
-            const auto point = BodyGeometry::Transform(samples[samples.size()/2], bot.x, bot.y, bot.size,
+            const auto arm = std::find_if(samples.begin(), samples.end(), [&](SDL_FPoint p) {
+                return p.y < -.25f && BodyGeometry::RegionAt(bot.spriteKey, game.ActorPoseSlot(bot),
+                    {p.x + .5f, p.y + .5f}) == BodyGeometry::HitRegion::Arm;
+            });
+            if (arm == samples.end()) return;
+            const auto point = BodyGeometry::Transform(*arm, bot.x, bot.y, bot.size,
                 bot.EffectiveAim(), static_cast<int>(bot.animState), bot.animTimer);
             game.FireBullet(point.x, point.y, 0, WeaponDB::Get(WeaponId::M4A4), -1, Team::CT);
             game.UpdateBullets(.001f, nullptr);
@@ -2626,8 +2805,17 @@ struct CS2DGameTestAccess {
         player.health = 100;
         player.armor = 0;
         game.bullets_.clear();
-        game.FireBullet(player.x, player.y, 0, WeaponDB::Get(WeaponId::Glock18), 0, Team::T);
-        game.UpdateBullets(.001f, nullptr);
+        const auto& pose = BodyGeometry::Get(player.spriteKey, game.ActorPoseSlot(player));
+        const auto arm = std::find_if(pose.samples.begin(), pose.samples.end(), [&](SDL_FPoint p) {
+            return p.y < -.25f && BodyGeometry::RegionAt(player.spriteKey, game.ActorPoseSlot(player),
+                {p.x + .5f, p.y + .5f}) == BodyGeometry::HitRegion::Arm;
+        });
+        if (arm != pose.samples.end()) {
+            const auto playerArm = BodyGeometry::Transform(*arm, player.x, player.y, player.size,
+                player.EffectiveAim(), static_cast<int>(player.animState), player.animTimer);
+            game.FireBullet(playerArm.x, playerArm.y, player.EffectiveAim(), WeaponDB::Get(WeaponId::Glock18), 0, Team::T);
+            game.UpdateBullets(.001f, nullptr);
+        }
         check(game.GetDamageFlashTimer() == .3f && std::any_of(game.damageDirections_.begin(),game.damageDirections_.end(),
               [](const auto& d) { return d.remaining == .5f; }), "PIX35 damage vignette and existing direction arc trigger together");
 
@@ -2665,6 +2853,10 @@ struct CS2DGameTestAccess {
         check(audio.Initialize(), "PIX35 feedback audio initializes");
         const int channel = audio.PlaySoundTracked(SoundEffect::DRYFIRE);
         check(channel >= 0 && Mix_Playing(channel), "PIX35 dedicated dry-fire asset loads and plays");
+        const int headshot = audio.PlaySoundTracked(SoundEffect::HEADSHOT);
+        const int normalHit = audio.PlaySoundTracked(SoundEffect::HIT);
+        check(headshot >= 0 && normalHit >= 0 && Mix_GetChunk(headshot) != Mix_GetChunk(normalHit),
+              "headshot audio loads and uses a different sample from a regular hit");
         audio.Clean();
     }
 
@@ -3663,6 +3855,13 @@ struct CS2DGameTestAccess {
               "PIX-36 follow target index survives the free-mode round trip");
     }
 
+    static CS2DMapData OpenTestMap() {
+        CS2DMapData data;
+        data.mapWidth = data.mapHeight = 60;
+        data.tileWidth = data.tileHeight = 16;
+        return data;
+    }
+
     // 脚步：按实际位移触发，玩家与 BOT 同一套
     static void TestPix36Footsteps() {
         std::printf("\n===== PIX-36 脚步 =====\n");
@@ -3743,6 +3942,8 @@ struct CS2DGameTestAccess {
         player.stealth = false;
 
         // ---- 开镜步频慢于不开镜：同样的时间窗内走的距离更短 ----
+        game.world_->Build(OpenTestMap());
+        game.visibility_.SetWorld(game.world_.get());
         auto walkDistance = [&](bool scoped, float seconds) {
             player.x = 400.0f; player.y = 400.0f;
             player.vx = player.vy = 0.0f;
@@ -3999,6 +4200,8 @@ struct CS2DGameTestAccess {
         game.bombX_ = 400.0f;
         game.bombY_ = 400.0f;
         game.bombTimer_ = 30.0f;
+        game.world_->Build(OpenTestMap());
+        game.visibility_.SetWorld(game.world_.get());
 
         // 贴脸：在半径内且无遮挡 → 可拆
         check(game.IsInDefuseRange(400.0f, 400.0f),
@@ -4013,9 +4216,7 @@ struct CS2DGameTestAccess {
 
         // 中间有墙：即使贴得很近也不能拆
         {
-            CS2DMapData data;
-            data.mapWidth = data.mapHeight = 60;
-            data.tileWidth = data.tileHeight = 16;
+            auto data = OpenTestMap();
             ObjectLayerDef walls;
             walls.name = "Collisions";
             ObjectDef wall;
@@ -4085,6 +4286,8 @@ struct CS2DGameTestAccess {
         CS2DGame game;
         game.SetMatchMode(MatchMode::BombDefusal);
         if (!game.LoadMap(MapPath(), nullptr, true)) return;
+        game.world_->Build(OpenTestMap());
+        game.visibility_.SetWorld(game.world_.get());
         CS2DGame::FireZone fire;
         fire.x = 400.0f; fire.y = 400.0f;
         fire.radius = Tuning::FireRadius;
@@ -5034,11 +5237,17 @@ static void TestPix34Input() {
     saved.MutableSettings().bindings = input.bindings;
     saved.MutableSettings().botDifficulty = 3;
     saved.MutableSettings().combatHintsVisible = false;
+    saved.MutableSettings().teammateXRay = true;
+    const auto xray = static_cast<int>(GameAction::TeammateXRay);
+    saved.MutableSettings().bindings.keys[xray] = SDL_SCANCODE_F8;
+    input.bindings.keys[xray] = SDL_SCANCODE_F8;
     saved.Save();
     SaveManager loaded;
     loaded.Load();
     check(loaded.GetSettings().bindings.keys == input.bindings.keys,
           "PIX-34 all key bindings and handedness survive restart");
+    check(loaded.GetSettings().teammateXRay && loaded.GetSettings().bindings[GameAction::TeammateXRay] == InputBinding(SDL_SCANCODE_F8),
+          "X-ray state and custom key survive restart");
     check(loaded.GetSettings().botDifficulty == 3, "PIX-34 difficulty survives restart");
     check(!loaded.GetSettings().combatHintsVisible, "round2 combat help preference survives restart");
     const auto savePath = directory / (std::string("cs2d_save") + std::string(BuildInfo::SaveSuffix()) + ".ini");
@@ -5247,6 +5456,59 @@ static void TestRound2RadarRendering() {
         draw(0,false,true,400,400,400);
         const auto largeSelf=pixel(208,208);
         check(largeSelf.b>largeSelf.r,"round2 400 unit radar supports centered markers");
+        using Shape = CS2DRenderer::RadarDot::Shape;
+        const std::vector<CS2DRenderer::RadarDot> teamDots = {
+            {460, 400, 100, 245, 170, 255, Shape::Circle, 0.0f, true},
+            {760, 400, 100, 245, 170, 255, Shape::Circle, 0.0f, true},
+            {40, 400, 240, 40, 40, 255}
+        };
+        auto hasTeamGreen = [&](int left, int right) {
+            for (int y = 100; y <= 116; ++y)
+                for (int x = left; x <= right; ++x) {
+                    const auto c = pixel(x, y);
+                    if (c.g > 200 && c.g > c.r * 2) return true;
+                }
+            return false;
+        };
+        SDL_SetRenderDrawColor(software, 0, 0, 0, 255);
+        SDL_RenderClear(software);
+        renderer.DrawRadarHUD(400, 400, 0, teamDots, 800, 800, true, false, true, 0,
+                              200, 2.0f, false, 640, 480);
+        SDL_RenderPresent(software);
+        check(hasTeamGreen(134, 142) && hasTeamGreen(194, 206),
+              "small radar displays in-range and out-of-range teammate markers");
+        const auto leftEdge = pixel(15, 108);
+        check(leftEdge.r < 200, "off-radar enemies do not receive an edge arrow");
+        SDL_SetRenderDrawColor(software, 0, 0, 0, 255);
+        SDL_RenderClear(software);
+        renderer.DrawRadarHUD(400, 400, 0, teamDots, 800, 800, false, false, true, 225,
+                              200, .65f, false, 640, 480, true);
+        SDL_RenderPresent(software);
+        check(hasTeamGreen(163, 170) && !hasTeamGreen(194, 206),
+              "full map marks distant allies at their projected positions");
+        const auto c4 = Tuning::RadarC4Color;
+        const auto planted = Tuning::RadarPlantedC4Color;
+        auto hasC4Ink = [&](int left, int right, SDL_Color ink) {
+            for (int y = 102; y <= 114; ++y)
+                for (int x = left; x <= right; ++x) {
+                    const auto c = pixel(x, y);
+                    if (c.r == ink.r && c.g == ink.g && c.b == ink.b) return true;
+                }
+            return false;
+        };
+        SDL_SetRenderDrawColor(software, 0, 0, 0, 255);
+        SDL_RenderClear(software);
+        renderer.DrawRadarHUD(400, 400, 0, {{760, 400, c4.r, c4.g, c4.b, 255, Shape::Carrier, 0.0f, true}},
+                              800, 800, true, false, true, 0, 200, 2.0f, false, 640, 480);
+        SDL_RenderPresent(software);
+        check(hasC4Ink(182, 199, c4), "distant C4 remains marked on the small radar");
+        SDL_SetRenderDrawColor(software, 0, 0, 0, 255);
+        SDL_RenderClear(software);
+        renderer.DrawRadarHUD(400, 400, 0, {{760, 400, planted.r, planted.g, planted.b, 255, Shape::PlantedBomb}},
+                              800, 800, false, false, true, 225, 200, .65f, false, 640, 480, true);
+        SDL_RenderPresent(software);
+        check(hasC4Ink(160, 173, planted) && !hasC4Ink(182, 205, planted),
+              "full map draws the planted C4 marker at the projected position");
         SDL_SetRenderDrawColor(software,0,0,0,255);
         SDL_RenderClear(software);
         renderer.DrawCrosshair(320,240,255,255,255,255,2,true,12,5);
@@ -5428,7 +5690,9 @@ static void TestRound3HudLayouts(bool experience = false) {
                 for (int scene = 0; scene < sceneCount; ++scene) {
                     GameUI::InGameCtx hud;
                     hud.state = PLAYING;
-                    hud.playerTeam = scene == 6 ? Team::None : Team::CT;
+                    hud.playerTeam = scene == 6 ? Team::None :
+                        (scene == 0 || scene == 2) ? Team::T : Team::CT;
+                    if (scene <= 2) hud.c4CarrierName = "铁壁";
                     hud.bindings = &bindings;
                     hud.scoreT = 7;
                     hud.scoreCT = 6;
@@ -5510,10 +5774,17 @@ static void TestRound3HudLayouts(bool experience = false) {
                     }
                     const auto *draws = ImGui::GetDrawData();
                     bool valid = draws && draws->TotalVtxCount > 0;
+                    bool carrierDrawnAtTop = false;
+                    const float hudScale = draws ? draws->DisplaySize.y / 1080.0f : 1.0f;
                     for (int list = 0; draws && list < draws->CmdListsCount; ++list)
-                        for (const auto &vertex : draws->CmdLists[list]->VtxBuffer)
+                        for (const auto &vertex : draws->CmdLists[list]->VtxBuffer) {
                             valid &= std::isfinite(vertex.pos.x) && std::isfinite(vertex.pos.y);
+                            carrierDrawnAtTop |= vertex.col == IM_COL32(255, 210, 100, 255) &&
+                                vertex.pos.y >= 98.0f * hudScale && vertex.pos.y <= 132.0f * hudScale;
+                        }
                     check(valid, "round3 HUD stage resolution and rendering scale emit finite geometry");
+                    if (scene <= 2)
+                        check(carrierDrawnAtTop == (scene == 0), "C4 carrier name is drawn below the timer only for T before plant");
                     if (scene == 3 || (experience && scene >= 7) || (width == 1920 && percent == 100)) {
                         const auto path = directory / ("hud-" + std::string(scenes[scene]) + "-" +
                                                        std::to_string(width) + "x" + std::to_string(height) +
@@ -5969,6 +6240,11 @@ static void TestExperienceRendering(bool gpu) {
 }
 
 int main(int argc,char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "--headshot-xray") {
+        CS2DGameTestAccess::TestHeadshotAndTeammateXRay();
+        std::printf("Headshot and teammate X-ray: %d passed, %d failed\n", g_pass, g_fail);
+        return g_fail ? 1 : 0;
+    }
     if (argc>1 && std::string(argv[1])=="--experience") {
         CS2DGameTestAccess::TestExperienceStates();
         EngineTestAccess::TestExperienceEntryPoints();
@@ -6089,6 +6365,7 @@ int main(int argc,char** argv) {
         std::printf("PIX35 focused: %d passed, %d failed\n", g_pass, g_fail);
         return g_fail ? 1 : 0;
     }
+    CS2DGameTestAccess::TestHeadshotAndTeammateXRay();
     std::printf("===== 合并契约 v1 玩法回归测试 =====\n");
     std::printf("地图: %s\n", MapPath());
 

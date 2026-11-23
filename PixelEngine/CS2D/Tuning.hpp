@@ -1,4 +1,5 @@
 #pragma once
+#include <SDL2/SDL.h>
 #include <algorithm>
 
 // ============================================================================
@@ -34,6 +35,30 @@ constexpr float SmokeVisualRadiusMul = 1.32f;
 constexpr float PlayerAcceleration = 1200.0f;
 constexpr float PlayerStopSpeed = 2.0f;
 constexpr float BulletHitPadding = 4.0f;
+constexpr float HeadDamageMultiplier = 4.0f;
+constexpr float ChestArmDamageMultiplier = 1.0f;
+constexpr float AbdomenDamageMultiplier = 1.25f;
+constexpr float LegDamageMultiplier = 0.75f;
+constexpr float BulletDamageAtMaxRange = 0.80f;
+constexpr float HeadshotMarkerSeconds = 0.30f;
+constexpr float HeadshotMarkerScale = 1.30f;
+constexpr SDL_Color HeadshotColor{255, 203, 84, 255};
+constexpr float HeadshotFeedIconRadius = 5.0f;
+constexpr float HeadshotFeedIconStroke = 1.2f;
+constexpr SDL_Color TeammateXRayColor{85, 240, 216, 155};
+constexpr float TeammateXRayOutlineScale = 1.04f;
+constexpr Uint8 TeammateXRayOutlineAlpha = 225;
+constexpr SDL_Color TeammateXRayLabelColor{149, 255, 236, 255};
+constexpr int TeammateXRayLabelSize = 14;
+constexpr float TeammateXRayLabelGap = 4.0f;
+constexpr float RadarAllyHeadingLength = 3.0f;
+constexpr SDL_Color RadarAllyColor{100, 245, 170, 255};
+constexpr float RadarAllyArrowMinRadius = 3.5f;
+constexpr float RadarAllyArrowRadius = 5.0f;
+constexpr SDL_Color RadarC4Color{255, 185, 78, 255};
+constexpr SDL_Color RadarPlantedC4Color{255, 121, 104, 255};
+constexpr float RadarC4GlyphScale = 1.4f;
+constexpr float RadarDroppedC4PulseRate = 0.005f;
 constexpr float BombPickupRadius = 48.0f;
 constexpr float DropPickupRadius = 32.0f;
 constexpr float ManualPickupRadius = 60.0f;

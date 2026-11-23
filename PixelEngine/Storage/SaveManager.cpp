@@ -55,6 +55,7 @@ void SaveManager::Load() {
     settings_.vsync            = ini.GetBool("settings", "vsync", false);
     settings_.renderScalePct   = ini.GetInt  ("settings", "render_scale", 100);
     settings_.fogOpacityPct    = ini.GetInt  ("settings", "fog_opacity", 100);
+    settings_.teammateXRay     = ini.GetBool ("settings", "teammate_xray", GameSettings{}.teammateXRay);
     settings_.sniperDelayedScopeClose =
         ini.GetBool("settings", "sniper_delayed_scope_close", false);
     settings_.scopeSensitivity    = ini.GetFloat("settings", "scope_sensitivity", 1.0f);
@@ -143,6 +144,7 @@ void SaveManager::Save() {
     ini.SetBool ("settings", "vsync",       settings_.vsync);
     ini.SetInt  ("settings", "render_scale", settings_.renderScalePct);
     ini.SetInt  ("settings", "fog_opacity", settings_.fogOpacityPct);
+    ini.SetBool ("settings", "teammate_xray", settings_.teammateXRay);
     ini.SetBool ("settings", "sniper_delayed_scope_close", settings_.sniperDelayedScopeClose);
     ini.SetFloat("settings", "scope_sensitivity", settings_.scopeSensitivity);
     ini.SetFloat("settings", "scope_cross_thickness", settings_.scopeCrossThickness);

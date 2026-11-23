@@ -7,6 +7,7 @@
 #include <iostream>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 #include <random>
 
 // ============================================================================
@@ -193,6 +194,24 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
         return;
     }
 
+    // 记录开枪前准星压住的敌人。后坐力和散布继续决定这发弹实际命中谁。
+    const float crosshairX = worldMX + player_.RecoilOffsetX();
+    const float crosshairY = worldMY + player_.RecoilOffsetY();
+    int crosshairTarget = -1;
+    float nearestDistanceSquared = std::numeric_limits<float>::infinity();
+    for (size_t i = 0; i < bots_.size(); ++i) {
+        const auto& bot = bots_[i];
+        if (!bot.alive || !IsHostile(player_, bot)) continue;
+        const float dx = bot.x - player_.x, dy = bot.y - player_.y;
+        const float distanceSquared = dx * dx + dy * dy;
+        if (distanceSquared < nearestDistanceSquared &&
+            BodyGeometry::Contains(bot.spriteKey, ActorPoseSlot(bot), bot.x, bot.y, bot.size,
+                bot.EffectiveAim(), static_cast<int>(bot.animState), bot.animTimer, crosshairX, crosshairY)) {
+            nearestDistanceSquared = distanceSquared;
+            crosshairTarget = static_cast<int>(i);
+        }
+    }
+
     // 散布 + 多弹丸（霰弹）
     // 静止 = 基础散布；静步/跑动按速度放大，跑动时明显打不准。
     const float speedFraction = std::hypot(player_.vx,player_.vy) /
@@ -205,7 +224,7 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
     recoilShakeAge_ = 0.0f;
     for (int p = 0; p < std::max(1, def.pellets); ++p) {
         const float angle = player_.EffectiveAim() + spreadDist(rng_);
-        FireBullet(player_.x, player_.y, angle, def, -1, player_.team);
+        FireBullet(player_.x, player_.y, angle, def, -1, player_.team, crosshairTarget);
     }
 
     player_.ammo--;
@@ -231,7 +250,7 @@ void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, flo
 
 // 由 WeaponDef 直接发射子弹
 void CS2DGame::FireBullet(float x, float y, float angle, const WeaponDef& def,
-                          int ownerIdx, Team ownerTeam) {
+                          int ownerIdx, Team ownerTeam, int crosshairTarget) {
     Bullet b;
     b.sourcePosition={x,y};
     if (const auto* owner=DamageOwner(ownerIdx)) b.equipmentId=owner->equipment[owner->weaponSlot].id;
@@ -241,8 +260,9 @@ void CS2DGame::FireBullet(float x, float y, float angle, const WeaponDef& def,
     b.vy = std::sin(angle) * def.bulletSpeed;
     b.traveled = 0.0f;
     b.maxDist  = def.range;
-    b.damage   = static_cast<int>(def.damage);
+    b.damage   = def.damage;
     b.ownerIdx = ownerIdx;
+    b.crosshairTarget = crosshairTarget;
     b.ownerTeam = ownerTeam;
     b.weapon   = def.id;      // 记录武器：击杀奖励按武器类型发放
     b.active   = true;
@@ -306,6 +326,8 @@ void CS2DGame::UpdateBullets(float dt, AudioManager *audio) {
         const float wall = visibility_.FirstBulletWallFraction(prevX, prevY, bullet.x, bullet.y);
         float nearest = wall;
         int hitActor = -2;
+        using Region = BodyGeometry::HitRegion;
+        Region hitRegion = Region::None;
         auto intersection = [&](const Player &actor, int index) {
             if (!actor.alive || bullet.ownerIdx == index || !IsHostileTeam(bullet.ownerTeam, actor.team))
                 return;
@@ -319,12 +341,14 @@ void CS2DGame::UpdateBullets(float dt, AudioManager *audio) {
             const float step = std::max(.001f, actor.size / 128 / std::max(.001f, length));
             for (float fraction = from; fraction <= to; fraction += step) {
                 const float x = prevX + dx * fraction, y = prevY + dy * fraction;
-                if (!BodyGeometry::Contains(actor.spriteKey, ActorPoseSlot(actor), actor.x, actor.y,
-                                            actor.size, actor.EffectiveAim(),
-                                            static_cast<int>(actor.animState), actor.animTimer, x, y))
+                const auto point = BodyGeometry::ToFrame(actor.x, actor.y, actor.size, actor.EffectiveAim(),
+                                                         static_cast<int>(actor.animState), actor.animTimer, x, y);
+                const auto region = BodyGeometry::RegionAt(actor.spriteKey, ActorPoseSlot(actor), point);
+                if (region == Region::None || (wall < 1.0f && fraction >= wall))
                     continue;
                 nearest = fraction;
                 hitActor = index;
+                hitRegion = region;
                 break;
             }
         };
@@ -340,6 +364,52 @@ void CS2DGame::UpdateBullets(float dt, AudioManager *audio) {
             AddBulletVisual(bullet, prevX, prevY, bullet.x, bullet.y, true);
             continue;
         }
+
+        const float hitDistance = bullet.traveled - distance * (1.0f - nearest);
+        if (bullet.ownerIdx == -1) {
+            if (hitActor >= 0 && hitActor == bullet.crosshairTarget)
+                hitRegion = Region::Head;
+            else if (hitRegion == Region::Head)
+                hitRegion = Region::Chest;
+        } else if (hitActor >= -1 && hitRegion != Region::Head && speed > 0.0f) {
+            // In the top-down projection, the head sits above the torso and arms.
+            // A ray through that head can hit it even if it first crosses the outline.
+            const Player& target = hitActor == -1 ? player_ : bots_[hitActor];
+            const float probeLength = std::clamp(bullet.maxDist - hitDistance, 0.0f, target.size * 1.5f);
+            const float endX = bullet.x + probeLength * bullet.vx / speed;
+            const float endY = bullet.y + probeLength * bullet.vy / speed;
+            const float limit = visibility_.FirstBulletWallFraction(bullet.x, bullet.y, endX, endY);
+            const int slot = ActorPoseSlot(target);
+            auto framePoint = [&](float x, float y) {
+                return BodyGeometry::ToFrame(target.x, target.y, target.size, target.EffectiveAim(),
+                    static_cast<int>(target.animState), target.animTimer, x, y);
+            };
+            const auto from = framePoint(bullet.x, bullet.y);
+            const auto to = framePoint(endX, endY);
+            const int steps = std::max(1, static_cast<int>(
+                std::ceil(probeLength * (2 * BodyGeometry::Resolution) / target.size)));
+            for (int step = 1; step <= steps; ++step) {
+                const float fraction = static_cast<float>(step) / steps;
+                if (limit < 1.0f && fraction >= limit) break;
+                const SDL_FPoint point{from.x + (to.x - from.x) * fraction,
+                                       from.y + (to.y - from.y) * fraction};
+                if (BodyGeometry::RegionAt(target.spriteKey, slot, point) == Region::Head) {
+                    hitRegion = Region::Head;
+                    break;
+                }
+            }
+        }
+        const bool headshot = hitRegion == Region::Head;
+        auto applyBulletDamage = [&](Player& victim) {
+            const float multiplier = headshot ? Tuning::HeadDamageMultiplier :
+                hitRegion == Region::Abdomen ? Tuning::AbdomenDamageMultiplier :
+                hitRegion == Region::Leg ? Tuning::LegDamageMultiplier : Tuning::ChestArmDamageMultiplier;
+            const float rangeFraction = std::clamp(hitDistance / std::max(1.0f, bullet.maxDist), 0.0f, 1.0f);
+            const float falloff = 1.0f - rangeFraction * (1.0f - Tuning::BulletDamageAtMaxRange);
+            const bool armorCoversHit = (!headshot || victim.helmet) && hitRegion != Region::Leg;
+            return ApplyDamage(victim, static_cast<int>(std::lround(bullet.damage * multiplier * falloff)),
+                               armorCoversHit ? WeaponDB::ArmorPen(bullet.weapon) : 1.0f);
+        };
 
         // ---- 命中 BOT ----
         for (size_t i = 0; i < bots_.size(); ++i) {
@@ -382,14 +452,18 @@ void CS2DGame::UpdateBullets(float dt, AudioManager *audio) {
                 }
             }
 
-            const bool armored = bot.armor > 0;
-            const bool killed = ApplyDamage(bot, bullet.damage, WeaponDB::ArmorPen(bullet.weapon));
+            const bool armored = bot.armor > 0 && hitRegion != Region::Leg;
+            const bool killed = applyBulletDamage(bot);
             if (bullet.ownerIdx == -1) {
-                // 同一帧多弹丸命中时保留击杀确认，避免被后续普通命中覆盖。
-                if (killed || hitMarkerKind_ != HitMarkerKind::Kill || hitMarkerTimer_ <= 0) {
-                    hitMarkerKind_ = killed ? HitMarkerKind::Kill : armored ? HitMarkerKind::Armor : HitMarkerKind::Normal;
-                    hitMarkerTimer_ = killed ? 0.30f : 0.18f;
+                const auto kind = killed ? (headshot ? HitMarkerKind::HeadshotKill : HitMarkerKind::Kill)
+                    : headshot ? HitMarkerKind::Headshot : armored ? HitMarkerKind::Armor : HitMarkerKind::Normal;
+                if (hitMarkerTimer_ <= 0 || kind >= hitMarkerKind_) {
+                    hitMarkerKind_ = kind;
+                    hitMarkerTimer_ = headshot ? Tuning::HeadshotMarkerSeconds : killed ? 0.30f : 0.18f;
                 }
+                if (headshot && audio) audio->PlaySound(SoundEffect::HEADSHOT);
+            } else if (headshot && audio) {
+                audio->PlaySoundAt(SoundEffect::HEADSHOT, bot.x, bot.y, ListenerX(), ListenerY());
             }
 
             if (killed) {
@@ -399,13 +473,14 @@ void CS2DGame::UpdateBullets(float dt, AudioManager *audio) {
                         : ((bullet.ownerIdx >= 0 && bullet.ownerIdx < static_cast<int>(bots_.size()))
                                ? &bots_[static_cast<size_t>(bullet.ownerIdx)]
                                : nullptr);
-                OnCombatantKilled(bot, audio, bulletKiller, bullet.weapon,bullet.equipmentId,bullet.sourcePosition);
+                OnCombatantKilled(bot, audio, bulletKiller, bullet.weapon, bullet.equipmentId, bullet.sourcePosition,
+                                  headshot);
 
                 if (audio) {
                     audio->PlaySoundAt(SoundEffect::KILL, bot.x, bot.y, ListenerX(), ListenerY());
                     if (bullet.ownerIdx == -1) audio->PlaySound(SoundEffect::KILL, 0.65f);
                 }
-            } else if (audio) {
+            } else if (audio && !headshot) {
                 audio->PlaySoundAt(bullet.ownerIdx == -1 && armored ? SoundEffect::ARMOR_HIT : SoundEffect::HIT,
                                    bot.x, bot.y, ListenerX(), ListenerY());
             }
@@ -440,13 +515,14 @@ void CS2DGame::UpdateBullets(float dt, AudioManager *audio) {
                 *direction = {std::atan2(-bullet.vy, -bullet.vx), 0.5f};
                 damageFlashTimer_ = 0.30f; // 玩家受伤反馈
                 if (audio)
-                    audio->PlaySound(player_.armor > 0 ? SoundEffect::ARMOR_HIT : SoundEffect::HIT);
-                if (ApplyDamage(player_, bullet.damage, WeaponDB::ArmorPen(bullet.weapon))) {
+                    audio->PlaySound(headshot ? SoundEffect::HEADSHOT :
+                        player_.armor > 0 && hitRegion != Region::Leg ? SoundEffect::ARMOR_HIT : SoundEffect::HIT);
+                if (applyBulletDamage(player_)) {
                     OnCombatantKilled(player_, audio,
                                       bullet.ownerIdx >= 0 && bullet.ownerIdx < static_cast<int>(bots_.size())
                                           ? &bots_[bullet.ownerIdx]
                                           : nullptr,
-                                      bullet.weapon,bullet.equipmentId,bullet.sourcePosition);
+                                      bullet.weapon, bullet.equipmentId, bullet.sourcePosition, headshot);
                 }
             }
         }
@@ -974,7 +1050,8 @@ bool CS2DGame::SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) con
 // 死亡处理
 // ============================================================================
 
-void CS2DGame::OnCombatantKilled(Player &victim, AudioManager *audio, Player *killer, WeaponId weapon, std::uint64_t equipmentId, std::optional<SDL_FPoint> sourcePosition) {
+void CS2DGame::OnCombatantKilled(Player &victim, AudioManager *audio, Player *killer, WeaponId weapon,
+                               std::uint64_t equipmentId, std::optional<SDL_FPoint> sourcePosition, bool headshot) {
     if (audio)
         audio->StopChannel(victim.defuseChannel);
     else if (victim.defuseChannel >= 0 && Mix_QuerySpec(nullptr, nullptr, nullptr))
@@ -998,6 +1075,7 @@ void CS2DGame::OnCombatantKilled(Player &victim, AudioManager *audio, Player *ki
     event.victimTeam = victim.team;
     event.weapon = weapon;
     event.personal = killer == &player_ || &victim == &player_;
+    event.headshot = headshot;
     event.text = event.killer + " 击杀 " + event.victim;
     killFeed_.insert(killFeed_.begin(), event);
     if (killFeed_.size() > 6)

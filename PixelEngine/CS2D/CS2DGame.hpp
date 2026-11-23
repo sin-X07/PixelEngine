@@ -500,8 +500,9 @@ public:
         float vy = 0.0f;
         float traveled = 0.0f;
         float maxDist  = 1600.0f;
-        int   damage   = 25;
+        float damage   = 25.0f;
         int   ownerIdx  = -1;        // -1=玩家, >=0=BOT索引
+        int   crosshairTarget = -1;  // 玩家开枪时准星下的敌人，-1 表示无目标
         Team  ownerTeam = Team::None;
         // 发射该子弹的武器：击杀奖励按武器类型发放（照抄 CS2）
         WeaponId weapon = WeaponId::None;
@@ -571,6 +572,7 @@ public:
         Team killerTeam = Team::None, victimTeam = Team::None;
         WeaponId weapon = WeaponId::None;
         bool personal = false;
+        bool headshot = false;
     };
     struct DeathPresentation {
         KillFeedEntry event;
@@ -719,8 +721,12 @@ public:
         if (!player_.alive) return false;
         return mode_ == MatchMode::DeathMatch || !round_.IsFrozen();
     }
-    enum class HitMarkerKind { Normal, Armor, Kill };
+    enum class HitMarkerKind { Normal, Armor, Kill, Headshot, HeadshotKill };
     HitMarkerKind GetHitMarkerKind() const { return hitMarkerKind_; }
+    void SetTeammateXRay(bool enabled) { teammateXRay_ = enabled; }
+    const std::vector<Presentation::TeammateXRayLabel>& GetTeammateXRayLabels() const {
+        return teammateXRayLabels_;
+    }
     float GetHitMarkerTimer()   const { return hitMarkerTimer_; }
     float GetDryFireHintTimer() const { return dryFireHintTimer_; }
     float GetReloadProgress() const {
@@ -1356,6 +1362,8 @@ private:
     int previousEquipSlot_ = 2;
     WeaponId previousEquipWeapon_ = WeaponId::Knife;
     HitMarkerKind hitMarkerKind_ = HitMarkerKind::Normal;
+    bool teammateXRay_ = false;
+    std::vector<Presentation::TeammateXRayLabel> teammateXRayLabels_;
     float dryFireHintTimer_ = 0.0f;
     float dryFireCooldown_ = 0.0f;
     float hitMarkerTimer_ = 0.0f;   // 命中敌人反馈
@@ -1576,8 +1584,9 @@ private:
     bool SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) const;
     void RespawnBOT(Player& bot);
 
-    void MoveWithCollision(Player& entity, float dt);    void FireBullet(float x, float y, float angle, const WeaponDef& def,
-                    int ownerIdx, Team ownerTeam);
+    void MoveWithCollision(Player& entity, float dt);
+    void FireBullet(float x, float y, float angle, const WeaponDef& def,
+                    int ownerIdx, Team ownerTeam, int crosshairTarget = -1);
 
     bool BotCanSeePlayer(const Player& bot) const;
     bool PlayerCanSeeBot(const Player& bot) const;
@@ -1614,5 +1623,6 @@ private:
     void DetonateBomb(class AudioManager* audio);
     void OnCombatantKilled(Player& victim, class AudioManager* audio,
                            Player* killer = nullptr, WeaponId weapon = WeaponId::None,
-                           std::uint64_t equipmentId=0, std::optional<SDL_FPoint> sourcePosition=std::nullopt);
+                           std::uint64_t equipmentId=0, std::optional<SDL_FPoint> sourcePosition=std::nullopt,
+                           bool headshot = false);
 };

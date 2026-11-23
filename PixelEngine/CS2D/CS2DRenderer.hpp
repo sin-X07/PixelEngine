@@ -1,5 +1,6 @@
 #pragma once
 #include <functional>
+#include <optional>
 #include "AimLineStyle.hpp"
 #include "Tuning.hpp"
 #include "CS2DWorld.hpp"
@@ -82,8 +83,8 @@ public:
     void DrawWorld();
     void DrawOverlay();
 
-    // 角色精灵绘制（统一玩家/BOT）
-    void DrawCharacter(const SpriteDrawParams& p);
+    // 角色精灵绘制（统一玩家/BOT）。透视模式只在角色完全不可见时绘制并返回 true。
+    bool DrawCharacter(const SpriteDrawParams& p, bool occludedTeammate = false);
 
     // 子弹 / 准星
     // 枪弹视觉段（契约 v1 第 6 节）：数据由 CS2DGame 产出，这里只绘制。
@@ -114,10 +115,12 @@ public:
     // 雷达（左上角 HUD + 中心全屏覆盖 — Tab）
     // 雷达上的一个标记（世界坐标 + 颜色）
     struct RadarDot {
-        enum class Shape { Circle, Carrier, DroppedBomb };
+        enum class Shape { Circle, Carrier, DroppedBomb, PlantedBomb };
         float x = 0.0f, y = 0.0f;
         Uint8 r = 255, g = 255, b = 255, alpha = 255;
         Shape shape = Shape::Circle;
+        std::optional<float> heading;
+        bool teammate = false;
     };
     // C4 携带者后背的贴图（取代旧的黄色菱形标记）。angle 用于让背包随人物朝向转动。
     void DrawBackpackC4(float worldX, float worldY, float size, float aimAngle, float timeSec);
@@ -223,6 +226,7 @@ private:
     std::array<float, 3> scopeMainCamera_{};
     float scopeMainFogMs_ = 0;
     std::vector<std::int8_t> observerVisibilityPixels_;
+    bool IsVisiblePixel(int x, int y);
     bool visibilityObserver_ = false;
     const CS2DWorld* world_ = nullptr;
     std::string mapDir_;

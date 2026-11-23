@@ -347,6 +347,7 @@ GameUI::Actions Engine::BuildActions() {
     };
 
     // 视野 / 开镜（契约 v1.2）
+    a.setTeammateXRay = [this](bool v) { SetTeammateXRay(v); };
     a.setFogOpacity = [this](int v) {
         v = std::clamp(v, 0, 100);
         saveManager->MutableSettings().fogOpacityPct = v;
@@ -638,6 +639,7 @@ void Engine::ResetSettingsSection(GameUI::SettingsSection section) {
         break;
     case GameUI::SettingsSection::VisionScope:
         actions.setFogOpacity(defaults.fogOpacityPct);
+        actions.setTeammateXRay(defaults.teammateXRay);
         actions.setSniperDelayedScopeClose(defaults.sniperDelayedScopeClose);
         actions.setScopeSensitivity(defaults.scopeSensitivity);
         actions.setScopeCrossThickness(defaults.scopeCrossThickness);
@@ -710,6 +712,7 @@ void Engine::ApplySavedSettings() {
 
     // 视野 / 开镜（契约 v1.2 / v1.3）
     if (cs2dRenderer) cs2dRenderer->SetFogOpacityPct(s.fogOpacityPct);
+    cs2dGame->SetTeammateXRay(s.teammateXRay);
     if (cs2dGame) {
         cs2dGame->SetDelayedScopeClose(s.sniperDelayedScopeClose);
         cs2dGame->SetScopeCrosshair(s.scopeCrossThickness, s.scopeCrossDynamic);
@@ -894,6 +897,12 @@ void Engine::ToggleFullscreen() {
 // 输入
 // ============================================================================
 
+void Engine::SetTeammateXRay(bool enabled) {
+    saveManager->MutableSettings().teammateXRay = enabled;
+    cs2dGame->SetTeammateXRay(enabled);
+    saveManager->Save();
+}
+
 void Engine::HandleInput() {
     inputManager->SetBindings(saveManager->GetSettings().bindings);
     if (currentState != SETTINGS) {
@@ -922,6 +931,8 @@ void Engine::HandleInput() {
     if (inputManager->IsQuitRequested()) isRunning = false;
     if (inputManager->IsFullscreenToggleRequested()) ToggleFullscreen();
     if (inputManager->IsMuteToggleRequested()) audioManager->ToggleMute();
+    if (inputManager->gameplayContext && inputManager->WasPressed(GameAction::TeammateXRay))
+        SetTeammateXRay(!saveManager->GetSettings().teammateXRay);
 
     if (inputManager->IsPauseToggleRequested() && (!IsTransitionActive() || sideChoicePending_)) {
         if (currentState == PLAYING) {
@@ -2186,6 +2197,7 @@ void Engine::Render() {
         ctx.radarHudSize          = cs2dOverlay.radar.hudSize;
         ctx.radarMapZoom          = cs2dOverlay.radar.mapZoom;
         ctx.fogOpacityPct         = saveManager ? saveManager->GetSettings().fogOpacityPct : 100;
+        ctx.teammateXRay          = saveManager->GetSettings().teammateXRay;
         ctx.sniperDelayedScopeClose =
             saveManager ? saveManager->GetSettings().sniperDelayedScopeClose : false;
         ctx.scopeSensitivity    = saveManager ? saveManager->GetSettings().scopeSensitivity : 1.0f;
@@ -2576,8 +2588,10 @@ void Engine::Render() {
 
         // 击杀播报
         for (const auto& e : cs2dGame->GetKillFeed()) {
-            ictx.killFeed.push_back({e.id, e.killer, e.victim, WeaponDB::Get(e.weapon).iconPath, e.killerTeam, e.victimTeam, e.life, e.personal});
+            ictx.killFeed.push_back({e.id, e.killer, e.victim, WeaponDB::Get(e.weapon).iconPath,
+                                    e.killerTeam, e.victimTeam, e.life, e.personal, e.headshot});
         }
+        ictx.teammateXRayLabels = cs2dGame->GetTeammateXRayLabels();
 
         // 屏幕中央提示（回合开始 / 胜负）
         ictx.announcement = cs2dGame->GetAnnouncement();

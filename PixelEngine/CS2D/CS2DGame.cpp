@@ -1384,6 +1384,7 @@ void CS2DGame::PrepareCamera(int viewW, int viewH, float interpolation) {
 }
 
 void CS2DGame::Render(int viewW, int viewH) {
+    teammateXRayLabels_.clear();
     if (!renderer_ || !world_)
         return;
     if (!cameraPrepared_)
@@ -1410,9 +1411,20 @@ void CS2DGame::Render(int viewW, int viewH) {
         op.crossThickness = scopeCrossThickness_;
         op.crossGap = Presentation::ComputeScopeCrossGap(GetCrosshairBloom(), scopeCrossDynamic_);
         if (renderer_->BeginScopeScene(GetRenderAimX(),GetRenderAimY(),op.centerX,op.centerY,scope.zoomMultiplier)) {
+            const float aperture = op.radiusPx * scope.transition;
+            auto insideScope = [&](const Presentation::TeammateXRayLabel& label) {
+                return std::hypot(label.x - op.centerX, label.y - op.centerY) <= aperture;
+            };
+            teammateXRayLabels_.erase(
+                std::remove_if(teammateXRayLabels_.begin(), teammateXRayLabels_.end(), insideScope),
+                teammateXRayLabels_.end());
+            const auto mainLabelCount = teammateXRayLabels_.size();
             DrawWorldPass(true);
             renderer_->EndScopeScene();
-            const float aperture = op.radiusPx * scope.transition;
+            teammateXRayLabels_.erase(
+                std::remove_if(teammateXRayLabels_.begin() + mainLabelCount, teammateXRayLabels_.end(),
+                    [&](const Presentation::TeammateXRayLabel& label) { return !insideScope(label); }),
+                teammateXRayLabels_.end());
             renderer_->DrawScopeScene(op.centerX,op.centerY,aperture,scope.transition);
         }
         renderer_->DrawScopeOverlay(op);
@@ -1637,6 +1649,19 @@ void CS2DGame::DrawWorldPass(bool lens) {
         renderer_->DrawVisionFog(observerX, observerY, observerAngle);
     }
 
+    if (teammateXRay_ && player_.alive && !IsSpectating() && !IsDeathMatch() && flashTimer_ <= 0.0f) {
+        renderer_->SetVisibilityFilter(actorVisible);
+        for (const auto& bot : bots_) {
+            if (!bot.alive || bot.team != player_.team || bot.team == Team::None) continue;
+            const auto sp = MakeActorDrawParams(bot, observer);
+            if (renderer_->DrawCharacter(sp, true)) {
+                const float zoom = renderer_->GetZoom();
+                teammateXRayLabels_.push_back({(sp.x - renderer_->GetCameraX()) * zoom,
+                    (sp.y - sp.size * .5f - renderer_->GetCameraY()) * zoom, bot.name});
+            }
+        }
+        renderer_->SetVisibilityFilter({});
+    }
 }
 
 CS2DGame::RefundQuote CS2DGame::EvaluateRefund(const Presentation::BuyRequest &request) const {

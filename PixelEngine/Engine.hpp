@@ -202,6 +202,7 @@ private:
 
     // 内部方法
     void HandleInput();
+    void SetTeammateXRay(bool enabled);
     GameUI::Actions BuildActions();
     void StartMatch(MatchMode mode);   // 按模式加载对应地图并开局
     void RestartCurrentMatch();        // 暂停菜单“重新开始”：沿用地图，重置回合

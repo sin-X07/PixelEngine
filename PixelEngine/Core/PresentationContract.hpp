@@ -4,11 +4,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <string>
 
 // ============================================================================
 // PresentationContract — 玩法层 → 表现层（UI）的唯一跨层契约（契约 v1 第 2 节）
 //
-// 只允许 include Types.hpp / WeaponDef.hpp / <cstdint>：
+// 仅依赖 Types.hpp、WeaponDef.hpp 和标准库。
 // 不得包含 GameUI、CS2DGame、ImGui 或 OpenGL，避免表现层反向依赖玩法实现。
 // 所有结构按值传递（快照），不暴露业务对象的可写指针。
 // ============================================================================
@@ -18,6 +19,12 @@ namespace Presentation {
 struct DamageDirection {
     float angle = 0;
     float remaining = 0;
+};
+
+struct TeammateXRayLabel {
+    float x = 0;
+    float y = 0;
+    std::string name;
 };
 
 // ---- 购买 ----

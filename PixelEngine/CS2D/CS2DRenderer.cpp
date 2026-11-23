@@ -698,6 +698,14 @@ void CS2DRenderer::DrawOverlay() {
 //   主武器 → 第1行第1列；副武器 → 第2行第2列；近战 → 第2行第1列
 // ============================================================================
 
+bool CS2DRenderer::IsVisiblePixel(int x, int y) {
+    auto& pixels = visibilityObserver_ ? observerVisibilityPixels_ : visibilityPixels_;
+    auto& cached = pixels[static_cast<size_t>(y) * viewW_ + x];
+    if (cached < 0)
+        cached = visibilityFilter_(cameraX_ + (x + .5f) / zoom_, cameraY_ + (y + .5f) / zoom_) ? 1 : 0;
+    return cached != 0;
+}
+
 void CS2DRenderer::MaskedCopy(SDL_Texture *texture, const SDL_Rect *source, const SDL_FRect &dst,
                               float angle) {
     if (!renderer_ || !texture || dst.w <= 0 || dst.h <= 0)
@@ -732,10 +740,7 @@ void CS2DRenderer::MaskedCopy(SDL_Texture *texture, const SDL_Rect *source, cons
             point.x >= static_cast<float>(src.x + src.w) / tw ||
             point.y >= static_cast<float>(src.y + src.h) / th)
             return false;
-        auto &cached = (visibilityObserver_ ? observerVisibilityPixels_ : visibilityPixels_)[static_cast<size_t>(y) * viewW_ + x];
-        if (cached < 0)
-            cached = visibilityFilter_(cameraX_ + (x + .5f) / zoom_, cameraY_ + (y + .5f) / zoom_) ? 1 : 0;
-        return cached != 0;
+        return IsVisiblePixel(x, y);
     };
     // Each contiguous visible row is one textured quad, with pixel-exact clipping.
     for (int y = std::max(0, static_cast<int>(cy - ey));
@@ -771,7 +776,7 @@ void CS2DRenderer::MaskedCopy(SDL_Texture *texture, const SDL_Rect *source, cons
                            indices.data(), static_cast<int>(indices.size()));
 }
 
-void CS2DRenderer::DrawCharacter(const SpriteDrawParams &p) {
+bool CS2DRenderer::DrawCharacter(const SpriteDrawParams &p, bool occludedTeammate) {
     // 选序列帧 sheet
     const SpriteSheetDef *sheet = nullptr;
     if (p.spriteKey == 0)
@@ -782,7 +787,7 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams &p) {
         sheet = &tAltSheet_;
 
     if (!sheet || !sheet->tex)
-        return;
+        return false;
 
     // ---- 按武器槽固定切片（死亡用主武器帧 + 倾斜淡出） ----
     int frameCol = 0, frameRow = 0; // 默认：第1行第1列（主武器）
@@ -825,7 +830,7 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams &p) {
         const float fadeFactor = std::max(0.0f, 1.0f - p.deathTimer / 2.0f);
         alpha = static_cast<Uint8>(alpha * fadeFactor);
         if (alpha < 5)
-            return;
+            return false;
     }
 
     // 行走不再做上下 bobbing：角色与瞄准线共用同一个世界锚点，
@@ -844,25 +849,52 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams &p) {
     dst.w = sz;
     dst.h = sz;
 
-    SDL_SetTextureAlphaMod(sheet->tex, alpha);
     SDL_FPoint center = {sz * 0.5f, sz * 0.5f};
     // 最新三套人物的全部姿势均朝上，统一旋转到实际瞄准方向。
     constexpr float poseAngleOffset = 90.0f;
     const float charAngle =
         p.aimAngle * 180.0f / 3.14159265f + tiltDeg + (p.animState == 3 ? 0.0f : poseAngleOffset);
+    const auto* outline = p.spriteKey == 0 ? &ctOutlineSheet_ :
+                         p.spriteKey == 1 ? &tOutlineSheet_ : &tAltOutlineSheet_;
+
+    if (occludedTeammate) {
+        if (!p.friendly || p.localPlayer || p.animState == 3 || !visibilityFilter_) return false;
+        const float cosAngle = std::cos(charAngle * Tuning::DegreesToRadians);
+        const float sinAngle = std::sin(charAngle * Tuning::DegreesToRadians);
+        const auto& pose = BodyGeometry::Get(p.spriteKey, p.weaponSlot);
+        bool onScreen = false;
+        for (const auto point : pose.samples) {
+            const int x = static_cast<int>(std::floor(cx + xOff + sz * (point.x * cosAngle - point.y * sinAngle)));
+            const int y = static_cast<int>(std::floor(cy + yOff + sz * (point.x * sinAngle + point.y * cosAngle)));
+            if (x < 0 || y < 0 || x >= viewW_ || y >= viewH_) continue;
+            onScreen = true;
+            if (IsVisiblePixel(x, y)) return false;
+        }
+        if (!onScreen) return false;
+
+        const auto color = Tuning::TeammateXRayColor;
+        auto drawTinted = [&](SDL_Texture* texture, const SDL_FRect& rect, Uint8 opacity) {
+            SDL_SetTextureColorMod(texture, color.r, color.g, color.b);
+            SDL_SetTextureAlphaMod(texture, opacity);
+            SDL_RenderCopyExF(renderer_, texture, &src, &rect, charAngle, nullptr, SDL_FLIP_NONE);
+            SDL_SetTextureAlphaMod(texture, 255);
+            SDL_SetTextureColorMod(texture, 255, 255, 255);
+        };
+        if (outline->tex) {
+            const float border = (Tuning::TeammateXRayOutlineScale - 1.0f) * sz * .5f;
+            drawTinted(outline->tex, {dst.x - border, dst.y - border, sz + border * 2, sz + border * 2},
+                       Tuning::TeammateXRayOutlineAlpha);
+        }
+        drawTinted(sheet->tex, dst, color.a);
+        return true;
+    }
+
+    SDL_SetTextureAlphaMod(sheet->tex, alpha);
 
     // ---- 敌我轮廓素材（紧贴角色剪影）----
     // 友军蓝 / 敌军红 / 自己白；白色描边素材 + ColorMod，所以一份素材服务三色。
     // 先画轮廓再画角色，轮廓被本体盖住内侧，只剩贴边的一圈。
     {
-        const SpriteSheetDef *outline = nullptr;
-        if (p.spriteKey == 0)
-            outline = &ctOutlineSheet_;
-        else if (p.spriteKey == 1)
-            outline = &tOutlineSheet_;
-        else
-            outline = &tAltOutlineSheet_;
-
         Uint8 rr = 236, gg = 88, bb = 78; // 敌军：红
         if (p.localPlayer) {
             rr = 240;
@@ -916,6 +948,7 @@ void CS2DRenderer::DrawCharacter(const SpriteDrawParams &p) {
         DrawWeaponForCharacter(cx + xOff, cy + yOff, p.size, p.aimAngle, p.weaponSlot, p.weaponId,
                                p.animState == 2, p.meleeSwing);
     }
+    return true;
 }
 // 枪口火焰：cx/cy 为武器中心的屏幕坐标
 namespace {
@@ -2053,61 +2086,107 @@ void CS2DRenderer::DrawRadarHUD(float playerX, float playerY, float playerAngle,
         }
     };
     const float dotRadius = std::clamp(1.5f+.5f*(zoom-1),1.5f,4.5f) * std::max(.7f,hudScale);
+    const float allyRadius = std::clamp(Tuning::RadarAllyArrowRadius * hudScale,
+                                       Tuning::RadarAllyArrowMinRadius, half / 3.0f);
+    auto drawAllyArrow = [&](SDL_FPoint p, float heading, SDL_Color color, bool atEdge) {
+        const float forwardX = std::cos(heading), forwardY = std::sin(heading);
+        auto triangle = [&](float radius) {
+            const SDL_FPoint tip{p.x + forwardX * radius, p.y + forwardY * radius};
+            const float backX = p.x - forwardX * radius * .65f;
+            const float backY = p.y - forwardY * radius * .65f;
+            const float wing = radius * .70f;
+            return std::array<SDL_FPoint, 3>{tip,
+                SDL_FPoint{backX - forwardY * wing, backY + forwardX * wing},
+                SDL_FPoint{backX + forwardY * wing, backY - forwardX * wing}};
+        };
+        auto fillTriangle = [&](float radius, SDL_Color fill) {
+            const auto points = triangle(radius);
+            const SDL_Vertex vertices[] = {{points[0], fill, {}}, {points[1], fill, {}}, {points[2], fill, {}}};
+            SDL_RenderGeometry(renderer_, nullptr, vertices, 3, nullptr, 0);
+        };
+        fillTriangle(allyRadius + 1.0f, {8, 12, 16, color.a});
+        if (atEdge) {
+            // A hollow arrow indicates the direction to a teammate outside the radar view.
+            const auto points = triangle(allyRadius);
+            const SDL_FPoint outline[] = {points[0], points[1], points[2], points[0]};
+            SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, color.a);
+            SDL_RenderDrawLinesF(renderer_, outline, 4);
+        } else {
+            fillTriangle(allyRadius, color);
+        }
+    };
     const auto self = point(playerX,playerY);
     dot(self,dotRadius+2,{220,240,255,255});
     dot(self,dotRadius+1,{8,12,16,255});
     dot(self,dotRadius,{110,215,255,255});
     for (const auto& d : dots) {
+        if (d.shape != RadarDot::Shape::Circle) continue;
         const auto p = point(d.x,d.y);
-        if (d.shape == RadarDot::Shape::Circle) {
+        if (d.teammate) {
+            const SDL_Color color{d.r, d.g, d.b, d.alpha};
+            const float dx = p.x - half, dy = p.y - half;
+            const float distance = std::hypot(dx, dy);
+            const float edge = std::max(1.0f, half - allyRadius - 3.0f);
+            if (!fullMap && distance > edge) {
+                const float fraction = edge / distance;
+                drawAllyArrow({half + dx * fraction, half + dy * fraction}, std::atan2(dy, dx), color, true);
+                continue;
+            }
+            drawAllyArrow(p, d.heading.value_or(0.0f) + angle, color, false);
+        } else {
             dot(p,dotRadius+1,{8,12,16,d.alpha});
             dot(p,dotRadius,{d.r,d.g,d.b,d.alpha});
-            continue;
         }
-        const float radius = std::max(3.5f, 5.0f*hudScale);
-        // 携带者与掉落的 C4 都用真实 C4 素材的小图标表示（取代旧的菱形/方块标记）。
-        // 携带者图标叠在本方小圆点之上，掉落物则单独一枚略大的图标。
-        if (d.shape == RadarDot::Shape::Carrier || d.shape == RadarDot::Shape::DroppedBomb) {
-            const int c4Id = static_cast<int>(WeaponId::C4);
-            SDL_Texture* icon = nullptr;
-            if (c4Id < static_cast<int>(weaponIcons_.size())) icon = weaponIcons_[c4Id];
-            if (!icon && c4Id < static_cast<int>(weaponSprites_.size())) icon = weaponSprites_[c4Id];
-            const bool dropped = d.shape == RadarDot::Shape::DroppedBomb;
-            if (dropped) {
-                dot(p, dotRadius + 1, {8, 12, 16, d.alpha});
-                dot(p, dotRadius, {255, 170, 60, d.alpha});
-            }
-            if (icon) {
-                int tw = 0, th = 0;
-                if (SDL_QueryTexture(icon, nullptr, nullptr, &tw, &th) == 0 && tw > 0 && th > 0) {
-                    // 「非常小」：携带者约 7px，掉落物约 10px（随 HUD 缩放）
-                    const float box = (dropped ? 10.0f : 7.0f) * std::max(.75f, hudScale);
-                    float dw = box, dh = box;
-                    if (tw >= th) dh = box * static_cast<float>(th) / static_cast<float>(tw);
-                    else          dw = box * static_cast<float>(tw) / static_cast<float>(th);
-                    SDL_SetTextureBlendMode(icon, SDL_BLENDMODE_BLEND);
-                    SDL_SetTextureAlphaMod(icon, d.alpha);
-                    const SDL_FRect dst{p.x - dw * 0.5f, p.y - dh * 0.5f, dw, dh};
-                    SDL_RenderCopyF(renderer_, icon, nullptr, &dst);
-                    SDL_SetTextureAlphaMod(icon, 255);
-                }
+    }
+    // C4 renders over nearby players, so even a carrier standing on a teammate stays identifiable.
+    const float glyphScale = std::clamp(Tuning::RadarC4GlyphScale * hudScale, 1.0f, half / 9.0f);
+    const float badgeHalfW = glyphScale * 5.5f, badgeHalfH = glyphScale * 3.5f;
+    const float badgeRadius = std::hypot(badgeHalfW, badgeHalfH);
+    const float badgeEdge = half - badgeRadius - 2.0f;
+    for (const auto& d : dots) {
+        if (d.shape == RadarDot::Shape::Circle) continue;
+        const SDL_Color color{d.r, d.g, d.b, d.alpha};
+        const auto position = point(d.x, d.y);
+        auto badge = position;
+        const float dx = position.x - half, dy = position.y - half;
+        const float distance = std::hypot(dx, dy);
+        if (distance > badgeEdge) {
+            const float inset = fullMap ? badgeEdge : std::max(1.0f, badgeEdge - allyRadius);
+            badge = {half + dx / distance * inset, half + dy / distance * inset};
+            if (fullMap) {
+                // Move the label clear of the border while preserving the exact point.
+                SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, color.a);
+                SDL_RenderDrawLineF(renderer_, badge.x, badge.y, position.x, position.y);
+                dot(position, 1.5f, color);
             } else {
-                // 素材缺失兜底：保留一个橙色小方块，绝不回退成旧菱形
-                const SDL_FRect rect{p.x-radius*.6f,p.y-radius*.6f,radius*1.2f,radius*1.2f};
-                SDL_SetRenderDrawColor(renderer_,d.r,d.g,d.b,d.alpha);
-                SDL_RenderFillRectF(renderer_,&rect);
+                const float arrowEdge = half - allyRadius - 2.0f;
+                drawAllyArrow({half + dx / distance * arrowEdge, half + dy / distance * arrowEdge},
+                              std::atan2(dy, dx), color, true);
             }
-            if (!dropped) continue;
+        } else if (d.heading) {
+            const float heading = *d.heading + angle;
+            const float length = badgeRadius + Tuning::RadarAllyHeadingLength * hudScale;
+            SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, color.a);
+            SDL_RenderDrawLineF(renderer_, badge.x, badge.y, badge.x + std::cos(heading) * length,
+                                badge.y + std::sin(heading) * length);
         }
-        const float pulse = d.shape == RadarDot::Shape::DroppedBomb ?
-            1.5f + 2.0f*(.5f+.5f*std::sin(SDL_GetTicks()*0.005f)) : 2.0f;
-        const float ring = radius+pulse;
-        SDL_SetRenderDrawColor(renderer_,d.r,d.g,d.b,static_cast<Uint8>(d.alpha*.7f));
-        for (int i=0;i<40;++i) {
-            const float a=i*6.2831853f/40, b=(i+1)*6.2831853f/40;
-            SDL_RenderDrawLineF(renderer_,p.x+std::cos(a)*ring,p.y+std::sin(a)*ring,
-                p.x+std::cos(b)*ring,p.y+std::sin(b)*ring);
-        }
+        const SDL_FRect frame{badge.x - badgeHalfW, badge.y - badgeHalfH, 2 * badgeHalfW, 2 * badgeHalfH};
+        SDL_SetRenderDrawColor(renderer_, 16, 18, 22, static_cast<Uint8>(color.a * .92f));
+        SDL_RenderFillRectF(renderer_, &frame);
+        const float borderOpacity = d.shape == RadarDot::Shape::DroppedBomb
+            ? .7f + .3f * std::sin(SDL_GetTicks() * Tuning::RadarDroppedC4PulseRate) : 1.0f;
+        SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, static_cast<Uint8>(color.a * borderOpacity));
+        SDL_RenderDrawRectF(renderer_, &frame);
+        SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, color.a);
+        auto glyph = [&](float x, float y) {
+            return SDL_FPoint{badge.x + x * glyphScale, badge.y + y * glyphScale};
+        };
+        const SDL_FPoint c[] = {glyph(-1, -2), glyph(-4, -2), glyph(-4, 2), glyph(-1, 2)};
+        const SDL_FPoint four[] = {glyph(1, -2), glyph(1, 0), glyph(4, 0)};
+        const SDL_FPoint fourStem[] = {glyph(3, -2), glyph(3, 2)};
+        SDL_RenderDrawLinesF(renderer_, c, 4);
+        SDL_RenderDrawLinesF(renderer_, four, 3);
+        SDL_RenderDrawLinesF(renderer_, fourStem, 2);
     }
     SDL_SetRenderTarget(renderer_,oldTarget);
     SDL_RenderSetScale(renderer_,oldScaleX,oldScaleY);
