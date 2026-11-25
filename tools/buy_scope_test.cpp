@@ -5902,6 +5902,50 @@ struct EngineTestAccess {
         PathUtils::SetBaseDir(previousBase);
     }
 
+    static void CaptureSceneryMenu(int scene, const std::filesystem::path& output) {
+        const auto directory = std::filesystem::absolute(output);
+        std::filesystem::create_directories(directory);
+        const auto oldBase = PathUtils::BaseDir();
+        PathUtils::SetBaseDir(directory.string());
+        SDL_setenv("SDL_AUDIODRIVER","dummy",1);
+        {
+            Engine engine;
+            const bool ready = engine.Initialize("PIX-39 menu acceptance",1280,720,false,false,1,false);
+            check(ready && engine.menu3D && engine.menu3D->IsReady() && engine.menu3D->ScenePreview(scene),"Production menu loads the requested 3D scene and its preview");
+            if (ready && engine.menu3D) {
+                ImGui::GetIO().IniFilename = nullptr;
+                engine.menu3D->SetScene(scene,true);
+                SDL_SetWindowSize(engine.window,1280,720);
+                engine.ResizeLogicalViewport(1280,720);
+                auto capture = [&](const char* file) {
+                    SDL_Delay(40);
+                    engine.Render();
+                    SDL_Texture* frame = engine.sceneTex_[1-engine.sceneWrite_];
+                    int w=0,h=0;
+                    bool ok = frame && SDL_QueryTexture(frame,nullptr,nullptr,&w,&h)==0;
+                    SDL_Texture* previous = SDL_GetRenderTarget(engine.renderer);
+                    SDL_Surface* pixels = ok ? SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_RGBA32) : nullptr;
+                    ok = pixels && SDL_SetRenderTarget(engine.renderer,frame)==0 &&
+                         SDL_RenderReadPixels(engine.renderer,nullptr,SDL_PIXELFORMAT_RGBA32,pixels->pixels,pixels->pitch)==0 &&
+                         IMG_SavePNG(pixels,(directory/file).string().c_str())==0;
+                    check(ok,file);
+                    SDL_SetRenderTarget(engine.renderer,previous);
+                    SDL_FreeSurface(pixels);
+                };
+                capture("main.png");
+                engine.focused3D_=0;
+                engine.focusAnimStartMs_=SDL_GetTicks64()-400;
+                engine.Render(); // Enter focus before sampling the fully-open camera.
+                capture("focus.png");
+                engine.focused3D_=-1;
+                engine.BeginMenuCameraTransition([] {});
+                engine.menuCameraStartMs_=SDL_GetTicks64()-850;
+                capture("overhead.png");
+            }
+        }
+        PathUtils::SetBaseDir(oldBase);
+    }
+
     static void TestExperienceEntryPoints() {
         const auto previousBase=PathUtils::BaseDir();
         const auto directory=std::filesystem::absolute("build-evidence/experience/engine");
@@ -6239,6 +6283,15 @@ static void TestExperienceRendering(bool gpu) {
 }
 
 int main(int argc,char** argv) {
+    if (argc>1 && std::string(argv[1])=="--pix39-menu") {
+        EngineTestAccess::CaptureSceneryMenu(1, "build-evidence/pix39/salt-exchange/game");
+        return g_fail ? 1 : 0;
+    }
+    if (argc>1 && std::string(argv[1])=="--menu-pair") {
+        EngineTestAccess::CaptureSceneryMenu(0, "build-evidence/menu-pair/ancient_ruins/game");
+        EngineTestAccess::CaptureSceneryMenu(2, "build-evidence/menu-pair/mirage/game");
+        return g_fail ? 1 : 0;
+    }
     if (argc > 1 && std::string(argv[1]) == "--pix37-coach") {
         CS2DGameTestAccess::TestPix37CoachWiring();
         CS2DGameTestAccess::TestPix37RotateSchema();

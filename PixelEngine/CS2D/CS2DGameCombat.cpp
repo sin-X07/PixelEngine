@@ -684,6 +684,10 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager *audio) {
                 const float dx = p.x - f.x;
                 const float dy = p.y - f.y;
                 if (FireContains(f, p.x, p.y)) {
+                    // P3-molotov: fire-zone damage accounting (3 HP per
+                    // 0.25s tick, armor ignored). Count HP actually dealt.
+                    counters_.fireDamage += std::min(p.health, Tuning::FireTickDamage);
+                    ++counters_.fireTicks;
                     if (ApplyDamage(p, Tuning::FireTickDamage, 1.0f))
                         OnCombatantKilled(p, audio, DamageOwner(f.owner), f.weapon,f.equipmentId,SDL_FPoint{f.x,f.y}); // 火区无视护甲（CS2 同）
                     break;
@@ -1048,9 +1052,14 @@ void CS2DGame::OnCombatantKilled(Player &victim, AudioManager *audio, Player *ki
     }
 
     if (killer && killer != &victim) {
-        ++killer->kills;
-        if (killer == &player_)
-            ++playerKills_;
+        if (IsHostile(victim, *killer)) {
+            ++killer->kills;
+            if (killer == &player_)
+                ++playerKills_;
+        } else {
+            // P0-2: friendly kill does not count as a kill; kept separately.
+            ++killer->teamKills;
+        }
         if (weapon != WeaponId::None && IsHostile(victim, *killer)) {
             killer->money += economy_.GrantKill(WeaponDB::KillReward(weapon));
             economy_.Clamp(killer->money);

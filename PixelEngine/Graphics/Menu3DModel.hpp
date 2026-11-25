@@ -2,6 +2,8 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <memory>
+struct SDL_Surface;
 #include <cstdint>
 
 // ============================================================================
@@ -11,10 +13,10 @@
 //   - 读取 .gltf/.glb（内嵌 buffer 或 .bin 均可）；
 //   - 解析 skin / 骨骼 / animation；
 //   - 每帧在 CPU 上计算骨骼矩阵并蒙皮；
-//   - 用 OpenGL 固定管线绘制纯色低模。
+//   - 用 OpenGL 固定管线绘制纯色或带内嵌底色贴图的模型。
 //
 // 不追求完整 glTF 支持：只处理 Quaternius/Chickensoft 这类
-// “单场景、TRS 节点、LINEAR/STEP 动画、无纹理”的装饰模型。
+// “单场景、TRS 节点、LINEAR/STEP 动画”的装饰模型。
 // ============================================================================
 class Menu3DModel {
 public:
@@ -22,7 +24,9 @@ public:
     struct Vec4 { float x = 0, y = 0, z = 0, w = 1; };
 
     Menu3DModel() = default;
-    ~Menu3DModel() = default;
+    ~Menu3DModel();
+    Menu3DModel(const Menu3DModel&) = delete;
+    Menu3DModel& operator=(const Menu3DModel&) = delete;
 
     bool Load(const std::string& path, const std::string& preferredAnimation = "");
     bool IsReady() const { return ready_; }
@@ -34,7 +38,12 @@ public:
               float opacity = 1.0f) const;
     void DrawHighlight(float scale, float yOffset = 0.0f, float yawDegrees = 0.0f) const;
     // 不施加「贴地/缩放/朝向」外层变换，直接按模型空间绘制（给配件用）
-    void DrawRaw(float opacity = 1.0f) const;
+    struct SurfaceUniforms {
+        int factors = -1;
+        int maps = -1;
+    };
+    void DrawRaw(float opacity = 1.0f, const SurfaceUniforms* surface = nullptr) const;
+    void DrawDepth() const;
     bool PlayAnimation(const std::string& name);
     void SetClothingTint(float r, float g, float b) { tint_ = Vec4{ r, g, b, 1.0f }; }
     void SetBluePalette(bool enabled) { bluePalette_ = enabled; }
@@ -83,7 +92,22 @@ private:
     };
     struct Primitive {
         std::vector<Vertex> vertices;
+        float metallic = 0.0f;
+        float roughness = 1.0f;
         std::vector<uint32_t> indices;
+        int texture = -1;
+        std::vector<std::array<float, 2>> uv;
+        int bakedTexture = -1;
+        bool alphaBlend = false;
+        bool doubleSided = false;
+        struct DataMap {
+            int texture = -1;
+            std::vector<std::array<float, 2>> uv;
+        };
+        std::array<DataMap, 3> dataMaps; // metallic-roughness, occlusion, normal
+        float occlusionStrength = 1.0f;
+        float normalScale = 1.0f;
+        std::vector<Vec4> tangents;
         std::vector<Vec3> skinnedPos;
         std::vector<Vec3> skinnedNormal;
         Vec4 color{ 0.8f, 0.8f, 0.8f, 1.0f };
@@ -110,6 +134,9 @@ private:
         Vec3 curS{ 1, 1, 1 };
         int mesh = -1;
         int skin = -1;
+        bool rigidCacheValid = false;
+        Mat4 cachedWorld;
+        float cachedMinY = 0;
         std::vector<int> children;
     };
     struct Skin {
@@ -131,6 +158,18 @@ private:
 
     bool ready_ = false;
     std::string lastError_;
+    struct Texture {
+        std::shared_ptr<SDL_Surface> pixels;
+        int wrapS, wrapT, minFilter, magFilter;
+        bool srgb;
+        unsigned int handle = 0;
+    };
+    mutable std::vector<Texture> textures_;
+    mutable void* textureContext_ = nullptr;
+    mutable float anisotropy_ = 1.0f;
+    void ReleaseTextures();
+    void DrawTexturedModel(float alpha, const SurfaceUniforms* surface) const;
+    static void UpdateTangents(Primitive& primitive);
     std::vector<Mesh> meshes_;
     std::vector<Node> nodes_;
     std::vector<Skin> skins_;

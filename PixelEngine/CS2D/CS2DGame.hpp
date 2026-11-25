@@ -247,6 +247,19 @@ public:
             --grenadeCount;
             SyncActiveGrenade();
         }
+        // Select the grenade of the given type (P3-molotov: throw what the
+        // plan utilKind asked for). Returns false when not carried, leaving
+        // the current selection untouched.
+        bool SelectGrenade(WeaponId id) {
+            for (int i = 0; i < grenadeCount; ++i) {
+                if (grenades[i] == id) {
+                    grenadeSlot = i;
+                    SyncActiveGrenade();
+                    return true;
+                }
+            }
+            return false;
+        }
 
         // 弹药：活动槽位（缓存值，切换武器时与 ammoSlot 互相同步）
         int       ammo      = 30;
@@ -344,6 +357,7 @@ public:
         // 战局数据
         int       money  = 800;
         int       kills  = 0;
+        int       teamKills = 0;  // friendly kills, kept separate from kills (P0-2)
         int       deaths = 0;
         int       armor  = 0;        // 护甲值（0..100）
         bool      helmet = false;    // 头盔：提高吸收比例
@@ -436,6 +450,7 @@ public:
         float alertX = 0.0f, alertY = 0.0f;
         float grenadeCooldown = 0.0f;  // 投掷冷却
         bool  tradePushed     = false; // 本回合是否已补过枪
+        bool  saveGun         = false; // P3-savegun: latched this round, CT retreats to save gun
         bool  scoped = false; // BOT scopes while tracking a visible target with a scoped weapon
         bool  hadTarget       = false; // 上一帧是否看得见敌人（决定是否原地扫描）
         float scanPhase       = 0.0f;  // 扫视相位（行走时左右小幅摆头）
@@ -481,6 +496,9 @@ public:
         int   utilKind  = 0;             // 0 无 1 烟 2 闪 3 火 4 雷
         float utilX = 0.0f, utilY = 0.0f;
         bool  utilDone = true;
+        bool  utilThrowFailed = false;  // P1-4: plan-util throw already counted as failed once
+        float nadeFailX = 0.0f, nadeFailY = 0.0f;  // P1-4: last intel-throw point that failed validation
+        float nadeFailAt = -1e9f;                  // P1-4: clockSec_ of that failure
 
         // ---- 决策 trace 的上一帧快照（仅在开启 trace 时写入，不影响玩法）----
         int   traceTarget   = -2;    // 上一帧锁定的敌人（-2 无）
@@ -585,6 +603,7 @@ public:
         std::string name;
         Team team = Team::None;
         int  kills = 0;
+        int  teamKills = 0;
         int  deaths = 0;
         int  money = 0;
         bool alive = true;
@@ -614,11 +633,18 @@ public:
         int assistPushes  = 0;    // 支援前压次数
         int nadeThrows    = 0;    // 成功投掷
         int nadeSkips     = 0;    // 因落点不可行放弃
+        int nadePlanFails = 0;    // P1-4: plan-util throw failed validation (once per assignment)
         int searchVisits  = 0;    // 搜点次数（到达未搜区域）
         int llmPlans      = 0;    // LLM 计划被采纳
         int llmAdvisory   = 0;    // 顾问模式：只记录不执行
         int llmLate       = 0;    // 迟到丢弃（决策期间局面已变）
         int renewals      = 0;    // 计划到期续期次数
+        int molotovBuys     = 0;    // P3-molotov: BOT bought molotov/incendiary
+        int molotovThrows   = 0;    // P3-molotov: plan-util throw that threw a fire grenade
+        int utilKindThrows  = 0;    // P3-molotov: plan-util throw with grenade matching utilKind
+        int utilKindMismatch= 0;    // P3-molotov: plan-util throw, wanted kind not carried
+        int fireDamage      = 0;    // P3-molotov: total HP dealt by fire-zone ticks
+        int fireTicks       = 0;    // P3-molotov: fire ticks that hit a player
     };
     const DebugCounters& Counters() const { return counters_; }
     DebugCounters& MutableCounters() { return counters_; }
@@ -776,6 +802,9 @@ public:
     // 保证 hasPlanHold/planHold 与 hasHold/hold 永远一致。
     void SetBotGoal(size_t i, float x, float y, BotRuntime::GoalSource src, bool force = false);
     void ClearBotGoal(size_t i);
+    // P1-5：同区域/同包点多 BOT 的驻守点环形散开（确定性：index→角度；逐个试角度直到可走）。
+    void SpreadHoldPoint(float cx, float cy, int index, float& ox, float& oy,
+                         const std::vector<std::pair<float, float>>& used) const;
 
     // ---- 目标物（爆破）----
     bool  IsBombPlanted()   const { return bombPlanted_; }
@@ -1264,6 +1293,7 @@ private:
         int   changesThisRound = 0;          // 本回合意图变更次数（变更预算）
         int   sameSideStreak = 0;            // 连续打同一侧的次数（防重复但不至于一次就换）
         float lastIntentChangeSec = -100.0f; // 上次意图变更时刻（变更预算用）
+        float lastManpowerReplanSec = -100.0f; // P1-1：上次减员重规划时刻（减员重评估冷却用）
         BuyPlan lastBuyPlan = BuyPlan::Full; // 上一回合买档（T18 跨回合经济状态机）
         bool  lastBuyWon = false;            // 上一回合是否赢（T18）
 
@@ -1498,6 +1528,8 @@ private:
 
     // 敌方出生点质心（用于无情报时的推进方向，与地图朝向无关）
     bool EnemySpawnCentroid(Team myTeam, float& outX, float& outY) const;
+    bool OwnSpawnCentroid(Team myTeam, float& outX, float& outY) const;
+    bool SaveGunRetreatPoint(size_t i, float& outX, float& outY) const;
 
     // 武器对应的换弹音效（时长与 WeaponDef::reloadTime 对齐）
     static SoundEffect ReloadSoundFor(WeaponId id);
@@ -1536,6 +1568,8 @@ private:
     bool BotCanDefuse(size_t i, const Player& bot) const;
     // 下包后指定一个 CT 拆包手：优先安全、离炸弹最近；其余 CT 清点/掩护。
     int  PickDefuseBot() const;
+    // P0-3：下包后指定一个 CT 掩护手——离炸弹最近的存活 CT（拆包手除外），去拆包手附近架枪。
+    int  PickCoverBot(int defuser) const;
     // 目标是否落在以 self 朝向为中心的视野扇形内（玩家/BOT 共用几何）
     bool CanSeePoint(const Player& observer, float x, float y) const;
     int ActorPoseSlot(const Player &actor) const {

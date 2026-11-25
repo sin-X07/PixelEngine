@@ -8,7 +8,7 @@
 //
 // 策略（固定、可复现，属于基准的一部分）：
 //   1. 有视线内敌人 → 瞄准它；进入反应延迟后开火；按距离拉近/拉开/侧移。
-//   2. 没有敌人 → 跟随最近的存活队友（队友由 BOT 负责寻路），保持 160px 距离。
+//   2. No enemy: follow a mate (P2-5: the mate in combat / most advanced, re-evaluated every 5s).
 //   3. 弹药不足 → 按 R 换弹；购买期按固定顺序补装备（主武器 → 护甲）。
 //   4. 不使用任何随机数（不污染游戏 RNG）。
 // ============================================================================
@@ -37,6 +37,13 @@ public:
     // T20 验收场景：脚本玩家（CT）每回合购买拆包钳。默认关闭，保持基准可比。
     void SetBuyKit(bool on) { buyKit_ = on; }
 
+    // P2-5: contrast strategies for playtest A/B. Default Follow keeps the
+    // baseline behaviour (same mate pick rule, same ranges) -- changing the
+    // strategy changes the benchmark, so record it in the summary header.
+    enum class Strategy { Follow, Hold, Rush, Stealth };
+    void SetStrategy(Strategy s) { strategy_ = s; }
+    Strategy GetStrategy() const { return strategy_; }
+
     struct Inputs {
         bool  mouseDown = false;
         float aimX = 0.0f;
@@ -56,6 +63,10 @@ public:
         const CS2DGame::Player& me = game.GetPlayer();
 
         ++tick_;
+        // P2-5: effective engage range depends on the contrast strategy.
+        const float engageRange = (strategy_ == Strategy::Rush)    ? 800.0f
+                                : (strategy_ == Strategy::Stealth) ? 300.0f
+                                                                   : params_.engageRange;
         BuyIfNeeded(game, in);
 
         // 死亡/观战：不产生输入（等回合重生）
@@ -65,7 +76,7 @@ public:
             return in;
         }
 
-        const CS2DGame::Player* target = PickTarget(game);
+        const CS2DGame::Player* target = PickTarget(game, engageRange);
         if (target) {
             if (target != lastTarget_) { seenTicks_ = 0; lastTarget_ = target; }
             ++seenTicks_;
@@ -87,7 +98,7 @@ public:
             const float tdist = std::sqrt((target->x - me.x) * (target->x - me.x) +
                                          (target->y - me.y) * (target->y - me.y));
             const bool ready = seenTicks_ >= params_.reactionTicks &&
-                               tdist <= params_.engageRange;
+                               tdist <= engageRange;
             const int period = params_.burstOn + params_.burstOff;
             const bool inBurst = period > 0 && (tick_ % period) < params_.burstOn;
             in.mouseDown = ready && aimed && inBurst && me.ammo > 0 && !me.reloading;
@@ -105,21 +116,44 @@ public:
             return in;
         }
 
-        // 没有目标：跟随最近的存活队友（让脚本玩家也会推进/回防）
+        // No target: behaviour depends on the contrast strategy (P2-5).
         lastTarget_ = nullptr;
         seenTicks_ = 0;
-        const CS2DGame::Player* mate = NearestMate(game);
-        if (mate) {
-            const float dx = mate->x - me.x;
-            const float dy = mate->y - me.y;
-            const float dist = std::sqrt(dx * dx + dy * dy);
-            if (dist > 160.0f) MoveToward(in, dx, dy);
-            in.aimX = mate->x;
-            in.aimY = mate->y;
+        if (strategy_ == Strategy::Hold) {
+            // Anchor at the nearest bomb site; stay within ~120px of its centre.
+            float cx = 0.0f, cy = 0.0f;
+            if (HoldSite(game, cx, cy)) {
+                const float dx = cx - me.x;
+                const float dy = cy - me.y;
+                const float dist = std::sqrt(dx * dx + dy * dy);
+                if (dist > 120.0f) MoveToward(in, dx, dy);
+                in.aimX = me.x + std::cos(me.aimAngle) * 200.0f;
+                in.aimY = me.y + std::sin(me.aimAngle) * 200.0f;
+            }
+        } else if (strategy_ == Strategy::Rush) {
+            // Push toward the nearest hostile even without line of sight.
+            const CS2DGame::Player* foe = NearestHostile(game);
+            if (foe) {
+                MoveToward(in, foe->x - me.x, foe->y - me.y);
+                in.aimX = foe->x;
+                in.aimY = foe->y;
+            }
         } else {
-            in.aimX = me.x + std::cos(me.aimAngle) * 200.0f;
-            in.aimY = me.y + std::sin(me.aimAngle) * 200.0f;
+            // Follow (default) / Stealth: follow the mate in combat or most advanced.
+            const CS2DGame::Player* mate = PickFollowMate(game);
+            if (mate) {
+                const float dx = mate->x - me.x;
+                const float dy = mate->y - me.y;
+                const float dist = std::sqrt(dx * dx + dy * dy);
+                if (dist > 160.0f) MoveToward(in, dx, dy);
+                in.aimX = mate->x;
+                in.aimY = mate->y;
+            } else {
+                in.aimX = me.x + std::cos(me.aimAngle) * 200.0f;
+                in.aimY = me.y + std::sin(me.aimAngle) * 200.0f;
+            }
         }
+        if (strategy_ == Strategy::Stealth) in.shift = true;   // walk, never run
         if (!me.reloading && me.ammo < me.maxAmmo && me.reserve > 0) in.reload = true;
         return in;
     }
@@ -128,10 +162,10 @@ private:
     static constexpr int kReactionTicks = 15;   // 0.25s @60Hz
 
     // ---- 目标：视线内最近的敌人（不要求落在朝向扇区内，避免"背对就不会转身"）----
-    const CS2DGame::Player* PickTarget(CS2DGame& game) {
+    const CS2DGame::Player* PickTarget(CS2DGame& game, float range) {
         const CS2DGame::Player& me = game.GetPlayer();
         const CS2DGame::Player* best = nullptr;
-        float bestD2 = params_.engageRange * params_.engageRange;
+        float bestD2 = range * range;
         for (const auto& b : game.GetBOTs()) {
             if (!b.alive || !game.IsHostile(me, b)) continue;
             const float dx = b.x - me.x;
@@ -145,18 +179,69 @@ private:
         return best;
     }
 
-    const CS2DGame::Player* NearestMate(CS2DGame& game) {
+    // P2-5: follow the mate who is in combat or most advanced, not the nearest one.
+    // Re-evaluated every 300 ticks (5s); the pick is cached in between so the
+    // scripted player does not flicker between mates every tick.
+    const CS2DGame::Player* PickFollowMate(CS2DGame& game) {
+        const CS2DGame::Player& me = game.GetPlayer();
+        if (followMate_ && followMate_->alive && tick_ - followEvalTick_ < 300) return followMate_;
+        followEvalTick_ = tick_;
+        const CS2DGame::Player* best = nullptr;
+        double bestScore = 1e18;
+        for (const auto& b : game.GetBOTs()) {
+            if (!b.alive || game.IsHostile(me, b)) continue;
+            double nearestFoeD2 = 1e18;
+            bool inCombat = false;
+            for (const auto& e : game.GetBOTs()) {
+                if (!e.alive || !game.IsHostile(b, e)) continue;
+                const double dx = static_cast<double>(e.x - b.x);
+                const double dy = static_cast<double>(e.y - b.y);
+                const double d2 = dx * dx + dy * dy;
+                if (d2 < nearestFoeD2) nearestFoeD2 = d2;
+                if (d2 <= 600.0 * 600.0 &&
+                    game.Visibility().HasLineOfSight(b.x, b.y, e.x, e.y)) inCombat = true;
+            }
+            const double dMe = std::sqrt(static_cast<double>(b.x - me.x) * (b.x - me.x) +
+                                         static_cast<double>(b.y - me.y) * (b.y - me.y));
+            // Combat mates first (score = distance to their nearest foe), then the
+            // most advanced mate (smallest distance to any foe); distance to me is
+            // only a tie-break. 1e12 separates the two groups.
+            const double score = (inCombat ? nearestFoeD2 : 1e12 + nearestFoeD2) + dMe * 0.001;
+            if (score < bestScore) { bestScore = score; best = &b; }
+        }
+        followMate_ = best;
+        return best;
+    }
+
+    // Nearest hostile regardless of line of sight (Rush strategy pushes blind).
+    const CS2DGame::Player* NearestHostile(CS2DGame& game) {
         const CS2DGame::Player& me = game.GetPlayer();
         const CS2DGame::Player* best = nullptr;
         float bestD2 = 1e18f;
         for (const auto& b : game.GetBOTs()) {
-            if (!b.alive || game.IsHostile(me, b)) continue;
+            if (!b.alive || !game.IsHostile(me, b)) continue;
             const float dx = b.x - me.x;
             const float dy = b.y - me.y;
             const float d2 = dx * dx + dy * dy;
             if (d2 < bestD2) { bestD2 = d2; best = &b; }
         }
         return best;
+    }
+
+    // Nearest bomb-site centre (Hold strategy anchors there).
+    bool HoldSite(CS2DGame& game, float& cx, float& cy) {
+        const CS2DGame::Player& me = game.GetPlayer();
+        float bestD2 = 1e18f;
+        bool found = false;
+        for (int i = 0; i < 2; ++i) {
+            float sx = 0.0f, sy = 0.0f;
+            if (!game.GetBombSiteCenter(i, sx, sy)) continue;
+            const float dx = sx - me.x;
+            const float dy = sy - me.y;
+            const float d2 = dx * dx + dy * dy;
+            if (d2 < bestD2) { bestD2 = d2; cx = sx; cy = sy; found = true; }
+        }
+        return found;
     }
 
     // 转身速率限制（340°/s），无随机数
@@ -216,6 +301,9 @@ private:
 
     const CS2DGame::Player* lastTarget_ = nullptr;
     int   seenTicks_ = 0;
+    Strategy strategy_ = Strategy::Follow;   // P2-5: contrast strategy (default = baseline)
+    const CS2DGame::Player* followMate_ = nullptr;  // P2-5: cached follow target
+    int followEvalTick_ = 0;                 // P2-5: last follow re-evaluation tick
     Params params_;
     int   strafeDir_ = 1;
     float virtualAim_ = 0.0f;   // 脚本玩家的"视线方向"（受转身速率限制）

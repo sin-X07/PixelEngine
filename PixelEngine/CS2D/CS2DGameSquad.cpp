@@ -98,6 +98,56 @@ bool CS2DGame::EnemySpawnCentroid(Team myTeam, float& outX, float& outY) const {
     return true;
 }
 
+// P3-savegun: own spawn centroid (mirror of EnemySpawnCentroid).
+bool CS2DGame::OwnSpawnCentroid(Team myTeam, float& outX, float& outY) const {
+    if (!world_) return false;
+
+    auto spawns = world_->SpawnsForTeam(myTeam == Team::CT);
+    if (spawns.empty()) return false;
+
+    float sx = 0.0f, sy = 0.0f;
+    for (const auto* sp : spawns) {
+        sx += sp->x;
+        sy += sp->y;
+    }
+    const float n = static_cast<float>(spawns.size());
+    outX = sx / n;
+    outY = sy / n;
+    return true;
+}
+
+// P3-savegun: retreat point near the CT spawn, spread per bot so savers do not
+// stack on one point (P1-5 lesson), and clear of the blast radius.
+bool CS2DGame::SaveGunRetreatPoint(size_t i, float& outX, float& outY) const {
+    if (!world_ || !pathFinder_.IsBuilt()) return false;
+    float cx = 0.0f, cy = 0.0f;
+    if (!OwnSpawnCentroid(Team::CT, cx, cy)) return false;
+
+    static const float kRing[8] = { 0.0f, 0.79f, 1.57f, 2.36f,
+                                    3.14f, 3.93f, 4.71f, 5.50f };
+    const float ang = kRing[i % 8];
+    const float radii[3] = { 0.0f, Tuning::SaveGunRetreatRing,
+                             Tuning::SaveGunRetreatRing * 2.0f };
+    const float minD2 = Tuning::SaveGunMinBombDist * Tuning::SaveGunMinBombDist;
+    for (int pass = 0; pass < 2; ++pass) {
+        for (float r : radii) {
+            const float px = cx + std::cos(ang) * r;
+            const float py = cy + std::sin(ang) * r;
+            if (!pathFinder_.IsWalkableWorld(px, py)) continue;
+            if (pass == 0) {
+                const float dx = px - bombX_;
+                const float dy = py - bombY_;
+                if (dx * dx + dy * dy < minD2) continue;
+            }
+            outX = px;
+            outY = py;
+            return true;
+        }
+    }
+    return false;
+}
+
+
 // ============================================================================
 // 卡墙脱困
 // ============================================================================
@@ -526,6 +576,36 @@ void CS2DGame::AssignSquadRoles(bool dynamic) {
 
     if (!dynamic && mode_ == MatchMode::BombDefusal && siteCount > 0) {
         int tIdx = 0, ctIdx = 0;
+        // P1-5：同包点多 BOT 时取包点内不同锚点——5 名 T 分 2 个包点必有 3 人
+        // 同点，回合开始即刷 duplicate_hold；与已用点 <40px 才环形散开。
+        // （实测：只按序号试角度不够，dup=1 与 dup=2 会落在同一个首个可行走
+        //  环点上；且上一轮计划的旧点不避开会和新点重合——都要用点集避让。）
+        std::vector<std::pair<float, float>> usedHoldPts;
+        std::vector<char> holdReassigned(bots_.size(), 0);
+        auto collectUsed = [&](size_t self) {
+            std::vector<std::pair<float, float>> used = usedHoldPts;
+            for (size_t j = 0; j < bots_.size(); ++j) {
+                if (j == self || !bots_[j].alive) continue;
+                if (holdReassigned[j]) continue;  // 已在本轮重派，旧点失效
+                const auto& aj = AiAt(j);
+                if (aj.hasPlanHold) used.emplace_back(aj.planHoldX, aj.planHoldY);
+            }
+            return used;
+        };
+        auto tooClose = [](const std::vector<std::pair<float, float>>& used, float x, float y) {
+            for (const auto& q : used) {
+                const float dx = x - q.first, dy = y - q.second;
+                if (dx * dx + dy * dy < 40.0f * 40.0f) return true;
+            }
+            return false;
+        };
+        auto spreadIfClose = [&](size_t self, float& gx, float& gy) {
+            std::vector<std::pair<float, float>> used = collectUsed(self);
+            if (tooClose(used, gx, gy))
+                SpreadHoldPoint(gx, gy, static_cast<int>(used.size()), gx, gy, used);
+            usedHoldPts.emplace_back(gx, gy);
+            holdReassigned[self] = 1;
+        };
         for (size_t i = 0; i < bots_.size(); ++i) {            Player& b = bots_[i];
             if (b.team == Team::T) {
                 // T：轮转分配包点，保证 A/B 都有人去
@@ -533,19 +613,23 @@ void CS2DGame::AssignSquadRoles(bool dynamic) {
                 const int site = tIdx % siteCount;
                 ++tIdx;
                 squad_[i].site = site;
-                SetBotGoal(i, sites[site].cx, sites[site].cy,
-                           BotRuntime::GoalSource::Squad);
+                float gx = sites[site].cx, gy = sites[site].cy;
+                spreadIfClose(i, gx, gy);
+                SetBotGoal(i, gx, gy, BotRuntime::GoalSource::Squad);
             } else {
                 // CT：A / B / 中路 三线轮转
                 const int slot = ctIdx % (siteCount + 1);
                 ++ctIdx;
                 if (slot < siteCount) {
                     squad_[i].site = slot;
-                    SetBotGoal(i, sites[slot].cx, sites[slot].cy,
-                               BotRuntime::GoalSource::Squad);
+                    float gx = sites[slot].cx, gy = sites[slot].cy;
+                    spreadIfClose(i, gx, gy);
+                    SetBotGoal(i, gx, gy, BotRuntime::GoalSource::Squad);
                 } else {
                     squad_[i].site = -1;             // 中路
-                    SetBotGoal(i, midX, midY, BotRuntime::GoalSource::Squad);
+                    float gx = midX, gy = midY;
+                    spreadIfClose(i, gx, gy);
+                    SetBotGoal(i, gx, gy, BotRuntime::GoalSource::Squad);
                 }
             }
         }
@@ -724,9 +808,10 @@ void CS2DGame::AccumulateSeparation(const Player& self, float& outX, float& outY
         const float dx = self.x - other.x;
         const float dy = self.y - other.y;
         const float d2 = dx * dx + dy * dy;
-        // 死区：只有真的靠近（< 55% 半径）才推。原来 26px 就开始推，
-        // 驻守时队友稍微靠近就互相顶，表现为原地抖动。
-        constexpr float kSepDeadZone = SEP_RADIUS * 0.55f;
+        // 死区：只有真的靠近才推。P1-5：死区从 28.6px（52×0.55）收到约 20px，
+        // 与 FollowPathTo 的到达死区 28px 错开 8px 以上——否则 BOT 走进 28px 圈
+        // 即停，队友分离力在 28.6px 内又把它推出圈外，来回震荡。
+        constexpr float kSepDeadZone = SEP_RADIUS * Tuning::SepDeadZoneFrac;
         if (d2 >= kSepDeadZone * kSepDeadZone) return;
 
         // 完全重叠时给一个确定性的偏移，避免除零与抖动

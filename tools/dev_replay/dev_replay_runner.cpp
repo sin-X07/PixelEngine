@@ -19,6 +19,7 @@
 #include "metrics.hpp"
 #include "replay.hpp"
 #include "scripted_player.hpp"
+#include "combat_tracker.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -63,6 +64,7 @@ struct Options {
     std::string dumpPath;                   // 调试：逐 tick 状态 dump
     std::string conflictsPath;             // 非空 → 写 AI 冲突 CSV
     std::string tracePath;                 // 非空 → 写 BOT 决策 trace（开发期解释"为什么这么走"）
+    std::string positionsPath;             // 单局：逐 tick 逐 BOT 位置 dump（P1-5 实际站位验收）
     std::vector<std::string> conflictIgnore;   // 按 kind 忽略
     bool enableNoisyConflicts = false;         // 开启 duplicate_hold 等高噪声规则
 
@@ -78,6 +80,9 @@ struct Options {
     bool  llmRoundStartOnly = false;  // 只在回合开始请求 LLM（请求数减半）
     bool  noHash = false;             // 批量模式不写逐 tick hash（快跑，验收用）
     bool  buyKit = false;             // 脚本玩家（CT）每回合购买拆包钳（T20 验收场景用）
+    std::string scriptedStrategy = "follow"; // P2-5：脚本玩家策略 follow|hold|rush|stealth
+    std::string playerTeam;                  // P2-5：脚本玩家阵营 ""=默认CT | T | CT
+    std::string combatPath;                  // P2-5：非空 → 写交火日志 CSV
     int   coachWaitMs = 30000;        // 单次等待 LLM 回包的上限
     std::string llmModel;             // 覆盖 llm.ini 的模型（评估加速可用 3B）
     int   llmParallel = 0;            // 覆盖并行槽数（0=用配置）
@@ -96,6 +101,7 @@ Options ParseArgs(int argc, char** argv) {
         else if (a.rfind("--tag=", 0) == 0)      o.tag = a.substr(6);
         else if (a.rfind("--conflicts=", 0) == 0) o.conflictsPath = a.substr(12);
         else if (a.rfind("--trace=", 0) == 0) o.tracePath = a.substr(8);
+        else if (a.rfind("--positions=", 0) == 0) o.positionsPath = a.substr(12);
         else if (a.rfind("--journal=", 0) == 0) o.journalPath = a.substr(10);
         else if (a.rfind("--replay=", 0) == 0) o.replayPath = a.substr(9);
         else if (a.rfind("--dump=", 0) == 0) o.dumpPath = a.substr(7);
@@ -105,6 +111,9 @@ Options ParseArgs(int argc, char** argv) {
         else if (a == "--llm-roundstart-only") o.llmRoundStartOnly = true;
         else if (a == "--no-hash") o.noHash = true;
         else if (a == "--buy-kit") o.buyKit = true;
+        else if (a.rfind("--scripted-strategy=", 0) == 0) o.scriptedStrategy = a.substr(20);
+        else if (a.rfind("--player-team=", 0) == 0) o.playerTeam = a.substr(14);
+        else if (a.rfind("--combat=", 0) == 0) o.combatPath = a.substr(9);
         else if (a.rfind("--jobs=", 0) == 0) o.jobs = std::max(1, std::atoi(a.c_str() + 7));
         else if (a.rfind("--coach-wait-ms=", 0) == 0) o.coachWaitMs = std::atoi(a.c_str() + 16);
         else if (a.rfind("--llm-model=", 0) == 0) o.llmModel = a.substr(12);
@@ -192,8 +201,10 @@ struct Summary {
     double pathShort = 0.0, pathMid = 0.0, pathLong = 0.0;
     // 行为度量（来自 CS2DGame::Counters）：用来判断"抖动/变更"是否被抑制
     int intentChanges = 0, roleSwitches = 0, assistPushes = 0;
-    int nadeThrows = 0, nadeSkips = 0, searchVisits = 0, renewals = 0;
+    int nadeThrows = 0, nadeSkips = 0, nadePlanFails = 0, searchVisits = 0, renewals = 0;
     int llmPlans = 0, llmAdvisory = 0, llmLate = 0;
+    int molotovBuys = 0, molotovThrows = 0, utilKindThrows = 0, utilKindMismatch = 0;
+    int fireDamage = 0, fireTicks = 0;
     int dirReversals = 0;
     int lastTick_ = 0;
 };
@@ -253,7 +264,9 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
                const std::string& planPath = std::string(),
                const std::string& decisionPath = std::string(),
                const std::string& wiringPath = std::string(),
-               const std::string& coachRoundsPath = std::string()) {
+               const std::string& coachRoundsPath = std::string(),
+               const std::string& positionsPath = std::string(),
+               const std::string& combatPath = std::string()) {
     Summary s;
     s.map = map;
     s.seed = seed;
@@ -261,6 +274,11 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
     CS2DGame game;
     game.SetMatchMode(MatchMode::BombDefusal);
     game.SetRngSeed(static_cast<uint32_t>(seed));
+    // P2-5：脚本玩家换边（--player-team=T），默认 CT。
+    if (opt.playerTeam == "T" || opt.playerTeam == "t") game.SetPlayerTeam(Team::T);
+    else if (opt.playerTeam == "CT" || opt.playerTeam == "ct") game.SetPlayerTeam(Team::CT);
+    else if (!opt.playerTeam.empty())
+        std::fprintf(stderr, "[dev_replay] 未知的 --player-team: %s（用默认 CT）\n", opt.playerTeam.c_str());
 
     const std::string mapPath =
         PathUtils::ResolveAppPath("assets/cs2d/maps/" + map + ".tmj");
@@ -278,6 +296,12 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
     sp.aimErrorDeg = opt.aimErrorDeg;
     dev_replay::ScriptedPlayer script(sp);
     script.SetBuyKit(opt.buyKit);
+    // P2-5：脚本玩家策略（--scripted-strategy=），默认 Follow（= 基线行为）。
+    if (opt.scriptedStrategy == "hold") script.SetStrategy(dev_replay::ScriptedPlayer::Strategy::Hold);
+    else if (opt.scriptedStrategy == "rush") script.SetStrategy(dev_replay::ScriptedPlayer::Strategy::Rush);
+    else if (opt.scriptedStrategy == "stealth") script.SetStrategy(dev_replay::ScriptedPlayer::Strategy::Stealth);
+    else if (opt.scriptedStrategy == "follow") script.SetStrategy(dev_replay::ScriptedPlayer::Strategy::Follow);
+    else std::fprintf(stderr, "[dev_replay] 未知的 --scripted-strategy: %s（用 follow）\n", opt.scriptedStrategy.c_str());
 
     if (!opt.tracePath.empty()) game.EnableDecisionTrace(opt.tracePath);
 
@@ -320,6 +344,25 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
         if (conflictFile) dev_replay::ConflictChecker::WriteHeader(conflictFile);
     }
 
+    // P1-5：逐 tick 位置 dump（只读日志，不影响仿真确定性）。
+    std::FILE* positionsFile = nullptr;
+    if (!positionsPath.empty()) {
+        positionsFile = std::fopen(positionsPath.c_str(), "wb");
+        if (positionsFile) std::fprintf(positionsFile, "tick,round,planted,bot,team,alive,x,y,vx,vy,hadTarget,hasPath,pathIdx,goalX,goalY,hasHold,holdX,holdY,stance,maneuver,moveLatch,strafeSide\n");
+    }
+    // P2-5：交火日志（只读观测，不写游戏状态、不影响仿真确定性）。
+    dev_replay::CombatTracker combatTracker;
+    std::FILE* combatFile = nullptr;
+    if (!combatPath.empty()) {
+        combatFile = std::fopen(combatPath.c_str(), "wb");
+        if (combatFile) {
+            dev_replay::CombatTracker::WriteHeader(combatFile);
+            combatTracker.Begin(game, 0);
+        } else {
+            std::fprintf(stderr, "[dev_replay] 无法写入交火日志: %s\n", combatPath.c_str());
+        }
+    }
+
     std::FILE* dumpFile = opt.dumpPath.empty() ? nullptr : std::fopen(opt.dumpPath.c_str(), "wb");
     const float dt = 1.0f / 60.0f;
     uint64_t finalHash = 0;
@@ -350,6 +393,22 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
                     nullptr);
         tracker.Sample(game, static_cast<uint64_t>(t));
         conflicts.Check(game, static_cast<uint64_t>(t), conflictFile);
+        combatTracker.Sample(game, static_cast<uint64_t>(t), combatFile);
+        if (positionsFile) {
+            const auto& bots = game.GetBOTs();
+            const int planted = game.IsBombPlanted() ? 1 : 0;
+            for (size_t bi = 0; bi < bots.size(); ++bi) {
+                const auto& b = bots[bi];
+                const auto& ai = game.AiAt(bi);
+                std::fprintf(positionsFile, "%d,%d,%d,%zu,%d,%d,%.1f,%.1f,%.1f,%.1f,%d,%d,%d,%.1f,%.1f,%d,%.1f,%.1f,%d,%d,%d,%.1f\n",
+                             t, game.GetRoundNumber(), planted, bi,
+                             static_cast<int>(b.team), b.alive ? 1 : 0, b.x, b.y, b.vx, b.vy,
+                             ai.hadTarget ? 1 : 0, ai.path.empty() ? 0 : 1, ai.pathIdx, ai.goalX, ai.goalY,
+                             ai.hasPlanHold ? 1 : 0, ai.planHoldX, ai.planHoldY,
+                             static_cast<int>(ai.stance), static_cast<int>(ai.maneuver),
+                             ai.moveLatch, ai.strafeSide);
+            }
+        }
         DumpTick(dumpFile, game, static_cast<uint64_t>(t));
 
         // LLM 评估：有未回包的计划请求时等它（真实游戏里这段是玩家看到的决策延迟）。
@@ -382,7 +441,10 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
 
     if (hashFile) std::fclose(hashFile);
     if (conflictFile) std::fclose(conflictFile);
+    if (positionsFile) std::fclose(positionsFile);
     if (dumpFile) std::fclose(dumpFile);
+    combatTracker.Finish(game, static_cast<uint64_t>(lastTick_ + 1), combatFile);
+    if (combatFile) std::fclose(combatFile);
     game.CloseDecisionTrace();
     game.ClosePlanTrace();
     game.CloseDecisionLog();
@@ -464,11 +526,18 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
         s.assistPushes  = c.assistPushes;
         s.nadeThrows    = c.nadeThrows;
         s.nadeSkips     = c.nadeSkips;
+        s.nadePlanFails = c.nadePlanFails;
         s.searchVisits  = c.searchVisits;
         s.renewals      = c.renewals;
         s.llmPlans      = c.llmPlans;
         s.llmAdvisory   = c.llmAdvisory;
         s.llmLate       = c.llmLate;
+        s.molotovBuys   = c.molotovBuys;
+        s.molotovThrows = c.molotovThrows;
+        s.utilKindThrows = c.utilKindThrows;
+        s.utilKindMismatch = c.utilKindMismatch;
+        s.fireDamage    = c.fireDamage;
+        s.fireTicks     = c.fireTicks;
     }
     s.ok = true;
 
@@ -587,7 +656,8 @@ int main(int argc, char** argv) {
         const std::string roundsCsv = opt.hashPath.empty() ? std::string()
                                                           : opt.hashPath + ".rounds.csv";
         const Summary s = RunOne(opt, opt.map, opt.seed, opt.hashPath, roundsCsv,
-                                 opt.planPath, opt.decisionPath, opt.wiringPath, opt.coachRoundsPath);
+                                 opt.planPath, opt.decisionPath, opt.wiringPath, opt.coachRoundsPath,
+                                 opt.positionsPath, opt.combatPath);
         if (!s.ok) return 1;
         std::printf("[dev_replay] map=%s seed=%d ticks=%d aimTurn=%.2f aimErr=%.1f reaction=%d\n",
                     s.map.c_str(), s.seed, s.ticks, opt.aimTurnRate, opt.aimErrorDeg,
@@ -595,10 +665,12 @@ int main(int argc, char** argv) {
         std::printf("[dev_replay] final_hash=%016" PRIx64 "\n", s.finalHash);
         std::printf("[dev_replay] player kills=%d deaths=%d  ai_conflicts=%d\n",
                     s.playerKills, s.playerDeaths, s.conflicts);
-        std::printf("[dev_replay] behavior intentChg=%d roleSw=%d assist=%d nade=%d/%d search=%d renew=%d dirRev=%d llm=%d adv=%d late=%d\n",
+        std::printf("[dev_replay] behavior intentChg=%d roleSw=%d assist=%d nade=%d/%d search=%d renew=%d dirRev=%d llm=%d adv=%d late=%d molotov buy=%d throw=%d utilKind=%d mismatch=%d fireDmg=%d ticks=%d\n",
                     s.intentChanges, s.roleSwitches, s.assistPushes, s.nadeThrows, s.nadeSkips,
                     s.searchVisits, s.renewals, s.dirReversals,
-                    s.llmPlans, s.llmAdvisory, s.llmLate);
+                    s.llmPlans, s.llmAdvisory, s.llmLate,
+                    s.molotovBuys, s.molotovThrows, s.utilKindThrows, s.utilKindMismatch,
+                    s.fireDamage, s.fireTicks);
         std::printf("[dev_replay] quality still=%.1f%% idle=%.1f%% pathEff=%.2f dmg/round=%.0f fbWin=%.0f%% "
                     "plantNear=%.1f defuseNear=%.1f\n",
                     s.stillPct * 100, s.idlePct * 100, s.pathEff, s.damagePerRound,
@@ -628,8 +700,9 @@ int main(int argc, char** argv) {
                  "plants,defuses,player_kills,player_deaths,ai_conflicts,still_pct,idle_pct,"
                  "path_eff,path_eff_short,path_eff_mid,path_eff_long,"
                  "dmg_per_round,fb_win_pct,plant_near,defuse_near,"
-                 "intent_changes,role_switches,assist_pushes,nade_throws,nade_skips,"
-                 "search_visits,renewals,dir_reversals,llm_plans,llm_advisory,llm_late,final_hash\n");
+                 "intent_changes,role_switches,assist_pushes,nade_throws,nade_skips,nade_plan_fails,"
+                 "search_visits,renewals,dir_reversals,llm_plans,llm_advisory,llm_late,final_hash,"
+                 "molotov_buys,molotov_throws,util_kind_throws,util_kind_mismatch,fire_damage,fire_ticks\n");
 
     int games = 0, tWins = 0, ctWins = 0, failed = 0;
     double sumAvgRoundTicks = 0.0;
@@ -662,10 +735,15 @@ int main(int argc, char** argv) {
             if (i >= jobs.size()) break;
             Job& j = jobs[i];
             const std::string hashP = opt.noHash ? std::string() : j.base + ".hash.txt";
+            // P3-reversals: --positions in batch mode enables a per-match
+            // positions dump (<base>.positions.csv); single-match mode keeps the
+            // literal --positions path.
+            const std::string posP = opt.positionsPath.empty()
+                ? std::string() : j.base + ".positions.csv";
             j.s = RunOne(opt, j.map, j.seed, hashP,
                          j.base + ".rounds.csv", j.base + ".plans.csv",
                          j.base + ".decisions.csv", j.base + ".wiring.jsonl",
-                         j.base + ".coach_rounds.jsonl");
+                         j.base + ".coach_rounds.jsonl", posP);
             std::lock_guard<std::mutex> lk(printMutex);
             std::printf("[dev_replay] done %s seed=%d ok=%d winner=%s rounds=%d\n",
                         j.map.c_str(), j.seed, j.s.ok ? 1 : 0,
@@ -693,7 +771,7 @@ int main(int argc, char** argv) {
             sumDefuses += s.defuses;
             std::fprintf(summary,
                          "%s,%d,%s,%d,%d,%d,%d,%.0f,%d,%d,%d,%d,%d,%.1f,%.1f,%.2f,%.2f,%.2f,%.2f,%.0f,%.1f,%.2f,%.2f,"
-                         "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%016" PRIx64 "\n",
+                         "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%016" PRIx64 ",%d,%d,%d,%d,%d,%d\n",
                          s.map.c_str(), s.seed, dev_replay::TeamTag(s.winner),
                          s.scoreT, s.scoreCT, s.rounds, s.ticks, s.avgRoundTicks,
                          s.plants, s.defuses, s.playerKills, s.playerDeaths, s.conflicts,
@@ -701,9 +779,10 @@ int main(int argc, char** argv) {
                          s.pathShort, s.pathMid, s.pathLong, s.damagePerRound,
                          s.fbWinPct * 100, s.plantNear, s.defuseNear,
                          s.intentChanges, s.roleSwitches, s.assistPushes, s.nadeThrows,
-                         s.nadeSkips, s.searchVisits, s.renewals, s.dirReversals,
+                          s.nadeSkips, s.nadePlanFails, s.searchVisits, s.renewals, s.dirReversals,
                          s.llmPlans, s.llmAdvisory, s.llmLate,
-                         s.finalHash);
+                         s.finalHash, s.molotovBuys, s.molotovThrows, s.utilKindThrows,
+                         s.utilKindMismatch, s.fireDamage, s.fireTicks);
         }
     }
     std::fclose(summary);

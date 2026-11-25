@@ -28,6 +28,7 @@ void MixPlayer(TickHasher& h, const CS2DGame::Player& p) {
         h.Mix(static_cast<int>(p.grenades[i]));
     }
     h.Mix(p.kills);
+    h.Mix(p.teamKills);
     h.Mix(p.deaths);
     h.Mix(static_cast<uint8_t>(p.reloading ? 1 : 0));
     h.MixFloat(p.reloadTimer);

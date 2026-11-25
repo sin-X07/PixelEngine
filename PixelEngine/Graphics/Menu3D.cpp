@@ -1,24 +1,126 @@
 #include "Menu3D.hpp"
 #include <SDL_image.h>
+#include <SDL_opengl.h>
 #include "../Core/PathUtils.hpp"
-
-#ifdef _WIN32
-#include <windows.h>
-#include <GL/gl.h>
-#else
-#include <OpenGL/gl.h>
-#endif
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <future>
 
 #ifndef GL_MULTISAMPLE
 #define GL_MULTISAMPLE 0x809D
 #endif
 
 namespace {
+
+constexpr int kShadowSize = 2048;
+
+void CapMenuSize(int& width, int& height) {
+    const double scale = std::min({1.0, 1920.0 / width, 1080.0 / height});
+    width = std::max(1, static_cast<int>(std::lround(width * scale)));
+    height = std::max(1, static_cast<int>(std::lround(height * scale)));
+}
+
+template<class Function>
+Function GlProc(const char* name) {
+    return reinterpret_cast<Function>(SDL_GL_GetProcAddress(name));
+}
+
+constexpr char kSurfaceVertex[] = R"GLSL(
+#version 120
+uniform mat4 shadowMatrix;
+varying vec3 eyePosition;
+varying vec3 worldNormal;
+varying vec4 tangent;
+varying vec4 baseMR;
+varying vec4 occlusionNormal;
+varying vec4 shadowPosition;
+
+void main() {
+    gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
+    eyePosition = vec3(gl_ModelViewMatrix * gl_Vertex);
+    worldNormal = gl_Normal;
+    tangent = gl_MultiTexCoord4;
+    baseMR = vec4(gl_MultiTexCoord0.xy, gl_MultiTexCoord1.xy);
+    occlusionNormal = vec4(gl_MultiTexCoord2.xy, gl_MultiTexCoord3.xy);
+    shadowPosition = shadowMatrix * gl_Vertex;
+    gl_FrontColor = gl_BackColor = gl_Color;
+}
+)GLSL";
+
+constexpr char kSurfaceFragment[] = R"GLSL(
+#version 120
+uniform sampler2D baseMap;
+uniform sampler2D metallicRoughnessMap;
+uniform sampler2D occlusionMap;
+uniform sampler2D normalMap;
+uniform sampler2D shadowMap;
+uniform bool hasShadow;
+uniform vec4 maps;
+uniform vec4 factors;
+varying vec3 eyePosition;
+varying vec3 worldNormal;
+varying vec4 tangent;
+varying vec4 baseMR;
+varying vec4 occlusionNormal;
+varying vec4 shadowPosition;
+
+float shadowVisibility(float cosLight) {
+    if (!hasShadow) return 1.0;
+    vec3 p = shadowPosition.xyz / shadowPosition.w * 0.5 + 0.5;
+    if (any(lessThanEqual(p, vec3(0.002))) || any(greaterThanEqual(p, vec3(0.998)))) return 1.0;
+    float depth = p.z - max(0.00020, 0.00085 * (1.0 - cosLight));
+    float lit = 0.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x)
+            lit += step(depth, texture2D(shadowMap, p.xy + vec2(x,y) * (1.2/2048.0)).r);
+    float edge = min(min(p.x, 1.0-p.x), min(p.y, 1.0-p.y));
+    return mix(1.0, lit/9.0, smoothstep(0.002, 0.06, edge));
+}
+
+vec3 aces(vec3 x) {
+    return clamp((x * (2.51*x + 0.03)) / (x * (2.43*x + 0.59) + 0.14), 0.0, 1.0);
+}
+
+void main() {
+    vec4 base = gl_Color;
+    if (maps.x > 0.5) base *= texture2D(baseMap, baseMR.xy);
+    vec2 mr = factors.xy;
+    if (maps.y > 0.5) mr *= texture2D(metallicRoughnessMap, baseMR.zw).gb;
+    float roughness = clamp(mr.x, 0.07, 1.0);
+    float metallic = clamp(mr.y, 0.0, 1.0);
+    float ao = 1.0;
+    if (maps.z > 0.5) ao = mix(1.0, texture2D(occlusionMap, occlusionNormal.xy).r, factors.z);
+    vec3 n = normalize(worldNormal);
+    if (maps.w > 0.5) {
+        vec3 t = normalize(tangent.xyz - n * dot(tangent.xyz, n));
+        vec3 b = cross(n,t) * (tangent.w < 0.0 ? -1.0 : 1.0);
+        vec3 detail = texture2D(normalMap, occlusionNormal.zw).rgb * 2.0 - 1.0;
+        n = normalize(mat3(t,b,n) * vec3(detail.xy * factors.w, detail.z));
+    }
+    vec3 N = normalize(gl_NormalMatrix * n);
+    vec3 L = normalize(gl_LightSource[0].position.xyz);
+    vec3 V = normalize(-eyePosition);
+    vec3 H = normalize(L+V);
+    float nl = max(0.0,dot(N,L));
+    float fill = max(0.0,dot(N,normalize(gl_LightSource[2].position.xyz)));
+    float shine = mix(6.0, 128.0, (1.0-roughness)*(1.0-roughness));
+    vec3 f0 = mix(vec3(0.04), base.rgb, metallic);
+    vec3 specular = f0 * pow(max(0.0, dot(N,H)), shine) * (1.6 - roughness);
+    vec3 sky = gl_LightSource[0].ambient.rgb;
+    vec3 ground = sky * vec3(0.68, 0.51, 0.36);
+    vec3 ambient = mix(ground, sky, n.y * 0.5 + 0.5);
+    vec3 diffuse = base.rgb * (1.0 - 0.82 * metallic);
+    vec3 linear = (diffuse + f0 * metallic * 0.45) * ambient * ao
+        + diffuse * gl_LightSource[2].diffuse.rgb * fill
+        + (diffuse + specular) * gl_LightSource[0].diffuse.rgb * nl * shadowVisibility(nl);
+    float fog = clamp((gl_Fog.end + eyePosition.z) * gl_Fog.scale, 0.0, 1.0);
+    // The sRGB framebuffer encodes once, after linear blending with compatibility draws.
+    gl_FragColor = vec4(mix(gl_Fog.color.rgb, aces(linear * 0.92), fog), base.a);
+}
+)GLSL";
 
 constexpr float kPi = 3.14159265358979323846f;
 
@@ -260,6 +362,14 @@ void ApplyFocusCamera(float progress) {
 
 bool Menu3D::Initialize(SDL_Renderer* mainRenderer, int width, int height) {
     Shutdown();
+    followOutputSize_ = width == 0 && height == 0;
+    if (mainRenderer && followOutputSize_) {
+        if (SDL_GetRendererOutputSize(mainRenderer, &width, &height) != 0) {
+            lastError_ = std::string("SDL_GetRendererOutputSize failed: ") + SDL_GetError();
+            return false;
+        }
+        if (width > 0 && height > 0) CapMenuSize(width, height);
+    }
     if (!mainRenderer || width <= 0 || height <= 0) {
         lastError_ = "invalid renderer/size";
         return false;
@@ -275,16 +385,12 @@ bool Menu3D::Initialize(SDL_Renderer* mainRenderer, int width, int height) {
 
     LoadModels();
 
-    texture_ = SDL_CreateTexture(mainRenderer_, SDL_PIXELFORMAT_RGBA32,
-                                 SDL_TEXTUREACCESS_STREAMING, width_, height_);
+    texture_ = CreateBackdropTexture(width_, height_);
     if (!texture_) {
         lastError_ = std::string("SDL_CreateTexture failed: ") + SDL_GetError();
         Shutdown();
         return false;
     }
-    SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(texture_, SDL_ScaleModeLinear);
-
     pixels_.assign(static_cast<size_t>(width_) * height_ * 4, 0);
     flipped_.assign(pixels_.size(), 0);
     animationTime_ = 0.0f;
@@ -299,6 +405,43 @@ bool Menu3D::Initialize(SDL_Renderer* mainRenderer, int width, int height) {
     return true;
 }
 
+SDL_Texture* Menu3D::CreateBackdropTexture(int width, int height) const {
+    auto* texture = SDL_CreateTexture(mainRenderer_, SDL_PIXELFORMAT_RGBA32,
+                                     SDL_TEXTUREACCESS_STREAMING, width, height);
+    if (texture) {
+        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(texture, SDL_ScaleModeLinear);
+    }
+    return texture;
+}
+
+void Menu3D::FollowOutputSize() {
+    if (!followOutputSize_) return;
+    int width = 0, height = 0;
+    if (SDL_GetRenderTarget(mainRenderer_)) {
+        // SDL_GetRendererOutputSize reports that target's logical size in this case.
+        auto* window = SDL_RenderGetWindow(mainRenderer_);
+        if (window) SDL_GetWindowSizeInPixels(window, &width, &height);
+    } else if (SDL_GetRendererOutputSize(mainRenderer_, &width, &height) != 0) {
+        return;
+    }
+    if (width <= 0 || height <= 0) return;
+    CapMenuSize(width, height);
+    if (width == width_ && height == height_) return;
+    auto* next = CreateBackdropTexture(width, height);
+    if (!next) return;
+
+    SDL_SetWindowSize(glWindow_, width, height);
+    SDL_GL_SwapWindow(glWindow_);
+    SDL_DestroyTexture(texture_);
+    texture_ = next;
+    width_ = width;
+    height_ = height;
+    pixels_.resize(static_cast<size_t>(width_) * height_ * 4);
+    flipped_.resize(pixels_.size());
+    CaptureScenePreviews();
+}
+
 bool Menu3D::InitGL() {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
@@ -311,6 +454,7 @@ bool Menu3D::InitGL() {
     SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
+    SDL_GL_SetAttribute(SDL_GL_FRAMEBUFFER_SRGB_CAPABLE, 1);
 
     const auto createWindow = [this] {
         return SDL_CreateWindow("Menu3D",
@@ -319,6 +463,10 @@ bool Menu3D::InitGL() {
                                  SDL_WINDOW_HIDDEN | SDL_WINDOW_OPENGL);
     };
     glWindow_ = createWindow();
+    if (!glWindow_) {
+        SDL_GL_SetAttribute(SDL_GL_FRAMEBUFFER_SRGB_CAPABLE, 0);
+        glWindow_ = createWindow();
+    }
     if (!glWindow_) {
         SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
         SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
@@ -353,17 +501,157 @@ bool Menu3D::InitGL() {
     glEnable(GL_MULTISAMPLE);
     glShadeModel(GL_SMOOTH);
 
-    const GLfloat ambient[] = { 0.18f, 0.20f, 0.24f, 1.0f };
+    const GLfloat ambient[] = { .25f, .25f, .28f, 1.0f };
     const GLfloat diffuse[] = { 0.88f, 0.84f, 0.76f, 1.0f };
     const GLfloat position[] = { -4.0f, 8.0f, 6.0f, 1.0f };
     glLightfv(GL_LIGHT0, GL_AMBIENT, ambient);
     glLightfv(GL_LIGHT0, GL_DIFFUSE, diffuse);
     glLightfv(GL_LIGHT0, GL_POSITION, position);
+    const GLfloat specular[] = {.72f,.70f,.65f,1};
+    const GLfloat fill[] = {.19f,.24f,.30f,1};
+    const GLfloat fillPosition[] = {4,3,-6,0};
+    glLightfv(GL_LIGHT0, GL_SPECULAR, specular);
+    glLightfv(GL_LIGHT2, GL_DIFFUSE, fill);
+    glLightfv(GL_LIGHT2, GL_POSITION, fillPosition);
+    glEnable(GL_LIGHT2);
+    InitSurfaceShader();
     return true;
+}
+
+void Menu3D::InitSurfaceShader() {
+    const auto createShader = GlProc<PFNGLCREATESHADERPROC>("glCreateShader");
+    const auto shaderSource = GlProc<PFNGLSHADERSOURCEPROC>("glShaderSource");
+    const auto compile = GlProc<PFNGLCOMPILESHADERPROC>("glCompileShader");
+    const auto shaderStatus = GlProc<PFNGLGETSHADERIVPROC>("glGetShaderiv");
+    const auto shaderLog = GlProc<PFNGLGETSHADERINFOLOGPROC>("glGetShaderInfoLog");
+    const auto deleteShader = GlProc<PFNGLDELETESHADERPROC>("glDeleteShader");
+    const auto createProgram = GlProc<PFNGLCREATEPROGRAMPROC>("glCreateProgram");
+    const auto attach = GlProc<PFNGLATTACHSHADERPROC>("glAttachShader");
+    const auto link = GlProc<PFNGLLINKPROGRAMPROC>("glLinkProgram");
+    const auto programStatus = GlProc<PFNGLGETPROGRAMIVPROC>("glGetProgramiv");
+    const auto programLog = GlProc<PFNGLGETPROGRAMINFOLOGPROC>("glGetProgramInfoLog");
+    const auto deleteProgram = GlProc<PFNGLDELETEPROGRAMPROC>("glDeleteProgram");
+    const auto useProgram = GlProc<PFNGLUSEPROGRAMPROC>("glUseProgram");
+    const auto location = GlProc<PFNGLGETUNIFORMLOCATIONPROC>("glGetUniformLocation");
+    const auto uniform1i = GlProc<PFNGLUNIFORM1IPROC>("glUniform1i");
+    GLint srgb = 0;
+    GLint textureCoords = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_COORDS, &textureCoords);
+    if (SDL_GL_GetAttribute(SDL_GL_FRAMEBUFFER_SRGB_CAPABLE, &srgb) != 0 ||
+        !srgb || textureCoords < 5 || !createShader || !shaderSource || !compile ||
+        !shaderStatus || !shaderLog || !deleteShader || !createProgram || !attach || !link ||
+        !programStatus || !programLog || !deleteProgram || !useProgram || !location || !uniform1i ||
+        !GlProc<PFNGLACTIVETEXTUREPROC>("glActiveTexture") ||
+        !GlProc<PFNGLCLIENTACTIVETEXTUREARBPROC>("glClientActiveTexture") ||
+        !GlProc<PFNGLUNIFORM4FPROC>("glUniform4f") ||
+        !GlProc<PFNGLUNIFORMMATRIX4FVPROC>("glUniformMatrix4fv")) {
+        std::cerr << "[Menu3D] GLSL/sRGB unavailable; fixed-function lighting\n";
+        return;
+    }
+    const auto buildShader = [&](GLenum type, const char* source) {
+        const GLuint shader = createShader(type);
+        if (!shader) return GLuint{0};
+        shaderSource(shader, 1, &source, nullptr);
+        compile(shader);
+        GLint ok = GL_FALSE;
+        shaderStatus(shader, GL_COMPILE_STATUS, &ok);
+        if (ok) return shader;
+        char log[2048]{};
+        shaderLog(shader, sizeof(log), nullptr, log);
+        std::cerr << "[Menu3D] Shader compile failed; fixed-function lighting: " << log << '\n';
+        deleteShader(shader);
+        return GLuint{0};
+    };
+    const GLuint vertex = buildShader(GL_VERTEX_SHADER, kSurfaceVertex);
+    if (!vertex) return;
+    // The capture harness can exercise real driver compilation failure.
+    const char* forceFailure = SDL_getenv("PIXELENGINE_MENU_INVALID_SHADER");
+    const GLuint fragment = buildShader(GL_FRAGMENT_SHADER,
+        forceFailure && std::strcmp(forceFailure, "1") == 0 ? "#version 120\ninvalid shader" : kSurfaceFragment);
+    if (!fragment) {
+        deleteShader(vertex);
+        return;
+    }
+    const GLuint program = createProgram();
+    GLint linked = GL_FALSE;
+    if (program) {
+        attach(program, vertex);
+        attach(program, fragment);
+        link(program);
+        programStatus(program, GL_LINK_STATUS, &linked);
+    }
+    deleteShader(vertex);
+    deleteShader(fragment);
+    if (!linked) {
+        char log[2048]{};
+        if (program) {
+            programLog(program, sizeof(log), nullptr, log);
+            deleteProgram(program);
+        }
+        std::cerr << "[Menu3D] Shader link failed; fixed-function lighting: " << log << '\n';
+        return;
+    }
+    glEnable(GL_FRAMEBUFFER_SRGB);
+    if (!glIsEnabled(GL_FRAMEBUFFER_SRGB)) {
+        deleteProgram(program);
+        std::cerr << "[Menu3D] sRGB conversion unavailable; fixed-function lighting\n";
+        return;
+    }
+    surfaceProgram_ = program;
+    useProgram(program);
+    const char* samplers[] = {"baseMap", "metallicRoughnessMap", "occlusionMap", "normalMap", "shadowMap"};
+    for (int i = 0; i < 5; ++i) uniform1i(location(program, samplers[i]), i);
+    surfaceUniforms_ = {location(program, "factors"), location(program, "maps")};
+    surfaceShadowMatrix_ = location(program, "shadowMatrix");
+    surfaceHasShadow_ = location(program, "hasShadow");
+    useProgram(0);
+    InitShadowMap();
+    std::cout << "[Menu3D] GLSL 1.20 with framebuffer sRGB"
+              << (shadowDepth_ ? " and 2048x2048 shadows" : "") << '\n';
+}
+
+void Menu3D::InitShadowMap() {
+    const auto gen = GlProc<PFNGLGENFRAMEBUFFERSPROC>("glGenFramebuffers");
+    const auto bind = GlProc<PFNGLBINDFRAMEBUFFERPROC>("glBindFramebuffer");
+    const auto attach = GlProc<PFNGLFRAMEBUFFERTEXTURE2DPROC>("glFramebufferTexture2D");
+    const auto status = GlProc<PFNGLCHECKFRAMEBUFFERSTATUSPROC>("glCheckFramebufferStatus");
+    const auto remove = GlProc<PFNGLDELETEFRAMEBUFFERSPROC>("glDeleteFramebuffers");
+    if ((!SDL_GL_ExtensionSupported("GL_ARB_framebuffer_object") &&
+         !SDL_GL_ExtensionSupported("GL_EXT_framebuffer_object")) ||
+        !gen || !bind || !attach || !status || !remove) {
+        std::cerr << "[Menu3D] Shadow framebuffer unavailable\n";
+        return;
+    }
+    glGenTextures(1, &shadowDepth_);
+    glBindTexture(GL_TEXTURE_2D, shadowDepth_);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, kShadowSize, kShadowSize,
+                 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    gen(1, &shadowFramebuffer_);
+    if (shadowFramebuffer_) {
+        bind(GL_FRAMEBUFFER, shadowFramebuffer_);
+        glDrawBuffer(GL_NONE);
+        glReadBuffer(GL_NONE);
+        attach(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowDepth_, 0);
+        const GLenum framebufferStatus = status(GL_FRAMEBUFFER);
+        bind(GL_FRAMEBUFFER, 0);
+        if (framebufferStatus == GL_FRAMEBUFFER_COMPLETE) return;
+        remove(1, &shadowFramebuffer_);
+        shadowFramebuffer_ = 0;
+    }
+    glDeleteTextures(1, &shadowDepth_);
+    shadowDepth_ = 0;
+    std::cerr << "[Menu3D] Shadow framebuffer incomplete\n";
 }
 
 void Menu3D::Shutdown() {
     ready_ = false;
+    if (glContext_) SDL_GL_MakeCurrent(glWindow_, glContext_);
+    focusWeapons_.clear();
     tModel_.reset();
     ctModel_.reset();
     chickens_.clear();
@@ -373,6 +661,10 @@ void Menu3D::Shutdown() {
         preview = nullptr;
     }
     if (texture_) { SDL_DestroyTexture(texture_); texture_ = nullptr; }
+    if (surfaceProgram_) GlProc<PFNGLDELETEPROGRAMPROC>("glDeleteProgram")(surfaceProgram_);
+    if (shadowFramebuffer_) GlProc<PFNGLDELETEFRAMEBUFFERSPROC>("glDeleteFramebuffers")(1, &shadowFramebuffer_);
+    if (shadowDepth_) glDeleteTextures(1, &shadowDepth_);
+    surfaceProgram_ = shadowFramebuffer_ = shadowDepth_ = 0;
     if (glContext_) { SDL_GL_DeleteContext(glContext_); glContext_ = nullptr; }
     if (glWindow_) { SDL_DestroyWindow(glWindow_); glWindow_ = nullptr; }
     mainRenderer_ = nullptr;
@@ -382,16 +674,23 @@ void Menu3D::Shutdown() {
 
 bool Menu3D::LoadModels() {
     const char* scenes[] = { "ancient_ruins", "dust_2", "mirage" };
+    // Parsing and skinning the three independent scenes can overlap. All GL work
+    // stays on this thread and takes place when the previews draw.
+    using SceneLoad = std::pair<std::unique_ptr<Menu3DModel>, bool>;
+    std::array<std::future<SceneLoad>, 3> loads;
     for (int i = 0; i < 3; ++i) {
-        // 场景预览不再从 assets/models/menu/scenes/*.png 读取：那些 PNG 是旧的人工
-        // 抓拍（含漫游聚光灯光柱与小鸡，三个预览几乎一样且常被漂白），仓库里从未提交
-        // 过、也没有生成器。改由 Initialize() 末尾的 CaptureScenePreviews() 对三个
-        // 环境做纯环境抓拍（无光柱、无角色、无小鸡），随运行实时生成。
-        auto environment = std::make_unique<Menu3DModel>();
-        if (environment->Load(std::string("assets/models/menu/scenes/") + scenes[i] + ".glb")) {
-            environments_[i] = std::move(environment);
+        loads[i] = std::async([name = scenes[i]] {
+            auto model = std::make_unique<Menu3DModel>();
+            const bool loaded = model->Load(std::string("assets/models/menu/scenes/") + name + ".glb");
+            return SceneLoad{std::move(model), loaded};
+        });
+    }
+    for (int i = 0; i < 3; ++i) {
+        auto [model, loaded] = loads[i].get();
+        if (loaded) {
+            environments_[i] = std::move(model);
         } else {
-            std::cerr << "[Menu3D] Environment unavailable: " << scenes[i] << std::endl;
+            std::cerr << "[Menu3D] Environment unavailable: " << scenes[i] << " (" << model->LastError() << ")\n";
         }
     }
     tModel_ = std::make_unique<Menu3DModel>();
@@ -505,8 +804,8 @@ float Menu3D::ChickenRadius(int index, float z) const {
 std::vector<Menu3D::GroundObstacle> Menu3D::ChickenObstacles(int index) const {
     std::vector<GroundObstacle> obstacles;
     // Keep room for every menu loadout as well as the currently visible meshes.
-    if (tModel_) obstacles.push_back({-4.4f, 0, std::max(1.5f, tModel_->HorizontalRadius() * 1.22f + .10f)});
-    if (ctModel_) obstacles.push_back({4.4f, 0, std::max(1.5f, ctModel_->HorizontalRadius() * 1.22f + .10f)});
+    if (tModel_) obstacles.push_back({ActorStageX(0), 0, std::max(1.5f, tModel_->HorizontalRadius() * 1.22f + .10f)});
+    if (ctModel_) obstacles.push_back({ActorStageX(1), 0, std::max(1.5f, ctModel_->HorizontalRadius() * 1.22f + .10f)});
     for (int other = 0; other < static_cast<int>(chickens_.size()) && other < 3; ++other) {
         if (other == index) continue;
         const auto& state = chickenState_[other];
@@ -638,10 +937,15 @@ void Menu3D::UpdateChickens(float dt) {
     }
 }
 
+float Menu3D::ActorStageX(int actor) const {
+    const float offset = displayedScene_ == 1 ? 4.92f : 4.4f;
+    return actor == 0 ? -offset : offset;
+}
+
 void Menu3D::DrawModels() {
     // 接地阴影
-    DrawShadow(-4.4f, 0.0f, 0.66f, 0.40f, 0.46f);
-    DrawShadow( 4.4f, 0.0f, 0.66f, 0.40f, 0.46f);
+    DrawShadow(ActorStageX(0), 0.0f, 0.66f, 0.40f, 0.46f);
+    DrawShadow( ActorStageX(1), 0.0f, 0.66f, 0.40f, 0.46f);
     for (int i = 0; i < static_cast<int>(chickens_.size()) && i < 3; ++i) {
         const ChickenState& s = chickenState_[i];
         const float dist = 8.6f - s.z;
@@ -650,13 +954,13 @@ void Menu3D::DrawModels() {
     }
     // 角色
     glPushMatrix();
-    glTranslatef(-4.4f, 0.0f, 0.0f);
+    glTranslatef(ActorStageX(0), 0.0f, 0.0f);
     if (hoveredObject_ == 0) tModel_->DrawHighlight(1.22f, 0.0f, 0.0f);
     tModel_->Draw(1.22f, 0.0f, 0.0f);
     glPopMatrix();
 
     glPushMatrix();
-    glTranslatef(4.4f, 0.0f, 0.0f);
+    glTranslatef(ActorStageX(1), 0.0f, 0.0f);
     if (hoveredObject_ == 1) ctModel_->DrawHighlight(1.22f, 0.0f, 0.0f);
     ctModel_->Draw(1.22f, 0.0f, 0.0f);
     glPopMatrix();
@@ -676,8 +980,8 @@ void Menu3D::DrawModels() {
 
 void Menu3D::ObjectWorldPosition(int index, float& x, float& y, float& z) const {
     x = 0.0f; y = 1.2f; z = 0.0f;
-    if (index == 0) { x = -4.4f; }
-    else if (index == 1) { x = 4.4f; }
+    if (index == 0) { x = ActorStageX(0); }
+    else if (index == 1) { x = ActorStageX(1); }
     else if (index >= 2 && index < 5 && index - 2 < static_cast<int>(chickenState_.size())) {
         const ChickenState& s = chickenState_[index - 2];
         x = s.x; y = 0.7f; z = s.z;
@@ -688,10 +992,10 @@ void Menu3D::FocusCurrentPosition(float& x, float& z) const {
     const float raw = std::clamp(focusProgress_, 0.0f, 1.0f);
     const float t = raw * raw * (3.0f - 2.0f * raw);
     if (focusedObject_ == 0) {
-        x = -4.4f + (focusTargetX_ + 4.4f) * t;
+        x = ActorStageX(0) + (focusTargetX_ - ActorStageX(0)) * t;
         z = 0.0f;
     } else if (focusedObject_ == 1) {
-        x = 4.4f + (focusTargetX_ - 4.4f) * t;
+        x = ActorStageX(1) + (focusTargetX_ - ActorStageX(1)) * t;
         z = 0.0f;
     } else if (focusedObject_ >= 2 && focusedObject_ - 2 < static_cast<int>(chickenState_.size())) {
         const ChickenState& s = chickenState_[focusedObject_ - 2];
@@ -1115,8 +1419,9 @@ void Menu3D::DrawSpotlight() {
     glDepthMask(GL_FALSE);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 
+    const float beamAlpha = si * .20f;
     // 可见光锥：顶端跟随灯源，底端跟随目标
-    glColor4f(0.72f, 0.86f, 1.0f, 0.24f * si);
+    glColor4f(0.72f, 0.86f, 1.0f, 0.24f * beamAlpha);
     glBegin(GL_QUAD_STRIP);
     constexpr int kSegments = 24;
     for (int i = 0; i <= kSegments; ++i) {
@@ -1129,7 +1434,7 @@ void Menu3D::DrawSpotlight() {
     glEnd();
 
     // 地面光斑
-    glColor4f(0.78f, 0.90f, 1.0f, 0.27f * si);
+    glColor4f(0.78f, 0.90f, 1.0f, 0.27f * beamAlpha);
     glBegin(GL_TRIANGLE_FAN);
     glVertex3f(spotX_, 0.008f, spotZ_);
     for (int i = 0; i <= kSegments; ++i) {
@@ -1203,6 +1508,42 @@ void Menu3D::SetScene(int index, bool immediate) {
     if (sceneTransition_ >= .25f) sceneTransition_ = .5f - sceneTransition_;
 }
 
+void Menu3D::DrawEnvironmentShadow(const Menu3DModel& model, const float sun[4]) {
+    const auto bind = GlProc<PFNGLBINDFRAMEBUFFERPROC>("glBindFramebuffer");
+    bind(GL_FRAMEBUFFER, shadowFramebuffer_);
+    glPushAttrib(GL_ENABLE_BIT | GL_POLYGON_BIT | GL_VIEWPORT_BIT | GL_DEPTH_BUFFER_BIT);
+    glViewport(0, 0, kShadowSize, kShadowSize);
+    glDisable(GL_LIGHTING);
+    glDisable(GL_FOG);
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(1.5f, 2.0f);
+    glClear(GL_DEPTH_BUFFER_BIT);
+
+    // Stable volume around the menu camera's courtyard and visible architecture.
+    const float center[] = {0, 2, -7};
+    const float eye[] = {center[0]+sun[0]*22, center[1]+sun[1]*22, center[2]+sun[2]*22};
+    const float up[] = {0,1,0};
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(-19,19,-15,15,1,58);
+    ApplyLookAt(eye, center, up);
+    glGetFloatv(GL_PROJECTION_MATRIX, shadowMatrix_.data());
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+    model.DrawDepth();
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glPopAttrib();
+    bind(GL_FRAMEBUFFER, 0);
+}
+
 void Menu3D::DrawEnvironment() {
     const bool ruins = displayedScene_ == 0;
     const bool desert = displayedScene_ == 1;
@@ -1220,11 +1561,13 @@ void Menu3D::DrawEnvironment() {
     glPushMatrix();
     glLoadIdentity();
     glBegin(GL_QUADS);
-    glColor4f(atmosphere(ruins ? .23f : .46f,.24f), atmosphere(ruins ? .29f : .36f,.27f),
-              atmosphere(ruins ? .27f : .24f,.27f), 1);
+    const GLfloat horizon[][3] = {{.60f,.72f,.64f},{.86f,.74f,.57f},{.91f,.76f,.63f}};
+    const GLfloat zenith[][3] = {{.23f,.43f,.46f},{.28f,.44f,.53f},{.35f,.53f,.67f}};
+    const auto& low = horizon[displayedScene_];
+    const auto& high = zenith[displayedScene_];
+    glColor4f(atmosphere(low[0],.24f),atmosphere(low[1],.27f),atmosphere(low[2],.27f),1);
     glVertex2f(-1,-1); glVertex2f(1,-1);
-    glColor4f(atmosphere(ruins ? .075f : .17f,.12f), atmosphere(ruins ? .16f : .25f,.20f),
-              atmosphere(ruins ? .18f : .30f,.24f), 1);
+    glColor4f(atmosphere(high[0],.12f),atmosphere(high[1],.20f),atmosphere(high[2],.24f),1);
     glVertex2f(1,1); glVertex2f(-1,1);
     glEnd();
     glPopMatrix();
@@ -1238,52 +1581,74 @@ void Menu3D::DrawEnvironment() {
              atmosphere(ruins ? .30f : .52f,.34f), atmosphere(ruins ? .30f : .41f,.32f),
              atmosphere(ruins ? .25f : .26f,.27f));
     glEnable(GL_LIGHTING);
-    const GLfloat haze[] = { ruins ? .23f : .46f, ruins ? .29f : .36f,
-                             ruins ? .27f : .24f, 1.0f };
+    const GLfloat haze[] = {atmosphere(low[0],.24f), atmosphere(low[1],.27f),
+                            atmosphere(low[2],.27f), 1.0f};
+    constexpr float fogRanges[][2] = {{19,43},{15,36},{18,39}};
     glEnable(GL_FOG);
     glFogi(GL_FOG_MODE, GL_LINEAR);
     glFogfv(GL_FOG_COLOR, haze);
-    glFogf(GL_FOG_START, 13.0f);
-    glFogf(GL_FOG_END, 34.0f);
+    glFogf(GL_FOG_START, fogRanges[displayedScene_][0]);
+    glFogf(GL_FOG_END, fogRanges[displayedScene_][1]);
     if (environments_[displayedScene_]) {
-        environments_[displayedScene_]->DrawRaw(fade);
+        glPushAttrib(GL_LIGHTING_BIT);
+        const GLfloat sun[] = {-1.12f,.71f,desert ? .55f : -.83f,0};
+        const GLfloat warmth[] = {.89f,ruins ? .82f : .74f,ruins ? .72f : .57f,1};
+        const GLfloat skylights[][4] = {{.25f,.30f,.35f,1},{.30f,.27f,.25f,1},{.28f,.29f,.32f,1}};
+        const GLfloat fill[] = {desert ? .19f : .17f,.24f,.30f,1};
+        const GLfloat fillDirection[] = {.85f,.55f,-.62f,0};
+        const auto& skylight = skylights[displayedScene_];
+        glLightfv(GL_LIGHT2, GL_POSITION, fillDirection);
+        glLightfv(GL_LIGHT2, GL_DIFFUSE, fill);
+        glLightfv(GL_LIGHT0, GL_POSITION, sun);
+        glLightfv(GL_LIGHT0, GL_DIFFUSE, warmth);
+        glLightfv(GL_LIGHT0, GL_AMBIENT, skylight);
+        glDisable(GL_LIGHT1);
+        auto& environment = *environments_[displayedScene_];
+        if (surfaceProgram_) {
+            const auto use = GlProc<PFNGLUSEPROGRAMPROC>("glUseProgram");
+            const auto active = GlProc<PFNGLACTIVETEXTUREPROC>("glActiveTexture");
+            const auto setMatrix = GlProc<PFNGLUNIFORMMATRIX4FVPROC>("glUniformMatrix4fv");
+            const auto setInt = GlProc<PFNGLUNIFORM1IPROC>("glUniform1i");
+            if (shadowDepth_) DrawEnvironmentShadow(environment, sun);
+            use(surfaceProgram_);
+            setInt(surfaceHasShadow_, shadowDepth_ != 0);
+            if (shadowDepth_) {
+                setMatrix(surfaceShadowMatrix_, 1, GL_FALSE, shadowMatrix_.data());
+                active(GL_TEXTURE4);
+                glBindTexture(GL_TEXTURE_2D, shadowDepth_);
+                active(GL_TEXTURE0);
+            }
+            environment.DrawRaw(fade, &surfaceUniforms_);
+            active(GL_TEXTURE4);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            active(GL_TEXTURE0);
+            use(0);
+        } else {
+            environment.DrawRaw(fade);
+        }
+        glPopAttrib();
     } else {
         DrawCube(0,-.05f,0,40,.1f,48,.32f,.29f,.23f);
     }
     glDisable(GL_FOG);
-    // Weather stays behind the full movement envelope, including the birds at Z=-2.
+    // Rain Observatory retains its existing ambient particles. The other scenes
+    // carry baked sunlit dust in their environment animation.
+    if (!ruins) return;
     glDisable(GL_LIGHTING);
     glDepthMask(GL_FALSE);
     glBegin(GL_QUADS);
-    const int count = desert ? 100 : 35;
-    for (int i = 0; i < count; ++i) {
-        const float phase = animationTime_ * (desert ? .65f : .12f) + i * .731f;
+    for (int i = 0; i < 35; ++i) {
+        const float phase = animationTime_ * .12f + i * .731f;
         const float x = std::fmod(phase + i * 1.91f, 24.0f) - 12.0f;
-        const float y = .12f + std::fmod(i * .337f, desert ? 2.2f : 4.6f);
+        const float y = .12f + std::fmod(i * .337f, 4.6f);
         const float z = -3.3f - std::fmod(i * .711f, 3.2f);
-        const float size = desert ? .08f : .018f;
-        glColor4f(ruins ? .58f : .78f, ruins ? .65f : .62f, .36f,
-                   (desert ? .09f : .18f) * fade);
+        const float size = .018f;
+        glColor4f(.58f, .65f, .36f,
+                   .18f * fade);
         glVertex3f(x-size,y,z); glVertex3f(x+size,y,z);
         glVertex3f(x+size,y+size*.45f,z); glVertex3f(x-size,y+size*.45f,z);
     }
     glEnd();
-    if (desert) {
-        // Soft, low-contrast dust banks have transparent edges and remain behind actors.
-        for (int bank = 0; bank < 12; ++bank) {
-            const float x = std::fmod(animationTime_ * .24f + bank * 2.73f, 30.0f) - 15.0f;
-            const float y = .3f + .18f * std::sin(animationTime_ * .3f + bank);
-            glBegin(GL_TRIANGLE_FAN);
-            glColor4f(.72f,.56f,.32f,.065f * fade);
-            glVertex3f(x,y,-3.15f);
-            glColor4f(.72f,.56f,.32f,0);
-            for (int edge = 0; edge <= 24; ++edge) {
-                const float angle = edge * (2*kPi/24);
-                glVertex3f(x + std::cos(angle)*3.8f, y + std::sin(angle)*.8f,-3.15f);
-            }
-            glEnd();
-        }
-    }
     glDepthMask(GL_TRUE);
     glEnable(GL_LIGHTING);
 }
@@ -1315,9 +1680,9 @@ void Menu3D::DrawFocusScene() {
     float normalX = 0.0f, normalZ = 0.0f, normalScale = 1.22f;
     float targetScale = 2.3f;
     if (focusedObject_ == 0) {
-        normalX = -4.4f;
+        normalX = ActorStageX(0);
     } else if (focusedObject_ == 1) {
-        normalX = 4.4f;
+        normalX = ActorStageX(1);
     } else if (focusedObject_ >= 2 && focusedObject_ - 2 < static_cast<int>(chickenState_.size())) {
         const ChickenState& s = chickenState_[focusedObject_ - 2];
         normalX = s.x;
@@ -1336,13 +1701,13 @@ void Menu3D::DrawFocusScene() {
     if (otherAlpha > 0.01f) {
         if (tModel_ && focusedObject_ != 0) {
             glPushMatrix();
-            glTranslatef(-4.4f, 0.0f, 0.0f);
+            glTranslatef(ActorStageX(0), 0.0f, 0.0f);
             tModel_->Draw(1.22f, 0.0f, 0.0f, otherAlpha);
             glPopMatrix();
         }
         if (ctModel_ && focusedObject_ != 1) {
             glPushMatrix();
-            glTranslatef(4.4f, 0.0f, 0.0f);
+            glTranslatef(ActorStageX(1), 0.0f, 0.0f);
             ctModel_->Draw(1.22f, 0.0f, 0.0f, otherAlpha);
             glPopMatrix();
         }
@@ -1393,6 +1758,7 @@ void Menu3D::Render(float dt) {
     lastRenderTicks_ = now;
 
     if (SDL_GL_MakeCurrent(glWindow_, glContext_) != 0) return;
+    FollowOutputSize();
     glViewport(0, 0, width_, height_);
 
     const float animDt = pendingAnimationTime_;
@@ -1420,7 +1786,7 @@ void Menu3D::Render(float dt) {
         DrawScene(animationTime_);
         UpdateObjectScreenPositions();
     }
-    ReadbackToTexture();
+    ReadbackToTexture(texture_);
     SDL_GL_SwapWindow(glWindow_);
 }
 
@@ -1495,8 +1861,8 @@ void Menu3D::DrawScene(float timeSec) {
     }
 }
 
-void Menu3D::ReadbackToTexture() {
-    if (!texture_ || pixels_.empty()) return;
+void Menu3D::ReadbackToTexture(SDL_Texture* target) {
+    if (!target || pixels_.empty()) return;
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadBuffer(GL_BACK);
     glReadPixels(0, 0, width_, height_, GL_RGBA, GL_UNSIGNED_BYTE, pixels_.data());
@@ -1517,6 +1883,11 @@ void Menu3D::ReadbackToTexture() {
     for (int y = 0; y < height_; ++y) {
         const uint8_t* src = pixels_.data() + static_cast<size_t>(height_ - 1 - y) * stride;
         uint8_t* dst = flipped_.data() + static_cast<size_t>(y) * stride;
+        // A live surface program uses framebuffer sRGB for the entire composite.
+        if (surfaceProgram_) {
+            std::memcpy(dst, src, stride);
+            continue;
+        }
         for (int x = 0; x < width_; ++x) {
             dst[x * 4] = srgb[src[x * 4]];
             dst[x * 4 + 1] = srgb[src[x * 4 + 1]];
@@ -1524,13 +1895,12 @@ void Menu3D::ReadbackToTexture() {
             dst[x * 4 + 3] = src[x * 4 + 3];
         }
     }
-    SDL_UpdateTexture(texture_, nullptr, flipped_.data(), static_cast<int>(stride));
+    SDL_UpdateTexture(target, nullptr, flipped_.data(), static_cast<int>(stride));
 }
 
 // 预览抓拍：逐个切到三个环境，只画环境本体并回读为预览纹理。
-// 在 Initialize() 末尾做一次（1024x576，与主 3D 纹理同分辨率，面板 164x90 绘制足够清晰）。
-// 抓拍会临时写掉 texture_（最后一帧是 mirage），但下一帧 Render() 会把主纹理
-// 重绘回当前场景，因此不会在主菜单上闪现。环境 .glb 加载失败的槽位保持空纹理，
+// 在 Initialize() 末尾做一次（与主 3D 纹理同分辨率）。
+// 环境 .glb 加载失败的槽位保持空纹理，
 // 面板按原有逻辑跳过绘制（GameUI.cpp 的 if (ctx.menuScenePreviews[i]) 守卫）。
 void Menu3D::CaptureScenePreviews() {
     if (!glContext_ || !mainRenderer_) return;
@@ -1538,25 +1908,31 @@ void Menu3D::CaptureScenePreviews() {
     glViewport(0, 0, width_, height_);
 
     const int savedScene = displayedScene_;
+    const float savedTransition = sceneTransition_;
+    const float savedCamera = cameraTopDown_;
     const bool savedSuppressed = spotlightSuppressed_;
+    sceneTransition_ = .5f;
+    cameraTopDown_ = 0;
     spotlightSuppressed_ = true;
     previewCapture_ = true;
     for (int i = 0; i < 3; ++i) {
         if (!environments_[i]) continue;
         displayedScene_ = i;
-        DrawScene(0.0f);
-        ReadbackToTexture();
         SDL_Texture* preview = SDL_CreateTexture(
             mainRenderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, width_, height_);
         if (!preview) {
             std::cerr << "[Menu3D] 预览纹理创建失败: " << SDL_GetError() << std::endl;
             continue;
         }
-        SDL_UpdateTexture(preview, nullptr, flipped_.data(), width_ * 4);
+        DrawScene(0.0f);
+        ReadbackToTexture(preview);
         SDL_SetTextureScaleMode(preview, SDL_ScaleModeLinear);
+        if (scenePreviews_[i]) SDL_DestroyTexture(scenePreviews_[i]);
         scenePreviews_[i] = preview;
     }
     previewCapture_ = false;
     spotlightSuppressed_ = savedSuppressed;
+    sceneTransition_ = savedTransition;
+    cameraTopDown_ = savedCamera;
     displayedScene_ = savedScene;
 }

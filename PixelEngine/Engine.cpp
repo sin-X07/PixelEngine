@@ -507,9 +507,14 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
             std::cerr << "[Menu3D] 主渲染器为 OpenGL，跳过独立 3D 上下文" << std::endl;
         }
     }
+    // 若存档要求全屏
+    if (saveManager->GetSettings().fullscreen && !isFullscreen) {
+        ToggleFullscreen();
+    }
+
     if (canInitMenu3D) {
         menu3D = std::make_unique<Menu3D>();
-        if (!menu3D->Initialize(renderer, 1024, 576)) {
+        if (!menu3D->Initialize(renderer)) {
             std::cerr << "[Menu3D] 初始化失败，回退静态菜单背景: "
                       << menu3D->LastError() << std::endl;
             menu3D.reset();
@@ -536,11 +541,6 @@ bool Engine::Initialize(const char* title, int width, int height, bool autostart
     });
 
     // LLM BOT 延迟到首次开局加载（黑屏加载阶段），避免启动菜单前阻塞。
-
-    // 若存档要求全屏
-    if (saveManager->GetSettings().fullscreen && !isFullscreen) {
-        ToggleFullscreen();
-    }
 
     // 主菜单背景：用一张地图实景（失败不影响运行）
     {

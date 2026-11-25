@@ -34,6 +34,8 @@ const char* IntentKey(PlanIntent i) {
         case PlanIntent::RetakeB:       return "retake_b";
         case PlanIntent::Save:          return "save";
         case PlanIntent::FakeThenOther: return "fake";
+        case PlanIntent::RotateA:       return "rotate_a";
+        case PlanIntent::RotateB:       return "rotate_b";
         default:                        return "default";
     }
 }
@@ -230,6 +232,38 @@ void CS2DGame::CoachUpdate(float dt) {
             shaped.target    = next.target;
             shaped.tempo     = next.tempo;
             shaped.hasBranch = false;
+            // P2-4: the branched plan must execute the branched intent, not just
+            // carry its label -- re-resolve slots from the branch intent's template
+            // (Rotate/Fake/Rush). A MID branch falls back to the MID-control shape.
+            // No re-shape once the bomb is planted: the fresh plan is already a
+            // post-plant Stack/Retake plan and must not be overwritten by an attack.
+            if (!bombPlanted_) {
+                shaped.templateDefault = true;
+                ApplyTacticsSlots(t, shaped);
+                if (shaped.intent == PlanIntent::Default && shaped.target == "MID") {
+                    // 5b: ApplyTacticsSlots above already applied the ini template
+                    // ([slots.<team>.Default@MID]) when the map ships one -- that is
+                    // the single source of truth (mirage: 4-mid + B-only anchor).
+                    // Only fall back to the hardcoded old 3-mid shape when the map
+                    // has no such template; never clobber the ini shape.
+                    const char* branchTeamKey = (t == Team::T) ? "T" : "CT";
+                    if (!tactics_.Slots(branchTeamKey, "Default@MID")) {
+                        const std::string midArea = AreaHint("Mid");
+                        const std::string aSiteArea = AreaHint("A_Site");
+                        const std::string bSiteArea = AreaHint("B_Site");
+                        shaped.slots[0] = { CoachRole::Entry,   midArea,   true, true  };
+                        shaped.slots[1] = { CoachRole::Support, midArea,   true, true  };
+                        shaped.slots[2] = { CoachRole::Anchor,  aSiteArea, true, false };
+                        shaped.slots[3] = { CoachRole::Anchor,  bSiteArea, true, false };
+                        shaped.slots[4] = { CoachRole::Lurk,    midArea,   true, true  };
+                        shaped.slots[0].lookArea = aSiteArea;
+                        shaped.slots[1].lookArea = bSiteArea;
+                        shaped.slots[2].lookArea = "CT_Spawn";
+                        shaped.slots[3].lookArea = "CT_Spawn";
+                        shaped.slots[4].lookArea = "CT_Spawn";
+                    }
+                }
+            }
             shaped.gen       = next.gen;
             shaped.createdAt = next.createdAt;
             shaped.expiresAt = next.expiresAt;
@@ -321,6 +355,9 @@ void CS2DGame::CoachUpdate(float dt) {
 void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
     CoachState& st = CoachFor(t);
 
+    // P2-2: the last 20s of a round without a plant is as critical as TimeLow --
+    // a replan here must rush (T) / hold sites (CT), never drift back to Default.
+    const bool lateRound = !bombPlanted_ && round_.IsLive() && GetRoundRemaining() <= 20.0f;
     const bool criticalEv =
         ev.type == CoachEventType::RoundStart ||
         ev.type == CoachEventType::BombPlanted ||
@@ -328,14 +365,19 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
         ev.type == CoachEventType::TimeLow ||
         ev.type == CoachEventType::EconomyLow ||
         ev.type == CoachEventType::MatchPoint ||
-        ev.type == CoachEventType::HumanDied;
+        ev.type == CoachEventType::HumanDied || lateRound;
 
+    // P1-1: EnemyDown/AllyDown is no longer a soft event -- a manpower change is
+    // a plan re-evaluation trigger (re-score into press/contract plans, not just
+    // a tempo tweak). Kill spam was flipping reason every death while intent
+    // stayed Default split; that is now held back by the manpower replan
+    // cooldown below, the T 18s execution lock, and the change budget.
+    const bool manpowerEv =
+        ev.type == CoachEventType::EnemyDown ||
+        ev.type == CoachEventType::AllyDown;
     // Soft events: keep a still-valid plan (skip full replan (sticky soft)).
-    // Kill spam was flipping reason every death while intent stayed Default split.
     const bool softEv =
         ev.type == CoachEventType::Heartbeat ||
-        ev.type == CoachEventType::EnemyDown ||
-        ev.type == CoachEventType::AllyDown ||
         ev.type == CoachEventType::EnemySpotted ||
         ev.type == CoachEventType::DefuseAborted;
 
@@ -384,7 +426,7 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
         ev.type != CoachEventType::EconomyLow &&
         ev.type != CoachEventType::TimeLow &&
         ev.type != CoachEventType::MatchPoint &&
-        ev.type != CoachEventType::BombPlanted) {
+         ev.type != CoachEventType::BombPlanted && !lateRound) {
         if (st.callsThisRound > 0) --st.callsThisRound;
         std::cout << "[Coach] T 执行锁定 " << st.plan.target
                   << " (ev#" << static_cast<int>(ev.type) << " no-replan)" << std::endl;
@@ -393,10 +435,16 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
 
     // ---- 变更预算：意图至少保持 IntentMinHold，每回合最多 IntentMaxChanges 次 ----
     // 治"无头苍蝇"的核心：没有新信息就不换指令（新信息由 criticalEv 放行）。
+    // P1-1: manpower events use their own cooldown instead of
+    // IntentMinHold/IntentChangeCooldown -- a manpower replan usually keeps
+    // intent Default, so it never moves lastIntentChangeSec; without its own
+    // timer, back-to-back deaths would replan every time.
     if (!criticalEv && st.plan.valid && !bombPlanted_) {
         const float held = clockSec_ - st.plan.createdAt;
-        const bool tooSoon = held < Tuning::ai::IntentMinHold ||
-                             (clockSec_ - st.lastIntentChangeSec) < Tuning::ai::IntentChangeCooldown;
+        const bool tooSoon = manpowerEv
+            ? (clockSec_ - st.lastManpowerReplanSec) < Tuning::ai::ManpowerReplanCooldown
+            : (held < Tuning::ai::IntentMinHold ||
+               (clockSec_ - st.lastIntentChangeSec) < Tuning::ai::IntentChangeCooldown);
         const bool budgetOut = st.changesThisRound >= Tuning::ai::IntentMaxChanges;
         if (tooSoon || budgetOut) {
             st.planExpiresAt  = clockSec_ + Tuning::ai::IntentRenewSec;
@@ -459,6 +507,7 @@ void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
     st.buyPlan = (plan.intent == PlanIntent::Save) ? BuyPlan::Eco : DecideBuyPlan(t);
     st.lastThinkAt = clockSec_;
     coachPlanChangedAt_ = clockSec_;
+    if (manpowerEv) st.lastManpowerReplanSec = clockSec_;   // P1-1：减员重规划计时
     {   // 规则计划也算「上条指令」，让 LLM 知道自己上一手是什么
         std::ostringstream o;
         o << static_cast<int>(plan.intent);
@@ -517,11 +566,39 @@ void CS2DGame::ApplyTacticsSlots(Team t, TeamPlan& plan) {
     if (!tactics_.loaded) return;
     const char* teamKey = (t == Team::T) ? "T" : "CT";
     const std::string intentKey = TacticsIntentKey(plan.intent);
-    const auto* slots = tactics_.Slots(teamKey, intentKey + "@" + plan.target);
-    if (!slots) slots = tactics_.Slots(teamKey, intentKey);
+    // P1-2: an explicit @Target template still wins wholesale (T04 behaviour).
+    if (const auto* slots = tactics_.Slots(teamKey, intentKey + "@" + plan.target)) {
+        if (!plan.templateDefault) return;   // only generic split templates are covered; event-shaped plans stay as-is
+        for (size_t i = 0; i < plan.slots.size(); ++i) {
+            plan.slots[i] = (*slots)[i];
+            plan.slots[i].area = tactics_.ResolveArea(plan.slots[i].area);
+        }
+        return;
+    }
+    const auto* slots = tactics_.Slots(teamKey, intentKey);
     if (!slots) return;
-    if (!plan.templateDefault) return;   // 只覆盖通用分兵模板，事件整形计划保持原样
-
+    if (!plan.templateDefault) return;   // only generic split templates are covered; event-shaped plans stay as-is
+    if (plan.intent == PlanIntent::Default) {
+        // P1-2: no Default@<target> template (e.g. Default@MID): do NOT replace
+        // the slots RuleCoachCore already built (MID control). Keep role/area,
+        // only fill fields the built slots are still missing (look/util/hold).
+        for (size_t i = 0; i < plan.slots.size(); ++i) {
+            const SlotOrder& tpl = (*slots)[i];
+            SlotOrder& so = plan.slots[i];
+            if (so.lookArea.empty() && so.lookAngle <= -90.0f) {
+                so.lookArea = tpl.lookArea;
+                so.lookAngle = tpl.lookAngle;
+            }
+            if (so.util == 0 && tpl.util != 0) {
+                so.util = tpl.util;
+                so.utilArea = tpl.utilArea;
+            }
+            if (so.hold == HoldStyle::Default && tpl.hold != HoldStyle::Default) {
+                so.hold = tpl.hold;
+            }
+        }
+        return;
+    }
     for (size_t i = 0; i < plan.slots.size(); ++i) {
         plan.slots[i] = (*slots)[i];
         plan.slots[i].area = tactics_.ResolveArea(plan.slots[i].area);
@@ -572,6 +649,19 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
     const std::string bombArea =
         bombPlanted_ && world_ ? world_->FindAreaAt(bombX_, bombY_) : std::string();
     const std::string siteArea = bombArea.empty() ? aSite : bombArea;
+    // P0-1：下包后 T 的槽位一律站包点外围、看向包点。
+    //   area 取入口通道 / 中路（aLong/aShort/bLong/mid 均经 tactics [areas] 映射到
+    //   各图的真实区域），lookArea=siteArea 让外围架枪位始终看着包点——
+    //   撤的是位置不是防守。只改 T 下包后的槽位，CT 回防（要贴身拆包）不动。
+    auto holdSlot = [&](CoachRole role, const std::string& area, bool canRotate) {
+        SlotOrder so;
+        so.role = role;
+        so.area = area;
+        so.canTrade = true;
+        so.canRotate = canRotate;
+        so.lookArea = siteArea;
+        return so;
+    };
 
     // ================= 下包后的战术姿态（任何事件都按当前局势重算）=================
     // 参考公开攻略的通用原则：
@@ -591,21 +681,21 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
 
         if (isT) {
             if (aliveT < aliveCT) {
-                plan.intent = PlanIntent::Default;
+                plan.intent = onB ? PlanIntent::StackB : PlanIntent::StackA;
                 plan.target = onB ? "B" : "A";
-                plan.tempo  = Tempo::Slow;
-                plan.reason = "包已下：残局守包，等拆包再抓";
+                plan.tempo  = Tempo::Normal;
+                plan.reason = "人数落后，守包点架枪等拆包声";
             } else {
                 plan.intent = onB ? PlanIntent::StackB : PlanIntent::StackA;
                 plan.target = onB ? "B" : "A";
                 plan.tempo  = (bombLeft < 15.0f) ? Tempo::Fast : Tempo::Normal;
                 plan.reason = "包已下：交叉火力守包";
             }
-            plan.slots[0] = { CoachRole::Anchor,  siteArea, true, false };
-            plan.slots[1] = { CoachRole::Support, siteArea, true, false };
-            plan.slots[2] = { CoachRole::Lurk,    onB ? bLong : aLong, true, true };
-            plan.slots[3] = { CoachRole::Entry,   onB ? bSite : aSite, true, false };
-            plan.slots[4] = { CoachRole::Support, mid, true, false };
+            plan.slots[0] = holdSlot(CoachRole::Anchor,  onB ? bLong : aLong, false);
+            plan.slots[1] = holdSlot(CoachRole::Support, onB ? mid : aShort, false);
+            plan.slots[2] = holdSlot(CoachRole::Lurk,    onB ? bLong : aLong, true);
+            plan.slots[3] = holdSlot(CoachRole::Entry,   onB ? bLong : aShort, false);
+            plan.slots[4] = holdSlot(CoachRole::Support, mid, false);
             return plan;
         }
 
@@ -621,8 +711,9 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
         plan.tempo  = mustRush ? Tempo::Fast : Tempo::Normal;
         plan.reason = mustRush ? (anyKit ? "有钳，强拆包点" : "时间不足，强拆包点")
                                : "集结回防，先清点再拆";
-        // T21：回防分工交给已校准的 @ 模板（CT.RetakeA@A / CT.RetakeB@B）——2 进点拆包
-        // + 2 掩护 + 1 控回防路线，且自带 look/hold/util。设置 templateDefault 让
+        // T21：回防分工交给已校准的 @ 模板（CT.RetakeA@A / CT.RetakeB@B）——2 进点
+        // + 3 掩护（其中 1 名为拆包手贴身架枪手，P0-3：掩护拆包、可一步接替拆包，
+        // 不再留人出生点被动断后），且自带 look/hold/util。设置 templateDefault 让
         // ApplyTacticsSlots 用 @ 模板覆盖下面的手写兜底槽位。
         plan.templateDefault = true;
         // 兜底槽位（模板缺失时用）：拆包手进点，其余掩护，控路走同侧，不再跨侧。
@@ -650,7 +741,11 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
             plan.intent = onB ? PlanIntent::StackB : PlanIntent::StackA;
             plan.target = onB ? "B" : "A";
             plan.reason = "包已下，全员守包";
-            for (auto& sl : plan.slots) sl = { CoachRole::Anchor, siteArea, true, false };
+            plan.slots[0] = holdSlot(CoachRole::Anchor, onB ? bLong : aLong, false);
+            plan.slots[1] = holdSlot(CoachRole::Anchor, onB ? mid : aShort, false);
+            plan.slots[2] = holdSlot(CoachRole::Anchor, onB ? bLong : aLong, false);
+            plan.slots[3] = holdSlot(CoachRole::Anchor, onB ? bLong : aShort, false);
+            plan.slots[4] = holdSlot(CoachRole::Anchor, mid, false);
         } else {
             plan.intent = onB ? PlanIntent::RetakeB : PlanIntent::RetakeA;
             plan.target = onB ? "B" : "A";
@@ -672,7 +767,11 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
             plan.intent = onB ? PlanIntent::StackB : PlanIntent::StackA;
             plan.target = onB ? "B" : "A";
             plan.reason = "有人在拆包，回防包点";
-            for (auto& sl : plan.slots) sl = { CoachRole::Entry, siteArea, true, false };
+            plan.slots[0] = holdSlot(CoachRole::Entry, onB ? bLong : aLong, false);
+            plan.slots[1] = holdSlot(CoachRole::Entry, onB ? mid : aShort, false);
+            plan.slots[2] = holdSlot(CoachRole::Entry, onB ? bLong : aLong, false);
+            plan.slots[3] = holdSlot(CoachRole::Entry, onB ? bLong : aShort, false);
+            plan.slots[4] = holdSlot(CoachRole::Entry, mid, false);
         } else {
             plan.intent = onB ? PlanIntent::RetakeB : PlanIntent::RetakeA;
             plan.target = onB ? "B" : "A";
@@ -681,18 +780,75 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
         }
         return plan;
     }
-    if (ev.type == CoachEventType::EnemyDown) {
+    // P1-1: manpower change grows real slots instead of Default split + tempo.
+    // Decided by the LIVE manpower diff (not the event alone -- a trade can
+    // leave the count even). Slots are written directly, NOT via assign():
+    // assign() sets templateDefault=true, and the plain Default tactics
+    // template would overwrite these slots wholesale (the P1-2 trap).
+    // 5b: the up-a-man MID plan below opts T into the ini template instead
+    // (see the flag before its return): ApplyTacticsSlots resolves
+    // [slots.T.Default@MID] wholesale, and the @Target lookup precedes the
+    // plain Default template, so the P1-2 trap does not apply. The hand-written
+    // slots stay as the fallback for maps without a Default@MID template.
+    // CT keeps templateDefault=false: no [slots.CT.Default@MID] exists, and
+    // flipping it would let the plain CT.Default template leak util/hold into
+    // these hand-written slots.
+    if (ev.type == CoachEventType::EnemyDown || ev.type == CoachEventType::AllyDown) {
+        const int mine   = AliveCount(t);
+        const int theirs = AliveCount(TeamManager::Opponent(t));
+        if (mine - theirs >= 1) {
+            // Up a man: press and control -- 2 push mid, 2 hold A/B sites, 1 free.
+            plan.intent = PlanIntent::Default;
+            plan.target = "MID";
+            plan.tempo  = Tempo::Fast;
+            plan.reason = "人数优势，前压控图";
+            plan.slots[0] = { CoachRole::Entry,   mid,   true, true  };   // 前压控中
+            plan.slots[1] = { CoachRole::Support, mid,   true, true  };   // 前压控中
+            plan.slots[2] = { CoachRole::Anchor,  aSite, true, false };   // 架 A 点
+            plan.slots[3] = { CoachRole::Anchor,  bSite, true, false };   // 架 B 点
+            plan.slots[4] = { CoachRole::Lurk,    mid,   true, true  };   // 自由人，控中补位
+            // P1-2: same MID-control look as the round-start MID branch.
+            // For T the ini [slots.T.Default@MID] template supplies look now
+            // (5b); these hand-written looks remain the fallback when the map
+            // has no @MID template, and for CT (which keeps the bypass).
+            plan.slots[0].lookArea = aSite;
+            plan.slots[1].lookArea = bSite;
+            plan.slots[2].lookArea = "CT_Spawn";
+            plan.slots[3].lookArea = "CT_Spawn";
+            plan.slots[4].lookArea = "CT_Spawn";
+            // 5b: T opts into the ini MID template (see the P1-1 comment above).
+            // Wholesale [slots.T.Default@MID] replace in ApplyTacticsSlots;
+            // hand-written slots above survive only as the no-template fallback.
+            if (isT) plan.templateDefault = true;
+            return plan;
+        }
+        if (theirs - mine >= 1) {
+            // Down a man: contract -- a pair holds each site, 1 watches mid.
+            plan.intent = PlanIntent::Default;
+            plan.target.clear();
+            plan.tempo  = Tempo::Slow;
+            plan.reason = "人数劣势，收缩双人架枪";
+            plan.slots[0] = { CoachRole::Anchor,  aSite, true, false };   // 双人架 A
+            plan.slots[1] = { CoachRole::Support, aSite, true, false };
+            plan.slots[2] = { CoachRole::Anchor,  bSite, true, false };   // 双人架 B
+            plan.slots[3] = { CoachRole::Support, bSite, true, false };
+            plan.slots[4] = { CoachRole::Anchor,  mid,   true, false };   // 控中路信息
+            // P1-2: contract slots carry their own look (site pairs watch the
+            // site approaches, mid anchor watches the B exit).
+            plan.slots[0].lookArea = aLong;
+            plan.slots[1].lookArea = aShort;
+            plan.slots[2].lookArea = bLong;
+            plan.slots[3].lookArea = mid;
+            plan.slots[4].lookArea = bSite;
+            return plan;
+        }
+        // Even count (a trade): keep the old behaviour (Default split + tempo).
         plan.intent = PlanIntent::Default;
-        plan.tempo  = Tempo::Fast;
-        plan.reason = "对面减员，前压抓人";
-        assign(aLong, aSite, bLong, bSite, mid);
-        return plan;
-    }
-    if (ev.type == CoachEventType::AllyDown) {
-        plan.intent = PlanIntent::Default;
-        plan.tempo  = Tempo::Slow;
-        plan.reason = "我方减员，收缩等机会";
-        assign(aSite, aLong, bSite, bLong, mid);
+        plan.tempo  = (ev.type == CoachEventType::EnemyDown) ? Tempo::Fast : Tempo::Slow;
+        plan.reason = (ev.type == CoachEventType::EnemyDown) ? "对面减员，前压抓人"
+                                                              : "我方减员，收缩等机会";
+        if (ev.type == CoachEventType::EnemyDown) assign(aLong, aSite, bLong, bSite, mid);
+        else assign(aSite, aLong, bSite, bLong, mid);
         return plan;
     }
     if (ev.type == CoachEventType::EconomyLow && ShouldSaveNow(t)) {
@@ -705,7 +861,8 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
         }
         return plan;
     }
-    if (ev.type == CoachEventType::TimeLow) {
+    if (ev.type == CoachEventType::TimeLow ||
+        (!bombPlanted_ && round_.IsLive() && GetRoundRemaining() <= 20.0f)) {
         plan.tempo = Tempo::Fast;
         if (isT) {
             // 跟随当前主攻侧，不要每次 TimeLow 都硬切 A。
@@ -742,6 +899,14 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
             plan.slots[2] = { CoachRole::Entry,   mid,    true, true  };
             plan.slots[3] = { CoachRole::Anchor,  bSite,  true, false };
             plan.slots[4] = { CoachRole::Support, bLong,  true, false };
+            // P1-2: this branch does not set templateDefault, so no template
+            // can supply look -- carry it in the slots (same CT hold shape
+            // as the plain [slots.CT.Default] template).
+            plan.slots[0].lookArea = aLong;
+            plan.slots[1].lookArea = mid;
+            plan.slots[2].lookArea = aSite;
+            plan.slots[3].lookArea = bLong;
+            plan.slots[4].lookArea = mid;
         }
         return plan;
     }
@@ -881,9 +1046,14 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
 
         // 1) Default 分兵：兜底，得分 0。
         cands.push_back({ PlanIntent::Default, "", 0.0f, "默认分兵找机会" });
-        // 2) MID 控中变体（T11）：无情报 + 开局，替代纯 Default。
-        const bool noIntel = intel_.ObservationCount() == 0;
-        if (noIntel) cands.push_back({ PlanIntent::Default, "MID", 0.4f, "无情报，控中换信息" });
+        // 2) MID control (T11, P1-2): the standing default -- 2 push mid +
+        // 1 anchor per site + 1 free lurk. It used to be offered only with
+        // no intel, so once the first contact landed every Default plan fell
+        // back to a target-less split (42% target '-'); offering it always
+        // keeps "default = control mid for info" all round long. It still
+        // loses to Rush/Split/Fake when their signals score higher, and to
+        // the plain split when the repeat penalty hits after a lost MID round.
+        cands.push_back({ PlanIntent::Default, "MID", 0.4f, "默认控中换信息" });
         // 3) RushA / RushB / SplitA / SplitB / Fake：按热差、敌人数、已控、道具、经济打分。
         // 注意：回合开始时敌人还没散开（集中在出生点），"敌少侧"不可作为速推依据，
         // 否则几乎每回合都会速推敌方出生点所在的对侧。速推只由「真实情报热差 / 记忆连败 /
@@ -912,17 +1082,22 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
                 if (intentAllowed(ri)) cands.push_back({ ri, std::string(1, side), rushScore, "速推主攻" });
             }
             // Split：Mid 已控 + 满/半起 + 烟（真实中路控制 + 满经济）。
-            if (controlMid && economyBoost > 0.0f && smokeCount >= 1) {
+            // P1-3: Split needs any 2 of 3 signals (mid control, economy, smoke),
+            // not all 3 at once; the old triple gate almost never fired in practice.
+            const int splitSignals = (controlMid ? 1 : 0) + (economyBoost > 0.0f ? 1 : 0) + (smokeCount >= 1 ? 1 : 0);
+            if (splitSignals >= 2) {
                 PlanIntent si = (side == 'A') ? PlanIntent::SplitA : PlanIntent::SplitB;
-                if (intentAllowed(si)) cands.push_back({ si, std::string(1, side), base + economyBoost + Tuning::ai::ScoreSmokeMul + 0.3f, "分路夹击" });
+                if (intentAllowed(si)) cands.push_back({ si, std::string(1, side), base + economyBoost + (smokeCount >= 1 ? Tuning::ai::ScoreSmokeMul : 0.0f) + 0.3f + Tuning::ai::ScoreSplitBase, "分路夹击" });
             }
         }
         // Fake：佯攻侧有接触 + 主攻侧 heat 低。
         {
-            const float fakeScore = (heatA - heatB) >= Tuning::ai::ScoreHeatDelta
-                ? 0.8f : 0.0f;
-            if (intentAllowed(PlanIntent::FakeThenOther) && fakeScore > 0.0f) {
-                cands.push_back({ PlanIntent::FakeThenOther, "A", fakeScore, "佯攻后转点" });
+            // P1-3: Fake fires when either side runs hotter by ScoreFakeHeatDelta.
+            // plan.target is the cold side (the side the branch rush really attacks).
+            const std::string fakeSide = (heatA >= heatB) ? "B" : "A";
+            const float fakeGap = std::fabs(heatA - heatB);
+            if (intentAllowed(PlanIntent::FakeThenOther) && fakeGap >= Tuning::ai::ScoreFakeHeatDelta) {
+                cands.push_back({ PlanIntent::FakeThenOther, fakeSide, 0.8f, "佯攻后转点" });
             }
         }
         // T10：连续同 intent+target 失败 → 换点（近 3 回合）。
@@ -957,23 +1132,77 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
         plan.target = best->target;
         plan.reason = best->reason;
 
+        // P2-4: branch diversification -- the 20s branch is no longer always a rush.
+        // Deterministic pick from live signals only (no RNG), so replays stay
+        // bit-identical. Rush stays a candidate and still wins on a clear intel gap.
+        //   gap >= BranchRushHeatGap -> Rush the cold side (exploit; old behaviour)
+        //   same-side streak / avoided side -> Rotate (other side; or the cold side
+        //     via rotate routing when the plan is a Fake whose target IS the cold side)
+        //   gap >= ScoreFakeHeatDelta -> Fake (feint hot, hit cold; not from a Fake plan)
+        //   otherwise -> Default+MID (stay mid, gather info; a Fake plan keeps its rush payoff)
+        struct BranchPick { PlanIntent intent; std::string target; Tempo tempo; };
+        auto pickBranch = [&](const std::string& rotateSide, bool allowFake) -> BranchPick {
+            const std::string coldSide = (heatA >= heatB) ? "B" : "A";
+            const float heatGap = std::fabs(heatA - heatB);
+            if (heatGap >= Tuning::ai::BranchRushHeatGap) {
+                return { (coldSide == "B") ? PlanIntent::RushB : PlanIntent::RushA, coldSide, Tempo::Fast };
+            }
+            const std::string curSide = (plan.target == "A" || plan.target == "B")
+                                            ? plan.target : st.lastAttackSide;
+            if (!rotateSide.empty()) {
+                const bool streakForcesSwitch =
+                    (st.sameSideStreak >= Tuning::ai::SameSideStreakLimit);
+                const bool avoidCur = (curSide == "A" && avoidA) || (curSide == "B" && avoidB);
+                if (rotateSide != curSide) {
+                    if (streakForcesSwitch || avoidCur) {
+                        return { (rotateSide == "B") ? PlanIntent::RotateB : PlanIntent::RotateA,
+                                 rotateSide, Tempo::Fast };
+                    }
+                } else if (streakForcesSwitch) {
+                    // Same side, rotate routing: the Fake payoff attacks the cold side
+                    // either way; a streak varies the routing instead of the side.
+                    return { (rotateSide == "B") ? PlanIntent::RotateB : PlanIntent::RotateA,
+                             rotateSide, Tempo::Fast };
+                }
+            }
+            if (allowFake && heatGap >= Tuning::ai::ScoreFakeHeatDelta) {
+                return { PlanIntent::FakeThenOther, coldSide, Tempo::Normal };
+            }
+            if (allowFake) {
+                return { PlanIntent::Default, "MID", Tempo::Normal };
+            }
+            return { (coldSide == "B") ? PlanIntent::RushB : PlanIntent::RushA, coldSide, Tempo::Fast };
+        };
         if (plan.intent == PlanIntent::Default && plan.target == "MID") {
-            // T11：MID 控中——2 人控中 + 两侧各 1 人架点 + 1 人自由。
+            // T11: MID control -- 2 push mid + 1 anchor per site + 1 free lurk.
             plan.slots[0] = { CoachRole::Entry,   mid,   true, true  };
             plan.slots[1] = { CoachRole::Support, mid,   true, true  };
             plan.slots[2] = { CoachRole::Anchor,  aSite, true, false };
             plan.slots[3] = { CoachRole::Anchor,  bSite, true, false };
             plan.slots[4] = { CoachRole::Lurk,    mid,   true, true  };
+            // P1-2: MID slots carry their own lookArea (mid pushers watch the
+            // two site exits, site anchors watch the CT side, free lurk watches deep
+            // CT). aSite/bSite/mid are AreaHint-resolved real area names, so
+            // CoachApplyPlan can resolve them even without a template.
+            plan.slots[0].lookArea = aSite;
+            plan.slots[1].lookArea = bSite;
+            plan.slots[2].lookArea = "CT_Spawn";
+            plan.slots[3].lookArea = "CT_Spawn";
+            plan.slots[4].lookArea = "CT_Spawn";
             plan.templateDefault = true;
             // T06：时间差打法——「按情报」才设分支（20s 后转 Rush 冷侧）。
             // 无情报不预支 rush：控中换信息就是本回合的完整计划，避免每回合开局都自动冲。
             if (intel_.ObservationCount() >= 2) {
                 plan.hasBranch = true;
                 plan.branchAfterSec = 20.0f;
-                const std::string branchSide = (heatA >= heatB) ? "B" : "A";   // 热侧避开
-                plan.branchIntent = (branchSide == "B") ? PlanIntent::RushB : PlanIntent::RushA;
-                plan.branchTarget = branchSide;
-                plan.branchTempo = Tempo::Fast;
+                // P2-4: branch varies by signal (see pickBranch); rotate side is the
+                // side opposite last round's attack.
+                const std::string lastSide = st.lastAttackSide;
+                const std::string rotateSide = (lastSide == "A") ? "B" : (lastSide == "B") ? "A" : std::string();
+                const BranchPick bp = pickBranch(rotateSide, true);
+                plan.branchIntent = bp.intent;
+                plan.branchTarget = bp.target;
+                plan.branchTempo = bp.tempo;
             }
         } else if (plan.intent == PlanIntent::RushA || plan.intent == PlanIntent::RushB) {
             const bool b = (plan.intent == PlanIntent::RushB);
@@ -995,13 +1224,18 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
         } else if (plan.intent == PlanIntent::FakeThenOther) {
             plan.tempo = Tempo::Normal;
             // T06：Fake 也带分支——佯攻后按情报转另一侧。
+            const bool attackB = (plan.target == "B");  // P2-4: kept -- the slot shape below still uses it.
             plan.hasBranch = true;
             plan.branchAfterSec = 20.0f;
-            plan.branchIntent = (heatB >= heatA) ? PlanIntent::RushA : PlanIntent::RushB;
-            plan.branchTarget = (heatB >= heatA) ? "A" : "B";
-            plan.branchTempo = Tempo::Fast;
-            for (auto& sl : plan.slots) sl = { CoachRole::Entry, aLong, true, false };
-            plan.slots[4] = { CoachRole::Anchor, bSite, true, false };
+            // P2-4: the fake's branch still attacks the real (cold) side, but the
+            // routing varies -- a streak rotates in via mid instead of rushing
+            // straight in. allowFake=false: a Fake plan never branches to another Fake.
+            const BranchPick bp = pickBranch(plan.target, false);
+            plan.branchIntent = bp.intent;
+            plan.branchTarget = bp.target;
+            plan.branchTempo = bp.tempo;
+            for (auto& sl : plan.slots) sl = { CoachRole::Entry, attackB ? aLong : bLong, true, false };
+            plan.slots[4] = { CoachRole::Anchor, attackB ? bSite : aSite, true, false };
             plan.templateDefault = true;
         } else {
             // Default 分兵。
@@ -1015,10 +1249,14 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
         if (plan.intent == PlanIntent::Default && plan.target.empty() && intel_.ObservationCount() >= 2) {
             plan.hasBranch = true;
             plan.branchAfterSec = 20.0f;
-            const char branchSide = (heatA >= heatB) ? 'B' : 'A';
-            plan.branchIntent = (branchSide == 'B') ? PlanIntent::RushB : PlanIntent::RushA;
-            plan.branchTarget = std::string(1, branchSide);
-            plan.branchTempo = Tempo::Fast;
+            // P2-4: branch varies by signal (see pickBranch); rotate side is the
+            // side opposite last round's attack.
+            const std::string lastSide = st.lastAttackSide;
+            const std::string rotateSide = (lastSide == "A") ? "B" : (lastSide == "B") ? "A" : std::string();
+            const BranchPick bp = pickBranch(rotateSide, true);
+            plan.branchIntent = bp.intent;
+            plan.branchTarget = bp.target;
+            plan.branchTempo = bp.tempo;
         }
     } else {
         // ---- CT 回合开始：按敌方习惯/情报/敌枪变阵（T13/T14）----
@@ -1652,12 +1890,25 @@ void CS2DGame::SanitizeCoachPlan(Team t, TeamPlan& plan) {
             plan.slots[2] = { CoachRole::Lurk,    mid,    true, true  };
             plan.slots[3] = { CoachRole::Anchor,  bLong,  true, false };
             plan.slots[4] = { CoachRole::Support, bSite,  true, false };
+            // P1-2: sanitize runs after ApplyTacticsSlots, so a reshaped
+            // default split must carry its own look (mirrors [slots.T.Default]).
+            plan.slots[0].lookArea = aSite;
+            plan.slots[1].lookArea = aShort;
+            plan.slots[2].lookArea = bSite;
+            plan.slots[3].lookArea = bSite;
+            plan.slots[4].lookArea = bLong;
         } else {
             plan.slots[0] = { CoachRole::Anchor,  aSite,  true, false };
             plan.slots[1] = { CoachRole::Support, aShort, true, false };
             plan.slots[2] = { CoachRole::Entry,   mid,    true, true  };
             plan.slots[3] = { CoachRole::Anchor,  bSite,  true, false };
             plan.slots[4] = { CoachRole::Support, bLong,  true, false };
+            // P1-2: same as above for CT (mirrors [slots.CT.Default]).
+            plan.slots[0].lookArea = aLong;
+            plan.slots[1].lookArea = mid;
+            plan.slots[2].lookArea = aSite;
+            plan.slots[3].lookArea = bLong;
+            plan.slots[4].lookArea = mid;
         }
         plan.intent = PlanIntent::Default;
         plan.target.clear();
@@ -1798,6 +2049,30 @@ void CS2DGame::CoachApplyPlan(Team t) {
         if (assignedBot == unassigned && next != alive.end()) assignedBot = *next++;
     }
 
+    // P1-5：本计划内已分配的驻守点 + 各存活队友的当前驻守点（跨计划残留）。
+    // 后者必须算进去：上一轮计划的旧点若不避开，会和本轮 dup=0 新点重合
+    // （实测：R1 末 bot1 守 A 锚点，某计划又把 bot2 派到同一锚点）。
+    // 只有目标点与已用点 <40px 时才散开——同一计划反复 Apply 时不抖动。
+    std::vector<std::pair<float, float>> usedHoldPts;
+    std::vector<char> holdReassigned(bots_.size(), 0);
+    auto collectUsed = [&](size_t self) {
+        std::vector<std::pair<float, float>> used = usedHoldPts;
+        for (size_t j = 0; j < bots_.size(); ++j) {
+            if (j == self || bots_[j].team != t || !bots_[j].alive) continue;
+            if (holdReassigned[j]) continue;  // 已在本计划内重派，旧点失效
+            const auto& aj = AiAt(j);
+            if (aj.hasPlanHold) used.emplace_back(aj.planHoldX, aj.planHoldY);
+        }
+        return used;
+    };
+    auto tooClose = [](const std::vector<std::pair<float, float>>& used, float x, float y) {
+        for (const auto& q : used) {
+            const float dx = x - q.first, dy = y - q.second;
+            if (dx * dx + dy * dy < 40.0f * 40.0f) return true;
+        }
+        return false;
+    };
+
     for (size_t si = 0; si < assigned.size(); ++si) {
         const size_t i = assigned[si];
         if (i == unassigned) continue;
@@ -1835,12 +2110,14 @@ void CS2DGame::CoachApplyPlan(Team t) {
             const int areaSite = areaSiteIndex(so.area);
             // T 进攻期：真正的推进目标是「目标包点中心」，区域中心只当集结/架枪点。
             // 否则 T 会停在区域边缘（例如 A_Long 中心）磨时间，进攻节奏变慢。
+            bool toSiteCenter = false;
             if (t == Team::T && !bombPlanted_ && !st.plan.target.empty()) {
                 const auto& sites = world_->GetBombSites();
                 if (areaSite >= 0 && areaSite < static_cast<int>(sites.size()) &&
                     sites[static_cast<size_t>(areaSite)].name == st.plan.target) {
                     cx = sites[static_cast<size_t>(areaSite)].cx;
                     cy = sites[static_cast<size_t>(areaSite)].cy;
+                    toSiteCenter = true;
                 }
             }
             ai.goalArea = so.area;   // 先写区域名，SetBotGoal 才能查到 [look] 朝向
@@ -1861,20 +2138,37 @@ void CS2DGame::CoachApplyPlan(Team t) {
                     cy = a2->second;
                 }
             }
+            // P1-5：驻守点不要和队友重合——本计划内已分配的点 + 其余存活队友
+            // 的当前驻守点（跨计划残留）都要避开；重合才散开，不重合不动。
+            {
+                std::vector<std::pair<float, float>> used = collectUsed(i);
+                if (tooClose(used, cx, cy))
+                    SpreadHoldPoint(cx, cy, static_cast<int>(used.size()), cx, cy, used);
+                usedHoldPts.emplace_back(cx, cy);
+                holdReassigned[i] = 1;
+            }
             SetBotGoal(i, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
 
             // ---- 可执行字段：朝向 / 站姿 / 投掷 ----
+            // P1-2: write the coach-specified look back into the plan slot so
+            // wiring records the effective look direction (lookDeg as-is, or
+            // the angle resolved from lookArea). The SetBotGoal fallback
+            // direction is deliberately NOT written back: a slot with no
+            // coach look must stay -99 in wiring.
             if (so.lookAngle > -90.0f) {
                 ai.lookAngle = so.lookAngle;
+                st.plan.slots[si].lookAngle = so.lookAngle;
             } else if (!so.lookArea.empty()) {
                 float lx = 0.0f, ly = 0.0f;
                 if (AreaCenterByName(so.lookArea, lx, ly)) {
                     ai.lookAngle = std::atan2(ly - cy, lx - cx);
+                    st.plan.slots[si].lookAngle = ai.lookAngle;
                 }
             }
             ai.holdStyle = static_cast<int>(so.hold);
             ai.utilKind  = so.util;
             ai.utilDone  = (so.util <= 0);
+            ai.utilThrowFailed = false;
             if (so.util > 0 && !so.utilArea.empty()) {
                 float ux = 0.0f, uy = 0.0f;
                 if (AreaCenterByName(so.utilArea, ux, uy)) { ai.utilX = ux; ai.utilY = uy; }
@@ -1935,6 +2229,19 @@ void CS2DGame::CoachApplyPlan(Team t) {
             auto& cai = AiAt(ci);
             auto& csq = squad_[ci];
             cai.goalArea  = siteArea;   // 先写区域名，SetBotGoal 才能查到 [look] 朝向
+            // P1-5：携带者与主攻组共用包点中心——与队友驻守点重合才散开。
+            // （目标若与携带者自己的槽位点重合，说明覆盖前后是同一点，不散开。）
+            {
+                const auto& cai0 = AiAt(ci);
+                const float sdx = cx - cai0.planHoldX, sdy = cy - cai0.planHoldY;
+                const bool selfSame = cai0.hasPlanHold &&
+                                      (sdx * sdx + sdy * sdy < 40.0f * 40.0f);
+                if (!selfSame) {
+                    std::vector<std::pair<float, float>> used = collectUsed(ci);
+                    if (tooClose(used, cx, cy))
+                        SpreadHoldPoint(cx, cy, static_cast<int>(used.size()), cx, cy, used);
+                }
+            }
             SetBotGoal(ci, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
             csq.site      = siteIdx;
             csq.role      = BotRole::Entry;   // 跟突破组进点，而不是当断后
@@ -2131,7 +2438,12 @@ BuyPlan CS2DGame::DecideBuyPlan(Team t) const {
     // 1) 上回合强起且输了 → 本回合强制 Eco（禁连强）。
     if (st.lastBuyPlan == BuyPlan::Force && !st.lastBuyWon) return BuyPlan::Eco;
     // 2) 连败 ≥2 且败方补偿能让下一回合满起 → Eco 存钱（本回合已穷才存，富了照打）。
-    if (GetLossStreak(t) >= 2 && avg < 2600) return BuyPlan::Eco;
+    // P2-1: widen the loss-streak save: the old avg<2600 almost never fired
+    // mid-match (round-start money is bimodal: <1800 in R1 only, >=3500 after;
+    // the 1800-2600 band holds ~0.3% of rounds). 4500 still leaves a team rich
+    // enough to Full-buy the round after saving (post-Eco avg is ~4500 minus a
+    // small Eco spend plus the loss bonus), so a save is one round, not a loop.
+    if (GetLossStreak(t) >= 2 && avg < 4500) return BuyPlan::Eco;
     // 3) 我穷敌更穷 → 强起打经济（手册决策序第 3 条；阈值不动）。
     if (avg < 1800 && oppAvg > 0 && oppAvg <= avg && avg >= 1200) return BuyPlan::Force;
 
@@ -2198,14 +2510,14 @@ bool CS2DGame::CanRotateNow(Team t) const {
     if (round_.PhaseRemaining() < 30.0f) return false;    // 留足执行 + 下包时间
     if (AliveCount(t) + 1 < AliveCount(TeamManager::Opponent(t))) return false;  // 少两个不转
     if (clockSec_ - lastRotateAt_ < 8.0f) return false;   // 8 秒冷却，防来回抖
-    if (intel_.ObservationCount() < 2) return false;      // 至少两条情报
+    if (intel_.ObservationCount() < Tuning::ai::RotateMinIntel) return false;      // 至少两条情报
 
     // 只有「默认分兵」阶段才允许转点；rush/split/stack/fake/save 都是已承诺的
     // 执行，不能被情报轻易拉回另一侧，否则会在两点之间来回走。
     const CoachState& st = CoachFor(t);
     if (!st.plan.valid) return false;
     if (st.plan.intent != PlanIntent::Default) return false;
-    if (clockSec_ - st.plan.createdAt < 12.0f) return false;   // 新计划先执行一段
+    if (clockSec_ - st.plan.createdAt < Tuning::ai::RotateMinPlanAge) return false;   // 新计划先执行一段
 
     // 已经有人进包点 / C4 携带者接近包点：优先下包，不转点。
     if (world_) {
@@ -2239,8 +2551,8 @@ void CS2DGame::CoachTryRotate(Team t) {
     const std::string othSite = AreaHint(other == "A" ? "A_Site" : "B_Site");
 
     // 证据门槛：当前目标侧明显更重防才转
-    constexpr float kDelta = 1.2f;
-    if (heatCur - heatOth < kDelta) return;
+    // P1-3: rotate heat gap lives in Tuning (RotateHeatDelta).
+    if (heatCur - heatOth < Tuning::ai::RotateHeatDelta) return;
 
     TeamPlan plan = st.plan;
     plan.intent    = (other == "A") ? PlanIntent::RotateA : PlanIntent::RotateB;

@@ -17,8 +17,15 @@
 struct Menu3DModelTestAccess {
     static float AnimationTime(const Menu3DModel& model) { return model.animationTime_; }
     static void VerifyWind(Menu3DModel& model) {
-        if (model.animations_.size() != 1 || model.animations_[0].channels.size() != 18)
-            throw std::runtime_error("Environment must animate all foliage in one clip");
+        if (model.animations_.size() != 1 || model.animations_[0].name != "Menu_Environment")
+            throw std::runtime_error("Environment must animate foliage and dust in one clip");
+        const auto& clip = model.animations_[0];
+        int foliage = 0;
+        for (const auto& channel : clip.channels) {
+            if (model.nodes_[channel.node].name.rfind("Sunlit dust | ", 0) != 0) ++foliage;
+        }
+        if (foliage != 18)
+            throw std::runtime_error("Environment must retain all 18 foliage channels");
         model.Update(0);
         const auto before = model.nodes_;
         model.Update(1.0f);
@@ -27,7 +34,7 @@ struct Menu3DModelTestAccess {
             const auto& end = model.nodes_[channel.node].world;
             float difference = 0;
             for (int i = 0; i < 16; ++i) difference += std::fabs(start.m[i]-end.m[i]);
-            if (difference < .00001f) throw std::runtime_error("Foliage node is not animated at runtime");
+            if (difference < .00001f) throw std::runtime_error("Environment node did not move at runtime: " + before[channel.node].name);
         }
     }
     static void VerifyArena(const Menu3DModel& model, float scale, float x, float z) {
@@ -59,7 +66,7 @@ struct Menu3DTestAccess {
                         menu.FocusSelect(object,3,accessory);
                         for (int frame = 0; frame < 120; ++frame) {
                             model.Update(1.0f/30.0f);
-                            Menu3DModelTestAccess::VerifyArena(model,1.22f,object == 0 ? -4.4f : 4.4f,0);
+                            Menu3DModelTestAccess::VerifyArena(model,1.22f,menu.ActorStageX(object),0);
                             Menu3DModelTestAccess::VerifyArena(model,2.3f,-2.4f,0);
                         }
                     }
@@ -216,7 +223,9 @@ static void Review(const std::filesystem::path& models, const std::filesystem::p
         SDL_CreateRenderer(window.get(), -1, SDL_RENDERER_SOFTWARE), SDL_DestroyRenderer);
     if (!renderer) throw std::runtime_error(SDL_GetError());
     Menu3D menu;
+    const auto start = SDL_GetPerformanceCounter();
     if (!menu.Initialize(renderer.get(), 1280, 720)) throw std::runtime_error(menu.LastError());
+    std::cout << "Menu initialize (ms): " << 1000.0*(SDL_GetPerformanceCounter()-start)/SDL_GetPerformanceFrequency() << std::endl;
     Menu3DTestAccess::VerifyFrameClock(menu);
     if (mode == "--scenes") {
         Menu3DTestAccess::VerifySceneState(menu);

@@ -23,6 +23,7 @@ std::vector<CS2DGame::ScoreRow> CS2DGame::BuildScoreboard() const {
     me.name      = "你";
     me.team      = player_.team;
     me.kills     = player_.kills;
+    me.teamKills = player_.teamKills;
     me.deaths    = player_.deaths;
     me.money     = player_.money;
     me.alive     = player_.alive;
@@ -35,6 +36,7 @@ std::vector<CS2DGame::ScoreRow> CS2DGame::BuildScoreboard() const {
         r.name   = b.name.empty() ? ("BOT#" + std::to_string(i)) : b.name;
         r.team   = b.team;
         r.kills  = b.kills;
+        r.teamKills = b.teamKills;
         r.deaths = b.deaths;
         r.money  = b.money;
         r.alive  = b.alive;
@@ -208,7 +210,9 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
                 Player& successful = winner == -1 ? player_ : bots_[winner];
                 successful.money += economy_.GrantDefuse();
                 economy_.Clamp(successful.money);
-                std::cout << "[Defuse] #" << winner << " success" << std::endl;
+                const bool kitWin = successful.hasDefuseKit;
+                std::cout << "[Defuse] #" << winner << " success kit=" << (kitWin ? 1 : 0)
+                          << " dur=" << (kitWin ? 4 : 10) << std::endl;
                 ApplyRoundResult(Team::CT,audio);
                 round_.EndRound(Team::CT);
             } else {
@@ -273,7 +277,7 @@ void CS2DGame::DetonateBomb(AudioManager* audio) {
     EmitSound(SoundEventType::Explosion, bombX_, bombY_, Team::T, -2, 3200.0f);
 
     // 爆炸范围伤害（不分阵营）
-    constexpr float RADIUS = 320.0f;
+    constexpr float RADIUS = Tuning::BombBlastRadius;
     auto damageAt = [&](Player& p) {
         if (!p.alive) return;
         const float dx = p.x - bombX_;

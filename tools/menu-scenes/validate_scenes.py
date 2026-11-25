@@ -15,7 +15,7 @@ for theme in ('ancient_ruins', 'dust_2', 'mirage'):
     assert scene.render.fps == 30
     assert scene.frame_start == 0 and scene.frame_end == 120
     props = [o for o in scene.objects if o.type == 'MESH' and
-             not o.name.startswith(('Continuous level courtyard','Courtyard paving'))]
+             not o.name.removeprefix(scene.get('object_prefix', '')).startswith(('Continuous level courtyard','Courtyard paving'))]
     failures = []
     # Keep independently placed props clear of the whole abandoned-car assembly.
     car_names = ('Abandoned car','Car cabin','Dust covered glass','Door trim','Door handle',
@@ -43,6 +43,15 @@ for theme in ('ancient_ruins', 'dust_2', 'mirage'):
             # beyond all swept chicken radii and both armed character positions.
             low = [min(v[i] for v in corners) for i in range(3)]
             high = [max(v[i] for v in corners) for i in range(3)]
+            if theme == 'dust_2':
+                # Chicken roaming with margin, plus both actors' loadout/hover envelopes.
+                zones = [(-5.95,5.95,-2.65,6.1,2.0),
+                         (-6.7,-3.15,-1.75,1.75,6.5),(3.15,6.7,-1.75,1.75,6.5),
+                         (-5.1,.3,-2.7,2.7,6.5)]  # Focus-stage model at x=-2.4
+                for left,right,back,front,height in zones:
+                    if low[0]<right and high[0]>left and -low[1]>back and -high[1]<front and high[2]>0 and low[2]<height:
+                        failures.append(dict(object=obj.name,frame=frame,minimum=low,maximum=high))
+                continue
             overlap = low[0] < 6.3 and high[0] > -6.3 and -low[1] > -2.7 and -high[1] < 6.1
             if overlap and high[2] > 0 and low[2] < 6.5:
                 failures.append(dict(object=obj.name,frame=frame,minimum=low,maximum=high))

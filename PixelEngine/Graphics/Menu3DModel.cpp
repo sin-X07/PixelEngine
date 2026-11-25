@@ -4,18 +4,15 @@
 #define CGLTF_IMPLEMENTATION
 #include "../ThirdParty/cgltf/cgltf.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#include <GL/gl.h>
-#else
-#include <OpenGL/gl.h>
-#endif
-
+#include <SDL_image.h>
+#include <SDL_opengl.h>
+#include <limits>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <mutex>
 #include <unordered_map>
 
 namespace {
@@ -155,7 +152,19 @@ Menu3DModel::Quat Menu3DModel::Slerp(const Quat& a, const Quat& b, float t) {
     };
 }
 
+Menu3DModel::~Menu3DModel() { ReleaseTextures(); }
+
+void Menu3DModel::ReleaseTextures() {
+    if (textureContext_ && textureContext_ == SDL_GL_GetCurrentContext()) {
+        for (const auto& tex : textures_)
+            if (tex.handle) glDeleteTextures(1, &tex.handle);
+    }
+    textures_.clear();
+    textureContext_ = nullptr;
+}
+
 bool Menu3DModel::Load(const std::string& path, const std::string& preferredAnimation) {
+    ReleaseTextures();
     horizontalRadiusDirty_ = true;
     horizontalRadius_ = 0;
     ready_ = false;
@@ -251,6 +260,43 @@ bool Menu3DModel::Load(const std::string& path, const std::string& preferredAnim
         }
     }
 
+    // Texture interpretation is part of the cache key. A glTF image may serve both roles.
+    std::array<std::unordered_map<const cgltf_texture*, int>, 2> textureIndices;
+    auto loadTexture = [&](const cgltf_texture& source, bool srgb) -> int {
+        auto& cache = textureIndices[srgb];
+        const auto found = cache.find(&source);
+        if (found != cache.end()) return found->second;
+        const auto* view = source.image ? source.image->buffer_view : nullptr;
+        if (!view || !view->buffer || view->offset > view->buffer->size ||
+            view->size > view->buffer->size - view->offset ||
+            view->size > static_cast<size_t>(std::numeric_limits<int>::max())) return -1;
+        const auto* bytes = cgltf_buffer_view_data(view);
+        if (!bytes || !view->size) return -1;
+        SDL_RWops* input = SDL_RWFromConstMem(bytes, static_cast<int>(view->size));
+        SDL_Surface* decoded = nullptr;
+        if (input) {
+            // SDL_image initializes shared decoder state while probing image formats.
+            static std::mutex decoderMutex;
+            const std::lock_guard<std::mutex> lock(decoderMutex);
+            decoded = IMG_Load_RW(input, 1);
+        }
+        if (!decoded) return -1;
+        std::shared_ptr<SDL_Surface> rgba(SDL_ConvertSurfaceFormat(decoded, SDL_PIXELFORMAT_RGBA32, 0),
+                                          SDL_FreeSurface);
+        SDL_FreeSurface(decoded);
+        if (!rgba) return -1;
+        const auto* sampler = source.sampler;
+        const int index = static_cast<int>(textures_.size());
+        textures_.push_back({std::move(rgba),
+            sampler ? static_cast<int>(sampler->wrap_s) : GL_REPEAT,
+            sampler ? static_cast<int>(sampler->wrap_t) : GL_REPEAT,
+            sampler && sampler->min_filter ? static_cast<int>(sampler->min_filter) : GL_LINEAR_MIPMAP_LINEAR,
+            sampler && sampler->mag_filter ? static_cast<int>(sampler->mag_filter) : GL_LINEAR,
+            srgb});
+        cache.emplace(&source, index);
+        return index;
+    };
+
     // mesh
     meshes_.resize(data->meshes_count);
     for (size_t mi = 0; mi < data->meshes_count; ++mi) {
@@ -274,6 +320,48 @@ bool Menu3DModel::Load(const std::string& path, const std::string& preferredAnim
             if (!posAcc) continue;
 
             Primitive prim;
+            if (cp.material) {
+                const auto& base = cp.material->pbr_metallic_roughness.base_color_texture;
+                if (base.texture && base.texture->image && base.texture->image->buffer_view) {
+                    const auto* uv = cgltf_find_accessor(&cp, cgltf_attribute_type_texcoord, base.texcoord);
+                    prim.texture = loadTexture(*base.texture, true);
+                    if (!uv || uv->count != posAcc->count || prim.texture < 0) {
+                        lastError_ = "Invalid embedded base-colour image or UV coordinates: " + resolved;
+                        cgltf_free(data);
+                        return false;
+                    }
+                    prim.uv.resize(posAcc->count);
+                    for (size_t i = 0; i < uv->count; ++i)
+                        cgltf_accessor_read_float(uv, i, prim.uv[i].data(), 2);
+                    if (base.texture->image->name) {
+                        const std::string label = std::string("PixelEngine AO fallback: ") + base.texture->image->name;
+                        for (size_t i = 0; i < data->textures_count; ++i) {
+                            const auto& candidate = data->textures[i];
+                            if (candidate.name && label == candidate.name) {
+                                prim.bakedTexture = loadTexture(candidate, true);
+                                break;
+                            }
+                        }
+                    }
+                }
+                const auto& mat = *cp.material;
+                const cgltf_texture_view* maps[] = {&mat.pbr_metallic_roughness.metallic_roughness_texture,
+                                                   &mat.occlusion_texture, &mat.normal_texture};
+                for (size_t index = 0; index < prim.dataMaps.size(); ++index) {
+                    const auto& map = *maps[index];
+                    if (!map.texture) continue;
+                    const auto* uv = cgltf_find_accessor(&cp, cgltf_attribute_type_texcoord, map.texcoord);
+                    if (!uv || uv->count != posAcc->count) continue;
+                    auto& dst = prim.dataMaps[index];
+                    dst.texture = loadTexture(*map.texture, false);
+                    if (dst.texture < 0) continue;
+                    dst.uv.resize(uv->count);
+                    for (size_t i = 0; i < uv->count; ++i)
+                        cgltf_accessor_read_float(uv, i, dst.uv[i].data(), 2);
+                }
+                if (mat.occlusion_texture.texture) prim.occlusionStrength = mat.occlusion_texture.scale;
+                if (mat.normal_texture.texture) prim.normalScale = mat.normal_texture.scale;
+            }
             prim.vertices.resize(posAcc->count);
             for (size_t vi = 0; vi < posAcc->count; ++vi) {
                 float p[3] = { 0, 0, 0 };
@@ -304,12 +392,25 @@ bool Menu3DModel::Load(const std::string& path, const std::string& preferredAnim
                 prim.indices.resize(prim.vertices.size());
                 for (size_t ii = 0; ii < prim.vertices.size(); ++ii) prim.indices[ii] = static_cast<uint32_t>(ii);
             }
+            if (std::any_of(prim.indices.begin(), prim.indices.end(),
+                            [&](uint32_t i) { return i >= prim.vertices.size(); })) {
+                lastError_ = "Invalid triangle index: " + resolved;
+                cgltf_free(data);
+                return false;
+            }
             prim.skinnedPos.resize(prim.vertices.size());
             prim.skinnedNormal.resize(prim.vertices.size());
 
             if (cp.material) {
-                const float* c = cp.material->pbr_metallic_roughness.base_color_factor;
+                const auto& pbr = cp.material->pbr_metallic_roughness;
+                if (cp.material->has_pbr_metallic_roughness) {
+                    prim.metallic = std::clamp(pbr.metallic_factor, 0.0f, 1.0f);
+                    prim.roughness = std::clamp(pbr.roughness_factor, 0.0f, 1.0f);
+                }
+                const float* c = pbr.base_color_factor;
                 prim.color = Vec4{ c[0], c[1], c[2], c[3] };
+                prim.alphaBlend = cp.material->alpha_mode == cgltf_alpha_mode_blend;
+                prim.doubleSided = cp.material->double_sided;
                 prim.isSkin = cp.material->name && ContainsNoCase(cp.material->name, "skin");
                 prim.materialName = cp.material->name ? cp.material->name : "";
                 prim.slot = SlotOfMaterial(prim.materialName);
@@ -543,13 +644,21 @@ void Menu3DModel::Update(float dt) {
 void Menu3DModel::SkinPrimitives() {
     horizontalRadiusDirty_ = true;
     float minY = 1e30f;
-    for (const Node& node : nodes_) {
+    for (Node& node : nodes_) {
         if (!node.visible) continue;
         if (node.mesh < 0 || node.mesh >= static_cast<int>(meshes_.size())) continue;
         const Mesh& mesh = meshes_[node.mesh];
         const Skin* skin = (node.skin >= 0 && node.skin < static_cast<int>(skins_.size()))
             ? &skins_[node.skin] : nullptr;
 
+        // Textured environments have one large static mesh and small moving foliage.
+        const bool rigidEnvironment = !textures_.empty() && !skin;
+        if (rigidEnvironment && node.rigidCacheValid &&
+            std::memcmp(node.cachedWorld.m,node.world.m,sizeof(node.world.m)) == 0) {
+            if (node.visible && !node.colorExcluded) minY = std::min(minY,node.cachedMinY);
+            continue;
+        }
+        float nodeMinY = 1e30f;
         std::vector<Mat4> jointMatrices;
         if (skin) {
             jointMatrices.resize(skin->joints.size());
@@ -594,10 +703,15 @@ void Menu3DModel::SkinPrimitives() {
                     dst.skinnedNormal[vi] = Normalize(TransformDir(node.world, v.normal));
                 }
                 // Hidden and attached geometry must not lift the feet off the floor.
-                if (node.visible && !node.colorExcluded) {
-                    minY = std::min(minY, dst.skinnedPos[vi].y);
-                }
+                nodeMinY = std::min(nodeMinY, dst.skinnedPos[vi].y);
             }
+            if (prim.dataMaps[2].texture >= 0) UpdateTangents(dst);
+        }
+        if (node.visible && !node.colorExcluded) minY = std::min(minY, nodeMinY);
+        if (rigidEnvironment) {
+            node.cachedWorld = node.world;
+            node.cachedMinY = nodeMinY;
+            node.rigidCacheValid = true;
         }
     }
     minY_ = (minY > 1e29f) ? 0.0f : minY;
@@ -618,7 +732,54 @@ void Menu3DModel::Draw(float scale, float yOffset, float yawDegrees, float opaci
 
 // 只画顶点，不施加「贴地 + 缩放 + 朝向」的外层变换。
 // 角色/小鸡的 Draw 内部调用它；配件则用 DrawAttached 在骨骼处直接调用它。
-void Menu3DModel::DrawRaw(float opacity) const {
+void Menu3DModel::UpdateTangents(Primitive& prim) {
+    const auto sub = [](Vec3 a, Vec3 b) { return Vec3{a.x-b.x, a.y-b.y, a.z-b.z}; };
+    const auto cross = [](Vec3 a, Vec3 b) {
+        return Vec3{a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x};
+    };
+    const auto dot = [](Vec3 a, Vec3 b) { return a.x*b.x+a.y*b.y+a.z*b.z; };
+    const auto add = [](Vec3& sum, Vec3 v) { sum.x+=v.x; sum.y+=v.y; sum.z+=v.z; };
+    const auto& uv = prim.dataMaps[2].uv;
+    std::vector<Vec3> tangent(uv.size()), bitangent(uv.size());
+    for (size_t i = 0; i + 2 < prim.indices.size(); i += 3) {
+        const uint32_t a = prim.indices[i], b = prim.indices[i+1], c = prim.indices[i+2];
+        const Vec3 e1 = sub(prim.skinnedPos[b], prim.skinnedPos[a]);
+        const Vec3 e2 = sub(prim.skinnedPos[c], prim.skinnedPos[a]);
+        const float u = uv[b][0]-uv[a][0], v = uv[b][1]-uv[a][1];
+        const float s = uv[c][0]-uv[a][0], t = uv[c][1]-uv[a][1];
+        const float det = u*t-v*s;
+        if (std::abs(det) < 1e-8f) continue;
+        const Vec3 T{(t*e1.x-v*e2.x)/det, (t*e1.y-v*e2.y)/det, (t*e1.z-v*e2.z)/det};
+        const Vec3 B{(u*e2.x-s*e1.x)/det, (u*e2.y-s*e1.y)/det, (u*e2.z-s*e1.z)/det};
+        for (uint32_t k : {a,b,c}) { add(tangent[k], T); add(bitangent[k], B); }
+    }
+    prim.tangents.resize(uv.size());
+    for (size_t i = 0; i < uv.size(); ++i) {
+        const Vec3 n = prim.skinnedNormal[i];
+        const float projection = dot(n, tangent[i]);
+        Vec3 t = sub(tangent[i], {n.x*projection, n.y*projection, n.z*projection});
+        if (dot(t,t) < 1e-8f) t = cross(n, std::abs(n.y) < .9f ? Vec3{0,1,0} : Vec3{1,0,0});
+        t = Normalize(t);
+        prim.tangents[i] = {t.x,t.y,t.z,dot(cross(n,t),bitangent[i]) < 0 ? -1.0f : 1.0f};
+    }
+}
+
+void Menu3DModel::DrawDepth() const {
+    glPushClientAttrib(GL_CLIENT_VERTEX_ARRAY_BIT);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    for (const auto& node : nodes_) {
+        if (!node.visible || node.mesh < 0) continue;
+        for (const auto& prim : meshes_[node.mesh].primitives) {
+            if (prim.alphaBlend) continue;
+            glVertexPointer(3, GL_FLOAT, sizeof(Vec3), prim.skinnedPos.data());
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(prim.indices.size()),
+                           GL_UNSIGNED_INT, prim.indices.data());
+        }
+    }
+    glPopClientAttrib();
+}
+
+void Menu3DModel::DrawRaw(float opacity, const SurfaceUniforms* surface) const {
     if (!ready_ || opacity <= 0.001f) return;
     const float alpha = std::clamp(opacity, 0.0f, 1.0f);
     const bool depthWrite = alpha >= 0.999f;
@@ -626,9 +787,11 @@ void Menu3DModel::DrawRaw(float opacity) const {
         glEnable(GL_BLEND);
         glDepthMask(GL_FALSE);
     }
+    glPushAttrib(GL_LIGHTING_BIT);
     if (unlit_) glDisable(GL_LIGHTING);
 
-    for (const Node& node : nodes_) {
+    if (surface || !textures_.empty()) DrawTexturedModel(alpha, surface);
+    else for (const Node& node : nodes_) {
         if (!node.visible) continue;
         if (node.mesh < 0 || node.mesh >= static_cast<int>(meshes_.size())) continue;
         const Mesh& mesh = meshes_[node.mesh];
@@ -647,8 +810,116 @@ void Menu3DModel::DrawRaw(float opacity) const {
         }
     }
 
-    if (unlit_) glEnable(GL_LIGHTING);
+    glPopAttrib();
     if (!depthWrite) glDepthMask(GL_TRUE);
+}
+
+void Menu3DModel::DrawTexturedModel(float alpha, const SurfaceUniforms* surface) const {
+    const auto activeTexture = reinterpret_cast<PFNGLACTIVETEXTUREPROC>(SDL_GL_GetProcAddress("glActiveTexture"));
+    const auto clientActiveTexture = reinterpret_cast<PFNGLCLIENTACTIVETEXTUREARBPROC>(SDL_GL_GetProcAddress("glClientActiveTexture"));
+    const auto uniform4f = reinterpret_cast<PFNGLUNIFORM4FPROC>(SDL_GL_GetProcAddress("glUniform4f"));
+    glPushAttrib(GL_TEXTURE_BIT);
+    glPushClientAttrib(GL_CLIENT_VERTEX_ARRAY_BIT | GL_CLIENT_PIXEL_STORE_BIT);
+    constexpr GLenum textureMaxAnisotropy = 0x84FE;
+    constexpr GLenum maxTextureMaxAnisotropy = 0x84FF;
+    constexpr GLint srgb8Alpha8 = 0x8C43;
+    if (!textureContext_ && !textures_.empty()) {
+        textureContext_ = SDL_GL_GetCurrentContext();
+        anisotropy_ = 1.0f;
+        if (SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic")) {
+            glGetFloatv(maxTextureMaxAnisotropy, &anisotropy_);
+            anisotropy_ = std::min(8.0f, anisotropy_);
+        }
+    }
+    const auto bindTexture = [&](int index) {
+        if (index < 0) {
+            glBindTexture(GL_TEXTURE_2D, 0);
+            return;
+        }
+        auto& tex = textures_[index];
+        if (tex.handle || !tex.pixels) {
+            glBindTexture(GL_TEXTURE_2D, tex.handle);
+            return;
+        }
+        glGenTextures(1, &tex.handle);
+        glBindTexture(GL_TEXTURE_2D, tex.handle);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, tex.wrapS);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, tex.wrapT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, tex.minFilter);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, tex.magFilter);
+        if (anisotropy_ > 1.0f) glTexParameterf(GL_TEXTURE_2D, textureMaxAnisotropy, anisotropy_);
+        constexpr GLenum generateMipmap = 0x8191;
+        glTexParameteri(GL_TEXTURE_2D, generateMipmap, tex.minFilter > GL_LINEAR);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, tex.pixels->pitch / 4);
+        glTexImage2D(GL_TEXTURE_2D, 0, tex.srgb ? srgb8Alpha8 : GL_RGBA8, tex.pixels->w, tex.pixels->h,
+                     0, GL_RGBA, GL_UNSIGNED_BYTE, tex.pixels->pixels);
+        tex.pixels.reset();
+    };
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_NORMAL_ARRAY);
+    for (const Node& node : nodes_) {
+        if (!node.visible || node.mesh < 0) continue;
+        for (const auto& prim : meshes_[node.mesh].primitives) {
+            if (prim.indices.empty()) continue;
+            ApplyPrimitiveColor(prim, alpha, !node.colorExcluded);
+            const int base = !surface && prim.bakedTexture >= 0 ? prim.bakedTexture : prim.texture;
+            if (base >= 0) {
+                glEnable(GL_TEXTURE_2D);
+                bindTexture(base);
+                glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+                glTexCoordPointer(2, GL_FLOAT, 0, prim.uv.data());
+            } else {
+                glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+                glDisable(GL_TEXTURE_2D);
+            }
+            if (surface) {
+                uniform4f(surface->factors, prim.roughness, prim.metallic, prim.occlusionStrength, prim.normalScale);
+                uniform4f(surface->maps, base >= 0, prim.dataMaps[0].texture >= 0,
+                          prim.dataMaps[1].texture >= 0, prim.dataMaps[2].texture >= 0);
+                for (size_t i = 0; i < prim.dataMaps.size(); ++i) {
+                    const auto& map = prim.dataMaps[i];
+                    const GLenum unit = GL_TEXTURE1 + static_cast<GLenum>(i);
+                    activeTexture(unit);
+                    clientActiveTexture(unit);
+                    bindTexture(map.texture);
+                    if (map.texture >= 0) {
+                        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+                        glTexCoordPointer(2, GL_FLOAT, 0, map.uv.data());
+                    } else {
+                        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+                    }
+                }
+                clientActiveTexture(GL_TEXTURE4);
+                if (!prim.tangents.empty()) {
+                    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+                    glTexCoordPointer(4, GL_FLOAT, sizeof(Vec4), prim.tangents.data());
+                } else {
+                    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+                }
+                clientActiveTexture(GL_TEXTURE0);
+                activeTexture(GL_TEXTURE0);
+            }
+            if (prim.alphaBlend) {
+                // The asset orders transparent meshes behind-to-front after opaque scenery.
+                glPushAttrib(GL_DEPTH_BUFFER_BIT | GL_POLYGON_BIT | GL_COLOR_BUFFER_BIT);
+                glEnable(GL_BLEND);
+                glDepthMask(GL_FALSE);
+                if (!prim.doubleSided) {
+                    glEnable(GL_CULL_FACE);
+                    glCullFace(GL_BACK);
+                }
+            }
+            glVertexPointer(3, GL_FLOAT, sizeof(Vec3), prim.skinnedPos.data());
+            glNormalPointer(GL_FLOAT, sizeof(Vec3), prim.skinnedNormal.data());
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(prim.indices.size()),
+                           GL_UNSIGNED_INT, prim.indices.data());
+            if (prim.alphaBlend) glPopAttrib();
+        }
+    }
+    glPopClientAttrib();
+    glPopAttrib();
 }
 
 void Menu3DModel::ApplyPrimitiveColor(const Primitive& prim, float alpha,
@@ -688,6 +959,12 @@ void Menu3DModel::ApplyPrimitiveColor(const Primitive& prim, float alpha,
         }
     }
 
+    // Fixed-function specular is interpolated per vertex.
+    const float gloss = 1.0f - prim.roughness;
+    const float strength = (.035f + .40f * prim.metallic) * gloss * gloss;
+    const GLfloat specular[] = {strength, strength, strength, 1.0f};
+    glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, specular);
+    glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, gloss * 128.0f);
     glColor4f(r, g, b, prim.color.w * alpha);
 }
 

@@ -238,6 +238,8 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
 //   Full    — 满起：高到低步枪偏好（允许 AWP）
 //   AntiEco — 反 eco overlay：优先 SMG（MAC10/MP9/MP7/UMP）+ 甲 + 轻雷；禁 AWP；已有步枪则保留
 void CS2DGame::BotBuyLoadout(Player& bot) {
+    // 拆包钳单价：与玩家购买价一致（CS2DGame::PurchasePriceOf: DefuseKit -> 400）。
+    constexpr int kDefuseKitPrice = 400;
     BuyPlan plan = GetBuyPlan(bot.team);
     if (GetCoachPlan(bot.team).intent == PlanIntent::Save) plan = BuyPlan::Eco;
     if (plan == BuyPlan::Eco) return;  // 不花钱
@@ -274,8 +276,15 @@ void CS2DGame::BotBuyLoadout(Player& bot) {
     };
 
     auto buyNades = [&](int maxTotal) {
-        const WeaponId order[3] = {
+        // P3-molotov: fire grenade is team-locked (T Molotov $400 / CT
+        // Incendiary $600, WeaponDB prices). Bought 2nd after HE, so
+        // Full/Force/AntiEco BOTs carry one when they can afford it;
+        // Half (maxTotal 1) keeps HE only. Same "leftover money" rule
+        // as the other grenades (buy only if money >= price).
+        const WeaponId fireGrenade = isT ? WeaponId::GrenadeMolotov : WeaponId::GrenadeIncendiary;
+        const WeaponId order[4] = {
             WeaponId::GrenadeHE,
+            fireGrenade,
             isT ? WeaponId::GrenadeFlash : WeaponId::GrenadeSmoke,
             isT ? WeaponId::GrenadeSmoke : WeaponId::GrenadeFlash
         };
@@ -289,6 +298,13 @@ void CS2DGame::BotBuyLoadout(Player& bot) {
                    gd.price > 0 && bot.money >= gd.price) {
                 bot.grenades[bot.grenadeCount++] = gid;
                 bot.money -= gd.price;
+                if (gid == fireGrenade) {
+                    ++counters_.molotovBuys;
+                    std::cout << "[Buy] " << (isT ? "T" : "CT") << " BOT #"
+                              << static_cast<int>(&bot - bots_.data()) + 1
+                              << (isT ? " Molotov ($400)" : " Incendiary ($600)")
+                              << " balance $" << bot.money << std::endl;
+                }
             }
         }
         bot.SyncActiveGrenade();
@@ -380,6 +396,22 @@ void CS2DGame::BotBuyLoadout(Player& bot) {
             };
             buyFirstAffordable(order, sizeof(order) / sizeof(order[0]));
             buyArmor(false);
+            // P3-kit（遗留 6）：CT 专属拆包钳——仅 Full 档、主武+护甲之后、
+            // 有余钱才买，不挤主武器/护甲；优先于投掷物。买一次整局有效
+            // （幸存 carry，阵亡掉落可被捡起；无钳时下次 Full 再补）。
+            // 拆包 4.0s vs 10.0s 见 CS2DGameObjective::UpdateObjective。
+            if (!isT && !bot.hasDefuseKit && bot.money >= kDefuseKitPrice) {
+                Player::EquipmentRecord receipt;
+                receipt.id = nextEquipmentId_++;
+                receipt.epoch = purchaseEpoch_;
+                receipt.buyer = static_cast<int>(&bot - bots_.data()) + 1;
+                receipt.paid = kDefuseKitPrice;
+                bot.kitEquipment = receipt;
+                bot.money -= kDefuseKitPrice;
+                bot.hasDefuseKit = true;
+                std::cout << "[Buy] CT BOT #" << receipt.buyer << " 拆包钳 ($400) 余额 $"
+                          << bot.money << std::endl;
+            }
             buyNades(/*maxTotal=*/Player::MAX_GRENADES);
             break;
         }

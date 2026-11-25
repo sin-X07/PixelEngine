@@ -153,6 +153,7 @@ void CS2DGame::ResetToNewMatch() {
 
     player_.team = desiredPlayerTeam_;
     player_.kills = 0;
+    player_.teamKills = 0;
     player_.deaths = 0;
     player_.money = economy_.StartMoney();
     SpawnPlayer();

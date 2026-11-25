@@ -21,7 +21,7 @@ public:
     Menu3D() = default;
     ~Menu3D() { Shutdown(); }
 
-    bool Initialize(SDL_Renderer* mainRenderer, int width, int height);
+    bool Initialize(SDL_Renderer* mainRenderer, int width = 0, int height = 0);
     void Shutdown();
 
     // 每帧调用；内部限制到约 30fps 更新 3D 纹理。
@@ -85,6 +85,11 @@ public:
 private:
     friend struct Menu3DTestAccess;
     bool InitGL();
+    SDL_Texture* CreateBackdropTexture(int width, int height) const;
+    void FollowOutputSize();
+    void InitSurfaceShader();
+    void InitShadowMap();
+    void DrawEnvironmentShadow(const Menu3DModel& model, const float sun[4]);
     void DrawEnvironment();
     void DrawScene(float timeSec);
     void DrawFocusScene();
@@ -95,7 +100,7 @@ private:
     void UpdateObjectScreenPositions();
     void ObjectWorldPosition(int index, float& x, float& y, float& z) const;
     void FocusCurrentPosition(float& x, float& z) const;
-    void ReadbackToTexture();
+    void ReadbackToTexture(SDL_Texture* target);
     void CaptureScenePreviews();
 
     SDL_Window*   glWindow_ = nullptr;
@@ -106,6 +111,14 @@ private:
     int width_ = 1024;
     int height_ = 576;
     bool ready_ = false;
+    bool followOutputSize_ = false;
+    unsigned int surfaceProgram_ = 0;
+    unsigned int shadowFramebuffer_ = 0;
+    unsigned int shadowDepth_ = 0;
+    std::array<float,16> shadowMatrix_{};
+    Menu3DModel::SurfaceUniforms surfaceUniforms_{};
+    int surfaceShadowMatrix_ = -1;
+    int surfaceHasShadow_ = -1;
     bool previewCapture_ = false;  // 抓拍场景预览时：DrawScene 只画环境本体
 
     std::vector<uint8_t> pixels_;   // 原始 glReadPixels 数据（左下原点）
@@ -168,6 +181,7 @@ private:
     void UpdateChickens(float dt);
     void PickChickenTarget(int index);
     bool LoadModels();
+    float ActorStageX(int actor) const;
     void DrawModels();
 
     int hoveredObject_ = -1;

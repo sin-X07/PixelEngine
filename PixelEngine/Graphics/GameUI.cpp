@@ -266,6 +266,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         : 1.0f;
 
     const float vpW = viewport->WorkSize.x;
+    const bool daylightMenu = ctx.state == MAIN_MENU && ctx.backdrop3D;
     const float centerX = vpW * 0.5f;
     const float buttonW = UI(300.0f);
     const float buttonH = UI(46.0f);
@@ -359,8 +360,8 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                           ImVec2(viewport->WorkPos.x + sw, viewport->WorkPos.y + sh),
                           uv0, uv1);
             // 压暗 + 上下渐变，让文字浮出来；实时 3D 背景保留更多细节
-            const float dimTop = ctx.backdrop3D ? 0.50f : 0.88f;
-            const float dimBot = ctx.backdrop3D ? 0.66f : 0.94f;
+            const float dimTop = daylightMenu ? .26f : ctx.backdrop3D ? .50f : .88f;
+            const float dimBot = daylightMenu ? .45f : ctx.backdrop3D ? .66f : .94f;
             mdl->AddRectFilledMultiColor(
                 viewport->WorkPos, ImVec2(viewport->WorkPos.x + sw, viewport->WorkPos.y + sh),
                 Palette::U32(ImVec4(0.02f, 0.03f, 0.045f, dimTop)),

@@ -100,6 +100,18 @@ void CS2DGame::TraceBotDecision(size_t i, const Player* target) {
 // 投掷前校验：2D 模拟里手雷会撞墙反弹，所以必须确认"到落点有视线 + 落点可站"。
 // 失败就左右偏转几个角度重试；全都不可行时返回 false（宁可不扔，也别扔墙上弹回来）。
 // ---------------------------------------------------------------------------
+// P3-molotov: plan utilKind (0 none 1 smoke 2 flash 3 fire 4 HE) -> grenade type.
+// Fire is team-locked: T throws Molotov, CT throws Incendiary.
+static WeaponId UtilKindGrenade(int utilKind, Team team) {
+    switch (utilKind) {
+        case 1: return WeaponId::GrenadeSmoke;
+        case 2: return WeaponId::GrenadeFlash;
+        case 3: return team == Team::T ? WeaponId::GrenadeMolotov : WeaponId::GrenadeIncendiary;
+        case 4: return WeaponId::GrenadeHE;
+        default: return WeaponId::None;
+    }
+}
+
 bool CS2DGame::PlanGrenadeThrow(const Player& bot, float tx, float ty, float& outAngle) const {
     if (!world_) return false;
     const float kNominalDist = std::clamp(std::hypot(tx - bot.x, ty - bot.y), Tuning::NadeThrowSpeedMin / Tuning::NadeFriction, Tuning::NadeThrowSpeedMax / Tuning::NadeFriction);
@@ -128,6 +140,42 @@ bool CS2DGame::PlanGrenadeThrow(const Player& bot, float tx, float ty, float& ou
     }
     return false;
 }
+// P1-5：同区域/同包点多 BOT 的驻守点不要落在同一个点上。
+// used：本计划内已分配的点 + 其余存活队友的当前驻守点（跨计划残留也要避开，
+// 否则上一轮计划的旧点会和本轮 dup=0 新点重合，duplicate_hold 在回合开始即刷屏）。
+// 实测教训：只按序号试角度不够——dup=1 与 dup=2 会落在同一个首个可行走环点上
+// （例如 A 点 45°/90° 不可行走，两者都停在 135°）；必须跳过已被占用的点。
+// 候选点必须可行走、且与 used 里所有点都 >=40px（>40px 验收线）。
+// 先试 r=HoldSpreadRadius 环（45° 一档），再试 2 倍半径环（错开 22.5°），
+// 都找不到才保留原点（不比原来差）。确定性：不耗随机数。
+void CS2DGame::SpreadHoldPoint(float cx, float cy, int index, float& ox, float& oy,
+                               const std::vector<std::pair<float, float>>& used) const {
+    ox = cx;
+    oy = cy;
+    auto clearOf = [&](float x, float y) {
+        for (const auto& p : used) {
+            const float dx = x - p.first, dy = y - p.second;
+            if (dx * dx + dy * dy < 40.0f * 40.0f) return false;
+        }
+        return true;
+    };
+    const float r = Tuning::HoldSpreadRadius;
+    for (int ring = 0; ring < 2; ++ring) {
+        const float rr = r * (ring == 0 ? 1.0f : 2.0f);
+        const float off = ring == 0 ? 0.0f : 0.39269908f;  // 第二环错开 22.5°
+        for (int k = 0; k < 8; ++k) {
+            const float ang = static_cast<float>(index + k) * 0.78539816f + off;  // 45° 一档
+            const float nx = cx + std::cos(ang) * rr;
+            const float ny = cy + std::sin(ang) * rr;
+            if (clearOf(nx, ny) && pathFinder_.IsWalkableWorld(nx, ny)) {
+                ox = nx;
+                oy = ny;
+                return;
+            }
+        }
+    }
+}
+
 void CS2DGame::SetBotGoal(size_t i, float x, float y,
                           BotRuntime::GoalSource src, bool force) {
     if (i >= bots_.size()) return;
@@ -186,17 +234,18 @@ bool CS2DGame::PlayerCanSeeBot(const Player& bot) const {
 }
 
 // 拆包安全判定：CT BOT 只有在「没有可见敌人、最近没挨打」时才拆包；
-// 炸弹最后 6 秒进入强制拆包窗口，必须顶着火力尝试。
+// 炸弹最后 DefuseForceWindow 秒进入强制拆包窗口，必须顶着火力尝试。
 bool CS2DGame::BotCanDefuse(size_t i, const Player& bot) const {
     if (mode_ != MatchMode::BombDefusal || !bombPlanted_) return false;
     if (!bot.alive || bot.team != Team::CT) return false;
+    if (AiAt(i).saveGun) return false;   // P3-savegun: saver never defuses
 
     // 距离 + 视线：太远或隔着墙都不能拆包。
     if (!IsInDefuseRange(bot.x, bot.y)) return false;
     if (bombTimer_ <= 0.0f) return false;
 
     // 时间不够时没有"先反击"的余裕：必须拆。
-    if (bombTimer_ <= 6.0f) return true;
+    if (bombTimer_ <= Tuning::DefuseForceWindow) return true;
 
     const BotRuntime& ai = AiAt(i);
     if (ai.defuseCooldown > 0.0f) return false;  // 刚放弃拆包，先处理威胁
@@ -206,17 +255,17 @@ bool CS2DGame::BotCanDefuse(size_t i, const Player& bot) const {
     if (FindVisibleEnemy(bot, enemyDist)) return false;   // 看得见敌人：先打
 
     // 不再因为「团队情报里包点附近有 T」就直接禁止拆包：
-    // 那会让 CT 全部站在炸弹上等到最后 6 秒。现在由拆包手尝试，
+    // 那会让 CT 全部站在炸弹上等到强制拆包窗口。现在由拆包手尝试，
     // 其他 CT 去清情报点/架枪；拆包手被看见或挨打时会自动放弃。
     return true;
 }
 
 // 下包后指定拆包手：优先选「当前没挨打、没在冷却、没看见敌人」的最近 CT；
-// 最后 6 秒退化为最近的存活 CT（必须强拆）。
+// 最后 DefuseForceWindow 秒退化为最近的存活 CT（必须强拆）。
 int CS2DGame::PickDefuseBot() const {
     if (mode_ != MatchMode::BombDefusal || !bombPlanted_) return -2;
 
-    const bool mustDefuse = (bombTimer_ <= 6.0f);
+    const bool mustDefuse = (bombTimer_ <= Tuning::DefuseForceWindow);
     int   best        = -2;
     int   fallback    = -2;
     float bestD2      = 1e36f;
@@ -225,6 +274,7 @@ int CS2DGame::PickDefuseBot() const {
     for (size_t i = 0; i < bots_.size(); ++i) {
         const Player& b = bots_[i];
         if (!b.alive || b.team != Team::CT) continue;
+        if (AiAt(i).saveGun) continue;   // P3-savegun: saver is out of defuse duty
 
         const float dx = b.x - bombX_;
         const float dy = b.y - bombY_;
@@ -244,6 +294,29 @@ int CS2DGame::PickDefuseBot() const {
 
     if (best >= 0) return best;
     return mustDefuse ? fallback : -2;
+}
+
+// P0-3：下包后指定掩护手——离炸弹最近的存活 CT（拆包手除外）。
+// 掩护手去拆包手附近的架枪点（炸弹与最近敌情方向之间，DefuseCoverDist 处），
+// 既能看到拆包手和主要入口，又能在拆包手被打断时一步上前接替拆包。
+// 注意：掩护手不参与 PickDefuseBot 的「没看见敌人」筛选——架枪本身就要直面敌人。
+int CS2DGame::PickCoverBot(int defuser) const {
+    if (mode_ != MatchMode::BombDefusal || !bombPlanted_) return -2;
+
+    int   best   = -2;
+    float bestD2 = 1e36f;
+    for (size_t i = 0; i < bots_.size(); ++i) {
+        if (static_cast<int>(i) == defuser) continue;
+        const Player& b = bots_[i];
+        if (!b.alive || b.team != Team::CT) continue;
+        if (AiAt(i).saveGun) continue;   // P3-savegun: saver is out of cover duty
+
+        const float dx = b.x - bombX_;
+        const float dy = b.y - bombY_;
+        const float d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) { bestD2 = d2; best = static_cast<int>(i); }
+    }
+    return best;
 }
 
 // 找最近的存活敌人（玩家或其它 BOT）
@@ -280,18 +353,64 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     const float gdy = destY - ai.goalY;
     const bool goalMoved = (gdx * gdx + gdy * gdy) >
                            Tuning::RepathGoalMoved * Tuning::RepathGoalMoved;
+    // P2-3：短距离目标（<200px）且直线可达 → 直接走直线，不经过完整 A*。
+    // （近点微调/架枪换位大多是这种情况；省一次寻路，也省一次绕路。）
+    const float ddx = destX - bot.x;
+    const float ddy = destY - bot.y;
+    const float distToDest = std::sqrt(ddx * ddx + ddy * ddy);
+    const bool shortDirect = distToDest < Tuning::ShortGoalDist &&
+                             pathFinder_.IsWalkableWorld(destX, destY) &&
+                             pathFinder_.HasLineOfSight(bot.x, bot.y, destX, destY);
+    if (shortDirect) {
+        ai.goalX = destX;
+        ai.goalY = destY;
+        ai.repathTimer = Tuning::RepathIntervalShort;
+        ai.path.clear();
+        ai.path.emplace_back(destX, destY);
+        ai.pathIdx = 0;
+    }
 
     ai.repathTimer -= dt;
     const bool exhausted = (ai.pathIdx >= static_cast<int>(ai.path.size()));
-    if (goalMoved || ai.repathTimer <= 0.0f || (exhausted && !ai.path.empty())) {
-        ai.goalX = destX;
-        ai.goalY = destY;
-        ai.repathTimer = Tuning::RepathInterval;
-        ai.path.clear();
-        ai.pathIdx = 0;
-        if (!pathFinder_.FindPath(bot.x, bot.y, destX, destY, ai.path)) {
+    if (!shortDirect &&
+        (goalMoved || ai.repathTimer <= 0.0f || (exhausted && !ai.path.empty()))) {
+        // P1-5：寻路方向锁存——定时重算不得把正在行进的 BOT 瞬间掉头。
+        // 新路第一步与当前速度夹角 >120° 时，沿用旧路、0.3 秒后再试；
+        // 目标大 move（goalMoved）或旧路走完时不锁存，合法转向不受影响。
+        bool keepOldPath = false;
+        if (!goalMoved && !exhausted && !ai.path.empty() &&
+            ai.pathIdx < static_cast<int>(ai.path.size())) {
+            const float cvx = bot.vx, cvy = bot.vy;
+            const float curSpeed = std::sqrt(cvx * cvx + cvy * cvy);
+            if (curSpeed > 10.0f) {
+                std::vector<std::pair<float, float>> fresh;
+                if (pathFinder_.FindPath(bot.x, bot.y, destX, destY, fresh)) {
+                    for (const auto& wp : fresh) {
+                        const float wx = wp.first - bot.x;
+                        const float wy = wp.second - bot.y;
+                        const float wd = std::sqrt(wx * wx + wy * wy);
+                        if (wd <= Tuning::WaypointReach) continue;
+                        if (wx * cvx + wy * cvy < -0.5f * wd * curSpeed) keepOldPath = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (keepOldPath) {
+            ai.repathTimer = Tuning::RepathLatchRetry;
+        } else {
+            ai.goalX = destX;
+            ai.goalY = destY;
+            // P1-5：短距离目标重算间隔放宽（0.8s→1.5s），少反复换向。
+            ai.repathTimer = (distToDest < Tuning::ShortGoalDist)
+                                 ? Tuning::RepathIntervalShort
+                                 : Tuning::RepathInterval;
             ai.path.clear();
-            return false;   // 无路可走 → 由调用方直线兜底
+            ai.pathIdx = 0;
+            if (!pathFinder_.FindPath(bot.x, bot.y, destX, destY, ai.path)) {
+                ai.path.clear();
+                return false;   // 无路可走 → 由调用方直线兜底
+            }
         }
     }
 
@@ -433,6 +552,25 @@ bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float dest
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// P0-1：爆炸半径外的安全站位采样
+//   在以炸弹为圆心、半径 radius 的圆上找一个可站的点：先试基准角，
+//   再左右偏转 ±30°/±60°/±90°，最后试反方向。找不到时返回 false，
+//   调用方保留原来的标称点（寻路兜底），行为与改动前一致。
+// ---------------------------------------------------------------------------
+static bool BombSafePoint(const PathFinder& pf, float bombX, float bombY,
+                          float baseAng, float radius, float& outX, float& outY) {
+    static const float kOff[] = { 0.0f, 0.5235988f, -0.5235988f, 1.0471976f, -1.0471976f,
+                                  1.5707963f, -1.5707963f, 3.14159265f };
+    for (float off : kOff) {
+        const float a = baseAng + off;
+        const float x = bombX + std::cos(a) * radius;
+        const float y = bombY + std::sin(a) * radius;
+        if (pf.IsWalkableWorld(x, y)) { outX = x; outY = y; return true; }
+    }
+    return false;
+}
+
 void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
     // 小队协同：刷新集火目标（内部 0.5s 节流）
     UpdateSquadFocus(dt);
@@ -515,9 +653,32 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                 if (d2 < 460.0f * 460.0f && d2 > 160.0f * 160.0f) {
                     float ang = 0.0f;
                     if (PlanGrenadeThrow(bot, ai.utilX, ai.utilY, ang)) {
+                        // P3-molotov: throw the grenade the plan asked for
+                        // (utilKind), not whatever happens to be active.
+                        // Fall back to the active grenade only when the
+                        // wanted kind is not carried (e.g. Eco round).
+                        const WeaponId want = UtilKindGrenade(ai.utilKind, bot.team);
+                        const bool matched = (want != WeaponId::None) && bot.SelectGrenade(want);
+                        if (want != WeaponId::None && !matched) ++counters_.utilKindMismatch;
                         ThrowGrenade(bot, ang, audio, std::sqrt(d2));
                         ai.utilDone = true;
                         ++counters_.nadeThrows;
+                        if (matched) {
+                            ++counters_.utilKindThrows;
+                            if (want == WeaponId::GrenadeMolotov || want == WeaponId::GrenadeIncendiary) {
+                                ++counters_.molotovThrows;
+                                std::cout << "[UtilThrow] #" << i << " utilKind=3 -> "
+                                          << (bot.team == Team::T ? "Molotov" : "Incendiary")
+                                          << " (" << static_cast<int>(ai.utilX) << ","
+                                          << static_cast<int>(ai.utilY) << ")" << std::endl;
+                            }
+                        }
+                    }
+                    else if (!ai.utilThrowFailed) {
+                        // P1-4: count a failed plan-util throw once per assignment
+                        // (it retries every frame while in range; do not spam the counter).
+                        ai.utilThrowFailed = true;
+                        ++counters_.nadePlanFails;
                     }
                 }
             }
@@ -862,6 +1023,19 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                     const float half = bot.size * 0.5f;
                     if (world_ && !world_->CheckRectCollision(nx - half, ny - half,
                                                               bot.size, bot.size)) {
+                        // P1-5：换位点别落在队友驻守点上（<40px 就换个候选点），
+                        // 否则随机换位会撞出 duplicate_hold（实测：R7 下包后 bot2
+                        // 换位到距 bot0 驻守点 22.7px 处）。6 个候选点都不行就
+                        // 本轮不换位，下次再试；不耗额外随机数（同一循环内判断）。
+                        bool nearMate = false;
+                        for (size_t j = 0; j < bots_.size(); ++j) {
+                            if (j == i || bots_[j].team != bot.team || !bots_[j].alive) continue;
+                            const auto& aj = AiAt(j);
+                            if (!aj.hasPlanHold) continue;
+                            const float dx = nx - aj.planHoldX, dy = ny - aj.planHoldY;
+                            if (dx * dx + dy * dy < 40.0f * 40.0f) { nearMate = true; break; }
+                        }
+                        if (nearMate) continue;
                         SetBotGoal(i, nx, ny, ai.goalSource, /*force=*/true);
                         break;
                     }
@@ -995,15 +1169,60 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
         if (ai.grenadeCooldown > 0.0f) ai.grenadeCooldown -= dt;
         if (!target && intel && bot.grenadeCount > 0 && ai.grenadeCooldown <= 0.0f) {
             if (engageDist > Tuning::NadeThrowMin && engageDist < Tuning::NadeThrowMax) {
-                float throwAng = 0.0f;
-                if (PlanGrenadeThrow(bot, aimX, aimY, throwAng)) {
-                    ThrowGrenade(bot, throwAng, audio, std::hypot(aimX - bot.x, aimY - bot.y));
-                    ai.grenadeCooldown = Tuning::NadeCooldown;
-                    ++counters_.nadeThrows;
-                } else {
-                    // 没有可行落点：短冷却后再找机会，避免每帧重试
+                // P1-4: do not retry the same unreachable intel point every 1.5s.
+                // A failed point is remembered for NadeFailMemorySec; a new point
+                // (moved more than NadeFailPointRadius) or an expired memory retries.
+                const float fdx = aimX - ai.nadeFailX;
+                const float fdy = aimY - ai.nadeFailY;
+                const bool sameFailedPoint =
+                    (fdx * fdx + fdy * fdy < Tuning::ai::NadeFailPointRadius * Tuning::ai::NadeFailPointRadius) &&
+                    (clockSec_ - ai.nadeFailAt < Tuning::ai::NadeFailMemorySec);
+                if (sameFailedPoint) {
                     ai.grenadeCooldown = 1.5f;
-                    ++counters_.nadeSkips;
+                } else {
+                    float throwAng = 0.0f;
+                    if (PlanGrenadeThrow(bot, aimX, aimY, throwAng)) {
+                        ThrowGrenade(bot, throwAng, audio, std::hypot(aimX - bot.x, aimY - bot.y));
+                        ai.grenadeCooldown = Tuning::NadeCooldown;
+                        ai.nadeFailAt = -1e9f;
+                        ++counters_.nadeThrows;
+                    } else {
+                        // P1-4 (2nd pass): exact intel point unreachable (usually a wall
+                        // blocks LOS). Try fallback landing points pulled back toward the
+                        // bot in NadeFallbackPull steps: a point on this side of the wall
+                        // still lands near the intel point, so throw there instead of
+                        // burning a skip. The exact point stays remembered as failed.
+                        ai.nadeFailX = aimX;
+                        ai.nadeFailY = aimY;
+                        ai.nadeFailAt = clockSec_;
+                        bool fallbackThrown = false;
+                        {
+                            const float dx = bot.x - aimX;
+                            const float dy = bot.y - aimY;
+                            const float d = std::hypot(dx, dy);
+                            if (d > 0.0f) {
+                                const float ux = dx / d;
+                                const float uy = dy / d;
+                                for (int s = 1; s <= Tuning::ai::NadeFallbackSteps && !fallbackThrown; ++s) {
+                                    const float fx = aimX + ux * (Tuning::ai::NadeFallbackPull * s);
+                                    const float fy = aimY + uy * (Tuning::ai::NadeFallbackPull * s);
+                                    const float fd = std::hypot(fx - bot.x, fy - bot.y);
+                                    if (fd < Tuning::ai::NadeFallbackMinDist) break;
+                                    float fbAng = 0.0f;
+                                    if (PlanGrenadeThrow(bot, fx, fy, fbAng)) {
+                                        ThrowGrenade(bot, fbAng, audio, fd);
+                                        ai.grenadeCooldown = Tuning::NadeCooldown;
+                                        ++counters_.nadeThrows;
+                                        fallbackThrown = true;
+                                    }
+                                }
+                            }
+                        }
+                        if (!fallbackThrown) {
+                            ai.grenadeCooldown = 1.5f;
+                            ++counters_.nadeSkips;
+                        }
+                    }
                 }
             }
         }
@@ -1022,10 +1241,26 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
 
             if (!visibleTarget) ai.perceivedTarget = -2;
 
+            // P3-savegun: post-plant, CT with no winning chance saves the gun.
+            // Trigger: CT alive <= 2 and T alive >= 3. Latched for the round;
+            // a bot already defusing (progress > 0) finishes instead of flipping.
+            if (mode_ == MatchMode::BombDefusal && bombPlanted_ && bot.team == Team::CT &&
+                bot.alive && !ai.saveGun && bot.defuseProgress <= 0.0f) {
+                const int aliveCT = AliveCount(Team::CT);
+                const int aliveT = AliveCount(Team::T);
+                if (aliveCT <= Tuning::SaveGunMaxAliveCT && aliveT >= Tuning::SaveGunMinAliveT) {
+                    ai.saveGun = true;
+                    std::cout << "[SaveGun] #" << i << " round " << round_.RoundNumber()
+                              << " CT=" << aliveCT << " T=" << aliveT
+                              << " bombLeft=" << bombTimer_ << "s, retreating to save gun"
+                              << std::endl;
+                }
+            }
+
         // ---- 听声扑人：优先级最高，直接压过常规驻守/进攻目标 ----
             // 听到下包（CT 方）或拆包（T 方）的声音时，立刻转向发声者，
             // 不再按教练计划守点/推进，避免"听见了却站着不动"。
-            if (heardSound && sm.who) {
+            if (heardSound && sm.who && !ai.saveGun) {
                 destX = sm.x;
                 destY = sm.y;
                 hasDest = true;
@@ -1082,18 +1317,59 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                         static const float kRing[8] = { 0.0f, 0.79f, 1.57f, 2.36f,
                                                         3.14f, 3.93f, 4.71f, 5.50f };
                         const float ang = kRing[i % 8];
+                        // P0-1：守包环半径已提到爆炸半径之外（Tuning::BombHoldRing=360）。
+                        // 环点若落在墙内就左右偏转找可站的点，否则寻路失败会把人顶在墙边，
+                        // 可能仍在爆炸半径内。
                         destX = bombX_ + std::cos(ang) * Tuning::BombHoldRing;
                         destY = bombY_ + std::sin(ang) * Tuning::BombHoldRing;
+                        BombSafePoint(pathFinder_, bombX_, bombY_, ang, Tuning::BombHoldRing, destX, destY);
                         hasDest = true;
                         destIsObjective = true;
                     }
                 } else if (bombPlanted_) {
-                    // 下包后：只让拆包手去炸弹；其他人去清包点附近的情报，
-                    // 没有情报就在炸弹外围架枪，不再全员堆在炸弹上。
+                    if (ai.saveGun) {
+                        // P3-savegun: retreat to the CT spawn and hold an angle
+                        // on the bomb instead of feeding the retake.
+                        float sx = 0.0f, sy = 0.0f;
+                        if (SaveGunRetreatPoint(i, sx, sy)) {
+                            destX = sx;
+                            destY = sy;
+                        } else {
+                            destX = bot.x;
+                            destY = bot.y;
+                        }
+                        hasDest = true;
+                        destIsObjective = true;
+                        if (!visibleTarget)
+                            ai.lookAngle = std::atan2(bombY_ - bot.y, bombX_ - bot.x);
+                    } else {
+                    // 下包后：拆包手去炸弹；掩护手去拆包手附近架枪；其他人去清
+                    // 包点附近的情报，没有情报就在炸弹外围架枪，不再全员堆在炸弹上。
+                    // P0-3：拆包手 + 架枪手双人组——掩护手站在炸弹与最近敌情方向
+                    // 之间（DefuseCoverDist 处），既架住入口，又能在拆包手被打断
+                    // 时一步上前接替（220px 拆包近点统计内）。
                     const int defuser = PickDefuseBot();
+                    const int cover = PickCoverBot(defuser);
                     if (defuser == static_cast<int>(i)) {
                         destX = bombX_;
                         destY = bombY_;
+                    } else if (cover == static_cast<int>(i)) {
+                        const EnemyContact* c = FindNearestContact(Team::CT, bombX_, bombY_);
+                        float coverAng = 0.0f;
+                        if (c) {
+                            coverAng = std::atan2(c->y - bombY_, c->x - bombX_);
+                        } else {
+                            // 无敌情：按序号散开，避免多局同点。
+                            static const float kCoverAng[8] = {
+                                0.0f, 0.79f, 1.57f, 2.36f, 3.14f, 3.93f, 4.71f, 5.50f
+                            };
+                            coverAng = kCoverAng[i % 8];
+                        }
+                        destX = bombX_ + std::cos(coverAng) * Tuning::DefuseCoverDist;
+                        destY = bombY_ + std::sin(coverAng) * Tuning::DefuseCoverDist;
+                        BombSafePoint(pathFinder_, bombX_, bombY_, coverAng, Tuning::DefuseCoverDist, destX, destY);
+                        // 架枪朝向：无可见目标时原地扫视以威胁方向为中心。
+                        if (!visibleTarget) ai.lookAngle = coverAng;
                     } else {
                         const EnemyContact* c = FindNearestContact(Team::CT, bombX_, bombY_);
                         const float cdx = c ? (c->x - bombX_) : 0.0f;
@@ -1116,6 +1392,7 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
                     }
                     hasDest = true;
                     destIsObjective = true;
+                    }
                 } else if (ai.hasPlanHold) {
                     // 未下包：各守 A / B / 中路（目标唯一真源）
                     destX = ai.planHoldX;
@@ -1259,6 +1536,27 @@ void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
             if (!destIsObjective && order.role == BotRole::Anchor &&
                 engageDist > Tuning::AnchorHoldRange * aggr) {
                 hasDest = false;
+            }
+
+            // P0-1 引信撤离：引信将尽时，仍在爆炸半径内的 T 必须撤出。
+            // 优先级高于一切移动目标（包括听拆包声扑人、追可见敌人）：
+            // 炸弹爆炸即判 T 赢回合，人活着才有意义；已在环上（半径外）的
+            // 架枪位不受影响，继续架枪；撤离只改移动目标，不改瞄准/开火。
+            if (mode_ == MatchMode::BombDefusal && bombPlanted_ && bot.team == Team::T &&
+                bombTimer_ <= Tuning::BombEvacSeconds) {
+                const float edx = bot.x - bombX_;
+                const float edy = bot.y - bombY_;
+                if (edx * edx + edy * edy < Tuning::BombHoldRing * Tuning::BombHoldRing) {
+                    const float away = std::atan2(edy, edx);
+                    float ex = bombX_ + std::cos(away) * Tuning::BombHoldRing;
+                    float ey = bombY_ + std::sin(away) * Tuning::BombHoldRing;
+                    BombSafePoint(pathFinder_, bombX_, bombY_, away, Tuning::BombHoldRing, ex, ey);
+                    destX = ex;
+                    destY = ey;
+                    hasDest = true;
+                    destIsObjective = true;
+                    softHold = false;
+                }
             }
 
             if (hasDest) {

@@ -101,12 +101,17 @@ constexpr float SpeedMulMin       = 0.30f;   // 速度倍率下限（防止不�
 
 // ---------------- 局部避障 ----------------
 constexpr float SepRadius        = 52.0f;    // 排斥半径
+constexpr float SepDeadZoneFrac  = 0.38f;   // P1-5：分离力死区占排斥半径的比例（52×0.38≈20px，与到达死区 28px 错开 8px 以上）
 constexpr float SepStrength      = 96.0f;    // 分离力强度
 constexpr float SepMaxSpeed      = 120.0f;    // 合成后限速
 
 // ---------------- 寻路 ----------------
 constexpr float RepathInterval   = 0.8f;     // 重算间隔
-constexpr float RepathGoalMoved  = 140.0f;    // 目标移动多少像素触发重算
+constexpr float RepathIntervalShort = 1.5f;   // P1-5：短距离目标（<ShortGoalDist）重算间隔放宽，少反复换向
+constexpr float RepathGoalMoved  = 200.0f;   // P1-5：目标移动多少像素触发重算（140→200）
+constexpr float RepathLatchRetry = 0.3f;     // P1-5：寻路方向锁存跳过一次重算后，多久再试
+constexpr float ShortGoalDist    = 200.0f;   // P1-5/P2-3：短距离目标阈值（直线直达 + 放宽重算）
+constexpr float HoldSpreadRadius = 56.0f;    // P1-5：同区域多槽位驻守点环形散开半径（环上相邻两点约 43px > 40px）
 constexpr float WaypointReach    = 16.0f;     // 到达路点判定
 constexpr float PathAgentRadius  = 8.0f;     // 烘焙可行走网格的角色半径
 
@@ -126,8 +131,17 @@ constexpr float TradeMinDist     = 80.0f;    // 太近不必补
 constexpr float NadeBlastRadius  = 220.0f;  // 高爆雷爆炸半径（世界单位）
 constexpr float NadeMaxDamage    = 78.0f;   // 中心伤害（边缘按平方衰减到 0）
 constexpr float DefuseRadius     = 30.0f;   // 拆包半径：必须贴身靠近包点（且中间不能有墙）
-constexpr float BombHoldRing     = 170.0f;   // 下包后 T 守包的环形半径
+constexpr float BombHoldRing     = 360.0f;   // 下包后 T 守包的环形半径
+constexpr float BombBlastRadius  = 320.0f;   // C4 爆炸半径：DetonateBomb 与守包环共用此值
+constexpr float BombEvacSeconds  = 8.0f;     // 引信撤离阈值（秒）：剩余时间低于此值时，仍在爆炸半径内的 T 必须撤出
+// P3-savegun: CT save-gun trigger + retreat tuning (PIX-40 legacy item 3).
+constexpr int   SaveGunMaxAliveCT  = 2;     // trigger: CT alive <= this
+constexpr int   SaveGunMinAliveT   = 3;     // trigger: T alive >= this
+constexpr float SaveGunRetreatRing = 130.0f; // retreat spread around CT spawn centroid
+constexpr float SaveGunMinBombDist = 420.0f; // retreat point must be this far from the bomb
 constexpr float DefuseCoverRing  = 180.0f;   // CT 拆包时其余人的掩护环半径
+constexpr float DefuseCoverDist  = 110.0f;   // P0-3：掩护手架枪点距炸弹的距离（220px 拆包近点统计内，接替拆包只需一步）
+constexpr float DefuseForceWindow = 12.0f;   // P0-3：强制拆包窗口（秒）：引信剩余 ≤ 此值时不再因看见敌人/挨打而放弃；略大于无钳拆包耗时 10s
 constexpr float NadeBlastFxTime  = 0.35f;   // 爆炸特效持续
 
 // 燃烧弹 / 燃烧瓶：落地后形成一片持续燃烧的火区
@@ -267,8 +281,13 @@ constexpr int   StrafeSlideAngles = 4;      // 探测角度数量（±45/±90）
 
 // 投掷物
 constexpr float NadeValidAngleStep = 15.0f; // 失败后尝试的角度步长（度）
-constexpr int   NadeValidTries      = 5;    // 最多尝试次数（含正向）
+constexpr int   NadeValidTries      = 9;    // 最多尝试次数（含正向）
 constexpr float NadeLandingSlack    = 48.0f;// 落点可行走判定的容差
+    constexpr float NadeFailMemorySec   = 7.0f;   // P1-4: a failed intel-throw point is not retried within this window
+    constexpr float NadeFailPointRadius = 60.0f;  // P1-4: same-point radius for the failed intel-throw memory
+    static constexpr float NadeFallbackPull = 80.0f;  // P1-4: fallback landing point pull-back per step (toward the bot)
+    static constexpr int NadeFallbackSteps = 3;      // P1-4: max pull-back steps tried before a skip is counted
+    static constexpr float NadeFallbackMinDist = 120.0f;  // P1-4: closest fallback landing point to the bot
 constexpr float NadeMinLandingDist  = 120.0f;
 
 // 支援（队友交战中前压补枪）
@@ -290,14 +309,21 @@ constexpr float RoleTransitionSec   = 3.0f;    // 速度倍率过渡时间
 
 // 教练指令变更预算
 constexpr float IntentMinHold       = 10.0f;   // 意图最短保持
+    constexpr int   RotateMinIntel     = 1;      // P1-3: rotate needs >=1 intel observation (was 2)
+    constexpr float RotateMinPlanAge   = 6.0f;   // P1-3: current plan must have run >=6s (was 12s)
+    constexpr float RotateHeatDelta    = 0.8f;   // P1-3: heat gap to rotate (was 1.2)
 constexpr int   IntentMaxChanges    = 2;       // 每回合最多变更次数
 constexpr float IntentChangeCooldown = 6.0f;   // 两次变更最短间隔
+constexpr float ManpowerReplanCooldown = 5.0f; // P1-1：减员重评估冷却：距上次减员重规划 ≥5 秒才再次重规划（防每死一人就换计划）
 constexpr float IntentRenewSec      = 8.0f;    // 到期续期时长
 constexpr float SilentSeconds       = 30.0f;   // 无接触多久算"沉默期"
 constexpr int   SameSideStreakLimit = 3;      // 连续同一侧打几次才强制换边（1=每两次必换）
 
 // 规则教练意图打分权重（T10；只用确定性输入，不碰 rng_ 主链）
 constexpr float ScoreHeatDelta      = 1.0f;   // 情报热度差：冷侧主攻加分（T15）
+    constexpr float ScoreSplitBase     = 0.5f;   // P1-3: Split base score so it can beat Default/MID (0.4) once 2 of 3 signals hold
+    constexpr float ScoreFakeHeatDelta = 0.6f;   // P1-3: Fake heat-gap trigger (was ScoreHeatDelta 1.0, A-side only)
+    constexpr float BranchRushHeatGap = 1.6f;   // P2-4: branch rush needs a clear intel gap (heat |A-B|); below this the branch varies (rotate/fake/mid). Offline sim on impl-p15p16 wiring: ~35% non-rush at 1.6.
 constexpr float ScoreRepeatPenalty  = 2.5f;   // 连续同 intent+target 失败 → 换点（T10）
 constexpr float ScoreControlMul     = 1.0f;   // "已控"信号（T31）
 constexpr float ScoreSmokeMul       = 1.0f;   // 烟 ≥1 才能道具开点（T14）

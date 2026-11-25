@@ -25,6 +25,14 @@
 - 可编辑源文件为 `tools/menu-models/CharacterLab.blend`，导出脚本为同目录的 `export_models.py`。
 - 在仓库根目录运行 `blender --background --python tools/menu-models/export_models.py` 可重新生成三份 GLB，制作版本为 Blender 5.2.3 LTS。
 
+## 主菜单盐市（dust_2）
+
+盐市建筑、车辆、道具、棕榈和风动由本项目在 Blender 中制作。门漆、木纹、墙面、石灰、锈迹、布纹和铺地使用自制程序纹理，八张底色图与一张立面光照图集均嵌入 GLB。生成入口为 `tools/menu-scenes/create_scenes.py`，场景建造位于同目录的 `salt_market.py`。源文件及导出资产随项目发布。
+
+## 主菜单雨历庭与靛蓝商旅院
+
+雨历庭（`menu/scenes/ancient_ruins.glb`）的石历盘、雨滴悬饰、石刻、板根树与蕨类由本项目自制。靛蓝商旅院（`menu/scenes/mirage.glb`）的灰泥建筑、蓝瓦风塔、拱廊、织毯、穹顶与陶器同为原创。两套场景各含七张自制底色贴图，铺地含按场景几何烘焙的投影。编辑源与生成入口位于 `tools/menu-scenes/`，几何与贴图随项目发布。
+
 ## 说明
 
 这些模型仅用于主菜单装饰。T/CT 不代表 Valve 的《反恐精英》角色，

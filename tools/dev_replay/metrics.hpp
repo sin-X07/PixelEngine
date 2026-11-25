@@ -28,6 +28,8 @@ struct RoundRow {
     int   ticks = 0;
     int   killsT = 0;
     int   killsCT = 0;
+    int   teamKillsT = 0;
+    int   teamKillsCT = 0;
     bool  plant = false;
     bool  defuse = false;
     int   firstBloodTick = -1;       // 相对回合开始
@@ -43,6 +45,10 @@ struct RoundRow {
     float stillRatioCT = 0.0f;
     float idleRatioT = 0.0f;     // 无目标 / 无驻守点 / 无路径 —— "不知道干什么"
     float idleRatioCT = 0.0f;
+    float stillPreRatioT = 0.0f;   // P1-6：下包前原地不动占比（进攻方站桩才是问题）
+    float stillPreRatioCT = 0.0f;
+    float stillPostRatioT = 0.0f;  // P1-6：下包后原地不动占比（守包架枪合理，40–50% 预期）
+    float stillPostRatioCT = 0.0f;
     float pathEffT = 0.0f;       // 直线位移 / 实际移动距离（1 = 最直）
     float pathEffCT = 0.0f;
     // 按 episode 直线距离分桶：短(<120) / 中(120-400) / 长(>400)。
@@ -58,6 +64,9 @@ struct RoundRow {
     int   buyPlanCT = 0;
     int   plantNearT = 0;        // 下包瞬间 220px 内 T 人数
     int   defuseNearCT = 0;      // 拆包开始瞬间 220px 内 CT 人数
+    int   saveGunTrig = 0;         // P3-savegun: CT bots that entered save-gun mode
+    int   saveGunAlive = 0;        // P3-savegun: of them, alive at round end
+    int   saveGunKept = 0;         // P3-savegun: of them, alive with a primary weapon
 };
 
 class RoundTracker {
@@ -69,6 +78,8 @@ public:
         scoreCT_ = game.GetScoreCT();
         killsStartT_ = KillsOf(game, Team::T);
         killsStartCT_ = KillsOf(game, Team::CT);
+        teamKillsStartT_ = TeamKillsOf(game, Team::T);
+        teamKillsStartCT_ = TeamKillsOf(game, Team::CT);
         plant_ = false;
         defuse_ = false;
         firstBlood_ = -1;
@@ -80,12 +91,17 @@ public:
         dirReversals_ = 0;
         plantNear_ = 0;
         defuseNear_ = 0;
+        saveGunTrig_ = 0; saveGunAlive_ = 0; saveGunKept_ = 0;
         lastAliveT_ = AliveOf(game, Team::T);
         lastAliveCT_ = AliveOf(game, Team::CT);
 
         for (int i = 0; i < 2; ++i) {
             teamTicks_[i] = 0;
             teamStill_[i] = 0;
+            teamTicksPre_[i] = 0;
+            teamStillPre_[i] = 0;
+            teamTicksPost_[i] = 0;
+            teamStillPost_[i] = 0;
             teamIdle_[i] = 0;
             teamTravel_[i] = 0.0;
             damageTaken_[i] = 0;
@@ -147,6 +163,19 @@ public:
         if (game.IsRoundDecided()) {
             lastAliveT_  = AliveOf(game, Team::T);
             lastAliveCT_ = AliveOf(game, Team::CT);
+            // P3-savegun: settle save-gun counts while the round is decided
+            // (BotRuntime is reset at the next round start, so count here).
+            saveGunTrig_ = 0; saveGunAlive_ = 0; saveGunKept_ = 0;
+            const auto& botsSG = game.GetBOTs();
+            for (size_t i = 0; i < botsSG.size(); ++i) {
+                const auto& b = botsSG[i];
+                if (b.team != Team::CT) continue;
+                if (!game.AiAt(i).saveGun) continue;
+                ++saveGunTrig_;
+                if (!b.alive) continue;
+                ++saveGunAlive_;
+                if (b.weapons[0] != WeaponId::None) ++saveGunKept_;
+            }
         }
 
         // 移动质量（只统计 BOT；玩家是脚本，单独看意义不大）
@@ -201,6 +230,14 @@ public:
             }
             if (moved > 0.5f) teamTravel_[ti] += moved;   // 过滤原地微抖
             if (moved < 0.15f && !ai.hadTarget) ++teamStill_[ti];
+            // P1-6：still 按下包切分——plant_ 在本 Sample 开头已按炸弹计时器更新。
+            if (plant_) {
+                ++teamTicksPost_[ti];
+                if (moved < 0.15f && !ai.hadTarget) ++teamStillPost_[ti];
+            } else {
+                ++teamTicksPre_[ti];
+                if (moved < 0.15f && !ai.hadTarget) ++teamStillPre_[ti];
+            }
             if (!ai.hasPlanHold && ai.path.empty() && !ai.hadTarget) ++teamIdle_[ti];
         }
 
@@ -223,6 +260,12 @@ public:
         int sum = 0;
         if (g.GetPlayerTeam() == t) sum += g.GetPlayer().kills;
         for (const auto& b : g.GetBOTs()) if (b.team == t) sum += b.kills;
+        return sum;
+    }
+    static int TeamKillsOf(const CS2DGame& g, Team t) {
+        int sum = 0;
+        if (g.GetPlayerTeam() == t) sum += g.GetPlayer().teamKills;
+        for (const auto& b : g.GetBOTs()) if (b.team == t) sum += b.teamKills;
         return sum;
     }
     static int AliveOf(const CS2DGame& g, Team t) {
@@ -296,6 +339,8 @@ private:
         row.ticks = static_cast<int>(tick - roundStartTick_);
         row.killsT = KillsOf(game, Team::T) - killsStartT_;
         row.killsCT = KillsOf(game, Team::CT) - killsStartCT_;
+        row.teamKillsT = TeamKillsOf(game, Team::T) - teamKillsStartT_;
+        row.teamKillsCT = TeamKillsOf(game, Team::CT) - teamKillsStartCT_;
         row.plant = plant_;
         row.defuse = defuse_;
         row.firstBloodTick = firstBlood_;
@@ -313,12 +358,19 @@ private:
         row.buyPlanCT = buyPlanCT_;
         row.plantNearT = plantNear_;
         row.defuseNearCT = defuseNear_;
+        row.saveGunTrig = saveGunTrig_;
+        row.saveGunAlive = saveGunAlive_;
+        row.saveGunKept = saveGunKept_;
 
         auto ratio = [](int a, int b) {
             return b > 0 ? static_cast<float>(a) / static_cast<float>(b) : 0.0f;
         };
         row.stillRatioT = ratio(teamStill_[0], teamTicks_[0]);
         row.stillRatioCT = ratio(teamStill_[1], teamTicks_[1]);
+        row.stillPreRatioT = ratio(teamStillPre_[0], teamTicksPre_[0]);
+        row.stillPreRatioCT = ratio(teamStillPre_[1], teamTicksPre_[1]);
+        row.stillPostRatioT = ratio(teamStillPost_[0], teamTicksPost_[0]);
+        row.stillPostRatioCT = ratio(teamStillPost_[1], teamTicksPost_[1]);
         row.idleRatioT = ratio(teamIdle_[0], teamTicks_[0]);
         row.idleRatioCT = ratio(teamIdle_[1], teamTicks_[1]);
 
@@ -366,17 +418,23 @@ private:
     int      lastRoundNumber_ = 0;
     int      scoreT_ = 0, scoreCT_ = 0;
     int      killsStartT_ = 0, killsStartCT_ = 0;
+    int      teamKillsStartT_ = 0, teamKillsStartCT_ = 0;
     bool     plant_ = false, defuse_ = false;
     int      firstBlood_ = -1;
     Team     firstBloodTeam_ = Team::None;
     int      moneyT_ = 0, moneyCT_ = 0;
     int      buyPlanT_ = 0, buyPlanCT_ = 0;
     int      plantNear_ = 0, defuseNear_ = 0;
+    int      saveGunTrig_ = 0, saveGunAlive_ = 0, saveGunKept_ = 0;
     int      lastAliveT_ = 0, lastAliveCT_ = 0;
     int      dirReversals_ = 0;
 
     int      teamTicks_[2] = {0, 0};
     int      teamStill_[2] = {0, 0};
+    int      teamTicksPre_[2] = {0, 0};
+    int      teamStillPre_[2] = {0, 0};
+    int      teamTicksPost_[2] = {0, 0};
+    int      teamStillPost_[2] = {0, 0};
     int      teamIdle_[2] = {0, 0};
     double   teamTravel_[2] = {0.0, 0.0};
     int      damageTaken_[2] = {0, 0};
@@ -403,12 +461,13 @@ inline bool WriteRoundsCsv(const std::string& path, const std::vector<RoundRow>&
                  "money_ct_start,still_t,still_ct,idle_t,idle_ct,path_eff_t,path_eff_ct,"
                  "path_eff_short,path_eff_mid,path_eff_long,path_n_short,path_n_mid,path_n_long,dir_reversals,"
                  "damage_t,damage_ct,money_t_end,money_ct_end,buy_t,buy_ct,"
-                 "plant_near_t,defuse_near_ct\n");
+                 "plant_near_t,defuse_near_ct,teamkills_t,teamkills_ct,"
+                 "still_pre_t,still_pre_ct,still_post_t,still_post_ct,savegun_trig,savegun_alive,savegun_kept\n");
     for (const auto& r : rows) {
         std::fprintf(f,
                      "%d,%s,%d,%d,%d,%d,%d,%d,%s,%d,%d,%d,%d,%d,"
                      "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%d,%d,"
-                     "%d,%d,%d,%d,%d,%d,%d,%d\n",
+                     "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.3f,%.3f,%.3f,%.3f,%d,%d,%d\n",
                      r.round, TeamTag(r.winner), r.ticks, r.killsT, r.killsCT,
                      r.plant ? 1 : 0, r.defuse ? 1 : 0, r.firstBloodTick,
                      TeamTag(r.firstBloodTeam), r.fbWinnerMatched ? 1 : 0,
@@ -417,7 +476,9 @@ inline bool WriteRoundsCsv(const std::string& path, const std::vector<RoundRow>&
                      r.pathEffT, r.pathEffCT, r.pathEffShort, r.pathEffMid, r.pathEffLong,
                      r.pathNShort, r.pathNMid, r.pathNLong, r.dirReversals, r.damageT, r.damageCT,
                      r.moneyTEnd, r.moneyCTEnd, r.buyPlanT, r.buyPlanCT,
-                     r.plantNearT, r.defuseNearCT);
+                     r.plantNearT, r.defuseNearCT, r.teamKillsT, r.teamKillsCT,
+                     r.stillPreRatioT, r.stillPreRatioCT, r.stillPostRatioT, r.stillPostRatioCT,
+                      r.saveGunTrig, r.saveGunAlive, r.saveGunKept);
     }
     std::fclose(f);
     return true;
