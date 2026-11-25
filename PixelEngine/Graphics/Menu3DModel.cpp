@@ -818,6 +818,7 @@ void Menu3DModel::DrawTexturedModel(float alpha, const SurfaceUniforms* surface)
     const auto activeTexture = reinterpret_cast<PFNGLACTIVETEXTUREPROC>(SDL_GL_GetProcAddress("glActiveTexture"));
     const auto clientActiveTexture = reinterpret_cast<PFNGLCLIENTACTIVETEXTUREARBPROC>(SDL_GL_GetProcAddress("glClientActiveTexture"));
     const auto uniform4f = reinterpret_cast<PFNGLUNIFORM4FPROC>(SDL_GL_GetProcAddress("glUniform4f"));
+    const auto uniform1i = reinterpret_cast<PFNGLUNIFORM1IPROC>(SDL_GL_GetProcAddress("glUniform1i"));
     glPushAttrib(GL_TEXTURE_BIT);
     glPushClientAttrib(GL_CLIENT_VERTEX_ARRAY_BIT | GL_CLIENT_PIXEL_STORE_BIT);
     constexpr GLenum textureMaxAnisotropy = 0x84FE;
@@ -878,6 +879,9 @@ void Menu3DModel::DrawTexturedModel(float alpha, const SurfaceUniforms* surface)
                 uniform4f(surface->factors, prim.roughness, prim.metallic, prim.occlusionStrength, prim.normalScale);
                 uniform4f(surface->maps, base >= 0, prim.dataMaps[0].texture >= 0,
                           prim.dataMaps[1].texture >= 0, prim.dataMaps[2].texture >= 0);
+                if (surface->alphaBlend >= 0 && uniform1i) {
+                    uniform1i(surface->alphaBlend, prim.alphaBlend ? 1 : 0);
+                }
                 for (size_t i = 0; i < prim.dataMaps.size(); ++i) {
                     const auto& map = prim.dataMaps[i];
                     const GLenum unit = GL_TEXTURE1 + static_cast<GLenum>(i);

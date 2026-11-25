@@ -197,13 +197,14 @@ if(MINGW)
     target_link_options(EngineApp PRIVATE -static -static-libgcc -static-libstdc++)
 endif()
 
-# 将仓库根目录的 assets 复制到可执行文件旁，使运行时以 exe 所在目录为基准找到资源。
-add_custom_command(TARGET EngineApp POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
+# 将仓库根目录的 assets 同步到构建输出目录，使每次编译无论源码是否变化都能获取最新资源。
+add_custom_target(SyncEngineAssets ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/../assets"
-        "$<TARGET_FILE_DIR:EngineApp>/assets"
-    COMMENT "Copying assets next to EngineApp executable"
+        "${CMAKE_CURRENT_BINARY_DIR}/assets"
+    COMMENT "Syncing assets next to EngineApp executable"
 )
+add_dependencies(EngineApp SyncEngineAssets)
 
 # ---- 玩法回归测试（无窗口 / 无渲染器）----
 # 复用应用代码，通过隐藏窗口验证玩法、设置动作及死亡画面缓存。

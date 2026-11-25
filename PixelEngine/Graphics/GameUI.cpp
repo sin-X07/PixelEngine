@@ -3,6 +3,7 @@
 #include <iostream>
 #include "UiScale.hpp"
 #include "Palette.hpp"
+#include "ControlMaterial.hpp"
 #include "TeamVisualStyle.hpp"
 #include "WeaponIconCache.hpp"
 #include "../Core/Resolutions.hpp"
@@ -271,18 +272,9 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
     const float buttonW = UI(300.0f);
     const float buttonH = UI(46.0f);
 
-    auto bigButton = [&](const char* label) {
+    auto bigButton = [&](const char* label, Controls::Finish finish = Controls::Finish::Smoke) {
         ImGui::SetCursorPosX(centerX - buttonW * 0.5f);
-        const bool pressed = ImGui::Button(label, ImVec2(buttonW, buttonH));
-        if (ImGui::IsItemHovered()) {
-            // 悬停时左侧亮起金色竖条，强化"可点"的反馈
-            const ImVec2 a = ImGui::GetItemRectMin();
-            const ImVec2 b = ImGui::GetItemRectMax();
-            ImGui::GetWindowDrawList()->AddRectFilled(
-                ImVec2(a.x, a.y + UI(2.0f)), ImVec2(a.x + UI(3.0f), b.y - UI(2.0f)),
-                Palette::U32(Palette::Accent()), UI(2.0f));
-        }
-        return pressed;
+        return Controls::Button(imGuiUI_,label,ImVec2(buttonW,buttonH),finish);
     };
     auto doClick = [&](const std::function<void()>& action) {
         if (actions.playClick) actions.playClick();
@@ -311,10 +303,11 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         const float btnY = yLocal + titleH + subH + gap1 + gap2;
         ImGui::SetCursorPosY(btnY);
         ImGui::SetCursorPosX(centerX - buttonW - UI(15.0f));
-        if (ImGui::Button(cancelLabel, ImVec2(buttonW, buttonH))) choice = 1;
+        if (Controls::Button(imGuiUI_, cancelLabel, ImVec2(buttonW, buttonH))) choice = 1;
         ImGui::SetCursorPosY(btnY);
         ImGui::SetCursorPosX(centerX + UI(15.0f));
-        if (ImGui::Button(confirmLabel, ImVec2(buttonW, buttonH))) choice = 2;
+        if (Controls::Button(imGuiUI_, confirmLabel, ImVec2(buttonW, buttonH),
+                             ctx.state == EXIT_CONFIRM ? Controls::Finish::Danger : Controls::Finish::Champagne)) choice = 2;
         return choice;
     };
 
@@ -382,9 +375,9 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                               160, 190, 210, subAlpha, 20);
 
         ImGui::SetCursorPosY(yLocal + titleH + subH + gap1);
-        if (bigButton("团队歼灭")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::TeamElimination)); });
-        if (bigButton("爆破模式")) doClick([&] { actions.goState(MAP_SELECT); });
-        if (bigButton("死斗模式")) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::DeathMatch)); });
+        if (bigButton("团队歼灭", Controls::Finish::Steel)) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::TeamElimination)); });
+        if (bigButton("爆破模式", Controls::Finish::Steel)) doClick([&] { actions.goState(MAP_SELECT); });
+        if (bigButton("死斗模式", Controls::Finish::Steel)) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::DeathMatch)); });
         if (bigButton("历史记录")) doClick([&] { actions.goState(HISTORY); });
         if (bigButton("设置"))     doClick([&] { actions.openSettings(MAIN_MENU); });
         if (bigButton("退出游戏")) doClick([&] { actions.quitToDesktop(); });
@@ -392,7 +385,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
             ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - UI(240),
                                             viewport->WorkPos.y + viewport->WorkSize.y - UI(62)));
             const std::string sceneLabel = std::string("场景 · ") + kMapCatalog[ctx.menuScene].name;
-            if (ImGui::Button(sceneLabel.c_str(), ImVec2(UI(218), UI(42))))
+            if (Controls::Button(imGuiUI_, sceneLabel.c_str(), ImVec2(UI(218), UI(42))))
                 ImGui::OpenPopup("Menu scene picker");
             if (ImGui::BeginPopup("Menu scene picker")) {
                 ImGui::TextUnformatted("主页面场景");
@@ -405,6 +398,9 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                         if (actions.selectMenuScene) actions.selectMenuScene(i);
                     }
                     ImDrawList* sceneDraw = ImGui::GetWindowDrawList();
+                    Controls::Surface(imGuiUI_,sceneDraw,row,ImVec2(row.x+UI(285),row.y+UI(98)),
+                                      Controls::Finish::Smoke,Controls::ItemState(i == ctx.menuScene));
+                    ImGui::RenderNavCursor(ImRect(ImGui::GetItemRectMin(),ImGui::GetItemRectMax()),ImGui::GetItemID());
                     if (ctx.menuScenePreviews[i]) {
                         sceneDraw->AddImage(reinterpret_cast<ImTextureID>(ctx.menuScenePreviews[i]),
                             ImVec2(row.x + UI(4), row.y + UI(4)),
@@ -440,7 +436,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                         viewport->WorkPos.y + yLocal + UI(38.0f), UI(40.0f));
 
         ImGui::SetCursorPosY(yLocal + titleH + gap1);
-        if (bigButton("继续游戏")) doClick([&] { actions.resumeGame(); });
+        if (bigButton("继续游戏", Controls::Finish::Champagne)) doClick([&] { actions.resumeGame(); });
         // 重新开始确认走独立页面（RESTART_CONFIRM），与「退出游戏」一致使用全局黑场转场；
         // 不再用页内 alpha 淡出，避免与设置等页面切换动画不一致。
         if (bigButton("重新开始")) doClick([&] { actions.goState(RESTART_CONFIRM); });
@@ -504,7 +500,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                           ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         if (ImGui::BeginTabBar("##settingsSections")) {
             for (int i = 0; i < 5; ++i) {
-                if (ImGui::BeginTabItem(sections[i])) {
+                if (Controls::Field(imGuiUI_, ImGui::BeginTabItem(sections[i]), Controls::FieldShape::Tab)) {
                     settingsSection = i;
                     if (i != 4) {
                         ctx.input->CancelCapture();
@@ -559,7 +555,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
             }
             ImGui::PushID(static_cast<int>(section));
             ImGui::SetCursorScreenPos(ImVec2(x + colW - UI(114), y + UI(17)));
-            if (ImGui::Button("恢复默认", ImVec2(UI(94), UI(28))) && actions.resetSettingsSection)
+            if (Controls::Button(imGuiUI_, "恢复默认", ImVec2(UI(94), UI(28))) && actions.resetSettingsSection)
                 actions.resetSettingsSection(section);
             ImGui::PopID();
             body(x, y);
@@ -579,12 +575,12 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 ImGui::SetCursorScreenPos(rowPos(x, y, 5));
                 ImGui::SetNextItemWidth(fieldW);
                 const char* difficultyNames[] = { "简单", "普通", "困难", "专家" };
-                ImGui::Combo("##botDifficulty", &ctx.settings->botDifficulty, difficultyNames, 4);
+                Controls::Field(imGuiUI_, ImGui::Combo("##botDifficulty", &ctx.settings->botDifficulty, difficultyNames, 4));
                 rowLabel(x, y, 0, "鼠标灵敏度");
                 ImGui::SetCursorScreenPos(rowPos(x, y, 0));
                 ImGui::SetNextItemWidth(fieldW);
                 float sens = ctx.mouseSensitivity;
-                if (ImGui::SliderFloat("##sens", &sens, 0.1f, 3.0f, "%.1f")) {
+                if (Controls::Field(imGuiUI_, ImGui::SliderFloat("##sens", &sens, 0.1f, 3.0f, "%.1f"))) {
                     actions.setMouseSensitivity(sens);
                 }
 
@@ -592,7 +588,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 ImGui::SetCursorScreenPos(rowPos(x, y, 1));
                 ImGui::SetNextItemWidth(fieldW);
                 int fps = ctx.targetFPS;
-                if (ImGui::InputInt("##fps", &fps, 1, 10)) actions.setTargetFPS(std::max(0, fps));
+                if (Controls::Field(imGuiUI_, ImGui::InputInt("##fps", &fps, 1, 10))) actions.setTargetFPS(std::max(0, fps));
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 表示不限帧");
 
                 rowLabel(x, y, 2, "窗口分辨率");
@@ -602,7 +598,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 const char* resLabels[kResolutionCount];
                 for (int i = 0; i < kResolutionCount; ++i) resLabels[i] = kResolutions[i].label;
                 int resIdx = std::clamp(ctx.resIdx, 0, kResolutionCount - 1);
-                if (ImGui::Combo("##res", &resIdx, resLabels, kResolutionCount)) {
+                if (Controls::Field(imGuiUI_, ImGui::Combo("##res", &resIdx, resLabels, kResolutionCount))) {
                     actions.setResolution(kResolutions[resIdx].w, kResolutions[resIdx].h, resIdx);
                 }
                 ImGui::EndDisabled();
@@ -612,16 +608,16 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 ImGui::SetNextItemWidth(fieldW);
                 const char* scaleLabels[] = { "100%（最清晰）", "75%", "50%" };
                 int scaleIdx = (ctx.renderScalePct >= 100) ? 0 : (ctx.renderScalePct >= 75) ? 1 : 2;
-                if (ImGui::Combo("##rscale", &scaleIdx, scaleLabels, 3)) {
+                if (Controls::Field(imGuiUI_, ImGui::Combo("##rscale", &scaleIdx, scaleLabels, 3))) {
                     actions.setRenderScale(scaleIdx == 0 ? 100 : scaleIdx == 1 ? 75 : 50);
                 }
 
                 ImGui::SetCursorScreenPos(rowPos(x, y, 4));
                 bool fs = ctx.isFullscreen;
-                if (ImGui::Checkbox("全屏（F11）", &fs)) actions.setFullscreen(fs);
+                if (Controls::Field(imGuiUI_, ImGui::Checkbox("全屏（F11）", &fs), Controls::FieldShape::Square)) actions.setFullscreen(fs);
                 ImGui::SetCursorScreenPos(rowPos(x, y, 6));
                 bool vsync = ctx.vsync;
-                if (ImGui::Checkbox("垂直同步", &vsync) && actions.setVSync) actions.setVSync(vsync);
+                if (Controls::Field(imGuiUI_, ImGui::Checkbox("垂直同步", &vsync), Controls::FieldShape::Square) && actions.setVSync) actions.setVSync(vsync);
                 const char* displayHint = ctx.displayError.empty()
                     ? (ctx.isFullscreen ? "全屏下请用渲染缩放调清晰度" : "帧率上限设为 0 表示不限帧")
                     : ctx.displayError.c_str();
@@ -636,13 +632,13 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 ImGui::SetCursorScreenPos(rowPos(x, y, 0));
                 ImGui::SetNextItemWidth(fieldW);
                 int fog = ctx.fogOpacityPct;
-                if (ImGui::SliderInt("##fogOpacity", &fog, 0, 100, "%d%%")) {
+                if (Controls::Field(imGuiUI_, ImGui::SliderInt("##fogOpacity", &fog, 0, 100, "%d%%"))) {
                     actions.setFogOpacity(fog);
                 }
 
                 ImGui::SetCursorScreenPos(rowPos(x, y, 1));
                 bool delayed = ctx.sniperDelayedScopeClose;
-                if (ImGui::Checkbox("狙击枪延迟关镜", &delayed)) {
+                if (Controls::Field(imGuiUI_, ImGui::Checkbox("狙击枪延迟关镜", &delayed), Controls::FieldShape::Square)) {
                     actions.setSniperDelayedScopeClose(delayed);
                 }
 
@@ -650,7 +646,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 ImGui::SetCursorScreenPos(rowPos(x, y, 2));
                 ImGui::SetNextItemWidth(fieldW);
                 float scopeSens = ctx.scopeSensitivity;
-                if (ImGui::SliderFloat("##scopeSens", &scopeSens, 0.5f, 2.0f, "%.2f")) {
+                if (Controls::Field(imGuiUI_, ImGui::SliderFloat("##scopeSens", &scopeSens, 0.5f, 2.0f, "%.2f"))) {
                     actions.setScopeSensitivity(scopeSens);
                 }
 
@@ -658,13 +654,13 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 ImGui::SetCursorScreenPos(rowPos(x, y, 3));
                 ImGui::SetNextItemWidth(fieldW);
                 float scopeCrossThick = ctx.scopeCrossThickness;
-                if (ImGui::SliderFloat("##scopeCrossThick", &scopeCrossThick, 1.0f, 6.0f, "%.1f")) {
+                if (Controls::Field(imGuiUI_, ImGui::SliderFloat("##scopeCrossThick", &scopeCrossThick, 1.0f, 6.0f, "%.1f"))) {
                     actions.setScopeCrossThickness(scopeCrossThick);
                 }
 
                 ImGui::SetCursorScreenPos(rowPos(x, y, 4));
                 bool crossDyn = ctx.scopeCrossDynamic;
-                if (ImGui::Checkbox("开镜准星随移动扩散", &crossDyn)) {
+                if (Controls::Field(imGuiUI_, ImGui::Checkbox("开镜准星随移动扩散", &crossDyn), Controls::FieldShape::Square)) {
                     actions.setScopeCrossDynamic(crossDyn);
                 }
 
@@ -689,7 +685,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 ImGui::SetCursorScreenPos(rowPos(x, y, 1));
                 ImGui::SetNextItemWidth(fieldW);
                 float thick = ctx.crosshairThickness;
-                if (ImGui::SliderFloat("##crossThick", &thick, 0.5f, 4.0f, "%.1f")) {
+                if (Controls::Field(imGuiUI_, ImGui::SliderFloat("##crossThick", &thick, 0.5f, 4.0f, "%.1f"))) {
                     actions.setCrosshairThickness(thick);
                 }
 
@@ -697,7 +693,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 ImGui::SetCursorScreenPos(rowPos(x, y, 2));
                 ImGui::SetNextItemWidth(fieldW);
                 float len = ctx.crosshairLength;
-                if (ImGui::SliderFloat("##crossLen", &len, 4.0f, 30.0f, "%.0f")) {
+                if (Controls::Field(imGuiUI_, ImGui::SliderFloat("##crossLen", &len, 4.0f, 30.0f, "%.0f"))) {
                     actions.setCrosshairLength(len);
                 }
 
@@ -705,17 +701,17 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 ImGui::SetCursorScreenPos(rowPos(x, y, 3));
                 ImGui::SetNextItemWidth(fieldW);
                 float gap = ctx.crosshairGap;
-                if (ImGui::SliderFloat("##crossGap", &gap, 0.0f, 12.0f, "%.1f")) {
+                if (Controls::Field(imGuiUI_, ImGui::SliderFloat("##crossGap", &gap, 0.0f, 12.0f, "%.1f"))) {
                     actions.setCrosshairGap(gap);
                 }
 
                 ImGui::SetCursorScreenPos(rowPos(x, y, 4));
                 bool dot = ctx.crosshairCenterDot;
-                if (ImGui::Checkbox("显示中心点", &dot)) actions.setCrosshairCenterDot(dot);
+                if (Controls::Field(imGuiUI_, ImGui::Checkbox("显示中心点", &dot), Controls::FieldShape::Square)) actions.setCrosshairCenterDot(dot);
 
                 ImGui::SetCursorScreenPos(rowPos(x, y, 5));
                 bool dyn = ctx.crosshairDynamic;
-                if (ImGui::Checkbox("动态准星（随移动扩散）", &dyn)) actions.setCrosshairDynamic(dyn);
+                if (Controls::Field(imGuiUI_, ImGui::Checkbox("动态准星（随移动扩散）", &dyn), Controls::FieldShape::Square)) actions.setCrosshairDynamic(dyn);
 
             }) + UI(16.0f);
 
@@ -724,7 +720,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                                IM_COL32(130, 158, 180, 255), SettingsSection::AimLine, [&](float x, float y) {
                 ImGui::SetCursorScreenPos(rowPos(x, y, 0));
                 bool enabled = ctx.aimLine;
-                if (ImGui::Checkbox("显示瞄准线", &enabled)) actions.setAimLine(enabled);
+                if (Controls::Field(imGuiUI_, ImGui::Checkbox("显示瞄准线", &enabled), Controls::FieldShape::Square)) actions.setAimLine(enabled);
 
                 AimLineStyle line = ctx.aimLineStyle;
                 bool changed = false;
@@ -744,14 +740,14 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                     rowLabel(x, y, row, label);
                     ImGui::SetCursorScreenPos(rowPos(x, y, row));
                     ImGui::SetNextItemWidth(fieldW);
-                    changed |= ImGui::SliderFloat(id, &value, minimum, maximum, "%.1f");
+                    changed |= Controls::Field(imGuiUI_, ImGui::SliderFloat(id, &value, minimum, maximum, "%.1f"));
                 };
                 auto opacityRow = [&](int row, const char* label, const char* id, Uint8& alpha) {
                     rowLabel(x, y, row, label);
                     ImGui::SetCursorScreenPos(rowPos(x, y, row));
                     ImGui::SetNextItemWidth(fieldW);
                     int opacity = static_cast<int>(std::lround(alpha * 100.0f / 255.0f));
-                    if (ImGui::SliderInt(id, &opacity, 0, 100, "%d%%")) {
+                    if (Controls::Field(imGuiUI_, ImGui::SliderInt(id, &opacity, 0, 100, "%d%%"))) {
                         alpha = static_cast<Uint8>(std::lround(opacity * 255.0f / 100.0f));
                         changed = true;
                     }
@@ -773,35 +769,35 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                                IM_COL32(130, 158, 180, 255), SettingsSection::Radar, [&](float x, float y) {
                 ImGui::SetCursorScreenPos(rowPos(x, y, 0));
                 bool pc = ctx.radarPlayerCentered;
-                if (ImGui::Checkbox("玩家居中", &pc)) actions.setRadarPlayerCentered(pc);
+                if (Controls::Field(imGuiUI_, ImGui::Checkbox("玩家居中", &pc), Controls::FieldShape::Square)) actions.setRadarPlayerCentered(pc);
 
                 ImGui::SetCursorScreenPos(rowPos(x, y, 1));
                 bool rwp = ctx.radarRotateWithPlayer;
-                if (ImGui::Checkbox("随玩家旋转", &rwp)) actions.setRadarRotateWithPlayer(rwp);
+                if (Controls::Field(imGuiUI_, ImGui::Checkbox("随玩家旋转", &rwp), Controls::FieldShape::Square)) actions.setRadarRotateWithPlayer(rwp);
 
                 ImGui::SetCursorScreenPos(rowPos(x, y, 2));
                 bool blend = ctx.radarBlendBg;
-                if (ImGui::Checkbox("半透明背景", &blend)) actions.setRadarBlendBg(blend);
+                if (Controls::Field(imGuiUI_, ImGui::Checkbox("半透明背景", &blend), Controls::FieldShape::Square)) actions.setRadarBlendBg(blend);
 
                 rowLabel(x, y, 3, "背景透明度");
                 ImGui::SetCursorScreenPos(rowPos(x, y, 3));
                 ImGui::SetNextItemWidth(fieldW);
                 int alpha = ctx.radarBgAlpha;
                 ImGui::BeginDisabled(!ctx.radarBlendBg);
-                if (ImGui::SliderInt("##radarAlpha", &alpha, 0, 255)) actions.setRadarBgAlpha(alpha);
+                if (Controls::Field(imGuiUI_, ImGui::SliderInt("##radarAlpha", &alpha, 0, 255))) actions.setRadarBgAlpha(alpha);
                 ImGui::EndDisabled();
 
                 rowLabel(x, y, 4, "雷达大小");
                 ImGui::SetCursorScreenPos(rowPos(x, y, 4));
                 ImGui::SetNextItemWidth(fieldW);
                 int size = ctx.radarHudSize;
-                if (ImGui::SliderInt("##radarSize", &size, 60, 400)) actions.setRadarHudSize(size);
+                if (Controls::Field(imGuiUI_, ImGui::SliderInt("##radarSize", &size, 60, 400))) actions.setRadarHudSize(size);
 
                 rowLabel(x, y, 5, "地图缩放");
                 ImGui::SetCursorScreenPos(rowPos(x, y, 5));
                 ImGui::SetNextItemWidth(fieldW);
                 float zoom = ctx.radarMapZoom;
-                if (ImGui::SliderFloat("##radarZoom", &zoom, 1.0f, 8.0f, "%.2f")) {
+                if (Controls::Field(imGuiUI_, ImGui::SliderFloat("##radarZoom", &zoom, 1.0f, 8.0f, "%.2f"))) {
                     actions.setRadarMapZoom(zoom);
                 }
             }) + UI(16.0f);
@@ -832,7 +828,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                     ImGui::SetCursorScreenPos(rowPos(x, y, i));
                     const std::string label = input.captureAction == i ? "按键或鼠标按钮…" : bindings.keys[i].Label();
                     ImGui::BeginDisabled(input.conflictAction >= 0);
-                    if (ImGui::Button(label.c_str(), ImVec2(fieldW, UI(30))) && input.captureAction < 0) {
+                    if (Controls::Button(imGuiUI_, label.c_str(), ImVec2(fieldW, UI(30)), Controls::Finish::Smoke, input.captureAction == i) && input.captureAction < 0) {
                         input.captureAction = i;
                         input.captureKey = true;
                         input.capturedInput = {};
@@ -850,14 +846,14 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                     ImGui::TextWrapped("%s 已绑定到“%s”。是否与“%s”交换？", input.pendingInput.Label().c_str(),
                         ActionNames[input.conflictAction], ActionNames[input.captureAction]);
                     ImGui::Spacing();
-                    if (ImGui::Button("交换绑定", ImVec2(UI(200), UI(38)))) {
+                    if (Controls::Button(imGuiUI_, "交换绑定", ImVec2(UI(200), UI(38)), Controls::Finish::Champagne)) {
                         std::swap(bindings.keys[input.conflictAction], bindings.keys[input.captureAction]);
                         bindings.keys[input.captureAction] = input.pendingInput;
                         input.CancelCapture();
                         ImGui::CloseCurrentPopup();
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button("取消", ImVec2(UI(200), UI(38)))) {
+                    if (Controls::Button(imGuiUI_, "取消", ImVec2(UI(200), UI(38)))) {
                         input.CancelCapture();
                         ImGui::CloseCurrentPopup();
                     }
@@ -870,17 +866,17 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                 rowLabel(x, y, 0, "主音量");
                 ImGui::SetCursorScreenPos(rowPos(x, y, 0));
                 ImGui::SetNextItemWidth(fieldW);
-                if (ImGui::SliderInt("##master", &master, 0, 100)) actions.setMasterVolume(master);
+                if (Controls::Field(imGuiUI_, ImGui::SliderInt("##master", &master, 0, 100))) actions.setMasterVolume(master);
 
                 rowLabel(x, y, 1, "音乐");
                 ImGui::SetCursorScreenPos(rowPos(x, y, 1));
                 ImGui::SetNextItemWidth(fieldW);
-                if (ImGui::SliderInt("##music", &music, 0, 100)) actions.setMusicVolume(music);
+                if (Controls::Field(imGuiUI_, ImGui::SliderInt("##music", &music, 0, 100))) actions.setMusicVolume(music);
 
                 rowLabel(x, y, 2, "音效");
                 ImGui::SetCursorScreenPos(rowPos(x, y, 2));
                 ImGui::SetNextItemWidth(fieldW);
-                if (ImGui::SliderInt("##effects", &effects, 0, 100)) actions.setEffectsVolume(effects);
+                if (Controls::Field(imGuiUI_, ImGui::SliderInt("##effects", &effects, 0, 100))) actions.setEffectsVolume(effects);
 
                 const int musN = std::clamp(ctx.musicTrackCount, 0, 8);
                 rowLabel(x, y, 3, "背景音乐");
@@ -888,7 +884,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                     ImGui::SetCursorScreenPos(rowPos(x, y, 3));
                     ImGui::SetNextItemWidth(fieldW);
                     int idx = std::clamp(ctx.musicTrack, 0, musN - 1);
-                    if (ImGui::Combo("##music_track", &idx, ctx.musicTrackLabels, musN)) {
+                    if (Controls::Field(imGuiUI_, ImGui::Combo("##music_track", &idx, ctx.musicTrackLabels, musN))) {
                         if (actions.setMusicTrack) actions.setMusicTrack(idx);
                     }
                 }
@@ -899,23 +895,16 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
                     ImGui::SetCursorScreenPos(rowPos(x, y, 4));
                     ImGui::SetNextItemWidth(fieldW);
                     int idx = std::clamp(ctx.clickSound, 0, clkN - 1);
-                    if (ImGui::Combo("##click_sound", &idx, ctx.clickSoundLabels, clkN)) {
+                    if (Controls::Field(imGuiUI_, ImGui::Combo("##click_sound", &idx, ctx.clickSoundLabels, clkN))) {
                         if (actions.setClickSound) actions.setClickSound(idx);
                     }
                 }
 
                 ImGui::SetCursorScreenPos(rowPos(x, y, 5));
-                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.11f, 0.15f, 0.20f, 0.92f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.16f, 0.21f, 0.27f, 1.00f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.20f, 0.26f, 0.33f, 1.00f));
-                ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.32f, 0.40f, 0.48f, 0.55f));
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, UI(1.0f));
-                if (ImGui::Button(ctx.muted ? "已静音 · 点击恢复" : "静音",
-                                  ImVec2(UI(180.0f), UI(32.0f)))) {
+                if (Controls::Button(imGuiUI_, ctx.muted ? "已静音 · 点击恢复" : "静音",
+                                  ImVec2(UI(180.0f), UI(32.0f)), Controls::Finish::Smoke, ctx.muted)) {
                     actions.toggleMute();
                 }
-                ImGui::PopStyleVar();
-                ImGui::PopStyleColor(4);
             }) + UI(16.0f);
 
         }
@@ -940,16 +929,9 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
 
         // ---- 页脚 ----
         ImGui::SetCursorScreenPos(ImVec2(wp.x + UI(72.0f), wp.y + vpH - UI(64.0f)));
-        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.10f, 0.14f, 0.19f, 0.92f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.20f, 0.26f, 1.00f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.19f, 0.25f, 0.32f, 1.00f));
-        ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.34f, 0.42f, 0.50f, 0.55f));
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, UI(1.0f));
-        if (ImGui::Button("返回", ImVec2(UI(150.0f), UI(42.0f)))) {
+        if (Controls::Button(imGuiUI_, "返回", ImVec2(UI(150.0f), UI(42.0f)))) {
             doClick([&] { actions.goState(ctx.settingsReturnState); });
         }
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor(4);
 
         DrawImGuiTextRight(imGuiUI_, "所有改动即时生效并自动保存",
                            wp.x + ws.x - UI(72.0f), wp.y + vpH - UI(46.0f),
@@ -1036,13 +1018,9 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
         }
         ImGui::PopID();
 
-        const ImU32 bg = selected ? IM_COL32(28, 38, 50, static_cast<int>(225 * fade))
-                                 : IM_COL32(18, 24, 32, static_cast<int>(205 * fade));
-        dl->AddRectFilled(cp, cp2, bg, UI(10.0f));
-        if (hovered) {
-            beamOverInteractive = true;
-            dl->AddRectFilled(cp, cp2, IM_COL32(110, 190, 255, static_cast<int>(26 * fade)), UI(10.0f));
-        }
+        const Controls::State cardState{hovered, interactive && hovered && ImGui::IsItemActive(), selected};
+        Controls::Surface(imGuiUI_, dl, cp, cp2, Controls::Finish::Smoke, cardState, fade, UI(10));
+        beamOverInteractive |= hovered;
         dl->AddRect(cp, cp2,
                     hovered ? IM_COL32(130, 205, 255, a255)
                     : (selected ? IM_COL32(235, 190, 85, a255)
@@ -1088,35 +1066,18 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
     const float btnY = cardY + cardH + UI(24.0f);
     if (interactive) {
         ImGui::SetCursorScreenPos(ImVec2(wp.x + ws.x * 0.5f - btnW - UI(12.0f), btnY));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.90f, 0.72f, 0.30f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.00f, 0.82f, 0.42f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.78f, 0.62f, 0.24f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.08f, 0.09f, 0.11f, 1.0f));
-        if (ImGui::Button("开始对局", ImVec2(btnW, btnH))) {
+        if (Controls::Button(imGuiUI_, "开始对局", ImVec2(btnW, btnH), Controls::Finish::Champagne)) {
             if (actions.playClick) actions.playClick();
             if (actions.startMatchOnChoice) actions.startMatchOnChoice(ctx.mapOverlaySelected);
         }
-        if (ImGui::IsItemHovered()) {
-            const ImVec2 a = ImGui::GetItemRectMin();
-            const ImVec2 b = ImGui::GetItemRectMax();
-            beamOverInteractive = true;
-            dl->AddRect(ImVec2(a.x - 3, a.y - 3), ImVec2(b.x + 3, b.y + 3),
-                        IM_COL32(150, 215, 255, a255), UI(8.0f), 0, UI(2.0f));
-        }
-        ImGui::PopStyleColor(4);
+        beamOverInteractive |= ImGui::IsItemHovered();
 
         ImGui::SetCursorScreenPos(ImVec2(wp.x + ws.x * 0.5f + UI(12.0f), btnY));
-        if (ImGui::Button("返回主菜单", ImVec2(btnW, btnH))) {
+        if (Controls::Button(imGuiUI_, "返回主菜单", ImVec2(btnW, btnH))) {
             if (actions.playClick) actions.playClick();
             if (actions.closeMapOverlay) actions.closeMapOverlay();
         }
-        if (ImGui::IsItemHovered()) {
-            const ImVec2 a = ImGui::GetItemRectMin();
-            const ImVec2 b = ImGui::GetItemRectMax();
-            beamOverInteractive = true;
-            dl->AddRect(ImVec2(a.x - 3, a.y - 3), ImVec2(b.x + 3, b.y + 3),
-                        IM_COL32(150, 215, 255, a255), UI(8.0f), 0, UI(2.0f));
-        }
+        beamOverInteractive |= ImGui::IsItemHovered();
     }
 
     // 俯视选图页的探照灯：灯源从顶部逐帧移到屏幕正下方，光束始终跟随鼠标
@@ -1269,29 +1230,11 @@ void GameUI::DrawFocusWheel(const MenuCtx& ctx, const Actions& actions) {
             const char* optionLabel = ctx.focusOptions[category][option]
                                     ? ctx.focusOptions[category][option] : "";
 
-            ImGui::PushStyleColor(ImGuiCol_Button,
-                isSelected ? ImVec4(0.63f, 0.48f, 0.19f, 0.96f) : ImVec4(0.08f, 0.11f, 0.15f, 0.88f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                isSelected ? ImVec4(0.72f, 0.56f, 0.24f, 1.0f) : ImVec4(0.24f, 0.30f, 0.36f, 0.96f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-                isSelected ? ImVec4(0.80f, 0.62f, 0.28f, 1.0f) : ImVec4(0.30f, 0.38f, 0.46f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_Text,
-                isSelected ? ImVec4(0.08f, 0.06f, 0.04f, 1.0f) : ImVec4(0.88f, 0.90f, 0.93f, 1.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, UI(5.0f));
-
-            bool clicked = false;
-            if (open > 0.72f) {
-                ImGui::SetCursorScreenPos(pos);
-                clicked = ImGui::Button(optionLabel, ImVec2(btnW, btnH));
-            } else {
-                ImGui::BeginDisabled();
-                ImGui::SetCursorScreenPos(pos);
-                ImGui::Button(optionLabel, ImVec2(btnW, btnH));
-                ImGui::EndDisabled();
-            }
-
-            ImGui::PopStyleVar();
-            ImGui::PopStyleColor(4);
+            ImGui::BeginDisabled(open <= 0.72f);
+            ImGui::SetCursorScreenPos(pos);
+            const bool clicked = Controls::Button(imGuiUI_, optionLabel, ImVec2(btnW, btnH),
+                                                  Controls::Finish::Smoke, isSelected);
+            ImGui::EndDisabled();
 
             if (clicked) {
                 if (actions.playClick) actions.playClick();
@@ -1307,7 +1250,7 @@ void GameUI::DrawFocusWheel(const MenuCtx& ctx, const Actions& actions) {
         const float closeW = UI(130.0f), closeH = UI(38.0f);
         ImGui::SetCursorScreenPos(ImVec2(wp.x + ws.x - closeW - UI(28.0f),
                                          wp.y + ws.y - closeH - UI(28.0f)));
-        if (ImGui::Button("返回大厅", ImVec2(closeW, closeH))) {
+        if (Controls::Button(imGuiUI_, "返回大厅", ImVec2(closeW, closeH))) {
             if (actions.playClick) actions.playClick();
             if (actions.close3DFocus) actions.close3DFocus();
         }
@@ -1380,15 +1323,7 @@ void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
         }
         ImGui::PopID();
 
-        // 卡片底
-        dl->AddRectFilled(cp, cp2,
-                          selected ? IM_COL32(28, 38, 50, 245) : IM_COL32(18, 24, 32, 235),
-                          10.0f);
-        // 悬停微亮
-        if (hovered && !selected) {
-            dl->AddRectFilled(cp, cp2, IM_COL32(255, 255, 255, 12), 10.0f);
-        }
-
+        Controls::Surface(imGuiUI_, dl, cp, cp2, Controls::Finish::Smoke, Controls::ItemState(selected), 1.f, UI(10));
         // 预览图
         const float pad = UI(12.0f);
         const ImVec2 img0(cp.x + pad, cp.y + pad);
@@ -1438,18 +1373,13 @@ void GameUI::DrawMapSelect(const MapSelectCtx& ctx, const Actions& actions) {
     const float btnH = UI(44.0f);
 
     ImGui::SetCursorScreenPos(ImVec2(centerX - btnW - UI(14.0f), btnY));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.90f, 0.72f, 0.30f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.00f, 0.82f, 0.42f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.78f, 0.62f, 0.24f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.08f, 0.09f, 0.11f, 1.0f));
-    if (ImGui::Button("开始对局", ImVec2(btnW, btnH))) {
+    if (Controls::Button(imGuiUI_, "开始对局", ImVec2(btnW, btnH), Controls::Finish::Champagne)) {
         if (actions.playClick) actions.playClick();
         if (actions.startMatchOnMap) actions.startMatchOnMap(ctx.selected);
     }
-    ImGui::PopStyleColor(4);
 
     ImGui::SetCursorScreenPos(ImVec2(centerX + UI(14.0f), btnY));
-    if (ImGui::Button("返回主菜单", ImVec2(btnW, btnH))) {
+    if (Controls::Button(imGuiUI_, "返回主菜单", ImVec2(btnW, btnH))) {
         if (actions.playClick) actions.playClick();
         if (actions.goState) actions.goState(MAIN_MENU);
     }
@@ -1644,17 +1574,10 @@ void GameUI::DrawHistory(const HistoryCtx& ctx, const Actions& actions) {
 
     // ---- 页脚 ----
     ImGui::SetCursorScreenPos(ImVec2(wp.x + UI(72.0f), wp.y + vpH - UI(64.0f)));
-    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.10f, 0.14f, 0.19f, 0.92f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.20f, 0.26f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.19f, 0.25f, 0.32f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.34f, 0.42f, 0.50f, 0.55f));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, UI(1.0f));
-    if (ImGui::Button("返回主菜单", ImVec2(UI(160.0f), UI(42.0f)))) {
+    if (Controls::Button(imGuiUI_, "返回主菜单", ImVec2(UI(160.0f), UI(42.0f)))) {
         if (actions.playClick) actions.playClick();
         if (actions.goState) actions.goState(MAIN_MENU);
     }
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor(4);
 
     if (count > 0) {
         char foot[96];
@@ -1783,14 +1706,12 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
             const ImVec2 p0 = ImGui::GetItemRectMin();
             const ImVec2 p1 = ImGui::GetItemRectMax();
 
-            // 状态底色：禁用 / 常态 / 悬停 / 按下
-            ImU32 bg = enabled ? Palette::GlassTint(IM_COL32(20, 27, 36, 235)) : Palette::GlassTint(IM_COL32(16, 19, 24, 210));
-            if (enabled && hovered) bg = held ? Palette::GlassTint(IM_COL32(52, 66, 84, 245)) : Palette::GlassTint(IM_COL32(38, 50, 66, 240));
-            ImU32 border = enabled ? Palette::GlassTint(IM_COL32(52, 68, 86, 190)) : Palette::GlassTint(IM_COL32(38, 44, 52, 160));
-            if (enabled && hovered) border = Palette::U32(Palette::Accent());
-            else if (hovered) border = IM_COL32(104, 116, 132, 220);   // 禁用项也回应悬停
-            dl->AddRectFilled(p0, p1, bg, UI(5.0f));
-            dl->AddRect(p0, p1, border, UI(5.0f), 0, UI(enabled && hovered ? 2.0f : 1.0f));
+            const bool equipped = it.availability == Presentation::BuyCode::AlreadyEquipped;
+            const Controls::State materialState{enabled && hovered, enabled && hovered && held, equipped, !enabled};
+            Controls::Surface(imGuiUI_, dl, p0, p1, Controls::Finish::Smoke, materialState, enabled ? .78f : .55f);
+            if (hovered)
+                dl->AddRect(p0, p1, enabled ? Palette::U32(Palette::Accent()) : IM_COL32(104,116,132,220),
+                            UI(5), 0, UI(1.5f));
 
             // 图标：借用 WeaponIconCache（cache owning，UI 借用，不 Destroy）
             const float iconWidth = cardW - UI(40);
@@ -1833,7 +1754,6 @@ void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
 
             // 武器占据卡片主体，底行只保留名称与价格。
             const float textY = p1.y - UI(30);
-            const bool equipped = it.availability == Presentation::BuyCode::AlreadyEquipped;
             const bool poor = it.price > displayMoney;
             const std::string price = equipped ? "已装备" : "$" + std::to_string(it.price);
             ImFont* priceFont = imGuiUI_ ? imGuiUI_->GetFont(18) : ImGui::GetFont();
@@ -2033,8 +1953,8 @@ void GameUI::DrawSideSelect(const SideSelectCtx& ctx, const Actions& actions) {
         if (imGuiUI_ && imGuiUI_->GetFont(static_cast<int>(UI(16.0f)))) ImGui::PopFont();
 
         ImGui::SetCursorPosY(cardH - UI(72.0f));
-        if (ImGui::Button(i == 0 ? "以 T 开始" : "以 CT 开始",
-                          ImVec2(cardW - UI(28.0f), UI(48.0f)))) {
+        if (Controls::Button(imGuiUI_, i == 0 ? "以 T 开始" : "以 CT 开始",
+                          ImVec2(cardW - UI(28.0f), UI(48.0f)), Controls::Finish::Steel)) {
             if (actions.playClick) actions.playClick();
             if (actions.chooseSide) actions.chooseSide(c.side);
         }
@@ -2046,7 +1966,7 @@ void GameUI::DrawSideSelect(const SideSelectCtx& ctx, const Actions& actions) {
 
     // 返回
     ImGui::SetCursorScreenPos(ImVec2(cx - UI(110.0f), vp->WorkPos.y + vp->WorkSize.y - UI(80.0f)));
-    if (ImGui::Button("返回地图选择", ImVec2(UI(220.0f), UI(46.0f)))) {
+    if (Controls::Button(imGuiUI_, "返回地图选择", ImVec2(UI(220.0f), UI(46.0f)))) {
         if (actions.playClick) actions.playClick();
         if (actions.goState) actions.goState(MAP_SELECT);
     }
@@ -2110,18 +2030,12 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
         ImGui::TextDisabled("%s", role);
         ImGui::TextWrapped("%s", desc);
         ImGui::Dummy(ImVec2(0.0f, UI(16.0f)));
-        ImGui::PushStyleColor(ImGuiCol_Button, accent);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                              ImVec4(accent.x + 0.08f, accent.y + 0.08f, accent.z + 0.08f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, accent);
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.06f, 0.08f, 0.10f, 1.0f));
         char label[64];
         snprintf(label, sizeof(label), "以 %s 开始", side == 0 ? "T" : "CT");
-        if (ImGui::Button(label, ImVec2(btnW, UI(46.0f)))) {
+        if (Controls::Button(imGuiUI_, label, ImVec2(btnW, UI(46.0f)), Controls::Finish::Steel)) {
             if (actions.playClick) actions.playClick();
             if (actions.chooseSide) actions.chooseSide(side);
         }
-        ImGui::PopStyleColor(4);
         ImGui::EndGroup();
     };
 
@@ -2140,14 +2054,10 @@ void GameUI::DrawSidePopup(const SideSelectCtx& ctx, const Actions& actions,
     const float rndW = UI(190.0f);
     const float rndH = UI(40.0f);
     ImGui::SetCursorPos(ImVec2((w - rndW) * 0.5f, UI(304.0f)));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.22f, 0.28f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.33f, 0.41f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.18f, 0.23f, 1.0f));
-    if (ImGui::Button("随机分配", ImVec2(rndW, rndH))) {
+    if (Controls::Button(imGuiUI_, "随机分配", ImVec2(rndW, rndH))) {
         if (actions.playClick) actions.playClick();
         if (actions.chooseSide) actions.chooseSide(-1);
     }
-    ImGui::PopStyleColor(3);
 
     ImGui::SetCursorPos(ImVec2(0.0f, h - UI(26.0f)));
     const char* hint = "选择后将重建首回合（不重新加载地图）";
@@ -2313,25 +2223,16 @@ void GameUI::DrawMatchEnd(const MatchEndCtx& ctx, const Actions& actions) {
         const float by = h - UI(92.0f);
 
         ImGui::SetCursorPos(ImVec2(bx, by));
-        ImGui::PushStyleColor(ImGuiCol_Button, Palette::Accent());
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.98f, 0.78f, 0.42f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, Palette::AccentDim());
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.06f, 0.08f, 0.10f, 1.0f));
-        if (ImGui::Button("返回主菜单", ImVec2(btnW, btnH))) {
+        if (Controls::Button(imGuiUI_, "返回主菜单", ImVec2(btnW, btnH))) {
             if (actions.playClick) actions.playClick();
             if (actions.goState) actions.goState(MAIN_MENU);
         }
-        ImGui::PopStyleColor(4);
 
         ImGui::SetCursorPos(ImVec2(bx + btnW + gap, by));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.22f, 0.28f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.33f, 0.41f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.18f, 0.23f, 1.0f));
-        if (ImGui::Button("再来一局", ImVec2(btnW, btnH))) {
+        if (Controls::Button(imGuiUI_, "再来一局", ImVec2(btnW, btnH), Controls::Finish::Champagne)) {
             if (actions.playClick) actions.playClick();
             if (actions.startMatch) actions.startMatch();
         }
-        ImGui::PopStyleColor(3);
 
         const char* hint = "Esc 返回主菜单";
         const float hintW = ImGui::CalcTextSize(hint).x;

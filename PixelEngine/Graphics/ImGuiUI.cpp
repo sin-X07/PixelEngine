@@ -12,6 +12,42 @@
 #include <cstdlib>
 #include <string>
 
+namespace {
+// A seamless brushed tile. Four-by-four copies keep every sampled UV inside [0,1]
+// on SDL renderers that clamp at the texture edge.
+SDL_Texture* CreateControlGrain(SDL_Renderer* renderer) {
+    constexpr int tile = 128, size = tile * 4;
+    std::vector<Uint8> pixels(size * size * 4);
+    auto noise = [](unsigned x, unsigned y) {
+        unsigned n = x * 0x45d9f3bu + y * 0x27d4eb2du + 11u;
+        n ^= n >> 16;
+        n *= 0x85ebca6bu;
+        return static_cast<int>((n ^ (n >> 13)) & 255);
+    };
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            const int u = x % tile, v = y % tile;
+            const int segment = u / 16, fraction = u % 16;
+            const int stroke = (noise(segment,v)*(16-fraction) + noise((segment+1)%8,v)*fraction)/16;
+            const int value = (3*stroke + noise(u,v))/4 - 128;
+            Uint8* pixel = &pixels[(y*size+x)*4];
+            pixel[0] = pixel[1] = pixel[2] = value > 0 ? 255 : 0;
+            pixel[3] = static_cast<Uint8>(std::abs(value)/3);
+        }
+    }
+    SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, size, size);
+    if (texture && SDL_UpdateTexture(texture, nullptr, pixels.data(), size*4) != 0) {
+        SDL_DestroyTexture(texture);
+        return nullptr;
+    }
+    if (texture) {
+        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(texture, SDL_ScaleModeLinear);
+    }
+    return texture;
+}
+}
+
 bool ImGuiUI::Initialize(SDL_Window* win, SDL_Renderer* ren) {
     window = win;
     renderer = ren;
@@ -189,6 +225,7 @@ bool ImGuiUI::Initialize(SDL_Window* win, SDL_Renderer* ren) {
 
     // Build and upload the font atlas during loading, before the first gameplay frame.
     if (!ImGui_ImplSDLRenderer2_CreateFontsTexture()) return false;
+    controlGrain_ = CreateControlGrain(renderer);
     initialized = true;
     return true;
 }
@@ -196,6 +233,8 @@ bool ImGuiUI::Initialize(SDL_Window* win, SDL_Renderer* ren) {
 void ImGuiUI::Shutdown() {
     if (!initialized) return;
     initialized = false;
+    SDL_DestroyTexture(controlGrain_);
+    controlGrain_ = nullptr;
     if (frostCapture_) SDL_DestroyTexture(frostCapture_);
     if (frostTexture_) SDL_DestroyTexture(frostTexture_);
     frostCapture_ = frostTexture_ = nullptr;

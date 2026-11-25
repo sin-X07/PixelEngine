@@ -15,6 +15,7 @@ private:
     ImGuiStyle baseStyle_{};     // 基准样式（缩放前）
     float      uiScaleApplied_ = 0.0f;
     bool       styleReady_ = false;   // ImGui 上下文创建后才允许改样式
+    SDL_Texture* controlGrain_ = nullptr;
     SDL_Texture* frostCapture_ = nullptr;
     SDL_Texture* frostTexture_ = nullptr;
     int frostWidth_ = 0, frostHeight_ = 0;
@@ -43,6 +44,7 @@ public:
     // 设置字体文件路径（须在 Initialize 之前调用；运行时修改需重启生效）
     void SetFontPath(const std::string& path) { fontPathOverride = path; }
 
+    SDL_Texture* ControlGrain() const { return controlGrain_; }
     void BeginFrame();   // ImGui_ImplSDL2_NewFrame + ImGui_ImplSDLRenderer2_NewFrame + ImGui::NewFrame
     void PrepareFrostedGlass();
     // 设置全局 UI 缩放（字体 + 控件尺寸）

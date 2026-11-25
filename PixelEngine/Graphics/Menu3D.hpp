@@ -38,10 +38,10 @@ public:
     void SetPresentationAspect(float aspect) { presentationAspect_ = std::clamp(aspect, 1.0f, 4.0f); }
 
     // ---- 主菜单 3D 交互 ----
-    // 索引：0=T, 1=CT, 2/3/4=三只小鸡
+    // 索引：0/1 号槽位原为 T/CT，已随角色移除（2026-11-25）不再可选；2/3/4=三只小鸡
     static constexpr int kObjectCount = 5;
     int HitTestNormalized(float u, float v) const;   // u/v 为 3D 纹理坐标，左上原点
-    void SetHoveredObject(int index) { hoveredObject_ = index; }
+    void SetHoveredObject(int index) { hoveredObject_ = (index >= 0 && index < 2) ? -1 : index; }
     int  HoveredObject() const { return hoveredObject_; }
     void SetFocusedObject(int index);
     int  FocusedObject() const { return focusedObject_; }
@@ -50,7 +50,7 @@ public:
     void SetFocusWeapon(int option) { focusWeapon_ = option; }
 
     // ---- 自定义（Phase 1/2）----
-    // 每项按对象索引：0=T, 1=CT, 2..4=三只小鸡
+    // 每项按对象索引：0/1 号槽位原为 T/CT（已移除，保留字段以免存档结构变化），2..4=三只小鸡
     struct Customization {
         int color[5]     = { 0, 0, 0, 0, 0 };   // 角色调色板 / 小鸡羽色
         int pose[5]      = { 0, 0, 0, 0, 0 };   // 动画选项
@@ -88,13 +88,30 @@ private:
     SDL_Texture* CreateBackdropTexture(int width, int height) const;
     void FollowOutputSize();
     void InitSurfaceShader();
-    void InitShadowMap();
+    void InitShadowMap(unsigned int& framebuffer, unsigned int& depth, int size);
+    void ResizeSpotlightTargets();
+    void InitSandstormAssets();
+    void InitAtmosphereShadersAndPost();
+    void ResizeBloomTargets();
+    void ReleaseAtmosphereResources();
+    void UpdateLightning(float dt);
+    void ComputeSceneWeights(float& ruinsW, float& desertW, float& mirageW, float& fade) const;
+    void DrawAtmosphereSky(float ruinsW, float desertW, float mirageW, float fade);
+    void DrawLightningBolt(float flash);
+    void DrawAtmosphereParticles(bool foreground, float ruinsW, float desertW, float mirageW);
+    void ApplyAtmospherePost(float ruinsW, float desertW, float mirageW);
     void DrawEnvironmentShadow(const Menu3DModel& model, const float sun[4]);
     void DrawEnvironment();
     void DrawScene(float timeSec);
     void DrawFocusScene();
     void DrawWeaponProp(float x, float y, float z);
-    void DrawSpotlight();
+    void PrepareSpotlight();
+    void DrawSpotlightLens();
+    void DrawSpotlightVolume();
+    void DrawLegacySpotlight();
+    void DrawChickens(bool depthOnly);
+    struct SpotUniforms { int position = -1, direction = -1, matrix = -1; };
+    void SetSpotlightUniforms(const SpotUniforms& uniforms) const;
     void DrawObjectRing(float x, float z, float radius, float alpha);
     void UpdateSpotlight(float dt);
     void UpdateObjectScreenPositions();
@@ -119,6 +136,46 @@ private:
     Menu3DModel::SurfaceUniforms surfaceUniforms_{};
     int surfaceShadowMatrix_ = -1;
     int surfaceHasShadow_ = -1;
+    int surfaceSceneWeights_ = -1;
+    int surfaceEnvParams_ = -1;
+    int surfaceCameraPos_ = -1;
+    unsigned int skyProgram_ = 0;
+    int skyCamRight_ = -1;
+    int skyCamUp_ = -1;
+    int skyCamForward_ = -1;
+    int skyParams_ = -1;
+    int skySceneWeights_ = -1;
+    int skyExtraParams_ = -1;
+    unsigned int sandWispTex_ = 0;
+    unsigned int sandStreakTex_ = 0;
+    unsigned int bloomFramebuffer_ = 0;
+    unsigned int sceneCopyTex_ = 0;
+    std::array<unsigned int, 2> bloomTex_{};
+    int bloomW_ = 0;
+    int bloomH_ = 0;
+    int sceneCopyW_ = 0;
+    int sceneCopyH_ = 0;
+    unsigned int bloomExtractProgram_ = 0;
+    int bloomExtractTex_ = -1;
+    int bloomExtractThreshold_ = -1;
+    int bloomExtractTint_ = -1;
+    unsigned int bloomBlurProgram_ = 0;
+    int bloomBlurTex_ = -1;
+    int bloomBlurOffset_ = -1;
+    unsigned int postHeatProgram_ = 0;
+    int postHeatSceneTex_ = -1;
+    int postHeatBloomTex_ = -1;
+    int postHeatParams_ = -1;
+    int postHeatBloomTint_ = -1;
+    float lightningTimer_ = 2.8f;
+    float lightningAge_ = -1.0f;
+    float lightningFlash_ = 0.0f;
+    float lightningX_ = -1.5f;
+    unsigned int lightningSeed_ = 1337u;
+    std::array<float, 3> cameraPos_{ 0.0f, 1.05f, 8.0f };
+    std::array<float, 3> cameraTarget_{ 0.0f, 0.95f, 0.0f };
+    float cameraUpY_ = 1.0f;
+    float cameraUpZ_ = 0.0f;
     bool previewCapture_ = false;  // 抓拍场景预览时：DrawScene 只画环境本体
 
     std::vector<uint8_t> pixels_;   // 原始 glReadPixels 数据（左下原点）
@@ -128,14 +185,12 @@ private:
     float pendingAnimationTime_ = 0.0f;
     std::string lastError_;
 
-    std::unique_ptr<Menu3DModel> tModel_;
     std::array<std::unique_ptr<Menu3DModel>, 3> environments_;
     std::array<SDL_Texture*, 3> scenePreviews_{};
     int sceneIndex_ = 1;
     int displayedScene_ = 1;
     float sceneTransition_ = .5f;
     float presentationAspect_ = 16.0f / 9.0f;
-    std::unique_ptr<Menu3DModel> ctModel_;
     std::vector<std::unique_ptr<Menu3DModel>> chickens_;
     std::vector<std::unique_ptr<Menu3DModel>> focusWeapons_;   // AK / 手枪 / 匕首
     // 自定义配件：0=鸭舌帽 1=墨镜 2=背包 3=小鸡帽
@@ -144,8 +199,6 @@ private:
     void ApplyAllCustomization();
     void ApplyCustomizationColor(int obj);
     void ApplyCustomizationPose(int obj);
-    void ApplyWeaponVisibility(int obj);
-    void ApplyCustomizationWeapon(int obj);
     void ApplyCustomizationAccessory(int obj);
     struct ChickenState {
         float x = 0.0f;
@@ -182,7 +235,6 @@ private:
     void PickChickenTarget(int index);
     bool LoadModels();
     float ActorStageX(int actor) const;
-    void DrawModels();
 
     int hoveredObject_ = -1;
     int focusedObject_ = -1;
@@ -191,6 +243,21 @@ private:
     float focusTargetX_ = -2.4f;
     float focusTargetZ_ = 0.0f;
     float cameraTopDown_ = 0.0f;
+    struct Spotlight {
+        std::array<float, 3> position{}, direction{}, right{}, up{};
+        float slope = 0.1f;
+        float power = 0;
+    } light_;
+    unsigned int chickenProgram_ = 0;
+    Menu3DModel::SurfaceUniforms chickenUniforms_{};
+    SpotUniforms surfaceSpot_, chickenSpot_, volumeSpot_;
+    int volumeCamera_ = -1, volumeMedium_ = -1;
+    int chickenTransform_ = -1, chickenCamera_ = -1;
+    unsigned int spotFramebuffer_ = 0, spotDepth_ = 0;
+    unsigned int volumeProgram_ = 0, volumeFramebuffer_ = 0;
+    unsigned int sceneDepthCopy_ = 0, volumeTexture_ = 0;
+    std::array<float, 16> spotMatrix_{};
+    int volumeWidth_ = 0, volumeHeight_ = 0;
     bool spotlightSuppressed_ = false;
     float spotlightIntensity_ = 1.0f;
     float spotSourceZ_ = 0.0f;

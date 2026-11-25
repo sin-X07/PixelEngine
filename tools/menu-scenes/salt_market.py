@@ -226,7 +226,7 @@ def label(text,x,y,z,size,key):
 def export(path, *, legacy_limits=True):
     s=scene()
     bpy.context.view_layer.update()
-    static=sorted((o for o in s.objects if o.type=='MESH' and not o.animation_data),key=lambda o:o.name)
+    static=sorted((o for o in s.objects if o.type=='MESH' and not o.animation_data and not o.name.startswith('ENV_')),key=lambda o:o.name)
     bpy.ops.object.select_all(action='DESELECT')
     # Join disposable copies, leaving every editable piece in the source scene.
     depsgraph=bpy.context.evaluated_depsgraph_get()

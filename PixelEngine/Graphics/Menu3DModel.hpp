@@ -41,6 +41,7 @@ public:
     struct SurfaceUniforms {
         int factors = -1;
         int maps = -1;
+        int alphaBlend = -1;
     };
     void DrawRaw(float opacity = 1.0f, const SurfaceUniforms* surface = nullptr) const;
     void DrawDepth() const;

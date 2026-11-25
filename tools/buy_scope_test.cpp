@@ -48,8 +48,7 @@
 struct Menu3DTestAccess {
     static bool ChickenAvoidance(const std::string& directory) {
         Menu3D menu;
-        if (!LoadCharacter(menu, 0, directory + "/t.glb") ||
-            !LoadCharacter(menu, 1, directory + "/ct.glb")) return false;
+        // T/CT 角色已移除（2026-11-25）：小鸡只躲避彼此与场景边界。
         for (int index = 0; index < 3; ++index) {
             auto chicken = std::make_unique<Menu3DModel>();
             if (!chicken->Load(directory + "/chicken.glb", "Menu_Walk")) return false;
@@ -77,16 +76,7 @@ struct Menu3DTestAccess {
             }
             float travel[3] = {};
             for (int frame = 0; frame < 1800; ++frame) {
-                if (frame % 300 == 0) {
-                    for (int actor = 0; actor < 2; ++actor) {
-                        menu.FocusSelect(actor, 0, (frame / 300 + actor) % 6);
-                        menu.FocusSelect(actor, 2, (frame / 300) % 4);
-                        menu.FocusSelect(actor, 3, (frame / 300) % 4);
-                    }
-                }
                 if (frame % 6 == 0) {
-                    menu.tModel_->Update(dt * 6);
-                    menu.ctModel_->Update(dt * 6);
                     for (auto& chicken : menu.chickens_) chicken->Update(dt * 6);
                 }
                 const auto before = menu.chickenState_;
@@ -133,13 +123,7 @@ struct Menu3DTestAccess {
         }
         return true;
     }
-    static Menu3DModel* LoadCharacter(Menu3D& menu, int actor, const std::string& path) {
-        auto model = std::make_unique<Menu3DModel>();
-        if (!model->Load(path, "Menu_Idle_AK")) return nullptr;
-        auto& target = actor == 0 ? menu.tModel_ : menu.ctModel_;
-        target = std::move(model);
-        return target.get();
-    }
+    // LoadCharacter 已随 T/CT 移除（2026-11-25）：ChickenAvoidance 不再加载角色模型。
 };
 
 struct Menu3DModelTestAccess {
@@ -1042,39 +1026,8 @@ static void TestMenuHeldPoses() {
     }
 }
 
-static void TestMenuWeaponMountSelection() {
-    const char* poses[] = { "Idle", "Crouch", "HandsOnHips", "FistPalm" };
-    const char* weapons[] = { "AK", "SMG", "Sniper", "Shotgun", "Pistol", "Knife_1" };
-    for (int actor = 0; actor < 2; ++actor) {
-        Menu3D menu;
-        Menu3DModel* model = Menu3DTestAccess::LoadCharacter(menu, actor, MenuAssetPath(actor == 0 ? "t" : "ct"));
-        bool valid = model != nullptr;
-        if (!model) {
-            check(false, "menu mount-selection model loads");
-            continue;
-        }
-        for (int pose = 0; pose < 4; ++pose) {
-            menu.FocusSelect(actor, 2, pose);
-            for (int weapon = 0; weapon < 6; ++weapon) {
-                menu.FocusSelect(actor, 0, weapon);
-                for (int accessory : { 3, 0, 1, 2, 3, 0 }) {
-                    menu.FocusSelect(actor, 3, accessory);
-                    for (int p = 0; p < 4; ++p) {
-                        for (int w = 0; w < 6; ++w) {
-                            const std::string node = std::string("weapon_") + poses[p] + "_" + weapons[w];
-                            const bool selected = p == pose && w == weapon;
-                            const bool packMount = accessory == 3 && model->HasNode(node + "_Backpack");
-                            valid = valid && model->GetNodeVisible(node) == (selected && !packMount);
-                            valid = valid && model->GetNodeVisible(node + "_Backpack") == (selected && packMount);
-                        }
-                    }
-                }
-            }
-        }
-        check(valid, "normal menu selectors keep exactly one compatible weapon mount visible");
-    }
-}
-
+// TestMenuWeaponMountSelection 已随 T/CT 移除（2026-11-25）：
+// 武器挂载节点显隐只属于已删除的角色模型；GLB 文件本身仍由 TestMenuHeldPoses 直接验证。
 // cover / center 两种碰撞栅格化模式（地图属性 collisionMode）
 static void TestCollisionModes() {
     CS2DMapData data;
@@ -5902,7 +5855,7 @@ struct EngineTestAccess {
         PathUtils::SetBaseDir(previousBase);
     }
 
-    static void CaptureSceneryMenu(int scene, const std::filesystem::path& output) {
+    static void CaptureSceneryMenu(int scene, const std::filesystem::path& output, int height = 720, bool exerciseMenu = false) {
         const auto directory = std::filesystem::absolute(output);
         std::filesystem::create_directories(directory);
         const auto oldBase = PathUtils::BaseDir();
@@ -5910,13 +5863,13 @@ struct EngineTestAccess {
         SDL_setenv("SDL_AUDIODRIVER","dummy",1);
         {
             Engine engine;
-            const bool ready = engine.Initialize("PIX-39 menu acceptance",1280,720,false,false,1,false);
+            const bool ready = engine.Initialize("PIX-39 menu acceptance",1280,height,false,false,1,false);
             check(ready && engine.menu3D && engine.menu3D->IsReady() && engine.menu3D->ScenePreview(scene),"Production menu loads the requested 3D scene and its preview");
             if (ready && engine.menu3D) {
                 ImGui::GetIO().IniFilename = nullptr;
                 engine.menu3D->SetScene(scene,true);
-                SDL_SetWindowSize(engine.window,1280,720);
-                engine.ResizeLogicalViewport(1280,720);
+                SDL_SetWindowSize(engine.window,1280,height);
+                engine.ResizeLogicalViewport(1280,height);
                 auto capture = [&](const char* file) {
                     SDL_Delay(40);
                     engine.Render();
@@ -5933,14 +5886,39 @@ struct EngineTestAccess {
                     SDL_FreeSurface(pixels);
                 };
                 capture("main.png");
-                engine.focused3D_=0;
+                engine.focused3D_=3;
                 engine.focusAnimStartMs_=SDL_GetTicks64()-400;
                 engine.Render(); // Enter focus before sampling the fully-open camera.
                 capture("focus.png");
                 engine.focused3D_=-1;
-                engine.BeginMenuCameraTransition([] {});
+                const auto actions = engine.BuildActions();
+                actions.goState(MAP_SELECT);
                 engine.menuCameraStartMs_=SDL_GetTicks64()-850;
                 capture("overhead.png");
+                if (exerciseMenu) {
+                    engine.menuCameraStartMs_ = SDL_GetTicks64()-950;
+                    engine.Render();
+                    engine.mapOverlayStartMs_ = SDL_GetTicks64()-400;
+                    capture("map-cards.png");
+                    check(engine.mapOverlayOpen_ && engine.mapOverlayCount_ > 1,"Map picker opened through main menu");
+                    actions.selectMapChoice(1);
+                    check(engine.mapOverlaySelected_ == 1,"Map card updates selection");
+                    actions.closeMapOverlay();
+                    engine.mapOverlayCloseStartMs_ = SDL_GetTicks64()-950;
+                    capture("return.png");
+                    check(!engine.mapOverlayOpen_ && engine.currentState == MAIN_MENU,"Return completed in main menu");
+                    actions.goState(MAP_SELECT);
+                    engine.menuCameraStartMs_ = SDL_GetTicks64()-950;
+                    engine.Render();
+                    actions.startMatchOnChoice(1);
+                    engine.mapOverlayLaunchStartMs_ = SDL_GetTicks64()-400;
+                    const auto deadline = SDL_GetTicks64()+5000;
+                    while (engine.currentState == MAIN_MENU && SDL_GetTicks64()<deadline) {
+                        SDL_Delay(16);
+                        engine.Render();
+                    }
+                    check(engine.currentState == PLAYING,"Selected map entered gameplay");
+                }
             }
         }
         PathUtils::SetBaseDir(oldBase);
@@ -6283,6 +6261,11 @@ static void TestExperienceRendering(bool gpu) {
 }
 
 int main(int argc,char** argv) {
+    if (argc>1 && std::string(argv[1])=="--spotlight-menu") {
+        for (int height : {720, 800})
+            EngineTestAccess::CaptureSceneryMenu(0, std::filesystem::path("build-evidence/spotlight/ui") / std::to_string(height), height, true);
+        return g_fail ? 1 : 0;
+    }
     if (argc>1 && std::string(argv[1])=="--pix39-menu") {
         EngineTestAccess::CaptureSceneryMenu(1, "build-evidence/pix39/salt-exchange/game");
         return g_fail ? 1 : 0;
@@ -6462,7 +6445,6 @@ int main(int argc,char** argv) {
     TestCollisionModes();
     TestFixedVisionRadius();
     TestMenuHeldPoses();
-    TestMenuWeaponMountSelection();
     const char* menuDirectory = std::getenv("PIXEL_MENU_MODEL_DIR");
     check(Menu3DTestAccess::ChickenAvoidance(menuDirectory ? menuDirectory : "assets/models/menu"),
           "eight seeded minute-long menu simulations avoid scene overlap and preserve roaming");

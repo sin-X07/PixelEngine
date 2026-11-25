@@ -15,6 +15,7 @@ for theme in ('ancient_ruins', 'dust_2', 'mirage'):
     assert scene.render.fps == 30
     assert scene.frame_start == 0 and scene.frame_end == 120
     props = [o for o in scene.objects if o.type == 'MESH' and
+             not o.name.startswith(('ENV_', 'Sunlit dust | ')) and
              not o.name.removeprefix(scene.get('object_prefix', '')).startswith(('Continuous level courtyard','Courtyard paving'))]
     failures = []
     # Keep independently placed props clear of the whole abandoned-car assembly.
