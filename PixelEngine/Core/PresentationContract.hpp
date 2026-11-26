@@ -31,7 +31,7 @@ struct BuyRequest {
 
 // 失败原因优先序（EvaluatePurchase 固定按此顺序返回）：
 // InvalidItem → PlayerDead → WindowClosed → OutsideBuyZone → TeamRestricted →
-// AlreadyEquipped → InventoryFull → ItemLimitReached → InsufficientFunds → Ok
+// NotInLoadout → AlreadyEquipped → InventoryFull → ItemLimitReached → InsufficientFunds → Ok
 enum class BuyCode {
     Ok,
     InvalidItem,
@@ -39,6 +39,7 @@ enum class BuyCode {
     WindowClosed,
     OutsideBuyZone,
     TeamRestricted,
+    NotInLoadout,
     InsufficientFunds,
     InventoryFull,
     ItemLimitReached,

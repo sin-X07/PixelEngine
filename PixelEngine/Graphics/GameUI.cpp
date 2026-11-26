@@ -320,7 +320,7 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         // 整块内容（标题 + 副标题 + 按钮组）垂直居中
         const float vpH = viewport->WorkSize.y;
         const float itemSpacing = ImGui::GetStyle().ItemSpacing.y;
-        const int   nBtn = 6;
+        const int   nBtn = 7;
 
         const float titleH = UI(46.0f);
         const float subH   = UI(30.0f);
@@ -374,10 +374,21 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         DrawImGuiTextCentered(imGuiUI_, "Counter-Strike 2D 单机版", yScreen + titleH,
                               160, 190, 210, subAlpha, 20);
 
+        const float btnAreaTop = viewport->WorkPos.y + yLocal + titleH + subH + gap1;
+        const float btnAreaBottom = btnAreaTop + nBtn * buttonH + (nBtn - 1) * itemSpacing;
+        if (actions.setMainMenuButtonRect) {
+            const float padX = UI(14.0f);
+            const float padY = UI(10.0f);
+            actions.setMainMenuButtonRect(
+                centerX - buttonW * 0.5f - padX, btnAreaTop - padY,
+                centerX + buttonW * 0.5f + padX, btnAreaBottom + padY);
+        }
+
         ImGui::SetCursorPosY(yLocal + titleH + subH + gap1);
         if (bigButton("团队歼灭", Controls::Finish::Steel)) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::TeamElimination)); });
         if (bigButton("爆破模式", Controls::Finish::Steel)) doClick([&] { actions.goState(MAP_SELECT); });
         if (bigButton("死斗模式", Controls::Finish::Steel)) doClick([&] { actions.startMatchMode(static_cast<int>(MatchMode::DeathMatch)); });
+        if (bigButton("武器配装")) doClick([&] { actions.goState(LOADOUT); });
         if (bigButton("历史记录")) doClick([&] { actions.goState(HISTORY); });
         if (bigButton("设置"))     doClick([&] { actions.openSettings(MAIN_MENU); });
         if (bigButton("退出游戏")) doClick([&] { actions.quitToDesktop(); });
@@ -941,8 +952,16 @@ void GameUI::DrawMenu(const MenuCtx& ctx, const Actions& actions) {
         ImGui::PopStyleColor(15);
     }
 
+    if (ctx.state != LOADOUT) {
+        loadoutPageOpen_ = false;
+        loadoutConfirmExit_ = false;
+    }
+
     if (ctx.state == MAIN_MENU && ctx.focus3D) {
         DrawFocusWheel(ctx, actions);
+    } else {
+        wasChickenFocus_ = false;
+        lastChickenFocusObj_ = -1;
     }
 
     ImGui::End();
@@ -1125,8 +1144,14 @@ void GameUI::DrawMapOverlay(const MenuCtx& ctx, const Actions& actions) {
 }
 
 // ============================================================================
-// 主菜单 3D 聚焦 + 右侧自定义面板
+// 主菜单 3D 聚焦 + 双层扇形定制轮盘（小鸡）
 // ============================================================================
+
+void GameUI::ResetChickenWheel() {
+    wasChickenFocus_ = false;
+    lastChickenFocusObj_ = -1;
+    chickenWheel_.ResetOnOpen(false);
+}
 
 void GameUI::DrawFocusWheel(const MenuCtx& ctx, const Actions& actions) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -1135,7 +1160,13 @@ void GameUI::DrawFocusWheel(const MenuCtx& ctx, const Actions& actions) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float p = std::clamp(ctx.focusProgress, 0.0f, 1.0f);
     const float open = p * p * (3.0f - 2.0f * p);
-    const float contentAlpha = std::clamp((open - 0.45f) / 0.55f, 0.0f, 1.0f);
+    const float contentAlpha = std::clamp((open - 0.35f) / 0.65f, 0.0f, 1.0f);
+
+    if (!wasChickenFocus_ || lastChickenFocusObj_ != ctx.focusObject) {
+        chickenWheel_.ResetOnOpen(ImGui::IsMouseDown(ImGuiMouseButton_Left));
+        wasChickenFocus_ = true;
+        lastChickenFocusObj_ = ctx.focusObject;
+    }
 
     // 左半屏留给 3D 聚焦模型，只压暗右侧轮盘区域
     if (ctx.backdropTex && ctx.backdropW > 0 && ctx.backdropH > 0) {
@@ -1158,103 +1189,629 @@ void GameUI::DrawFocusWheel(const MenuCtx& ctx, const Actions& actions) {
     }
     dl->AddRectFilled(ImVec2(wp.x + ws.x * 0.48f, wp.y),
                       ImVec2(wp.x + ws.x, wp.y + ws.y),
-                      IM_COL32(4, 7, 10, static_cast<int>(150.0f * open)));
+                      IM_COL32(4, 7, 10, static_cast<int>(156.0f * open)));
 
-    // 左侧标题
-    const char* kind = ctx.focusChicken ? "小鸡" : (ctx.focusObject == 0 ? "T" : "CT");
-    dl->AddText(ImVec2(wp.x + UI(54.0f), wp.y + UI(44.0f)),
-                IM_COL32(240, 216, 156, 255), kind);
-    dl->AddText(ImVec2(wp.x + UI(54.0f), wp.y + UI(72.0f)),
-                IM_COL32(168, 190, 208, 230), "自定义装备");
-    dl->AddText(ImVec2(wp.x + UI(54.0f), wp.y + ws.y - UI(54.0f)),
-                IM_COL32(150, 166, 180, 210), "点击右侧轮盘选项 · ESC 返回");
+    // 左侧标题（加暗底阴影提高在亮色 3D 场景中的可读性）
+    const char* kind = ctx.focusChicken ? "小鸡定制" : (ctx.focusObject == 0 ? "T" : "CT");
+    dl->AddRectFilled(ImVec2(wp.x + UI(40.0f), wp.y + UI(32.0f)),
+                      ImVec2(wp.x + UI(310.0f), wp.y + UI(108.0f)),
+                      IM_COL32(8, 12, 18, static_cast<int>(165.0f * open)), UI(8.0f));
+    dl->AddRectFilled(ImVec2(wp.x + UI(40.0f), wp.y + ws.y - UI(66.0f)),
+                      ImVec2(wp.x + UI(350.0f), wp.y + ws.y - UI(30.0f)),
+                      IM_COL32(8, 12, 18, static_cast<int>(165.0f * open)), UI(6.0f));
+    DrawImGuiText(imGuiUI_, kind, wp.x + UI(54.0f), wp.y + UI(40.0f), 246, 222, 162, 255, 24);
+    DrawImGuiText(imGuiUI_, "左键选择 · Esc 或中心返回", wp.x + UI(54.0f), wp.y + UI(74.0f), 196, 214, 230, 245, 15);
+    DrawImGuiText(imGuiUI_, "数字 1-N / 方向键 / Enter 均可操作", wp.x + UI(54.0f), wp.y + ws.y - UI(58.0f), 186, 202, 218, 235, 14);
 
-    const int categoryCount = std::clamp(ctx.focusCategoryCount, 0, 4);
-    const float arcSpan = 1.34f * open;
-    const ImVec2 center(wp.x + ws.x * 0.60f, wp.y + ws.y * 0.52f);
+    // 轮盘圆心置于右半屏中央，半径随可用短边自适应
+    const float maxAvailW = ws.x * 0.46f;
+    const float maxAvailH = ws.y * 0.80f;
+    const float targetOuter = std::clamp(std::min(maxAvailW, maxAvailH) * 0.46f, UI(145.0f), UI(270.0f));
+    const float outerR = targetOuter * (0.32f + 0.68f * open);
+    const float innerR = outerR * RadialWheel::kDefaultInnerRatio;
+    const ImVec2 center(wp.x + ws.x * 0.69f, wp.y + ws.y * 0.50f);
 
-    // 每个类别的环半径：按选项数保证相邻按钮有足够弧距，环与环之间至少留 64。
-    // 这样 8 个颜色选项也不会压在一起，同时四环仍能完整落在屏幕内。
-    const float btnW = UI(60.0f);
-    const float btnH = UI(27.0f);
-    float radii[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-    for (int cat = 0; cat < categoryCount; ++cat) {
-        const int n = std::clamp(ctx.focusOptionCounts[cat], 1, 8);
-        const float minArcR = (btnW + UI(10.0f)) * static_cast<float>(n - 1) / (2.0f * 1.34f);
-        const float baseR = UI(170.0f) * (0.52f + 0.30f * static_cast<float>(cat));
-        const float prevR = (cat > 0) ? radii[cat - 1] + UI(60.0f) : 0.0f;
-        radii[cat] = std::max(std::max(baseR, minArcR), prevR);
-    }
+    // 小鸡一级固定顺序：0=配饰(Menu3D cat=2), 1=姿势(Menu3D cat=1), 2=颜色(Menu3D cat=0)
+    static constexpr int kChickenOrderToRealCat[3] = { 2, 1, 0 };
+    static constexpr const char* kChickenLvl1Names[3] = { "配饰", "姿势", "颜色" };
+    static const ImU32 kChickenSwatchColors[7] = {
+        IM_COL32(240, 158, 31, 255),  // 原色
+        IM_COL32(237, 237, 230, 255), // 白羽
+        IM_COL32(158, 107, 61, 255),  // 棕羽
+        IM_COL32(56, 56, 64, 255),    // 黑羽
+        IM_COL32(87, 138, 230, 255),  // 蓝羽
+        IM_COL32(102, 194, 97, 255),  // 绿羽
+        IM_COL32(224, 64, 56, 255),   // 红羽
+    };
 
-    // 轮盘底：随 open 从物体后方展开（右半圆）
-    const float anim = 0.20f + 0.80f * open;
-    if (open > 0.02f && categoryCount > 0) {
-        const float outerR = radii[categoryCount - 1] * anim + UI(26.0f);
-        dl->PathClear();
-        dl->PathArcTo(center, outerR, -1.42f * open, 1.42f * open, 48);
-        dl->PathFillConvex(IM_COL32(9, 13, 18, static_cast<int>(225.0f * open)));
-        dl->PathClear();
-        dl->PathArcTo(center, outerR, -1.42f * open, 1.42f * open, 48);
-        dl->PathStroke(IM_COL32(226, 185, 92, static_cast<int>(190.0f * open)),
-                       false, UI(2.0f));
-    }
-
-    for (int category = 0; category < categoryCount; ++category) {
-        const float radius = radii[category] * anim;
-        const char* categoryName = ctx.focusCategoryNames[category]
-                                 ? ctx.focusCategoryNames[category] : "";
-        const ImVec2 catSize = ImGui::CalcTextSize(categoryName);
-
-        if (contentAlpha > 0.05f) {
-            dl->PathClear();
-            dl->PathArcTo(center, radius, -arcSpan, arcSpan, 32);
-            dl->PathStroke(IM_COL32(160, 132, 70, static_cast<int>(120.0f * open)),
-                           false, UI(1.0f));
-            dl->AddText(ImVec2(center.x - catSize.x - UI(14.0f), center.y - radius - UI(4.0f)),
-                        IM_COL32(190, 168, 108, static_cast<int>(235.0f * contentAlpha)),
-                        categoryName);
-        }
-
-        if (contentAlpha <= 0.05f) continue;
-        const int optionCount = std::clamp(ctx.focusOptionCounts[category], 0, 8);
-        ImGui::PushID(category);
-        for (int option = 0; option < optionCount; ++option) {
-            ImGui::PushID(option);
-            const float t = (optionCount <= 1)
-                ? 0.0f
-                : static_cast<float>(option) / static_cast<float>(optionCount - 1);
-            const float angle = -arcSpan + 2.0f * arcSpan * t;
-            const ImVec2 pos(center.x + std::cos(angle) * radius - btnW * 0.5f,
-                             center.y + std::sin(angle) * radius - btnH * 0.5f);
-            const bool isSelected = (ctx.focusSelected[category] == option);
-            const char* optionLabel = ctx.focusOptions[category][option]
-                                    ? ctx.focusOptions[category][option] : "";
-
-            ImGui::BeginDisabled(open <= 0.72f);
-            ImGui::SetCursorScreenPos(pos);
-            const bool clicked = Controls::Button(imGuiUI_, optionLabel, ImVec2(btnW, btnH),
-                                                  Controls::Finish::Smoke, isSelected);
-            ImGui::EndDisabled();
-
-            if (clicked) {
-                if (actions.playClick) actions.playClick();
-                if (actions.focus3DSelect) actions.focus3DSelect(category, option);
+    std::vector<RadialWheel::SectorItem> items;
+    if (chickenWheel_.level == 0) {
+        for (int s = 0; s < 3; ++s) {
+            const int realCat = kChickenOrderToRealCat[s];
+            const int sel = std::clamp(ctx.focusSelected[realCat], 0,
+                                       std::max(0, ctx.focusOptionCounts[realCat] - 1));
+            const char* curOpt = (realCat < ctx.focusCategoryCount &&
+                                  sel < ctx.focusOptionCounts[realCat] &&
+                                  ctx.focusOptions[realCat][sel])
+                               ? ctx.focusOptions[realCat][sel] : "";
+            RadialWheel::SectorItem it;
+            it.id = std::string("chicken_cat_") + std::to_string(s);
+            it.label = kChickenLvl1Names[s];
+            it.subLabel = curOpt;
+            it.enabled = true;
+            if (realCat == 0 && sel >= 0 && sel < 7) {
+                it.hasSwatch = true;
+                it.swatchColor = kChickenSwatchColors[sel];
             }
-            ImGui::PopID();
+            items.push_back(std::move(it));
         }
-        ImGui::PopID();
+    } else {
+        const int orderIdx = std::clamp(chickenWheel_.activeCategory, 0, 2);
+        const int realCat = kChickenOrderToRealCat[orderIdx];
+        const int optCount = std::clamp(ctx.focusOptionCounts[realCat], 0, 8);
+        const int curSel = ctx.focusSelected[realCat];
+        for (int opt = 0; opt < optCount; ++opt) {
+            const char* optName = ctx.focusOptions[realCat][opt] ? ctx.focusOptions[realCat][opt] : "";
+            RadialWheel::SectorItem it;
+            it.id = std::string("chicken_opt_") + std::to_string(realCat) + "_" + std::to_string(opt);
+            it.label = optName;
+            it.selected = (curSel == opt);
+            it.subLabel = it.selected ? "已应用" : "";
+            it.enabled = true;
+            if (realCat == 0 && opt >= 0 && opt < 7) {
+                it.hasSwatch = true;
+                it.swatchColor = kChickenSwatchColors[opt];
+            }
+            items.push_back(std::move(it));
+        }
     }
 
-    // 关闭
-    if (open > 0.80f) {
-        const float closeW = UI(130.0f), closeH = UI(38.0f);
-        ImGui::SetCursorScreenPos(ImVec2(wp.x + ws.x - closeW - UI(28.0f),
-                                         wp.y + ws.y - closeH - UI(28.0f)));
-        if (Controls::Button(imGuiUI_, "返回大厅", ImVec2(closeW, closeH))) {
+    RadialWheel::Layout layout;
+    layout.centerX = center.x;
+    layout.centerY = center.y;
+    layout.innerRadius = innerR;
+    layout.outerRadius = outerR;
+    layout.sectorCount = static_cast<int>(items.size());
+    layout.gapHalfAngle = (layout.sectorCount >= 7) ? 0.016f : 0.024f;
+
+    std::vector<bool> enabledVec(items.size(), true);
+    RadialWheel::Action act;
+    if (contentAlpha > 0.25f) {
+        const RadialWheel::InputSnapshot snap =
+            RadialWheel::CollectImGuiInput(ctx.windowFocused, false);
+        act = chickenWheel_.Step(layout, snap, enabledVec);
+        if (act.type == RadialWheel::Action::Type::EnterCategory) {
+            if (actions.playClick) actions.playClick();
+            chickenWheel_.EnterSecondLevel(act.sector);
+        } else if (act.type == RadialWheel::Action::Type::SelectItem) {
+            const int orderIdx = std::clamp(chickenWheel_.activeCategory, 0, 2);
+            const int realCat = kChickenOrderToRealCat[orderIdx];
+            if (actions.playClick) actions.playClick();
+            if (actions.focus3DSelect) actions.focus3DSelect(realCat, act.sector);
+            // 小鸡二级确认后停在当前类别，便于连续对比
+        } else if (act.type == RadialWheel::Action::Type::Back) {
+            if (actions.playClick) actions.playClick();
+            chickenWheel_.BackToFirstLevel();
+        } else if (act.type == RadialWheel::Action::Type::Close) {
             if (actions.playClick) actions.playClick();
             if (actions.close3DFocus) actions.close3DFocus();
         }
     }
+
+    // 悬停预览文字（中心圆盘显示）
+    RadialWheel::DrawStyle style;
+    style.ui = imGuiUI_;
+    style.opacity = contentAlpha;
+    style.hoveredSector = act.hoveredSector;
+    style.hoveredCenter = act.hoveredCenter;
+    style.pressedSector = (chickenWheel_.pressedButton == 1 && chickenWheel_.pressedLevel == chickenWheel_.level)
+                        ? chickenWheel_.pressedSector : -1;
+    style.pressedCenter = (chickenWheel_.pressedButton == 1 && chickenWheel_.pressedLevel == chickenWheel_.level &&
+                           chickenWheel_.pressedRegion == RadialWheel::HitRegion::Center);
+    style.kbIndex = chickenWheel_.kbIndex;
+    style.centerIsBack = (chickenWheel_.level == 1);
+
+    const int highlightIdx = (act.hoveredSector >= 0) ? act.hoveredSector : chickenWheel_.kbIndex;
+    if (act.hoveredCenter) {
+        style.centerTitle = (chickenWheel_.level == 1) ? "返回上一级" : "退出聚焦";
+        style.centerSubtitle = "点击或按 Esc";
+    } else if (highlightIdx >= 0 && highlightIdx < static_cast<int>(items.size())) {
+        style.centerTitle = items[highlightIdx].label;
+        style.centerSubtitle = items[highlightIdx].selected ? "当前已应用" : items[highlightIdx].subLabel;
+    } else if (chickenWheel_.level == 1) {
+        const int orderIdx = std::clamp(chickenWheel_.activeCategory, 0, 2);
+        style.centerTitle = kChickenLvl1Names[orderIdx];
+        style.centerSubtitle = "点中心返回";
+    } else {
+        style.centerTitle = "小鸡外观";
+        style.centerSubtitle = "选类别 · 点中心退出";
+    }
+
+    RadialWheel::DrawWheel(dl, layout, items, style);
+
+    // 底部返回按钮（辅助可见控件）
+    if (open > 0.80f) {
+        const float closeW = UI(130.0f), closeH = UI(38.0f);
+        ImGui::SetCursorScreenPos(ImVec2(wp.x + ws.x - closeW - UI(28.0f),
+                                         wp.y + ws.y - closeH - UI(28.0f)));
+        if (Controls::Button(imGuiUI_, chickenWheel_.level == 1 ? "返回类别" : "返回大厅",
+                             ImVec2(closeW, closeH))) {
+            if (actions.playClick) actions.playClick();
+            if (chickenWheel_.level == 1) chickenWheel_.BackToFirstLevel();
+            else if (actions.close3DFocus) actions.close3DFocus();
+        }
+    }
+}
+
+// ============================================================================
+// 大厅“武器配装”页
+// ============================================================================
+
+void GameUI::DrawLoadout(const MenuCtx& ctx, const Actions& actions) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const ImVec2 wp = vp->WorkPos;
+    const ImVec2 ws = vp->WorkSize;
+    ImGui::SetNextWindowPos(wp);
+    ImGui::SetNextWindowSize(ws);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::Begin("LoadoutRoot", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
+                 ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+    if (!loadoutPageOpen_) {
+        loadoutDraft_       = WeaponDB::SanitizeMatchLoadouts(ctx.loadouts);
+        loadoutBaseline_    = loadoutDraft_;
+        loadoutEditT_       = false;
+        loadoutSelGroup_    = WeaponDB::LoadoutGroup::StartingPistol;
+        loadoutSelSlot_     = 0;
+        loadoutNotice_.clear();
+        loadoutNoticeErr_   = false;
+        loadoutConfirmExit_ = false;
+        loadoutPageOpen_    = true;
+    }
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (ctx.backdropTex && ctx.backdropW > 0 && ctx.backdropH > 0) {
+        const float texAspect = static_cast<float>(ctx.backdropW) / static_cast<float>(ctx.backdropH);
+        const float scrAspect = ws.x / std::max(1.0f, ws.y);
+        ImVec2 uv0(0.0f, 0.0f), uv1(1.0f, 1.0f);
+        if (texAspect > scrAspect) {
+            const float frac = scrAspect / texAspect;
+            uv0.x = (1.0f - frac) * 0.5f;
+            uv1.x = uv0.x + frac;
+        } else {
+            const float frac = texAspect / scrAspect;
+            uv0.y = (1.0f - frac) * 0.5f;
+            uv1.y = uv0.y + frac;
+        }
+        dl->AddImage(reinterpret_cast<ImTextureID>(ctx.backdropTex),
+                     wp, ImVec2(wp.x + ws.x, wp.y + ws.y), uv0, uv1);
+        dl->AddRectFilledMultiColor(
+            wp, ImVec2(wp.x + ws.x, wp.y + ws.y),
+            IM_COL32(6, 10, 14, 212), IM_COL32(6, 10, 14, 212),
+            IM_COL32(10, 14, 20, 234), IM_COL32(10, 14, 20, 234));
+    } else {
+        DrawMenuBackdrop(dl, wp, ws);
+    }
+
+    DrawPageHeader(imGuiUI_, dl, wp, ws,
+                   "PRE-MATCH / LOADOUT", "武器配装",
+                   "配置 T 与 CT 各 15 个局内商店槽位", "ESC  返回大厅");
+
+    struct DragPayload {
+        bool                   fromCandidate;
+        bool                   isTerrorist;
+        WeaponDB::LoadoutGroup group;
+        int                    slotIdx;
+        WeaponId               weapon;
+    };
+
+    const bool hasUnsaved = (loadoutDraft_ != loadoutBaseline_);
+    WeaponDB::TeamLoadout& activeLoadout = loadoutEditT_ ? loadoutDraft_.t : loadoutDraft_.ct;
+
+    // ---- 顶部阵营切换 ----
+    const float marginX = std::max(UI(44.0f), ws.x * 0.045f);
+    const float contentW = ws.x - marginX * 2.0f;
+    const float topBarY = wp.y + UI(132.0f);
+    {
+        const float tabW = UI(210.0f);
+        const float tabH = UI(40.0f);
+        ImGui::SetCursorScreenPos(ImVec2(wp.x + marginX, topBarY));
+        if (Controls::Button(imGuiUI_, "CT  反恐精英", ImVec2(tabW, tabH),
+                             !loadoutEditT_ ? Controls::Finish::Champagne : Controls::Finish::Smoke,
+                             !loadoutEditT_)) {
+            if (actions.playClick) actions.playClick();
+            loadoutEditT_ = false;
+            loadoutNotice_.clear();
+        }
+        ImGui::SetCursorScreenPos(ImVec2(wp.x + marginX + tabW + UI(12.0f), topBarY));
+        if (Controls::Button(imGuiUI_, "T  恐怖分子", ImVec2(tabW, tabH),
+                             loadoutEditT_ ? Controls::Finish::Champagne : Controls::Finish::Smoke,
+                             loadoutEditT_)) {
+            if (actions.playClick) actions.playClick();
+            loadoutEditT_ = true;
+            loadoutNotice_.clear();
+        }
+
+        if (hasUnsaved) {
+            DrawImGuiTextRight(imGuiUI_, "● 有未保存的改动",
+                               wp.x + marginX + contentW, topBarY + UI(10.0f),
+                               244, 204, 118, 255, 15);
+        }
+    }
+
+    // ---- 主体两区：左/中 15 槽位，右 候选区（底部操作栏恒定可见）----
+    const float bodyTop = topBarY + UI(54.0f);
+    const float footerH = UI(84.0f);
+    const float bodyH   = std::max(UI(260.0f), (wp.y + ws.y - footerH) - bodyTop);
+    const float colGap  = UI(18.0f);
+    const float candW   = std::clamp(contentW * 0.34f, UI(270.0f), UI(420.0f));
+    const float slotAreaW = std::max(UI(360.0f), contentW - candW - colGap);
+
+    auto drawWeaponIcon = [&](ImDrawList* idl, const char* iconPath, const ImVec2& box0,
+                              const ImVec2& box1, bool dimmed) {
+        SDL_Texture* tex = (weaponIconCache_ && iconPath && iconPath[0])
+                         ? weaponIconCache_->GetBuy(iconPath) : nullptr;
+        const float bw = box1.x - box0.x;
+        const float bh = box1.y - box0.y;
+        if (tex) {
+            int tw = 0, th = 0;
+            if (SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th) == 0 && tw > 0 && th > 0) {
+                const float fit = std::min(bw / static_cast<float>(tw), bh / static_cast<float>(th));
+                const ImVec2 sz(tw * fit, th * fit);
+                const ImVec2 p0(box0.x + (bw - sz.x) * 0.5f, box0.y + (bh - sz.y) * 0.5f);
+                idl->AddImage(reinterpret_cast<ImTextureID>(tex), p0,
+                              ImVec2(p0.x + sz.x, p0.y + sz.y), ImVec2(0, 0), ImVec2(1, 1),
+                              IM_COL32(255, 255, 255, dimmed ? 140 : 240));
+                return;
+            }
+        }
+        const ImU32 oc = dimmed ? IM_COL32(115, 125, 138, 120) : IM_COL32(170, 185, 200, 175);
+        idl->AddRect(box0, box1, oc, UI(3.0f), 0, UI(1.0f));
+        idl->AddLine(ImVec2(box0.x + bw * 0.16f, box0.y + bh * 0.72f),
+                     ImVec2(box0.x + bw * 0.84f, box0.y + bh * 0.28f), oc, UI(1.5f));
+    };
+
+    // 左区：15 个槽位
+    ImGui::SetCursorScreenPos(ImVec2(wp.x + marginX, bodyTop));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.055f, 0.070f, 0.090f, 0.78f));
+    ImGui::BeginChild("##loadoutSlots", ImVec2(slotAreaW, bodyH), true);
+    {
+        ImDrawList* sdl = ImGui::GetWindowDrawList();
+        const float innerW = ImGui::GetContentRegionAvail().x;
+        const float cardGap = UI(8.0f);
+
+        auto renderGroup = [&](const char* title, const char* sub,
+                               WeaponDB::LoadoutGroup group, int count, int cols) {
+            ImGui::PushID(static_cast<int>(group));
+            const ImVec2 hdrPos = ImGui::GetCursorScreenPos();
+            DrawImGuiText(imGuiUI_, title, hdrPos.x, hdrPos.y, 232, 238, 246, 255, 17);
+            if (sub && sub[0]) {
+                DrawImGuiText(imGuiUI_, sub, hdrPos.x + UI(128.0f), hdrPos.y + UI(2.0f),
+                              152, 178, 202, 235, 13);
+            }
+            ImGui::Dummy(ImVec2(innerW, UI(26.0f)));
+
+            const float cardW = (innerW - cardGap * static_cast<float>(cols - 1)) / static_cast<float>(cols);
+            const float cardH = UI(86.0f);
+
+            for (int i = 0; i < count; ++i) {
+                ImGui::PushID(i);
+                WeaponId wid = WeaponId::None;
+                if (group == WeaponDB::LoadoutGroup::StartingPistol) wid = activeLoadout.starting;
+                else if (group == WeaponDB::LoadoutGroup::Pistol)    wid = activeLoadout.pistols[i];
+                else if (group == WeaponDB::LoadoutGroup::Midtier)   wid = activeLoadout.midtier[i];
+                else                                                 wid = activeLoadout.rifles[i];
+
+                const WeaponDef& def = WeaponDB::Get(wid);
+                const bool selected = (loadoutSelGroup_ == group && loadoutSelSlot_ == i);
+
+                const bool clicked = ImGui::InvisibleButton("##slot", ImVec2(cardW, cardH));
+                const bool hovered = ImGui::IsItemHovered();
+                const ImVec2 p0 = ImGui::GetItemRectMin();
+                const ImVec2 p1 = ImGui::GetItemRectMax();
+
+                const Controls::State st{ hovered, hovered && ImGui::IsItemActive(), selected, false };
+                Controls::Surface(imGuiUI_, sdl, p0, p1, Controls::Finish::Smoke, st, 0.90f, UI(6.0f));
+                if (selected) {
+                    sdl->AddRect(p0, p1, Palette::U32(Palette::Accent()), UI(6.0f), 0, UI(2.0f));
+                }
+
+                // 拖放源（槽位本身可拖到同组另一槽互换）
+                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                    const DragPayload payload{ false, loadoutEditT_, group, i, wid };
+                    ImGui::SetDragDropPayload("PE_LOADOUT_ITEM", &payload, sizeof(payload));
+                    ImGui::Text("%s ($%d)", def.name, def.price);
+                    ImGui::EndDragDropSource();
+                }
+
+                // 拖放目标
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("PE_LOADOUT_ITEM",
+                            ImGuiDragDropFlags_AcceptBeforeDelivery)) {
+                        if (pl->DataSize == sizeof(DragPayload)) {
+                            const auto* dp = static_cast<const DragPayload*>(pl->Data);
+                            bool willSwap = false;
+                            std::string err;
+                            if (dp->isTerrorist != loadoutEditT_) {
+                                err = "不可跨阵营放置武器";
+                            } else {
+                                err = WeaponDB::ValidateLoadoutAssignment(
+                                    activeLoadout, loadoutEditT_, group, i, dp->weapon, willSwap);
+                            }
+                            if (!err.empty()) {
+                                ImGui::SetTooltip("%s", err.c_str());
+                                if (pl->IsDelivery()) {
+                                    loadoutNotice_ = err;
+                                    loadoutNoticeErr_ = true;
+                                }
+                            } else if (pl->IsDelivery()) {
+                                if (!dp->fromCandidate && dp->group == group) {
+                                    WeaponDB::SwapLoadoutSlots(activeLoadout, group, dp->slotIdx, i);
+                                } else {
+                                    WeaponDB::ApplyLoadoutSlotChoice(activeLoadout, loadoutEditT_, group, i, dp->weapon);
+                                }
+                                loadoutSelGroup_ = group;
+                                loadoutSelSlot_  = i;
+                                loadoutNotice_.clear();
+                                loadoutNoticeErr_ = false;
+                                if (actions.playClick) actions.playClick();
+                            }
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+
+                if (clicked) {
+                    if (actions.playClick) actions.playClick();
+                    loadoutSelGroup_ = group;
+                    loadoutSelSlot_  = i;
+                    loadoutNotice_.clear();
+                }
+
+                // 图标 + 名称 + 价格 + 槽位序号
+                char tag[16];
+                std::snprintf(tag, sizeof(tag), "#%d", i + 1);
+                drawWeaponIcon(sdl, def.iconPath,
+                               ImVec2(p0.x + UI(10.0f), p0.y + UI(8.0f)),
+                               ImVec2(p1.x - UI(10.0f), p1.y - UI(30.0f)), false);
+                DrawImGuiText(imGuiUI_, tag, p0.x + UI(8.0f), p0.y + UI(6.0f), 140, 162, 184, 220, 12);
+
+                ImFont* f14 = imGuiUI_ ? imGuiUI_->GetFont(14) : ImGui::GetFont();
+                if (!f14) f14 = ImGui::GetFont();
+                const std::string priceStr = "$" + std::to_string(def.price);
+                const float pw = f14->CalcTextSizeA(UI(13), FLT_MAX, 0.0f, priceStr.c_str()).x;
+                const std::string fitName = FitHudText(imGuiUI_, def.name, cardW - pw - UI(22.0f), 14);
+                DrawImGuiText(imGuiUI_, fitName.c_str(), p0.x + UI(8.0f), p1.y - UI(24.0f), 228, 236, 244, 255, 14);
+                DrawImGuiText(imGuiUI_, priceStr.c_str(), p1.x - UI(8.0f) - pw, p1.y - UI(23.0f), 224, 188, 108, 255, 13);
+
+                ImGui::PopID();
+                if (i + 1 < count) ImGui::SameLine(0.0f, cardGap);
+            }
+            ImGui::Dummy(ImVec2(0.0f, UI(8.0f)));
+            ImGui::PopID();
+        };
+
+        const int cols5 = (slotAreaW < UI(620.0f)) ? 3 : 5;
+        renderGroup("起始手枪", loadoutEditT_ ? "T 固定为 Glock-18" : "CT 可切换 USP-S / P2000",
+                    WeaponDB::LoadoutGroup::StartingPistol, 1, 1);
+        renderGroup("手枪", "共 4 个手枪槽位",
+                    WeaponDB::LoadoutGroup::Pistol, 4, std::min(4, cols5));
+        renderGroup("中型武器", "冲锋枪 · 霰弹枪 · 机枪（共 5 位）",
+                    WeaponDB::LoadoutGroup::Midtier, 5, cols5);
+        renderGroup("步枪", "步枪与狙击枪共用 5 位",
+                    WeaponDB::LoadoutGroup::Rifle, 5, cols5);
+    }
+    ImGui::EndChild();
+
+    // 右区：当前选中槽位候选武器（独立滚动）
+    ImGui::SetCursorScreenPos(ImVec2(wp.x + marginX + slotAreaW + colGap, bodyTop));
+    ImGui::BeginChild("##loadoutCandidates", ImVec2(candW, bodyH), true);
+    {
+        ImDrawList* cdl = ImGui::GetWindowDrawList();
+        const float availW = ImGui::GetContentRegionAvail().x;
+        const char* grpName = (loadoutSelGroup_ == WeaponDB::LoadoutGroup::StartingPistol) ? "起始手枪"
+                            : (loadoutSelGroup_ == WeaponDB::LoadoutGroup::Pistol)         ? "手枪"
+                            : (loadoutSelGroup_ == WeaponDB::LoadoutGroup::Midtier)        ? "中型武器"
+                                                                                           : "步枪/狙击枪";
+        char titleBuf[64];
+        std::snprintf(titleBuf, sizeof(titleBuf), "可用候选 · %s #%d", grpName, loadoutSelSlot_ + 1);
+        const ImVec2 tPos = ImGui::GetCursorScreenPos();
+        DrawImGuiText(imGuiUI_, titleBuf, tPos.x, tPos.y, 240, 214, 150, 255, 17);
+        DrawImGuiText(imGuiUI_, "点击替换/互换，或拖放至左侧槽位",
+                      tPos.x, tPos.y + UI(24.0f), 146, 168, 190, 225, 13);
+        ImGui::Dummy(ImVec2(availW, UI(48.0f)));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, UI(6.0f)));
+
+        const std::vector<WeaponId> cands = WeaponDB::LoadoutCandidatesForGroup(loadoutEditT_, loadoutSelGroup_);
+        for (size_t idx = 0; idx < cands.size(); ++idx) {
+            const WeaponId wid = cands[idx];
+            const WeaponDef& def = WeaponDB::Get(wid);
+            ImGui::PushID(static_cast<int>(wid));
+
+            WeaponDB::LoadoutGroup eqGroup{};
+            int eqSlot = -1;
+            const bool equipped = WeaponDB::FindWeaponInLoadout(activeLoadout, wid, eqGroup, eqSlot);
+            const bool inThisSlot = equipped && eqGroup == loadoutSelGroup_ && eqSlot == loadoutSelSlot_;
+
+            const float rowH = UI(68.0f);
+            const bool clicked = ImGui::InvisibleButton("##cand", ImVec2(availW, rowH));
+            const bool hovered = ImGui::IsItemHovered();
+            const ImVec2 p0 = ImGui::GetItemRectMin();
+            const ImVec2 p1 = ImGui::GetItemRectMax();
+
+            const Controls::State st{ hovered, hovered && ImGui::IsItemActive(), inThisSlot, false };
+            Controls::Surface(imGuiUI_, cdl, p0, p1, Controls::Finish::Smoke, st, 0.90f, UI(6.0f));
+
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                const DragPayload payload{ true, loadoutEditT_, loadoutSelGroup_, -1, wid };
+                ImGui::SetDragDropPayload("PE_LOADOUT_ITEM", &payload, sizeof(payload));
+                ImGui::Text("%s ($%d)", def.name, def.price);
+                ImGui::EndDragDropSource();
+            }
+
+            drawWeaponIcon(cdl, def.iconPath,
+                           ImVec2(p0.x + UI(10.0f), p0.y + UI(8.0f)),
+                           ImVec2(p0.x + UI(92.0f), p1.y - UI(8.0f)), false);
+
+            DrawImGuiText(imGuiUI_, def.name, p0.x + UI(104.0f), p0.y + UI(12.0f),
+                          inThisSlot ? 248 : 232, inThisSlot ? 216 : 238, inThisSlot ? 140 : 244, 255, 16);
+
+            char subBuf[64];
+            if (inThisSlot) std::snprintf(subBuf, sizeof(subBuf), "$%d · 当前槽位", def.price);
+            else if (equipped) std::snprintf(subBuf, sizeof(subBuf), "$%d · 已在 #%d（点击互换）", def.price, eqSlot + 1);
+            else std::snprintf(subBuf, sizeof(subBuf), "$%d · 点击装备", def.price);
+
+            DrawImGuiText(imGuiUI_, subBuf, p0.x + UI(104.0f), p0.y + UI(36.0f),
+                          equipped ? 156 : 204, equipped ? 212 : 186, equipped ? 172 : 122, 235, 13);
+
+            if (clicked) {
+                if (actions.playClick) actions.playClick();
+                if (!inThisSlot) {
+                    if (WeaponDB::ApplyLoadoutSlotChoice(activeLoadout, loadoutEditT_,
+                                                         loadoutSelGroup_, loadoutSelSlot_, wid)) {
+                        loadoutNotice_.clear();
+                        loadoutNoticeErr_ = false;
+                    }
+                }
+            }
+
+            ImGui::PopID();
+            ImGui::Dummy(ImVec2(0.0f, UI(4.0f)));
+        }
+
+        // 提示：显示其它阵营专属或跨组武器不可放置的原因，供用户查阅
+        ImGui::Dummy(ImVec2(0.0f, UI(8.0f)));
+        ImGui::Separator();
+        DrawImGuiText(imGuiUI_, "规则说明", ImGui::GetCursorScreenPos().x,
+                      ImGui::GetCursorScreenPos().y + UI(6.0f), 156, 178, 200, 235, 13);
+        ImGui::Dummy(ImVec2(0.0f, UI(24.0f)));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.70f, 0.78f, 0.90f));
+        ImGui::TextWrapped("• 禁止跨组、跨阵营或重复占用多个槽位。\n• 步枪与狙击枪共享 5 个步枪槽位。\n• 选择本组已有武器会自动互换位置。");
+        ImGui::PopStyleColor();
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+
+    // ---- 键盘槽位导航 ----
+    if (!loadoutConfirmExit_) {
+        auto groupSlotsCount = [](WeaponDB::LoadoutGroup g) -> int {
+            if (g == WeaponDB::LoadoutGroup::StartingPistol) return 1;
+            if (g == WeaponDB::LoadoutGroup::Pistol) return 4;
+            return 5;
+        };
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)) {
+            if (loadoutSelSlot_ > 0) --loadoutSelSlot_;
+        } else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
+            if (loadoutSelSlot_ + 1 < groupSlotsCount(loadoutSelGroup_)) ++loadoutSelSlot_;
+        } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false)) {
+            int g = static_cast<int>(loadoutSelGroup_);
+            if (g > 0) {
+                loadoutSelGroup_ = static_cast<WeaponDB::LoadoutGroup>(g - 1);
+                loadoutSelSlot_ = std::min(loadoutSelSlot_, groupSlotsCount(loadoutSelGroup_) - 1);
+            }
+        } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, false)) {
+            int g = static_cast<int>(loadoutSelGroup_);
+            if (g < 3) {
+                loadoutSelGroup_ = static_cast<WeaponDB::LoadoutGroup>(g + 1);
+                loadoutSelSlot_ = std::min(loadoutSelSlot_, groupSlotsCount(loadoutSelGroup_) - 1);
+            }
+        }
+    }
+
+    // ---- 底部始终可见的操作区 ----
+    const float footerY = wp.y + ws.y - UI(64.0f);
+    ImGui::SetCursorScreenPos(ImVec2(wp.x + marginX, footerY));
+    if (Controls::Button(imGuiUI_, "恢复本阵营默认", ImVec2(UI(180.0f), UI(42.0f)))) {
+        if (actions.playClick) actions.playClick();
+        activeLoadout = WeaponDB::DefaultTeamLoadout(loadoutEditT_);
+        loadoutNotice_ = loadoutEditT_ ? "已恢复 T 默认配装（未保存）" : "已恢复 CT 默认配装（未保存）";
+        loadoutNoticeErr_ = false;
+    }
+
+    if (!loadoutNotice_.empty()) {
+        DrawImGuiText(imGuiUI_, loadoutNotice_.c_str(),
+                      wp.x + marginX + UI(198.0f), footerY + UI(12.0f),
+                      loadoutNoticeErr_ ? 240 : 155,
+                      loadoutNoticeErr_ ? 120 : 215,
+                      loadoutNoticeErr_ ? 112 : 168, 255, 14);
+    }
+
+    const float saveW = UI(150.0f);
+    const float backW = UI(130.0f);
+    ImGui::SetCursorScreenPos(ImVec2(wp.x + marginX + contentW - saveW - backW - UI(12.0f), footerY));
+    if (Controls::Button(imGuiUI_, "保存", ImVec2(saveW, UI(42.0f)), Controls::Finish::Champagne)) {
+        if (actions.playClick) actions.playClick();
+        loadoutDraft_ = WeaponDB::SanitizeMatchLoadouts(loadoutDraft_);
+        if (actions.saveLoadouts) actions.saveLoadouts(loadoutDraft_);
+        loadoutBaseline_ = loadoutDraft_;
+        loadoutPageOpen_ = false;
+        if (actions.goState) actions.goState(MAIN_MENU);
+    }
+
+    auto tryReturn = [&]() {
+        if (hasUnsaved) {
+            loadoutConfirmExit_ = true;
+            ImGui::OpenPopup("未保存的配装更改");
+        } else {
+            loadoutPageOpen_ = false;
+            if (actions.goState) actions.goState(MAIN_MENU);
+        }
+    };
+
+    ImGui::SetCursorScreenPos(ImVec2(wp.x + marginX + contentW - backW, footerY));
+    if (Controls::Button(imGuiUI_, "返回", ImVec2(backW, UI(42.0f)))) {
+        if (actions.playClick) actions.playClick();
+        tryReturn();
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !loadoutConfirmExit_) {
+        tryReturn();
+    }
+
+    ImGui::SetNextWindowPos(ImVec2(wp.x + ws.x * 0.5f, wp.y + ws.y * 0.5f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(UI(480.0f), 0.0f), ImGuiCond_Always);
+    if (ImGui::BeginPopupModal("未保存的配装更改", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+        ImGui::TextWrapped("当前 T / CT 武器配装存在尚未保存的修改，离开前要如何处理？");
+        ImGui::Spacing();
+        if (Controls::Button(imGuiUI_, "保存并返回", ImVec2(UI(148.0f), UI(38.0f)), Controls::Finish::Champagne)) {
+            if (actions.playClick) actions.playClick();
+            loadoutDraft_ = WeaponDB::SanitizeMatchLoadouts(loadoutDraft_);
+            if (actions.saveLoadouts) actions.saveLoadouts(loadoutDraft_);
+            loadoutBaseline_ = loadoutDraft_;
+            loadoutConfirmExit_ = false;
+            loadoutPageOpen_ = false;
+            ImGui::CloseCurrentPopup();
+            if (actions.goState) actions.goState(MAIN_MENU);
+        }
+        ImGui::SameLine();
+        if (Controls::Button(imGuiUI_, "放弃更改", ImVec2(UI(132.0f), UI(38.0f)), Controls::Finish::Danger)) {
+            if (actions.playClick) actions.playClick();
+            loadoutConfirmExit_ = false;
+            loadoutPageOpen_ = false;
+            ImGui::CloseCurrentPopup();
+            if (actions.goState) actions.goState(MAIN_MENU);
+        }
+        ImGui::SameLine();
+        if (Controls::Button(imGuiUI_, "继续编辑", ImVec2(UI(132.0f), UI(38.0f)))) {
+            if (actions.playClick) actions.playClick();
+            loadoutConfirmExit_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    } else {
+        loadoutConfirmExit_ = false;
+    }
+
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
 }
 
 // ============================================================================
@@ -1604,6 +2161,7 @@ static const char* BuyCodeText(Presentation::BuyCode code) {
         case Presentation::BuyCode::WindowClosed:      return "当前不是购买阶段";
         case Presentation::BuyCode::OutsideBuyZone:    return "不在购买区内";
         case Presentation::BuyCode::TeamRestricted:    return "本阵营无法购买该武器";
+        case Presentation::BuyCode::NotInLoadout:      return "未配装";
         case Presentation::BuyCode::InsufficientFunds: return "余额不足";
         case Presentation::BuyCode::InventoryFull:     return "投掷物已满 4 个";
         case Presentation::BuyCode::ItemLimitReached:  return "该投掷物已达携带上限";
@@ -1612,242 +2170,362 @@ static const char* BuyCodeText(Presentation::BuyCode code) {
     return "无法购买";
 }
 
+void GameUI::ResetBuyWheel() {
+    wasBuyMenuOpen_ = false;
+    buyWheel_.ResetOnOpen(false);
+    buyFlashText_.clear();
+    buyFlashUntil_ = -1.0f;
+}
+
+ImVec2 GameUI::ComputeBuyWheelCenter(const ImVec2& workPos, const ImVec2& workSize) {
+    return ImVec2(workPos.x + workSize.x * 0.5f, workPos.y + workSize.y * 0.5f);
+}
+
+float GameUI::ComputeBuyWheelOuterRadius(const ImVec2& workSize) {
+    return std::clamp(std::min(workSize.x, workSize.y) * 0.36f, UI(160.0f), UI(355.0f));
+}
+
 void GameUI::DrawBuyMenu(const BuyMenuCtx& ctx,
     const std::function<Presentation::BuyResult(const Presentation::BuyRequest&)>& onBuy) {
     if (imGuiUI_) imGuiUI_->PrepareFrostedGlass();
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    const float w = std::min(UI(1120.0f), viewport->WorkSize.x - UI(48));
-    // 高度跟着视口走，小窗口也不会被裁掉；内容超出时右侧出现滚动条
-    const float h = std::min(UI(900.0f), viewport->WorkSize.y - UI(48.0f));
-    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (viewport->WorkSize.x - w) * 0.5f,
-                                  viewport->WorkPos.y + (viewport->WorkSize.y - h) * 0.5f),
-                            ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.043f, 0.059f, 0.078f, 0.30f));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0,0,0,0));
+    const ImVec2 wp = viewport->WorkPos;
+    const ImVec2 ws = viewport->WorkSize;
+
+    if (!wasBuyMenuOpen_) {
+        buyWheel_.ResetOnOpen(ImGui::IsMouseDown(ImGuiMouseButton_Left));
+        wasBuyMenuOpen_ = true;
+    }
+
+    ImGui::SetNextWindowPos(wp, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ws, ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.02f, 0.03f, 0.045f, 0.42f));
     ImGui::Begin("##BuyMenu", nullptr,
                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
                  ImGuiWindowFlags_NoScrollWithMouse);
 
-    Palette::DrawGlassPanel(ImGui::GetBackgroundDrawList(), ImGui::GetWindowPos(),
-        ImVec2(ImGui::GetWindowPos().x + w, ImGui::GetWindowPos().y + h),
-        Palette::GlassTint(IM_COL32(15,19,25,190)), UI(6));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(8, 12, 18, 128));
 
-    // 卡片字阶使用精确字号，避免 13/16 被 GetFont 的就近档位合成同一大小。
-    auto drawBuyText = [this](const char* text, float x, float y,
-                             Uint8 r, Uint8 g, Uint8 b, Uint8 alpha, int size) {
-        ImFont* font = imGuiUI_ ? imGuiUI_->GetFont(size) : ImGui::GetFont();
-        ImGui::GetWindowDrawList()->AddText(font, UI(size), ImVec2(x + UI(1),y + UI(1)), IM_COL32(0,0,0,alpha*3/4), text);
-        ImGui::GetWindowDrawList()->AddText(font, UI(size), ImVec2(x,y), IM_COL32(r,g,b,alpha), text);
+    const bool isTerrorist = (ctx.playerTeam == Team::T);
+    const ImVec2 center = ComputeBuyWheelCenter(wp, ws);
+    const float outerR  = ComputeBuyWheelOuterRadius(ws);
+    const float innerR  = outerR * RadialWheel::kDefaultInnerRatio;
+
+    auto findWeaponItem = [&](WeaponId wid) -> const BuyItem* {
+        for (const auto& it : ctx.items) {
+            if (it.request.kind == Presentation::BuyKind::Weapon && it.request.weapon == wid) {
+                return &it;
+            }
+        }
+        return nullptr;
+    };
+    auto findSpecialItem = [&](Presentation::BuyKind k, int tier) -> const BuyItem* {
+        for (const auto& it : ctx.items) {
+            if (it.request.kind == k && (k != Presentation::BuyKind::Armor || it.request.armorTier == tier)) {
+                return &it;
+            }
+        }
+        return nullptr;
     };
 
-    // 一帧最多提交一次购买请求：提交后本帧其余条目只显示旧快照
-    bool submittedThisFrame = false;
-    int  displayMoney = ctx.money;
-    // 上一条结果提示（UI 自己保存，不写 CS2DGame）
-    static std::string flashText;
-    static float       flashUntil = -1.0f;
-    static bool        flashOk = false;
-    static float       flashStarted = -1.0f;
-
-    const ImVec2 header = ImGui::GetCursorScreenPos();
-    ImDrawList* headerDraw = ImGui::GetWindowDrawList();
-    const float headerWidth = ImGui::GetContentRegionAvail().x;
-    bool hoveredUnaffordable = false;
-    ImGui::Dummy(ImVec2(headerWidth, UI(112)));
-    const ImVec2 feedback = ImGui::GetCursorScreenPos();
-    ImGui::Dummy(ImVec2(headerWidth, UI(22)));
-    ImGui::Separator();
-
-    // 只滚动卡片区：余额和购买结果提示始终可见
-    ImGui::BeginChild("##buyItems", ImVec2(0.0f, 0.0f), false,
-                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
-
-    static const char* kGroupNames[] = { "主武器", "副武器", "近战", "投掷物", "护甲" };
-    for (int g = 0; g < 5; ++g) {
-        bool headerDrawn = false;
-        int  col = 0;
-        for (const auto& it : ctx.items) {
-            if (it.group != g) continue;
-
-            if (!headerDrawn) {
-                ImGui::Dummy(ImVec2(0, UI(g == 0 ? 5 : 14)));
-                const ImVec2 groupPos = ImGui::GetCursorScreenPos();
-                drawBuyText(kGroupNames[g], groupPos.x, groupPos.y, 155, 200, 226, 255, 18);
-                drawBuyText(kGroupNames[g], groupPos.x + UI(.35f), groupPos.y, 155, 200, 226, 255, 18);
-                ImGui::Dummy(ImVec2(0, UI(27)));
-                headerDrawn = true;
-                col = 0;
+    auto collectCategoryItems = [&](int catIdx) -> std::vector<const BuyItem*> {
+        std::vector<const BuyItem*> out;
+        if (catIdx >= 0 && catIdx <= 3) {
+            const auto sc = static_cast<WeaponDB::ShopCategory>(catIdx);
+            for (WeaponId wid : WeaponDB::ShopWeaponsForCategory(ctx.loadout, isTerrorist, sc)) {
+                if (const BuyItem* p = findWeaponItem(wid)) out.push_back(p);
             }
-
-            // 禁用判定以新字段 availability 为准（canBuy/affordable/owned 仅兼容）
-            const bool enabled = ctx.canBuy && !submittedThisFrame &&
-                                 it.availability == Presentation::BuyCode::Ok;
-            const char* reason = BuyCodeText(it.availability);
-
-            // 大幅武器主视图，底部名称与价格，状态由配色表达。
-            const float cardW = (ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x - ImGui::GetStyle().ItemSpacing.x * 2) / 3;
-            const float cardH = UI(154.0f);
-            // Stable across per-frame BuyMenuCtx allocations and mouse press/release.
-            ImGui::PushID(static_cast<int>(it.request.kind));
-            ImGui::PushID(it.request.kind == Presentation::BuyKind::Armor
-                ? it.request.armorTier : static_cast<int>(it.request.weapon));
-            // 松开时才算点击：按下后移出卡片再松开可以取消，避免误买
-            const bool released = ImGui::InvisibleButton("##card", ImVec2(cardW, cardH));
-            const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
-            const bool held    = ImGui::IsItemActive();
-            hoveredUnaffordable |= hovered && it.price > displayMoney;
-            const bool clicked = enabled && released;
-            if (hovered && !enabled) ImGui::SetMouseCursor(ImGuiMouseCursor_NotAllowed);
-
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            const ImVec2 p0 = ImGui::GetItemRectMin();
-            const ImVec2 p1 = ImGui::GetItemRectMax();
-
-            const bool equipped = it.availability == Presentation::BuyCode::AlreadyEquipped;
-            const Controls::State materialState{enabled && hovered, enabled && hovered && held, equipped, !enabled};
-            Controls::Surface(imGuiUI_, dl, p0, p1, Controls::Finish::Smoke, materialState, enabled ? .78f : .55f);
-            if (hovered)
-                dl->AddRect(p0, p1, enabled ? Palette::U32(Palette::Accent()) : IM_COL32(104,116,132,220),
-                            UI(5), 0, UI(1.5f));
-
-            // 图标：借用 WeaponIconCache（cache owning，UI 借用，不 Destroy）
-            const float iconWidth = cardW - UI(40);
-            const float iconBox = UI(102);
-            const ImVec2 iconPos(p0.x + UI(20), p0.y + UI(10));
-            SDL_Texture* iconTex = nullptr;
-            if (weaponIconCache_ && !it.iconPath.empty()) {
-                iconTex = weaponIconCache_->GetBuy(it.iconPath);
+        } else if (catIdx == 4) {
+            if (const BuyItem* a1 = findSpecialItem(Presentation::BuyKind::Armor, 1)) out.push_back(a1);
+            if (const BuyItem* a2 = findSpecialItem(Presentation::BuyKind::Armor, 2)) out.push_back(a2);
+            if (const BuyItem* z  = findWeaponItem(WeaponId::Zeus)) out.push_back(z);
+            if (const BuyItem* dk = findSpecialItem(Presentation::BuyKind::DefuseKit, 0)) out.push_back(dk);
+        } else if (catIdx == 5) {
+            for (WeaponId wid : WeaponDB::ShopWeaponsForCategory(ctx.loadout, isTerrorist, WeaponDB::ShopCategory::Grenades)) {
+                if (const BuyItem* p = findWeaponItem(wid)) out.push_back(p);
             }
-            const ImU32 iconTintMod = enabled ? IM_COL32(255, 255, 255, 235)
-                                             : IM_COL32(255, 255, 255, 175);
-            if (iconTex) {
-                int width = 0, height = 0;
-                if (SDL_QueryTexture(iconTex, nullptr, nullptr, &width, &height) == 0 && width > 0 && height > 0) {
-                    const float fit = std::min(iconWidth / width, iconBox / height);
-                    const ImVec2 size(width * fit, height * fit);
-                    const ImVec2 pos(iconPos.x + (iconWidth - size.x) * 0.5f,
-                                     iconPos.y + (iconBox - size.y) * 0.5f);
-                    dl->AddImage(reinterpret_cast<ImTextureID>(iconTex), pos,
-                                 ImVec2(pos.x + size.x, pos.y + size.y),
-                                 ImVec2(0, 0), ImVec2(1, 1), iconTintMod);
-                }
+        }
+        return out;
+    };
+
+    static constexpr const char* kCatTitles[6] = {
+        "手枪", "中型武器", "步枪", "狙击枪", "装备", "投掷物"
+    };
+
+    std::vector<const BuyItem*> activeItems;
+    std::vector<RadialWheel::SectorItem> wheelItems;
+    std::vector<bool> sectorEnabled;
+
+    if (buyWheel_.level == 0) {
+        for (int c = 0; c < 6; ++c) {
+            const auto list = collectCategoryItems(c);
+            RadialWheel::SectorItem si;
+            si.id = std::string("buy_cat_") + std::to_string(c);
+            si.label = kCatTitles[c];
+            if (list.empty()) {
+                si.subLabel = "未配装";
+                si.enabled = false;
+                si.disabledReason = "该类别在赛前配装中未配置武器";
             } else {
-                // 降级：轮廓占位（护甲画盾牌轮廓，其它画武器剪影框）
-                const float fallbackX = p0.x + (cardW - iconBox) * .5f;
-                const ImU32 oc = enabled ? IM_COL32(170, 182, 198, 200)
-                                         : IM_COL32(110, 118, 128, 140);
-                if (it.group == 4) {
-                    dl->AddRectFilled(ImVec2(fallbackX + iconBox * 0.25f, iconPos.y + iconBox * 0.15f),
-                                      ImVec2(fallbackX + iconBox * 0.75f, iconPos.y + iconBox * 0.85f),
-                                      oc, UI(4.0f));
-                } else {
-                    dl->AddRect(ImVec2(fallbackX, iconPos.y), ImVec2(fallbackX + iconBox, iconPos.y + iconBox), oc,
-                                UI(3.0f), 0, UI(1.0f));
-                    dl->AddLine(ImVec2(fallbackX + iconBox * 0.15f, iconPos.y + iconBox * 0.72f),
-                                ImVec2(fallbackX + iconBox * 0.85f, iconPos.y + iconBox * 0.30f),
-                                oc, UI(2.0f));
-                }
+                if (c == 1) si.subLabel = "冲锋枪·霰弹·机枪";
+                else        si.subLabel = std::to_string(list.size()) + " 件";
+                si.enabled = true;
             }
-
-            // 武器占据卡片主体，底行只保留名称与价格。
-            const float textY = p1.y - UI(30);
-            const bool poor = it.price > displayMoney;
-            const std::string price = equipped ? "已装备" : "$" + std::to_string(it.price);
-            ImFont* priceFont = imGuiUI_ ? imGuiUI_->GetFont(18) : ImGui::GetFont();
-            if (!priceFont) priceFont = ImGui::GetFont();
-            const float priceWidth = priceFont->CalcTextSizeA(UI(18), FLT_MAX, 0, price.c_str()).x;
-            drawBuyText(FitHudText(imGuiUI_, it.name, cardW - priceWidth - UI(44), 18).c_str(),
-                        p0.x + UI(16), textY, 222, 231, 238, 255, 18);
-            drawBuyText(price.c_str(), p1.x - UI(16) - priceWidth, textY,
-                        equipped ? 124 : poor ? 225 : 239,
-                        equipped ? 209 : poor ? 124 : 199,
-                        equipped ? 157 : poor ? 111 : 120, 255, 18);
-
-            if (clicked && onBuy) {
-                const Presentation::BuyResult res = onBuy(it.request);
-                submittedThisFrame = true;
-                flashStarted = static_cast<float>(ImGui::GetTime());
-                flashOk = (res.code == Presentation::BuyCode::Ok);
-                if (flashOk) {
-                    displayMoney = res.moneyAfter;
-                    flashText = std::string(it.name) + " 已购买";
-                    flashUntil = static_cast<float>(ImGui::GetTime()) + 1.6f;
-                } else {
-                    flashText = std::string(it.name) + ": " + BuyCodeText(res.code);
-                    flashUntil = static_cast<float>(ImGui::GetTime()) + 2.2f;
-                }
+            sectorEnabled.push_back(si.enabled);
+            wheelItems.push_back(std::move(si));
+        }
+    } else {
+        const int cat = std::clamp(buyWheel_.activeCategory, 0, 5);
+        activeItems = collectCategoryItems(cat);
+        for (size_t i = 0; i < activeItems.size(); ++i) {
+            const BuyItem* it = activeItems[i];
+            const bool canBuyNow = ctx.canBuy && (it->availability == Presentation::BuyCode::Ok);
+            const bool equipped  = (it->availability == Presentation::BuyCode::AlreadyEquipped);
+            RadialWheel::SectorItem si;
+            si.id = std::string("buy_item_") + std::to_string(cat) + "_" + std::to_string(i);
+            si.label = it->name;
+            si.selected = equipped;
+            si.enabled = canBuyNow;
+            si.refundable = (it->refundAmount > 0);
+            si.refundAmount = it->refundAmount;
+            si.disabledReason = canBuyNow ? "" : BuyCodeText(it->availability);
+            if (si.disabledReason.empty() && !ctx.canBuy) si.disabledReason = ctx.hint;
+            si.subLabel = equipped ? "已装备" : ("$" + std::to_string(it->price));
+            if (weaponIconCache_ && !it->iconPath.empty()) {
+                si.icon = weaponIconCache_->GetBuy(it->iconPath);
             }
-            if (hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && !submittedThisFrame &&
-                ctx.refund) {
-                flashOk = ctx.refund(it.request);
-                submittedThisFrame = true;
-                flashStarted = static_cast<float>(ImGui::GetTime());
-                flashText = flashOk ? std::string(it.name) + " 已退款 $" + std::to_string(it.refundAmount)
-                                    : it.refundReason;
-                if (flashOk)
-                    displayMoney += it.refundAmount;
-                flashUntil = static_cast<float>(ImGui::GetTime()) + 2;
-            }
-            if (hovered && it.refundAmount > 0) {
-                ImGui::SetTooltip("右键退款 $%d · 可退 %d 件", it.refundAmount, it.refundQuantity);
-            }
-            // disabled 项也允许悬停读原因
-            if (!enabled && !reason[0] && ctx.hint.size()) reason = ctx.hint.c_str();
-            if (!enabled && reason[0] && hovered && it.refundAmount<=0) {
-                ImGui::SetTooltip("%s", reason);
-            }
-            ImGui::PopID();
-            ImGui::PopID();
-
-            ++col;
-            if (col % 3 != 0) ImGui::SameLine();
+            sectorEnabled.push_back(canBuyNow);
+            wheelItems.push_back(std::move(si));
         }
     }
 
-    ImGui::EndChild();
-    ImFont* titleFont = imGuiUI_ ? imGuiUI_->GetFont(34) : ImGui::GetFont();
-    if (!titleFont) titleFont = ImGui::GetFont();
-    const float titleWidth = titleFont->CalcTextSizeA(UI(34), FLT_MAX, 0, "购买装备").x;
-    drawBuyText("购买装备", header.x + (headerWidth - titleWidth) * .5f,
-                header.y + UI(8), 236, 243, 249, 255, 34);
-    const int seconds = static_cast<int>(std::ceil(ctx.buyRemaining));
-    if (ctx.buyRemaining >= 0) {
-        const std::string remaining = std::to_string(seconds) + " 秒";
-        drawBuyText(remaining.c_str(), header.x + UI(12), header.y + UI(76),
-                    seconds <= 10 ? 239 : 147, seconds <= 10 ? 119 : 166,
-                    seconds <= 10 ? 102 : 181, 255, 16);
+    RadialWheel::Layout layout;
+    layout.centerX = center.x;
+    layout.centerY = center.y;
+    layout.innerRadius = innerR;
+    layout.outerRadius = outerR;
+    layout.sectorCount = static_cast<int>(wheelItems.size());
+    layout.gapHalfAngle = (layout.sectorCount >= 6) ? 0.018f : 0.024f;
+
+    const RadialWheel::InputSnapshot snap =
+        RadialWheel::CollectImGuiInput(ctx.windowFocused, ctx.suppressNav);
+    const RadialWheel::Action act = buyWheel_.Step(layout, snap, sectorEnabled);
+
+    int displayMoney = ctx.money;
+    if (act.type == RadialWheel::Action::Type::EnterCategory) {
+        buyWheel_.EnterSecondLevel(act.sector);
+    } else if (act.type == RadialWheel::Action::Type::Back) {
+        buyWheel_.BackToFirstLevel();
+    } else if (act.type == RadialWheel::Action::Type::Close) {
+        if (ctx.onClose) ctx.onClose();
+    } else if (act.type == RadialWheel::Action::Type::SelectItem) {
+        if (act.sector >= 0 && act.sector < static_cast<int>(activeItems.size()) && onBuy) {
+            const BuyItem* it = activeItems[act.sector];
+            const Presentation::BuyResult res = onBuy(it->request);
+            buyFlashStarted_ = static_cast<float>(ImGui::GetTime());
+            buyFlashOk_ = (res.code == Presentation::BuyCode::Ok);
+            if (buyFlashOk_) {
+                displayMoney = res.moneyAfter;
+                buyFlashText_ = "已购买 " + it->name + " · 余额 $" + std::to_string(displayMoney);
+                buyFlashUntil_ = static_cast<float>(ImGui::GetTime()) + 2.2f;
+                buyWheel_.BackToFirstLevel();
+            } else {
+                buyFlashText_ = it->name + ": " + BuyCodeText(res.code);
+                buyFlashUntil_ = static_cast<float>(ImGui::GetTime()) + 2.2f;
+            }
+        }
+    } else if (act.type == RadialWheel::Action::Type::RefundItem) {
+        if (act.sector >= 0 && act.sector < static_cast<int>(activeItems.size()) && ctx.refund) {
+            const BuyItem* it = activeItems[act.sector];
+            buyFlashStarted_ = static_cast<float>(ImGui::GetTime());
+            buyFlashOk_ = ctx.refund(it->request);
+            if (buyFlashOk_) {
+                displayMoney += it->refundAmount;
+                buyFlashText_ = it->name + " 已退款 $" + std::to_string(it->refundAmount);
+            } else {
+                buyFlashText_ = it->refundReason.empty() ? "无法退款" : it->refundReason;
+            }
+            buyFlashUntil_ = static_cast<float>(ImGui::GetTime()) + 2.2f;
+        }
     }
-    const float balanceX = header.x + headerWidth - UI(195);
-    headerDraw->AddRectFilled(ImVec2(balanceX, header.y + UI(58)), ImVec2(header.x + headerWidth, header.y + UI(106)),
-        hoveredUnaffordable ? Palette::GlassTint(IM_COL32(78,32,30,210)) : Palette::GlassTint(IM_COL32(60,49,29,210)), UI(6));
-    headerDraw->AddRect(ImVec2(balanceX, header.y + UI(58)), ImVec2(header.x + headerWidth, header.y + UI(106)),
-        hoveredUnaffordable ? IM_COL32(226,108,95,130) : IM_COL32(228,188,102,100), UI(6));
-    const std::string balance = "$" + std::to_string(displayMoney);
-    drawBuyText(balance.c_str(), balanceX + UI(15), header.y + UI(68),
-        245, hoveredUnaffordable ? 121 : 207, hoveredUnaffordable ? 105 : 121, 255, 28);
-    const std::string close = "[" + ctx.closeBinding + "] 关闭";
-    ImFont* hintFont = imGuiUI_ ? imGuiUI_->GetFont(13) : ImGui::GetFont();
-    if (!hintFont) hintFont = ImGui::GetFont();
-    const float closeWidth = hintFont->CalcTextSizeA(UI(13), FLT_MAX, 0, close.c_str()).x;
-    drawBuyText(close.c_str(), header.x + headerWidth - closeWidth - UI(8), header.y + UI(16),
-                130,151,167,255,13);
-    const bool flashing = !flashText.empty() && ImGui::GetTime() < flashUntil;
-    const std::string message = flashing ? flashText : !ctx.canBuy ? ctx.hint : "";
-    if (!message.empty()) {
-        const bool ok = flashing && flashOk;
-        const float remaining = flashing ? flashUntil - static_cast<float>(ImGui::GetTime()) : 1;
-        const float fadeIn = flashing ? std::clamp((static_cast<float>(ImGui::GetTime()) - flashStarted) / .12f, 0.0f, 1.0f) : 1;
-        const float fade = std::min(fadeIn, remaining / .25f);
-        headerDraw->AddRectFilled(feedback, ImVec2(feedback.x + headerWidth, feedback.y + UI(24)),
-            ok ? Palette::GlassTint(IM_COL32(36,82,60,static_cast<int>(150*fade))) : IM_COL32(113,40,36,static_cast<int>(170*fade)), UI(4));
-        drawBuyText(message.c_str(), feedback.x + UI(8), feedback.y + UI(4),
-            ok ? 145 : 245, ok ? 222 : 145, ok ? 175 : 132, static_cast<Uint8>(255*fade), 14);
+
+    // ---- 中心圆盘信息 ----
+    RadialWheel::DrawStyle style;
+    style.ui = imGuiUI_;
+    style.opacity = 1.0f;
+    style.hoveredSector = act.hoveredSector;
+    style.hoveredCenter = act.hoveredCenter;
+    style.pressedSector = (buyWheel_.pressedButton == 1 && buyWheel_.pressedLevel == buyWheel_.level)
+                        ? buyWheel_.pressedSector : -1;
+    style.pressedCenter = (buyWheel_.pressedButton == 1 && buyWheel_.pressedLevel == buyWheel_.level &&
+                           buyWheel_.pressedRegion == RadialWheel::HitRegion::Center);
+    style.kbIndex = buyWheel_.kbIndex;
+    style.centerIsBack = (buyWheel_.level == 1);
+
+    const int hiIdx = (act.hoveredSector >= 0) ? act.hoveredSector : buyWheel_.kbIndex;
+    const BuyItem* hoveredBuyItem = (buyWheel_.level == 1 && hiIdx >= 0 && hiIdx < static_cast<int>(activeItems.size()))
+                                  ? activeItems[hiIdx] : nullptr;
+
+    if (act.hoveredCenter) {
+        style.centerTitle = (buyWheel_.level == 1) ? "返回类别" : "关闭商店";
+        style.centerSubtitle = "点击或按 Esc";
+    } else if (buyWheel_.level == 0 && hiIdx >= 0 && hiIdx < static_cast<int>(wheelItems.size())) {
+        style.centerTitle = wheelItems[hiIdx].label;
+        style.centerSubtitle = wheelItems[hiIdx].enabled
+                             ? ("可用 " + std::to_string(collectCategoryItems(hiIdx).size()) + " 项")
+                             : "未配装";
+    } else if (hoveredBuyItem) {
+        style.centerTitle = hoveredBuyItem->name;
+        if (hoveredBuyItem->availability == Presentation::BuyCode::Ok) {
+            style.centerSubtitle = "$" + std::to_string(hoveredBuyItem->price) + " · 左键购买";
+        } else {
+            style.centerSubtitle = BuyCodeText(hoveredBuyItem->availability);
+        }
+    } else if (buyWheel_.level == 1) {
+        const int cat = std::clamp(buyWheel_.activeCategory, 0, 5);
+        style.centerTitle = kCatTitles[cat];
+        style.centerSubtitle = "左键购买 · 右键退款";
+    } else {
+        style.centerTitle = "购买装备";
+        style.centerSubtitle = "$" + std::to_string(displayMoney);
     }
+
+    RadialWheel::DrawWheel(dl, layout, wheelItems, style);
+
+    // ---- 盘外固定 HUD（余额、剩余时间、提示、成交/失败反馈）----
+    auto drawShadowText = [&](const char* text, float x, float y, Uint8 r, Uint8 g, Uint8 b, Uint8 a, int size) {
+        ImFont* font = imGuiUI_ ? imGuiUI_->GetFont(size) : ImGui::GetFont();
+        if (!font) font = ImGui::GetFont();
+        dl->AddText(font, UI(size), ImVec2(x + UI(1), y + UI(1)), IM_COL32(0, 0, 0, a * 3 / 4), text);
+        dl->AddText(font, UI(size), ImVec2(x, y), IM_COL32(r, g, b, a), text);
+    };
+
+    const float padX = UI(34.0f);
+    const float padY = UI(24.0f);
+    const bool hoveredPoor = hoveredBuyItem && hoveredBuyItem->price > displayMoney;
+
+    // 左上：余额 + 购买剩余时间
+    {
+        const ImVec2 balP0(wp.x + padX, wp.y + padY);
+        const ImVec2 balP1(balP0.x + UI(210.0f), balP0.y + UI(74.0f));
+        dl->AddRectFilled(balP0, balP1,
+                          hoveredPoor ? IM_COL32(78, 32, 30, 215) : IM_COL32(22, 28, 35, 220), UI(8.0f));
+        dl->AddRect(balP0, balP1,
+                    hoveredPoor ? IM_COL32(226, 108, 95, 165) : IM_COL32(228, 188, 102, 140), UI(8.0f));
+
+        const std::string balStr = "$" + std::to_string(displayMoney);
+        drawShadowText(balStr.c_str(), balP0.x + UI(16.0f), balP0.y + UI(10.0f),
+                       245, hoveredPoor ? 121 : 207, hoveredPoor ? 105 : 121, 255, 28);
+
+        if (ctx.buyRemaining >= 0.0f) {
+            const int sec = static_cast<int>(std::ceil(ctx.buyRemaining));
+            const std::string remStr = "购买剩余 " + std::to_string(sec) + " 秒";
+            drawShadowText(remStr.c_str(), balP0.x + UI(16.0f), balP0.y + UI(46.0f),
+                           sec <= 10 ? 239 : 156, sec <= 10 ? 119 : 176, sec <= 10 ? 102 : 194, 255, 14);
+        } else {
+            drawShadowText("死斗模式 · 购买区可用", balP0.x + UI(16.0f), balP0.y + UI(46.0f),
+                           156, 176, 194, 255, 14);
+        }
+    }
+
+    // 右上：按键关闭提示
+    {
+        const std::string closeHint = "[" + ctx.closeBinding + "] 开关  ·  [Esc] 返回  ·  [1-6] 快选";
+        ImFont* f = imGuiUI_ ? imGuiUI_->GetFont(14) : ImGui::GetFont();
+        if (!f) f = ImGui::GetFont();
+        const float tw = f->CalcTextSizeA(UI(14), FLT_MAX, 0.0f, closeHint.c_str()).x;
+        drawShadowText(closeHint.c_str(), wp.x + ws.x - padX - tw, wp.y + padY + UI(8.0f),
+                       180, 198, 214, 240, 14);
+    }
+
+    // 较宽屏幕右侧展示详情旁区；较窄屏幕在盘外下方显示详情与状态提示
+    const bool wideScreen = (ws.x - (center.x + outerR)) >= UI(265.0f);
+    if (wideScreen && hoveredBuyItem) {
+        const float cardX = center.x + outerR + UI(28.0f);
+        const float cardW = std::min(UI(290.0f), wp.x + ws.x - padX - cardX);
+        const float cardH = UI(210.0f);
+        const float cardY = center.y - cardH * 0.5f;
+        const ImVec2 c0(cardX, cardY), c1(cardX + cardW, cardY + cardH);
+        Controls::Surface(imGuiUI_, dl, c0, c1, Controls::Finish::Smoke, {}, 0.92f, UI(8.0f));
+        dl->AddRect(c0, c1, IM_COL32(226, 185, 92, 130), UI(8.0f), 0, UI(1.2f));
+
+        drawShadowText(hoveredBuyItem->name.c_str(), c0.x + UI(16.0f), c0.y + UI(14.0f), 240, 244, 250, 255, 20);
+        drawShadowText(hoveredBuyItem->categoryLabel.c_str(), c0.x + UI(16.0f), c0.y + UI(42.0f), 156, 178, 198, 235, 13);
+
+        const std::string pStr = "$" + std::to_string(hoveredBuyItem->price);
+        drawShadowText(pStr.c_str(), c0.x + UI(16.0f), c0.y + UI(68.0f),
+                       hoveredPoor ? 235 : 239, hoveredPoor ? 120 : 199, hoveredPoor ? 110 : 120, 255, 18);
+
+        if (hoveredBuyItem->magazine > 0) {
+            char spec[64];
+            std::snprintf(spec, sizeof(spec), "弹匣 %d  ·  %s%s",
+                          hoveredBuyItem->magazine,
+                          hoveredBuyItem->automatic ? "全自动" : "半自动",
+                          hoveredBuyItem->scopeSupported ? "  ·  可开镜" : "");
+            drawShadowText(spec, c0.x + UI(16.0f), c0.y + UI(102.0f), 192, 208, 222, 240, 13);
+        }
+
+        const char* statusTxt = (hoveredBuyItem->availability == Presentation::BuyCode::Ok)
+                              ? "状态: 可购买（左键成交）"
+                              : BuyCodeText(hoveredBuyItem->availability);
+        const bool okSt = (hoveredBuyItem->availability == Presentation::BuyCode::Ok);
+        drawShadowText(statusTxt, c0.x + UI(16.0f), c0.y + UI(136.0f),
+                       okSt ? 145 : 239, okSt ? 222 : 138, okSt ? 175 : 124, 255, 14);
+
+        if (hoveredBuyItem->refundAmount > 0) {
+            char refBuf[64];
+            std::snprintf(refBuf, sizeof(refBuf), "右键退一件 +$%d（可退 %d）",
+                          hoveredBuyItem->refundAmount, hoveredBuyItem->refundQuantity);
+            drawShadowText(refBuf, c0.x + UI(16.0f), c0.y + UI(166.0f), 146, 206, 250, 255, 13);
+        }
+    }
+
+    // 底部成交 / 退款 / 失败 / 窄屏详情提示条
+    const bool flashing = !buyFlashText_.empty() && ImGui::GetTime() < buyFlashUntil_;
+    std::string bottomMsg;
+    bool bottomOk = false;
+    if (flashing) {
+        bottomMsg = buyFlashText_;
+        bottomOk = buyFlashOk_;
+    } else if (!ctx.canBuy && !ctx.hint.empty()) {
+        bottomMsg = ctx.hint;
+    } else if (!wideScreen && hoveredBuyItem) {
+        bottomMsg = hoveredBuyItem->name + " $" + std::to_string(hoveredBuyItem->price);
+        if (hoveredBuyItem->availability != Presentation::BuyCode::Ok) {
+            bottomMsg += " · " + std::string(BuyCodeText(hoveredBuyItem->availability));
+        } else {
+            bottomMsg += " · 左键购买";
+        }
+        if (hoveredBuyItem->refundAmount > 0) {
+            bottomMsg += " · 右键退 $" + std::to_string(hoveredBuyItem->refundAmount);
+        }
+        bottomOk = (hoveredBuyItem->availability == Presentation::BuyCode::Ok);
+    }
+
+    if (!bottomMsg.empty()) {
+        ImFont* f15 = imGuiUI_ ? imGuiUI_->GetFont(15) : ImGui::GetFont();
+        if (!f15) f15 = ImGui::GetFont();
+        const ImVec2 mSz = f15->CalcTextSizeA(UI(15), FLT_MAX, 0.0f, bottomMsg.c_str());
+        const float boxW = std::min(ws.x - UI(48.0f), mSz.x + UI(44.0f));
+        const float boxH = UI(34.0f);
+        const float boxX = center.x - boxW * 0.5f;
+        const float boxY = std::min(wp.y + ws.y - boxH - UI(18.0f), center.y + outerR + UI(20.0f));
+        dl->AddRectFilled(ImVec2(boxX, boxY), ImVec2(boxX + boxW, boxY + boxH),
+                          bottomOk ? IM_COL32(32, 74, 54, 225) : IM_COL32(96, 36, 34, 225), UI(6.0f));
+        dl->AddRect(ImVec2(boxX, boxY), ImVec2(boxX + boxW, boxY + boxH),
+                    bottomOk ? IM_COL32(124, 212, 162, 190) : IM_COL32(226, 118, 108, 190), UI(6.0f));
+        drawShadowText(bottomMsg.c_str(), center.x - mSz.x * 0.5f, boxY + UI(8.0f),
+                       bottomOk ? 168 : 246, bottomOk ? 236 : 168, bottomOk ? 190 : 158, 255, 15);
+    }
+
     ImGui::End();
-    ImGui::PopStyleColor(2);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
 }
 
 // ============================================================================

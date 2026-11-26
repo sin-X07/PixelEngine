@@ -410,6 +410,16 @@ GameUI::Actions Engine::BuildActions() {
     a.setFullscreen = [this](bool v) {
         if (v != isFullscreen) ToggleFullscreen();
     };
+    a.setMainMenuButtonRect = [this](float x0, float y0, float x1, float y1) {
+        mainMenuBtnRect_[0] = x0; mainMenuBtnRect_[1] = y0;
+        mainMenuBtnRect_[2] = x1; mainMenuBtnRect_[3] = y1;
+        mainMenuBtnRectValid_ = true;
+    };
+    a.saveLoadouts = [this](const WeaponDB::MatchLoadouts& loadouts) {
+        if (!saveManager) return;
+        saveManager->MutableSettings().loadouts = WeaponDB::SanitizeMatchLoadouts(loadouts);
+        saveManager->Save();
+    };
 
     return a;
 }
@@ -923,7 +933,12 @@ void Engine::HandleInput() {
     if (inputManager->IsFullscreenToggleRequested()) ToggleFullscreen();
     if (inputManager->IsMuteToggleRequested()) audioManager->ToggleMute();
 
-    if (inputManager->IsPauseToggleRequested() && (!IsTransitionActive() || sideChoicePending_)) {
+    const bool wheelOwnsEsc =
+        (currentState == LOADOUT) ||
+        (currentState == MAIN_MENU && focused3D_ >= 0) ||
+        (currentState == PLAYING && buyMenuOpen_);
+
+    if (!wheelOwnsEsc && inputManager->IsPauseToggleRequested() && (!IsTransitionActive() || sideChoicePending_)) {
         if (currentState == PLAYING) {
             if (sideChoicePending_ || sidePopupOpen_) sidePauseStartMs_ = SDL_GetTicks64();
             currentState = PAUSED;
@@ -980,18 +995,28 @@ void Engine::HandleInput() {
         cursorCaptured_ = false;
     }
     // ---- 买枪菜单 ----
-    if (inputManager->IsBuyMenuToggleRequested() && cs2dGame->IsBuyPhase() && cs2dGame->IsPlayerInBuyZone()) {
-        buyMenuOpen_ = !buyMenuOpen_;
+    if (inputManager->IsBuyMenuToggleRequested()) {
+        if (buyMenuOpen_) {
+            CloseBuyMenu();
+        } else if (cs2dGame->IsBuyPhase() && cs2dGame->IsPlayerInBuyZone()) {
+            OpenBuyMenu();
+        }
     }
-    if (buyMenuOpen_ && (!cs2dGame->IsBuyPhase() || !cs2dGame->IsPlayerInBuyZone())) {
-        buyMenuOpen_ = false;   // 离开购买期自动关闭
+    if (buyMenuOpen_ && (!cs2dGame->IsBuyPhase() || !cs2dGame->IsPlayerInBuyZone() || !inputManager->HasWindowFocus())) {
+        CloseBuyMenu();   // 离开购买期 / 购买区 / 窗口失焦时强制关盘并清理状态
     }
 
     if (buyMenuOpen_) {
-        // 菜单打开：绝对鼠标，允许点击
+        // 菜单打开：绝对鼠标，允许点击；消费导航与数字键，不触发开火、切枪或丢枪
         SDL_SetRelativeMouseMode(SDL_FALSE);
         SDL_ShowCursor(SDL_ENABLE);
         cursorCaptured_ = false;
+        cs2dMouseDown = false;
+        cs2dKeyW = cs2dKeyA = cs2dKeyS = cs2dKeyD = false;
+        cs2dKeyShift = cs2dKeyR = false;
+        showScoreboard_ = false;
+        cs2dOverlay.showScoreboard = false;
+        return;
     } else if (cs2dGame->GetPlayer().alive) {
         // 正常对局：相对鼠标瞄准
         SDL_SetRelativeMouseMode(SDL_TRUE);
@@ -1215,7 +1240,7 @@ void Engine::UpdateSideSpawnTransition() {
             sidePopupClosing_ = false;
             sidePopupAlpha_ = 0.0f;
             currentState = PLAYING;
-            buyMenuOpen_ = false;
+            CloseBuyMenu();
             SDL_SetRelativeMouseMode(SDL_TRUE);
             SDL_ShowCursor(SDL_DISABLE);
         }
@@ -1344,7 +1369,7 @@ void Engine::RestartCurrentMatch() {
     matchLoadElapsed_ = 0.0f;
     transitionKind_ = TransitionKind::None;
     transitionElapsed_ = 0.0f;
-    buyMenuOpen_ = false;
+    CloseBuyMenu();
     showScoreboard_ = false;
 
     currentState = PLAYING;
@@ -1386,8 +1411,11 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
 
     currentMapRel_ = mapRel;
 
-    // 阵营必须在 LoadMap 之前设置：LoadMap 会立刻生成玩家
-    if (cs2dGame) cs2dGame->SetPlayerTeam(playerTeam);
+    // 阵营与赛前配装快照必须在 LoadMap 之前交付：LoadMap 会立刻生成玩家与初始手枪
+    if (cs2dGame) {
+        if (saveManager) cs2dGame->SetMatchLoadouts(saveManager->GetSettings().loadouts);
+        cs2dGame->SetPlayerTeam(playerTeam);
+    }
 
     const std::string mapPath = PathUtils::ResolveAppPath(mapRel);
     const bool deferMatchStart = sideChoicePending_;
@@ -1616,10 +1644,7 @@ void Engine::Update(float dt) {
         debugLoadoutPending_ = false;
     }
     if (debugBuyMenuPending_ && cs2dGame && cs2dGame->IsBuyPhase()) {
-        buyMenuOpen_ = true;
-        SDL_SetRelativeMouseMode(SDL_FALSE);
-        SDL_ShowCursor(SDL_ENABLE);
-        cursorCaptured_ = false;
+        OpenBuyMenu();
         debugBuyMenuPending_ = false;
     }
     // 调试死亡镜头（--killplayer）：进对局 2s 后按真实死亡流程杀一次玩家
@@ -1691,7 +1716,7 @@ void Engine::Update(float dt) {
         if (cs2dGame->GetMatchOverTimer() >= kSettleDelay && !cs2dGame->IsDeathFreeze()) {
             RecordMatchHistory(false);
             std::cout << "[CS2D] 比赛结束，进入结算页" << std::endl;
-            buyMenuOpen_ = false;
+            CloseBuyMenu();
             cs2dGame->ResetScope(Presentation::ScopeResetReason::MatchExit);
             scopeRightClickPending_ = false;
             cs2dKeyW = cs2dKeyA = cs2dKeyS = cs2dKeyD = false;
@@ -1745,7 +1770,7 @@ void Engine::BeginMatchLoad(MatchMode mode, const std::string& mapRel, Team team
     // 这里只是开始动画，真正 LoadMap/初始化对局放到黑屏阶段。
     transitionKind_ = TransitionKind::None;
     transitionElapsed_ = 0.0f;
-    buyMenuOpen_ = false;
+    CloseBuyMenu();
     SDL_SetRelativeMouseMode(SDL_FALSE);
     SDL_ShowCursor(SDL_ENABLE);
 }
@@ -2137,9 +2162,9 @@ void Engine::Render() {
             mctx.previewTex[i] = mapPreviewTex_[i];
         }
         gameUI->DrawMapSelect(mctx, BuildActions());
-    } else if (currentState == MAIN_MENU || currentState == SETTINGS ||
-        currentState == PAUSED    || currentState == RESTART_CONFIRM ||
-        currentState == EXIT_CONFIRM) {
+    } else if (currentState == MAIN_MENU || currentState == LOADOUT ||
+        currentState == SETTINGS || currentState == PAUSED ||
+        currentState == RESTART_CONFIRM || currentState == EXIT_CONFIRM) {
         GameUI::MenuCtx ctx;
         ctx.state              = currentState;
         ctx.settingsReturnState = settingsReturnState;
@@ -2202,8 +2227,10 @@ void Engine::Render() {
         ctx.backdropW   = menuBgW_;
         ctx.backdropH   = menuBgH_;
         ctx.backdrop3D  = false;
+        ctx.loadouts    = saveManager ? saveManager->GetSettings().loadouts : WeaponDB::DefaultMatchLoadouts();
+        ctx.windowFocused = inputManager ? inputManager->HasWindowFocus() : true;
 
-        if (currentState == MAIN_MENU && menu3D && menu3D->IsReady()) {
+        if ((currentState == MAIN_MENU || currentState == LOADOUT) && menu3D && menu3D->IsReady()) {
             const ImVec2 menuViewport = ImGui::GetMainViewport()->WorkSize;
             menu3D->SetPresentationAspect(menuViewport.x / std::max(1.0f, menuViewport.y));
             if (mapOverlayOpen_ && mapOverlayLaunching_) {
@@ -2292,6 +2319,7 @@ void Engine::Render() {
                         focused3D_ = -1;
                         hovered3D_ = -1;
                         menu3D->SetFocusedObject(-1);
+                        if (gameUI) gameUI->ResetChickenWheel();
                     }
                 } else {
                     focus3DProgress_ = std::clamp(
@@ -2387,7 +2415,11 @@ void Engine::Render() {
             }
         }
 
-        gameUI->DrawMenu(ctx, BuildActions());
+        if (currentState == LOADOUT) {
+            gameUI->DrawLoadout(ctx, BuildActions());
+        } else {
+            gameUI->DrawMenu(ctx, BuildActions());
+        }
 
         if (menuCameraTransition_ &&
             SDL_GetTicks64() - menuCameraStartMs_ >= 900) {
@@ -2410,10 +2442,11 @@ void Engine::Render() {
                 const float screenU = u;
                 const float screenV = v;
 
-                // 主菜单中央是按钮列，鼠标在这里时绝不穿透到 3D 物体。
-                const bool overMenuButtons =
-                    (screenU > 0.37f && screenU < 0.63f &&
-                     screenV > 0.33f && screenV < 0.68f);
+                // 主菜单中央按钮列区域由 DrawMenu 实际布局结果同步，绝不穿透到 3D 物体。
+                const bool overMenuButtons = mainMenuBtnRectValid_
+                    ? (io.MousePos.x >= mainMenuBtnRect_[0] && io.MousePos.x <= mainMenuBtnRect_[2] &&
+                       io.MousePos.y >= mainMenuBtnRect_[1] && io.MousePos.y <= mainMenuBtnRect_[3])
+                    : (screenU > 0.36f && screenU < 0.64f && screenV > 0.30f && screenV < 0.72f);
 
                 // 与 GameUI 的背景等比裁切一致，把屏幕坐标换算成 3D 纹理坐标
                 const float texAspect = static_cast<float>(menu3D->Width()) /
@@ -2467,11 +2500,6 @@ void Engine::Render() {
                 }
             } else {
                 hovered3D_ = -1;
-                if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !focus3DClosing_) {
-                    focus3DClosing_ = true;
-                    focusExitStartMs_ = SDL_GetTicks64();
-                    focusCloseStartProgress_ = focus3DProgress_;
-                }
             }
         }
     } else {
@@ -2804,6 +2832,41 @@ static const char* BuyCategoryLabel(WeaponClass cls) {
     return "";
 }
 
+void Engine::OpenBuyMenu() {
+    buyMenuOpen_ = true;
+    buyMenuOpenedThisFrame_ = true;
+    if (gameUI) gameUI->ResetBuyWheel();
+    SDL_SetRelativeMouseMode(SDL_FALSE);
+    SDL_ShowCursor(SDL_ENABLE);
+    cursorCaptured_ = false;
+    fireInputGate_.Block();
+    if (window && renderer) {
+        const ImVec2 center = GameUI::ComputeBuyWheelCenter(
+            ImVec2(0.0f, 0.0f),
+            ImVec2(static_cast<float>(logicalW_), static_cast<float>(logicalH_)));
+        int wx = 0, wy = 0;
+        SDL_RenderLogicalToWindow(renderer, center.x, center.y, &wx, &wy);
+        SDL_WarpMouseInWindow(window, wx, wy);
+        ImGui::GetIO().MousePos = center;
+    }
+    SDL_GetRelativeMouseState(nullptr, nullptr);
+}
+
+void Engine::CloseBuyMenu() {
+    if (!buyMenuOpen_) return;
+    buyMenuOpen_ = false;
+    buyMenuOpenedThisFrame_ = false;
+    if (gameUI) gameUI->ResetBuyWheel();
+    if (currentState == PLAYING && !sideChoicePending_ && !sidePopupOpen_ &&
+        cs2dGame && cs2dGame->GetPlayer().alive) {
+        SDL_SetRelativeMouseMode(SDL_TRUE);
+        SDL_ShowCursor(SDL_DISABLE);
+    }
+    SDL_GetRelativeMouseState(nullptr, nullptr);
+    cursorCaptured_ = false;
+    fireInputGate_.Block();
+}
+
 void Engine::RenderBuyMenu() {
     GameUI::BuyMenuCtx bctx;
     bctx.closeBinding = saveManager->GetSettings().bindings[GameAction::Buy].Label();
@@ -2815,6 +2878,11 @@ void Engine::RenderBuyMenu() {
 
     const CS2DGame::Player& p = cs2dGame->GetPlayer();
     bctx.playerTeam = p.team;
+    bctx.loadout = cs2dGame->LoadoutForTeam(p.team);
+    bctx.windowFocused = inputManager ? inputManager->HasWindowFocus() : true;
+    bctx.suppressNav = buyMenuOpenedThisFrame_;
+    buyMenuOpenedThisFrame_ = false;
+    bctx.onClose = [this] { CloseBuyMenu(); };
     const bool isTerrorist = (p.team == Team::T);
 
     for (int i = 1; i < static_cast<int>(WeaponId::Count); ++i) {

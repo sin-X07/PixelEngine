@@ -136,8 +136,8 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
         player_.kitEquipment = {};
         player_.hasDefuseKit = false;
         player_.weapons[0] = WeaponId::None;
-        // 起始手枪按阵营（照抄 CS2）：CT = USP-S，T = Glock-18
-        player_.weapons[1] = (player_.team == Team::CT) ? WeaponId::USP_S : WeaponId::Glock18;
+        // 起始手枪按本场阵营配装起始槽位
+        player_.weapons[1] = LoadoutForTeam(player_.team).starting;
         player_.weapons[2] = WeaponId::Knife;
         player_.weapons[3] = WeaponId::None;
         player_.grenadeCount = 0;

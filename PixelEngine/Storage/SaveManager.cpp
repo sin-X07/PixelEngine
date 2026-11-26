@@ -120,6 +120,29 @@ void SaveManager::Load() {
     settings_.menuWeapon[0] = ini.GetInt("menu", "weapon0", 0);
     settings_.menuWeapon[1] = ini.GetInt("menu", "weapon1", 0);
 
+    // ---- 赛前武器配装（版本化；缺省或损坏自动补全）----
+    auto loadTeamLoadout = [&](const char* section, bool isTerrorist) {
+        WeaponDB::TeamLoadout raw = WeaponDB::DefaultTeamLoadout(isTerrorist);
+        if (!ini.GetSection(section).empty()) {
+            const int ver = ini.GetInt(section, "version", 0);
+            (void)ver;
+            raw.starting = WeaponDB::WeaponFromKey(ini.GetString(section, "starting", ""));
+            for (int i = 0; i < 4; ++i) {
+                raw.pistols[i] = WeaponDB::WeaponFromKey(
+                    ini.GetString(section, "pistol_" + std::to_string(i + 1), ""));
+            }
+            for (int i = 0; i < 5; ++i) {
+                raw.midtier[i] = WeaponDB::WeaponFromKey(
+                    ini.GetString(section, "midtier_" + std::to_string(i + 1), ""));
+                raw.rifles[i] = WeaponDB::WeaponFromKey(
+                    ini.GetString(section, "rifle_" + std::to_string(i + 1), ""));
+            }
+        }
+        return WeaponDB::SanitizeTeamLoadout(raw, isTerrorist);
+    };
+    settings_.loadouts.t  = loadTeamLoadout("loadout_t", true);
+    settings_.loadouts.ct = loadTeamLoadout("loadout_ct", false);
+
     loaded_ = true;
     std::cout << "[Save] 已读取存档" << std::endl;
 }
@@ -194,6 +217,25 @@ void SaveManager::Save() {
     ini.SetInt("menu", "scene", std::clamp(settings_.menuScene, 0, 2));
     ini.SetInt("menu", "weapon0", settings_.menuWeapon[0]);
     ini.SetInt("menu", "weapon1", settings_.menuWeapon[1]);
+
+    // ---- 赛前武器配装（校验后落盘）----
+    settings_.loadouts = WeaponDB::SanitizeMatchLoadouts(settings_.loadouts);
+    auto saveTeamLoadout = [&](const char* section, const WeaponDB::TeamLoadout& l) {
+        ini.SetInt(section, "version", 1);
+        ini.Set(section, "starting", WeaponDB::WeaponKey(l.starting));
+        for (int i = 0; i < 4; ++i) {
+            ini.Set(section, "pistol_" + std::to_string(i + 1),
+                    WeaponDB::WeaponKey(l.pistols[i]));
+        }
+        for (int i = 0; i < 5; ++i) {
+            ini.Set(section, "midtier_" + std::to_string(i + 1),
+                    WeaponDB::WeaponKey(l.midtier[i]));
+            ini.Set(section, "rifle_" + std::to_string(i + 1),
+                    WeaponDB::WeaponKey(l.rifles[i]));
+        }
+    };
+    saveTeamLoadout("loadout_t", settings_.loadouts.t);
+    saveTeamLoadout("loadout_ct", settings_.loadouts.ct);
 
     const std::string path = PathUtils::ResolveWritablePath(kSaveFile);
     if (!ini.Save(path)) {

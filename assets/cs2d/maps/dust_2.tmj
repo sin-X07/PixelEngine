@@ -275,8 +275,8 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":164,
-                 "x":274,
+                 "width":136,
+                 "x":302,
                  "y":1126
                 }, 
                 {
@@ -1708,7 +1708,7 @@
                  "y":786
                 }, 
                 {
-                 "height":74,
+                 "height":46,
                  "id":421,
                  "name":"",
                  "opacity":1,
@@ -1717,7 +1717,7 @@
                  "visible":true,
                  "width":8,
                  "x":342,
-                 "y":990
+                 "y":1018
                 }, 
                 {
                  "height":14,
@@ -3467,8 +3467,8 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":88,
-                 "x":274,
+                 "width":60,
+                 "x":302,
                  "y":1168
                 }, 
                 {
@@ -4000,18 +4000,6 @@
                  "y":1050
                 }, 
                 {
-                 "height":26,
-                 "id":753,
-                 "name":"",
-                 "opacity":1,
-                 "rotation":0,
-                 "type":"",
-                 "visible":true,
-                 "width":2,
-                 "x":340,
-                 "y":990
-                }, 
-                {
                  "height":10,
                  "id":755,
                  "name":"",
@@ -4061,7 +4049,7 @@
                 }],
          "opacity":1,
          "type":"objectgroup",
-         "visible":false,
+         "visible":true,
          "x":0,
          "y":0
         }, 
@@ -6670,7 +6658,7 @@
                          "y":702
                         }, 
                         {
-                         "height":48,
+                         "height":46,
                          "id":867,
                          "name":"",
                          "opacity":1,
@@ -6679,7 +6667,7 @@
                          "visible":true,
                          "width":2,
                          "x":350,
-                         "y":1016
+                         "y":1018
                         }, 
                         {
                          "height":18,
@@ -6776,6 +6764,18 @@
                          "width":2,
                          "x":444,
                          "y":1050
+                        }, 
+                        {
+                         "height":28,
+                         "id":924,
+                         "name":"",
+                         "opacity":1,
+                         "rotation":0,
+                         "type":"",
+                         "visible":true,
+                         "width":10,
+                         "x":350,
+                         "y":990
                         }],
                  "opacity":1,
                  "type":"objectgroup",
@@ -9218,6 +9218,29 @@
                  "visible":true,
                  "x":0,
                  "y":0
+                }, 
+                {
+                 "draworder":"topdown",
+                 "id":49,
+                 "name":"Window",
+                 "objects":[
+                        {
+                         "height":46,
+                         "id":925,
+                         "name":"",
+                         "opacity":1,
+                         "rotation":0,
+                         "type":"",
+                         "visible":true,
+                         "width":28,
+                         "x":284,
+                         "y":1126
+                        }],
+                 "opacity":1,
+                 "type":"objectgroup",
+                 "visible":true,
+                 "x":0,
+                 "y":0
                 }],
          "name":"site",
          "offsetx":-10,
@@ -9228,8 +9251,8 @@
          "x":0,
          "y":0
         }],
- "nextlayerid":49,
- "nextobjectid":924,
+ "nextlayerid":50,
+ "nextobjectid":926,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.12.2",

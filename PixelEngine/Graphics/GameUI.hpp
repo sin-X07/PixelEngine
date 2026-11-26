@@ -3,6 +3,7 @@
 #include "../Core/Types.hpp"
 #include "../Core/PresentationContract.hpp"
 #include "../Storage/MatchHistory.hpp"
+#include "RadialWheel.hpp"
 #include <array>
 #include "../Storage/SaveManager.hpp"
 #include "../Input/InputManager.hpp"
@@ -80,6 +81,10 @@ public:
         std::function<void(float)> setScopeCrossThickness;     // 大十字线宽
         std::function<void(bool)>  setScopeCrossDynamic;       // 移动时是否张开
         std::function<void(float)> setScopeSensitivity;        // 开镜灵敏度倍率
+        // 主菜单按钮遮挡矩形（用于防止点击穿透到 3D 小鸡）
+        std::function<void(float,float,float,float)> setMainMenuButtonRect;
+        // 赛前武器配装保存
+        std::function<void(const WeaponDB::MatchLoadouts&)> saveLoadouts;
     };
 
     struct MenuCtx {
@@ -173,6 +178,10 @@ public:
         std::array<std::string, 8> mapOverlayNames;
         std::array<std::string, 8> mapOverlayTaglines;
         std::array<void*, 8> mapOverlayPreviews{};
+
+        // 赛前武器配装 & 窗口焦点
+        WeaponDB::MatchLoadouts loadouts = WeaponDB::DefaultMatchLoadouts();
+        bool        windowFocused = true;
     };
 
     struct InGameCtx {
@@ -279,6 +288,7 @@ public:
 };
 
     void DrawMenu(const MenuCtx& ctx, const Actions& actions);
+    void DrawLoadout(const MenuCtx& ctx, const Actions& actions);
     void DrawFocusWheel(const MenuCtx& ctx, const Actions& actions);
     void DrawMapOverlay(const MenuCtx& ctx, const Actions& actions);
 
@@ -356,9 +366,17 @@ public:
         bool        canBuy = false;   // 是否在购买期 + 购买区内（兼容字段）
         std::string hint;
         Team        playerTeam = Team::None;   // 契约 v1 第 5 节
+        WeaponDB::TeamLoadout loadout = WeaponDB::DefaultTeamLoadout(false);
+        bool        windowFocused = true;
+        bool        suppressNav = false;       // 打开当帧抑制同键导航
+        std::function<void()> onClose;         // 轮盘收盘回调
     };
     void DrawBuyMenu(const BuyMenuCtx& ctx,
         const std::function<Presentation::BuyResult(const Presentation::BuyRequest&)>& onBuy);
+    void ResetBuyWheel();
+    void ResetChickenWheel();
+    static ImVec2 ComputeBuyWheelCenter(const ImVec2& workPos, const ImVec2& workSize);
+    static float  ComputeBuyWheelOuterRadius(const ImVec2& workSize);
 
     // 武器图标缓存（非 owning 借用；由 Engine 管理生命周期）
     void SetWeaponIconCache(WeaponIconCache* cache) { weaponIconCache_ = cache; }
@@ -380,4 +398,27 @@ private:
     float reloadCompleteFlash_ = 0;
     ImGuiUI* imGuiUI_ = nullptr;
     WeaponIconCache* weaponIconCache_ = nullptr;
+
+    // 共享双层轮盘状态（小鸡与商店各自独立）
+    RadialWheel::WheelState chickenWheel_;
+    int  lastChickenFocusObj_ = -1;
+    bool wasChickenFocus_     = false;
+
+    RadialWheel::WheelState buyWheel_;
+    bool        wasBuyMenuOpen_ = false;
+    std::string buyFlashText_;
+    float       buyFlashUntil_   = -1.0f;
+    float       buyFlashStarted_ = -1.0f;
+    bool        buyFlashOk_      = false;
+
+    // 武器配装编辑草稿状态
+    bool                    loadoutPageOpen_   = false;
+    WeaponDB::MatchLoadouts loadoutDraft_      = WeaponDB::DefaultMatchLoadouts();
+    WeaponDB::MatchLoadouts loadoutBaseline_   = WeaponDB::DefaultMatchLoadouts();
+    bool                    loadoutEditT_      = false; // false=CT, true=T
+    WeaponDB::LoadoutGroup  loadoutSelGroup_   = WeaponDB::LoadoutGroup::StartingPistol;
+    int                     loadoutSelSlot_    = 0;
+    std::string             loadoutNotice_;
+    bool                    loadoutNoticeErr_  = false;
+    bool                    loadoutConfirmExit_= false;
 };

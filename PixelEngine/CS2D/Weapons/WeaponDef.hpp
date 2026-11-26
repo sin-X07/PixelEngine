@@ -1,5 +1,9 @@
 #pragma once
+#include <array>
+#include <cctype>
 #include <cstdint>
+#include <string>
+#include <vector>
 #include "../Tuning.hpp"
 
 // ============================================================================
@@ -356,6 +360,327 @@ inline int KillReward(WeaponId id) {
 inline bool IsDefaultPistol(WeaponId id, bool isTerrorist) {
     return isTerrorist ? (id == WeaponId::Glock18)
                        : (id == WeaponId::USP_S || id == WeaponId::P2000);
+}
+
+// ----------------------------------------------------------------------------
+// 赛前武器配装（每阵营 15 个有序槽位：起始×1 + 其他手枪×4 + 中型×5 + 步枪与狙击×5）
+// ----------------------------------------------------------------------------
+inline constexpr const char* kWeaponKeys[] = {
+    "none", "knife",
+    "glock18", "usp_s", "p2000", "dual_berettas", "p250", "five_seven",
+    "tec9", "cz75", "deagle", "r8_revolver", "zeus",
+    "mac10", "mp9", "mp7", "mp5sd", "ump45", "p90",
+    "galil_ar", "famas", "ak47", "m4a4", "m4a1_s", "sg553", "aug",
+    "ssg08", "awp", "scar20", "g3sg1",
+    "nova", "xm1014", "sawed_off", "mag7",
+    "m249", "negev",
+    "grenade_he", "grenade_flash", "grenade_smoke", "grenade_molotov", "grenade_incendiary", "grenade_decoy",
+    "c4"
+};
+static_assert(static_cast<int>(sizeof(kWeaponKeys) / sizeof(kWeaponKeys[0])) == kWeaponCount,
+              "kWeaponKeys must stay aligned with WeaponId");
+
+inline const char* WeaponKey(WeaponId id) {
+    const int idx = static_cast<int>(id);
+    if (idx < 0 || idx >= kWeaponCount) return kWeaponKeys[0];
+    return kWeaponKeys[idx];
+}
+
+inline WeaponId WeaponFromKey(const std::string& key) {
+    std::string low;
+    low.reserve(key.size());
+    for (unsigned char c : key) {
+        if (!std::isspace(c)) low.push_back(static_cast<char>(std::tolower(c)));
+    }
+    if (low.empty()) return WeaponId::None;
+    for (int i = 1; i < kWeaponCount; ++i) {
+        if (low == kWeaponKeys[i]) return static_cast<WeaponId>(i);
+    }
+    return WeaponId::None;
+}
+
+enum class LoadoutGroup { StartingPistol = 0, Pistol = 1, Midtier = 2, Rifle = 3 };
+
+struct TeamLoadout {
+    WeaponId                 starting = WeaponId::USP_S;
+    std::array<WeaponId, 4>  pistols{};
+    std::array<WeaponId, 5>  midtier{};
+    std::array<WeaponId, 5>  rifles{};
+
+    bool operator==(const TeamLoadout& o) const {
+        return starting == o.starting && pistols == o.pistols &&
+               midtier == o.midtier && rifles == o.rifles;
+    }
+    bool operator!=(const TeamLoadout& o) const { return !(*this == o); }
+};
+
+struct MatchLoadouts {
+    TeamLoadout t;
+    TeamLoadout ct;
+
+    bool operator==(const MatchLoadouts& o) const { return t == o.t && ct == o.ct; }
+    bool operator!=(const MatchLoadouts& o) const { return !(*this == o); }
+};
+
+inline TeamLoadout DefaultTeamLoadout(bool isTerrorist) {
+    TeamLoadout l;
+    if (isTerrorist) {
+        l.starting = WeaponId::Glock18;
+        l.pistols  = { WeaponId::DualBerettas, WeaponId::P250, WeaponId::Tec9, WeaponId::Deagle };
+        l.midtier  = { WeaponId::MAC10, WeaponId::MP7, WeaponId::UMP45, WeaponId::XM1014, WeaponId::Negev };
+        l.rifles   = { WeaponId::GalilAR, WeaponId::AK47, WeaponId::SG553, WeaponId::SSG08, WeaponId::AWP };
+    } else {
+        l.starting = WeaponId::USP_S;
+        l.pistols  = { WeaponId::DualBerettas, WeaponId::P250, WeaponId::FiveSeven, WeaponId::Deagle };
+        l.midtier  = { WeaponId::MP9, WeaponId::MP7, WeaponId::UMP45, WeaponId::XM1014, WeaponId::Negev };
+        l.rifles   = { WeaponId::FAMAS, WeaponId::M4A4, WeaponId::M4A1S, WeaponId::SSG08, WeaponId::AWP };
+    }
+    return l;
+}
+
+inline MatchLoadouts DefaultMatchLoadouts() {
+    return { DefaultTeamLoadout(true), DefaultTeamLoadout(false) };
+}
+
+inline bool IsStartingLoadoutWeapon(WeaponId id) {
+    return id == WeaponId::Glock18 || id == WeaponId::USP_S || id == WeaponId::P2000;
+}
+
+inline bool IsWeaponInLoadoutGroup(WeaponId id, bool isTerrorist, LoadoutGroup group) {
+    const int idx = static_cast<int>(id);
+    if (idx <= 0 || idx >= kWeaponCount) return false;
+    const WeaponDef& def = Get(id);
+    if (def.price <= 0) return false;
+    if (!TeamAllowed(id, isTerrorist)) return false;
+
+    switch (group) {
+        case LoadoutGroup::StartingPistol:
+            return isTerrorist ? (id == WeaponId::Glock18)
+                               : (id == WeaponId::USP_S || id == WeaponId::P2000);
+        case LoadoutGroup::Pistol:
+            return def.cls == WeaponClass::Pistol && !IsStartingLoadoutWeapon(id);
+        case LoadoutGroup::Midtier:
+            return def.cls == WeaponClass::SMG ||
+                   def.cls == WeaponClass::Shotgun ||
+                   def.cls == WeaponClass::MachineGun;
+        case LoadoutGroup::Rifle:
+            return def.cls == WeaponClass::Rifle || def.cls == WeaponClass::Sniper;
+    }
+    return false;
+}
+
+inline bool RequiresLoadoutSelection(WeaponId id) {
+    const int idx = static_cast<int>(id);
+    if (idx <= 0 || idx >= kWeaponCount) return false;
+    const WeaponClass cls = Get(id).cls;
+    return cls == WeaponClass::Pistol ||
+           cls == WeaponClass::SMG ||
+           cls == WeaponClass::Rifle ||
+           cls == WeaponClass::Sniper ||
+           cls == WeaponClass::Shotgun ||
+           cls == WeaponClass::MachineGun;
+}
+
+inline bool IsWeaponInLoadout(const TeamLoadout& l, WeaponId id) {
+    if (id == WeaponId::None) return false;
+    if (l.starting == id) return true;
+    for (WeaponId w : l.pistols) if (w == id) return true;
+    for (WeaponId w : l.midtier) if (w == id) return true;
+    for (WeaponId w : l.rifles)  if (w == id) return true;
+    return false;
+}
+
+inline TeamLoadout SanitizeTeamLoadout(const TeamLoadout& raw, bool isTerrorist) {
+    const TeamLoadout def = DefaultTeamLoadout(isTerrorist);
+    TeamLoadout out;
+    std::array<bool, kWeaponCount> used{};
+
+    out.starting = IsWeaponInLoadoutGroup(raw.starting, isTerrorist, LoadoutGroup::StartingPistol)
+                 ? raw.starting : def.starting;
+    used[static_cast<int>(out.starting)] = true;
+
+    auto sanitizeGroup = [&](auto& dst, const auto& src, const auto& defArr, LoadoutGroup group) {
+        constexpr int N = static_cast<int>(dst.size());
+        dst.fill(WeaponId::None);
+        for (int i = 0; i < N; ++i) {
+            const WeaponId w = src[i];
+            if (IsWeaponInLoadoutGroup(w, isTerrorist, group) && !used[static_cast<int>(w)]) {
+                dst[i] = w;
+                used[static_cast<int>(w)] = true;
+            }
+        }
+        for (int i = 0; i < N; ++i) {
+            if (dst[i] != WeaponId::None) continue;
+            WeaponId pick = WeaponId::None;
+            for (int j = 0; j < N; ++j) {
+                const WeaponId dw = defArr[j];
+                if (IsWeaponInLoadoutGroup(dw, isTerrorist, group) && !used[static_cast<int>(dw)]) {
+                    pick = dw;
+                    break;
+                }
+            }
+            if (pick == WeaponId::None) {
+                for (int id = 1; id < kWeaponCount; ++id) {
+                    const WeaponId cw = static_cast<WeaponId>(id);
+                    if (IsWeaponInLoadoutGroup(cw, isTerrorist, group) && !used[id]) {
+                        pick = cw;
+                        break;
+                    }
+                }
+            }
+            if (pick != WeaponId::None) {
+                dst[i] = pick;
+                used[static_cast<int>(pick)] = true;
+            }
+        }
+    };
+
+    sanitizeGroup(out.pistols, raw.pistols, def.pistols, LoadoutGroup::Pistol);
+    sanitizeGroup(out.midtier, raw.midtier, def.midtier, LoadoutGroup::Midtier);
+    sanitizeGroup(out.rifles,  raw.rifles,  def.rifles,  LoadoutGroup::Rifle);
+    return out;
+}
+
+inline MatchLoadouts SanitizeMatchLoadouts(const MatchLoadouts& raw) {
+    return { SanitizeTeamLoadout(raw.t, true), SanitizeTeamLoadout(raw.ct, false) };
+}
+
+inline std::vector<WeaponId> LoadoutCandidatesForGroup(bool isTerrorist, LoadoutGroup group) {
+    std::vector<WeaponId> res;
+    for (int id = 1; id < kWeaponCount; ++id) {
+        const WeaponId wid = static_cast<WeaponId>(id);
+        if (IsWeaponInLoadoutGroup(wid, isTerrorist, group)) res.push_back(wid);
+    }
+    return res;
+}
+
+// 查询某把武器当前在 TeamLoadout 中的分组与槽位下标（未装备返回 false）
+inline bool FindWeaponInLoadout(const TeamLoadout& l, WeaponId id,
+                                LoadoutGroup& outGroup, int& outIndex) {
+    if (l.starting == id) { outGroup = LoadoutGroup::StartingPistol; outIndex = 0; return true; }
+    for (int i = 0; i < 4; ++i) if (l.pistols[i] == id) { outGroup = LoadoutGroup::Pistol; outIndex = i; return true; }
+    for (int i = 0; i < 5; ++i) if (l.midtier[i] == id) { outGroup = LoadoutGroup::Midtier; outIndex = i; return true; }
+    for (int i = 0; i < 5; ++i) if (l.rifles[i] == id)  { outGroup = LoadoutGroup::Rifle; outIndex = i; return true; }
+    return false;
+}
+
+// 校验将 candidate 放入 targetGroup[targetSlot] 是否合法，不合法返回中文原因，合法返回空串
+inline std::string ValidateLoadoutAssignment(const TeamLoadout& l, bool isTerrorist,
+                                             LoadoutGroup targetGroup, int targetSlot,
+                                             WeaponId candidate, bool& outWillSwap) {
+    outWillSwap = false;
+    const int idx = static_cast<int>(candidate);
+    if (idx <= 0 || idx >= kWeaponCount) return "无效武器";
+    if (!TeamAllowed(candidate, isTerrorist)) return "该武器属于另一阵营，不可配置到本阵营";
+    if (!IsWeaponInLoadoutGroup(candidate, isTerrorist, targetGroup)) {
+        if (targetGroup == LoadoutGroup::StartingPistol) {
+            return isTerrorist ? "T 起始槽固定为 Glock-18" : "起始手枪槽仅支持 USP-S / P2000";
+        }
+        if (IsStartingLoadoutWeapon(candidate)) return "起始手枪不能放入常规手枪槽位";
+        return "武器类型与目标槽位分组不匹配";
+    }
+    LoadoutGroup curGroup{};
+    int curIdx = -1;
+    if (FindWeaponInLoadout(l, candidate, curGroup, curIdx)) {
+        if (curGroup == targetGroup && curIdx == targetSlot) return "已在当前槽位";
+        if (curGroup == targetGroup) outWillSwap = true;
+    }
+    return {};
+}
+
+// 应用替换或同组位置互换（保证 15 槽位合法唯一）
+inline bool ApplyLoadoutSlotChoice(TeamLoadout& l, bool isTerrorist,
+                                   LoadoutGroup group, int slotIdx, WeaponId candidate) {
+    bool willSwap = false;
+    if (!ValidateLoadoutAssignment(l, isTerrorist, group, slotIdx, candidate, willSwap).empty()) {
+        return false;
+    }
+    if (group == LoadoutGroup::StartingPistol) {
+        if (slotIdx != 0) return false;
+        l.starting = candidate;
+        return true;
+    }
+    auto applyArr = [&](auto& arr) -> bool {
+        const int N = static_cast<int>(arr.size());
+        if (slotIdx < 0 || slotIdx >= N) return false;
+        for (int i = 0; i < N; ++i) {
+            if (arr[i] == candidate) {
+                if (i == slotIdx) return false;
+                std::swap(arr[i], arr[slotIdx]);
+                return true;
+            }
+        }
+        arr[slotIdx] = candidate;
+        return true;
+    };
+    switch (group) {
+        case LoadoutGroup::Pistol:  return applyArr(l.pistols);
+        case LoadoutGroup::Midtier: return applyArr(l.midtier);
+        case LoadoutGroup::Rifle:   return applyArr(l.rifles);
+        default: return false;
+    }
+}
+
+inline bool SwapLoadoutSlots(TeamLoadout& l, LoadoutGroup group, int slotA, int slotB) {
+    if (slotA == slotB) return false;
+    auto swapArr = [&](auto& arr) -> bool {
+        const int N = static_cast<int>(arr.size());
+        if (slotA < 0 || slotA >= N || slotB < 0 || slotB >= N) return false;
+        std::swap(arr[slotA], arr[slotB]);
+        return true;
+    };
+    switch (group) {
+        case LoadoutGroup::Pistol:  return swapArr(l.pistols);
+        case LoadoutGroup::Midtier: return swapArr(l.midtier);
+        case LoadoutGroup::Rifle:   return swapArr(l.rifles);
+        default: return false;
+    }
+}
+
+// 局内购买轮盘一级类别（与文档严格对齐）
+enum class ShopCategory {
+    Pistols   = 0,
+    Midtier   = 1,
+    Rifles    = 2,
+    Snipers   = 3,
+    Equipment = 4,
+    Grenades  = 5
+};
+
+inline std::vector<WeaponId> ShopWeaponsForCategory(const TeamLoadout& raw, bool isTerrorist,
+                                                    ShopCategory cat) {
+    const TeamLoadout l = SanitizeTeamLoadout(raw, isTerrorist);
+    std::vector<WeaponId> out;
+    switch (cat) {
+        case ShopCategory::Pistols:
+            out.push_back(l.starting);
+            for (WeaponId w : l.pistols) out.push_back(w);
+            break;
+        case ShopCategory::Midtier:
+            for (WeaponId w : l.midtier) out.push_back(w);
+            break;
+        case ShopCategory::Rifles:
+            for (WeaponId w : l.rifles) {
+                if (Get(w).cls == WeaponClass::Rifle) out.push_back(w);
+            }
+            break;
+        case ShopCategory::Snipers:
+            for (WeaponId w : l.rifles) {
+                if (Get(w).cls == WeaponClass::Sniper) out.push_back(w);
+            }
+            break;
+        case ShopCategory::Equipment:
+            out.push_back(WeaponId::Zeus);
+            break;
+        case ShopCategory::Grenades:
+            out.push_back(WeaponId::GrenadeHE);
+            out.push_back(WeaponId::GrenadeFlash);
+            out.push_back(WeaponId::GrenadeSmoke);
+            out.push_back(isTerrorist ? WeaponId::GrenadeMolotov : WeaponId::GrenadeIncendiary);
+            out.push_back(WeaponId::GrenadeDecoy);
+            break;
+    }
+    return out;
 }
 
 } // namespace WeaponDB

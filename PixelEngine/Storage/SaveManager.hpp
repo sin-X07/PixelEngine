@@ -1,5 +1,6 @@
 #pragma once
 #include "../CS2D/AimLineStyle.hpp"
+#include "../CS2D/Weapons/WeaponDef.hpp"
 #include <string>
 #include "../Input/KeyBindings.hpp"
 
@@ -56,6 +57,9 @@ struct GameSettings {
     int   menuWeapon[2]    = { 0, 0 };
     int   menuScene = 1;
     int   menuAccessory[5] = { 0, 0, 0, 0, 0 };
+
+    // 赛前武器配装（T / CT 各 15 槽位）
+    WeaponDB::MatchLoadouts loadouts = WeaponDB::DefaultMatchLoadouts();
 };
 
 class SaveManager {

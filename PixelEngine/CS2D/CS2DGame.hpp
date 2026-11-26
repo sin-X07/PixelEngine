@@ -906,6 +906,15 @@ public:
     // 选阵营后重建首回合（地图保持已加载，不重新 LoadMap）
     void RestartMatchWithTeam(Team t);
     Team GetPlayerTeam() const { return desiredPlayerTeam_; }
+
+    // ---- 本场武器配装快照（T / CT 各 15 槽位）----
+    void SetMatchLoadouts(const WeaponDB::MatchLoadouts& loadouts) {
+        matchLoadouts_ = WeaponDB::SanitizeMatchLoadouts(loadouts);
+    }
+    const WeaponDB::MatchLoadouts& GetMatchLoadouts() const { return matchLoadouts_; }
+    const WeaponDB::TeamLoadout& LoadoutForTeam(Team t) const {
+        return (t == Team::T) ? matchLoadouts_.t : matchLoadouts_.ct;
+    }
     bool ActorHasC4(const Player& actor) const {
         return mode_==MatchMode::BombDefusal && !bombPlanted_ && !bombDropped_ && actor.alive &&
             ((bombCarrier_==-1 && &actor==&player_) || (bombCarrier_>=0 && bombCarrier_<static_cast<int>(bots_.size()) && &actor==&bots_[bombCarrier_]));
@@ -1420,6 +1429,7 @@ private:
 
 
     Team  desiredPlayerTeam_ = Team::CT;
+    WeaponDB::MatchLoadouts matchLoadouts_ = WeaponDB::DefaultMatchLoadouts();
     int bombPlanter_ = -2;
     std::uint64_t c4EquipmentId_=0;
     int   bombCarrier_ = -2;      // -2 无人, -1 玩家, >=0 BOT 索引

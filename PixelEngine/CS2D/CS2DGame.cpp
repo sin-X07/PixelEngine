@@ -306,13 +306,18 @@ Presentation::BuyCode CS2DGame::EvaluatePurchase(
     if (request.kind == Presentation::BuyKind::DefuseKit && player_.team != Team::CT)
         return BuyCode::InvalidItem;
 
-    // 2) 存活 → 时窗 → 区域 → 阵营（固定优先序，保证失败原因稳定可测）
+    // 2) 存活 → 时窗 → 区域 → 阵营 → 本场配装（固定优先序，保证失败原因稳定可测）
     if (!player_.alive) return BuyCode::PlayerDead;
     if (!IsBuyWindowOpen()) return BuyCode::WindowClosed;
     if (!IsPlayerInBuyZone()) return BuyCode::OutsideBuyZone;
     if (request.kind == Presentation::BuyKind::Weapon &&
         !WeaponDB::TeamAllowed(request.weapon, player_.team == Team::T)) {
         return BuyCode::TeamRestricted;
+    }
+    if (request.kind == Presentation::BuyKind::Weapon &&
+        WeaponDB::RequiresLoadoutSelection(request.weapon) &&
+        !WeaponDB::IsWeaponInLoadout(LoadoutForTeam(player_.team), request.weapon)) {
+        return BuyCode::NotInLoadout;
     }
 
 
@@ -561,10 +566,10 @@ void CS2DGame::SpawnPlayer() {
     player_.deathTimer = 0.0f;
     player_.shootAnimTimer = 0.0f;
     player_.spriteKey = (desiredPlayerTeam_ == Team::CT) ? 0 : 1;
-    // 开局只有起始手枪（照抄 CS2）：
-    //   CT = USP-S，T = Glock-18。无护甲无投掷物，其余靠购买。
+    // 开局只有起始手枪（按本场阵营配装的起始槽位）：
+    const WeaponId startingPistol = LoadoutForTeam(desiredPlayerTeam_).starting;
     player_.weapons[0] = WeaponId::None;
-    player_.weapons[1] = (desiredPlayerTeam_ == Team::CT) ? WeaponId::USP_S : WeaponId::Glock18;
+    player_.weapons[1] = startingPistol;
     player_.weapons[2] = WeaponId::Knife;
     player_.weapons[3] = WeaponId::None;
     player_.weapons[4] = WeaponId::None;
@@ -591,13 +596,23 @@ void CS2DGame::SpawnPlayer() {
     }
     player_.SaveAmmoToSlot();
 
-    // 死斗：重生自动装配「上一次购买的武器」（武器免费沿用；金钱仍为 16000，可继续购买）
+    // 死斗：重生自动装配「上一次购买的武器」（按本场阵营与配装校验，失效则回退起始手枪）
     if (mode_ == MatchMode::DeathMatch && dmLoadout_.valid) {
-        if (dmLoadout_.primary != WeaponId::None) {
+        const auto& teamLoadout = LoadoutForTeam(player_.team);
+        const bool isT = (player_.team == Team::T);
+        auto validDmWeapon = [&](WeaponId wid) {
+            if (wid == WeaponId::None) return false;
+            if (!WeaponDB::TeamAllowed(wid, isT)) return false;
+            return !WeaponDB::RequiresLoadoutSelection(wid) ||
+                   WeaponDB::IsWeaponInLoadout(teamLoadout, wid);
+        };
+        if (validDmWeapon(dmLoadout_.primary)) {
             player_.SetSlotWeapon(0, dmLoadout_.primary);
         }
-        if (dmLoadout_.secondary != WeaponId::None) {
+        if (validDmWeapon(dmLoadout_.secondary)) {
             player_.SetSlotWeapon(1, dmLoadout_.secondary);
+        } else {
+            player_.SetSlotWeapon(1, startingPistol);
         }
         player_.weaponSlot = (player_.weapons[0] != WeaponId::None) ? 0 : 1;
         player_.LoadAmmoFromSlot();

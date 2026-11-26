@@ -59,6 +59,7 @@ private:
     bool  cs2dKeyW = false, cs2dKeyA = false, cs2dKeyS = false, cs2dKeyD = false;
     bool  cs2dKeyShift = false, cs2dKeyR = false;
     bool  buyMenuOpen_ = false;   // 买枪菜单开关
+    bool  buyMenuOpenedThisFrame_ = false; // 开盘当帧抑制同键导航
     bool  showScoreboard_ = false; // Tab 按住显示记分板
     // 契约 v1 第 4 节：右键 down 边沿在 HandleInput 采集，Engine::Update 只消费一次
     bool  scopeRightClickPending_ = false;
@@ -66,7 +67,9 @@ private:
     std::unique_ptr<WeaponIconCache> weaponIconCache_;
     MatchMode currentMatchMode_ = MatchMode::TeamElimination;   // 暂停页"重新开始"用
 
-    // 买枪菜单渲染
+    // 买枪菜单开关与渲染
+    void OpenBuyMenu();
+    void CloseBuyMenu();
     void RenderBuyMenu();
 
     // 状态机与时钟
@@ -127,6 +130,8 @@ private:
     bool         matchZoomRectValid_ = false;
     float        mapPreviewRect_[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
     bool         mapPreviewRectValid_ = false;
+    float        mainMenuBtnRect_[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    bool         mainMenuBtnRectValid_ = false;
     std::string  pendingMatchMapRel_;
     bool         sideChoicePending_ = false;
     bool         sidePopupOpen_ = false;

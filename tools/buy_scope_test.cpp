@@ -675,6 +675,9 @@ static void TestDamageAndScopeShot() {
         // 可连发的开镜武器（AUG / SG 553 / SCAR-20 / G3SG1）：必须能**开镜连射**，
         // 每打一发不自动退镜；「延迟关镜」对它们没有意义（本来就不关）。
         CS2DGame game;
+        WeaponDB::MatchLoadouts ml = WeaponDB::DefaultMatchLoadouts();
+        ml.ct.rifles[4] = WeaponId::AUG;
+        game.SetMatchLoadouts(ml);
         if (!LoadDeathMatch(game)) return;
         game.GetPlayer().money = 16000;
         check(game.ExecutePurchase(WeaponReq(WeaponId::AUG)).code == Presentation::BuyCode::Ok,
@@ -6084,6 +6087,166 @@ struct EngineTestAccess {
         }
         PathUtils::SetBaseDir(previousBase);
     }
+
+    static void TestWheelAndLoadoutAcceptance() {
+        std::printf("\n===== 双层轮盘与赛前武器配装真实引擎验收 =====\n");
+        const auto previousBase = PathUtils::BaseDir();
+        const auto directory = std::filesystem::absolute("build-evidence/wheel-loadout");
+        std::filesystem::create_directories(directory);
+        PathUtils::SetBaseDir(directory.string());
+        std::error_code ec;
+        std::filesystem::remove(directory / (std::string("cs2d_save") + BuildInfo::SaveSuffix() + ".ini"), ec);
+        SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
+        SDL_InitSubSystem(SDL_INIT_VIDEO);
+        {
+            Engine engine;
+            const bool okInit = engine.Initialize("Wheel & Loadout Acceptance", 1280, 720, false, false, 1, false);
+            check(okInit, "验收引擎初始化成功 (1280x720)");
+            if (okInit) {
+                ImGui::GetIO().IniFilename = nullptr;
+                auto saveScene = [&](const char* name) {
+                    SDL_Texture* target = SDL_GetRenderTarget(engine.renderer);
+                    SDL_Texture* scene = engine.sceneTex_[1 - engine.sceneWrite_];
+                    int w = 0, h = 0;
+                    bool ok = scene && SDL_QueryTexture(scene, nullptr, nullptr, &w, &h) == 0;
+                    SDL_Surface* img = ok ? SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_RGBA32) : nullptr;
+                    ok = img && SDL_SetRenderTarget(engine.renderer, scene) == 0 &&
+                         SDL_RenderReadPixels(engine.renderer, nullptr, SDL_PIXELFORMAT_RGBA32, img->pixels, img->pitch) == 0 &&
+                         IMG_SavePNG(img, (directory / name).string().c_str()) == 0;
+                    SDL_SetRenderTarget(engine.renderer, target);
+                    SDL_FreeSurface(img);
+                    check(ok, name);
+                };
+
+                // 1) 主菜单：同步布局按钮包围盒
+                engine.Render();
+                check(engine.mainMenuBtnRectValid_, "主菜单按钮列包围盒由 DrawMenu 同步到 Engine");
+                check(engine.mainMenuBtnRect_[3] > engine.mainMenuBtnRect_[1] + 200.0f,
+                      "主菜单 7 按钮区域覆盖武器配装入口且防点穿");
+
+                // 2) 小鸡轮盘：打开后停在一级，再进入二级颜色页（7 扇区）
+                if (engine.menu3D && engine.menu3D->IsReady()) {
+                    engine.focused3D_ = 2; // 第一只小鸡
+                    engine.focusAnimStartMs_ = SDL_GetTicks64() - 500;
+                    engine.Render();
+                    saveScene("chicken-wheel-lvl1.png");
+
+                    // 用数字键 3 进入第 3 个一级扇区（颜色，对应 Menu3D cat=0）
+                    auto pressAndRelease = [&](ImGuiKey key) {
+                        auto& io = ImGui::GetIO();
+                        io.AddKeyEvent(key, true);
+                        engine.Render();
+                        io.AddKeyEvent(key, false);
+                        engine.Render();
+                    };
+
+                    pressAndRelease(ImGuiKey_3);
+                    saveScene("chicken-wheel-lvl2-colors.png");
+
+                    // 选中第 5 种羽色（绿羽 index=4）并验证停在二级且持久化
+                    pressAndRelease(ImGuiKey_5);
+                    check(engine.saveManager->GetSettings().menuColor[2] == 4,
+                          "小鸡颜色二级数字键选中绿羽并写入存档");
+
+                    // 二级 Esc 退回一级，不直接退出聚焦
+                    pressAndRelease(ImGuiKey_Escape);
+                    check(engine.focused3D_ == 2 && !engine.focus3DClosing_,
+                          "小鸡二级按 Esc 只退回一级");
+
+                    // 一级 Esc 退出聚焦
+                    pressAndRelease(ImGuiKey_Escape);
+                    check(engine.focus3DClosing_ || engine.focused3D_ == -1,
+                          "小鸡一级按 Esc 退出聚焦");
+                    engine.focused3D_ = -1;
+                    engine.focus3DClosing_ = false;
+                }
+
+                // 3) 配装页：1280x720 / 1920x1080 / 1920x1200 均可渲染，修改 CT 起始为 P2000 并用 AUG 换 AWP
+                auto actions = engine.BuildActions();
+                actions.goState(LOADOUT);
+                engine.transitionKind_ = Engine::TransitionKind::None;
+                engine.lastRenderedState_ = LOADOUT;
+                engine.Render();
+                saveScene("loadout-1280x720.png");
+
+                for (auto [rw, rh] : { std::pair{1920, 1080}, std::pair{1920, 1200} }) {
+                    SDL_SetWindowSize(engine.window, rw, rh);
+                    engine.ResizeLogicalViewport(rw, rh);
+                    engine.Render();
+                    check(engine.logicalW_ > 0 && engine.logicalH_ > 0, "多分辨率下配装页渲染正常");
+                }
+                SDL_SetWindowSize(engine.window, 1280, 720);
+                engine.ResizeLogicalViewport(1280, 720);
+
+                WeaponDB::MatchLoadouts custom = WeaponDB::DefaultMatchLoadouts();
+                custom.ct.starting = WeaponId::P2000;
+                custom.ct.rifles[4] = WeaponId::AUG; // AWP 换成 AUG
+                actions.saveLoadouts(custom);
+                check(engine.saveManager->GetSettings().loadouts.ct.starting == WeaponId::P2000 &&
+                      engine.saveManager->GetSettings().loadouts.ct.rifles[4] == WeaponId::AUG,
+                      "保存配装写入 SaveManager");
+
+                // 4) 3D 背景不可用时（置空 menu3D），配装页仍可正常打开并渲染
+                auto savedMenu3D = std::move(engine.menu3D);
+                engine.currentState = LOADOUT;
+                engine.Render();
+                check(engine.currentState == LOADOUT, "3D 背景不可用时仍可编辑配装");
+                engine.menu3D = std::move(savedMenu3D);
+
+                // 5) 进入爆破模式对局（CT），验证出生手枪为 P2000，且购买轮盘打开/两层/收盘恢复相对瞄准
+                engine.StartMatchWithMap(MatchMode::BombDefusal, "assets/cs2d/maps/ancient_ruins.tmj", Team::CT);
+                engine.transitionKind_ = Engine::TransitionKind::None;
+                engine.lastRenderedState_ = PLAYING;
+                check(engine.cs2dGame->GetPlayer().weapons[1] == WeaponId::P2000,
+                      "爆破 CT 开局出生自动发配装起始手枪 P2000");
+                check(engine.cs2dGame->GetPlayer().ammo == WeaponDB::Get(WeaponId::P2000).magazine &&
+                      engine.cs2dGame->GetPlayer().reserve == WeaponDB::Get(WeaponId::P2000).magazine * 3,
+                      "P2000 弹匣与备弹按 WeaponDB 初始化");
+                check(engine.cs2dGame->EvaluatePurchase(WeaponReq(WeaponId::AWP)) == Presentation::BuyCode::NotInLoadout,
+                      "移除 AWP 后直接请求购买返回 NotInLoadout");
+
+                engine.cs2dGame->GetPlayer().money = 16000;
+                engine.OpenBuyMenu();
+                check(engine.buyMenuOpen_ && SDL_GetRelativeMouseMode() == SDL_FALSE,
+                      "打开购买轮盘切换至绝对鼠标模式");
+                engine.Render();
+                saveScene("buy-wheel-lvl1.png");
+
+                auto pressKeyPlay = [&](ImGuiKey key) {
+                    auto& io = ImGui::GetIO();
+                    io.AddKeyEvent(key, true);
+                    engine.Render();
+                    io.AddKeyEvent(key, false);
+                    engine.Render();
+                };
+
+                // 按数字键 3 进入步枪二级（含 FAMAS, M4A4, M4A1-S, AUG）
+                pressKeyPlay(ImGuiKey_3);
+                saveScene("buy-wheel-lvl2-rifles.png");
+
+                // 按数字键 4 购买 AUG，成交后回一级并扣款
+                const int moneyBeforeBuy = engine.cs2dGame->GetPlayerMoney();
+                pressKeyPlay(ImGuiKey_4);
+                check(engine.cs2dGame->GetPlayer().weapons[0] == WeaponId::AUG &&
+                      engine.cs2dGame->GetPlayerMoney() == moneyBeforeBuy - WeaponDB::Get(WeaponId::AUG).price,
+                      "购买轮盘二级买 AUG 成功且仅扣一次款");
+
+                // 再次按购买键收盘：恢复相对瞄准，第一帧无射击且准星不跳变
+                const float aimBeforeX = engine.cs2dOverlay.virtCursorX;
+                const float aimBeforeY = engine.cs2dOverlay.virtCursorY;
+                engine.CloseBuyMenu();
+                check(!engine.buyMenuOpen_ && SDL_GetRelativeMouseMode() == SDL_TRUE && !engine.cursorCaptured_,
+                      "收盘恢复相对鼠标模式并重置采集状态");
+                engine.Update(1.0f / 60.0f);
+                check(std::fabs(engine.cs2dOverlay.virtCursorX - aimBeforeX) < 1.0f &&
+                      std::fabs(engine.cs2dOverlay.virtCursorY - aimBeforeY) < 1.0f,
+                      "收盘后第一帧准星无跳变");
+
+                engine.Clean();
+            }
+        }
+        PathUtils::SetBaseDir(previousBase);
+    }
 };
 
 static void TestExperienceDisplaySettings() {
@@ -6416,6 +6579,11 @@ int main(int argc,char** argv) {
     }
     check(Ballistics::Spread(WeaponId::AWP,0,0,0)>Ballistics::Spread(WeaponId::AWP,0,1,0),
           "round3 AWP unscoped fire has greater random dispersion");
+    if (argc > 1 && std::string(argv[1]) == "--wheel-acceptance") {
+        EngineTestAccess::TestWheelAndLoadoutAcceptance();
+        std::printf("\n===== Wheel & Loadout Acceptance: %d passed, %d failed =====\n", g_pass, g_fail);
+        return g_fail == 0 ? 0 : 1;
+    }
     CS2DGameTestAccess::TestPix34Round3();
     TestRound3PartialRendering();
     TestPix34Input();
@@ -6456,6 +6624,121 @@ int main(int argc,char** argv) {
     TestDamageAndScopeShot();
     TestScopeCrosshair();
     TestBulletVisuals();
+
+    // ---- 双阵营配装规则、旧档迁移与玩法契约测试 ----
+    {
+        std::printf("\n===== 赛前武器配装与旧档迁移测试 =====\n");
+        const auto def = WeaponDB::DefaultMatchLoadouts();
+        // 默认 15 槽位唯一且合法
+        check(WeaponDB::SanitizeTeamLoadout(def.t, true) == def.t, "T 默认 15 槽位合法唯一");
+        check(WeaponDB::SanitizeTeamLoadout(def.ct, false) == def.ct, "CT 默认 15 槽位合法唯一");
+
+        // CT 可以双 M4 共存、AUG 换 AWP 后 步枪4把/狙击1把
+        auto ctCustom = def.ct;
+        check(WeaponDB::ApplyLoadoutSlotChoice(ctCustom, false, WeaponDB::LoadoutGroup::Rifle, 4, WeaponId::AUG),
+              "CT 用 AUG 替换 AWP");
+        check(WeaponDB::ShopWeaponsForCategory(ctCustom, false, WeaponDB::ShopCategory::Rifles).size() == 4 &&
+              WeaponDB::ShopWeaponsForCategory(ctCustom, false, WeaponDB::ShopCategory::Snipers).size() == 1,
+              "换 AUG 后步枪=4把、狙击枪=1把");
+
+        // 同组互换
+        check(WeaponDB::ApplyLoadoutSlotChoice(ctCustom, false, WeaponDB::LoadoutGroup::Rifle, 0, WeaponId::M4A4) &&
+              ctCustom.rifles[0] == WeaponId::M4A4 && ctCustom.rifles[1] == WeaponId::FAMAS,
+              "选择本组已有枪械时互换位置");
+
+        // 跨阵营 / 跨组拒绝
+        bool swap = false;
+        check(!WeaponDB::ValidateLoadoutAssignment(ctCustom, false, WeaponDB::LoadoutGroup::Rifle, 0, WeaponId::AK47, swap).empty(),
+              "CT 禁止配置 T 专属 AK-47");
+        check(!WeaponDB::ValidateLoadoutAssignment(ctCustom, false, WeaponDB::LoadoutGroup::Pistol, 0, WeaponId::AWP, swap).empty(),
+              "禁止跨组将 AWP 放入手枪槽");
+
+        // 存档损坏与旧档修复测试（保留有效槽与原小鸡外观）
+        const auto prevBase = PathUtils::BaseDir();
+        const auto dir = std::filesystem::absolute("build-evidence/loadout-migration");
+        std::filesystem::create_directories(dir);
+        PathUtils::SetBaseDir(dir.string());
+        const auto iniPath = dir / (std::string("cs2d_save") + BuildInfo::SaveSuffix() + ".ini");
+
+        // 1) 无配装段旧档
+        {
+            IniFile legacy;
+            legacy.SetInt("menu", "pose_version", 1);
+            legacy.SetInt("menu", "color2", 5);
+            legacy.SetInt("menu", "pose2", 2);
+            legacy.SetInt("menu", "accessory2", 1);
+            legacy.Save(iniPath.string());
+            SaveManager sm;
+            sm.Load();
+            check(sm.GetSettings().loadouts == WeaponDB::DefaultMatchLoadouts(), "无配装段旧档回退默认配装");
+            check(sm.GetSettings().menuColor[2] == 5 && sm.GetSettings().menuPose[2] == 2 &&
+                  sm.GetSettings().menuAccessory[2] == 1, "旧档迁移保留原有小鸡外观设置");
+        }
+        // 2) 重复 ID、跨阵营、错组、未知 ID 修复
+        {
+            IniFile bad;
+            bad.SetInt("loadout_ct", "version", 1);
+            bad.Set("loadout_ct", "starting", "glock18");     // 跨阵营起始
+            bad.Set("loadout_ct", "pistol_1", "awp");         // 错组
+            bad.Set("loadout_ct", "pistol_2", "p250");        // 合法
+            bad.Set("loadout_ct", "rifle_1", "m4a4");         // 合法
+            bad.Set("loadout_ct", "rifle_2", "m4a4");         // 重复
+            bad.Set("loadout_ct", "rifle_3", "unknown_gun");  // 未知
+            bad.Set("loadout_ct", "rifle_4", "ak47");         // 跨阵营
+            bad.Set("loadout_ct", "rifle_5", "aug");          // 合法保留
+            bad.SetInt("menu", "color3", 6);
+            bad.Save(iniPath.string());
+
+            SaveManager sm;
+            sm.Load();
+            const auto& ct = sm.GetSettings().loadouts.ct;
+            check(ct.starting == WeaponId::USP_S, "非法起始手枪修复为 CT 默认 USP-S");
+            check(ct.pistols[1] == WeaponId::P250, "有效手枪槽保留原位");
+            check(ct.rifles[0] == WeaponId::M4A4 && ct.rifles[4] == WeaponId::AUG,
+                  "有效步枪槽保留原位且问题槽被修复");
+            check(WeaponDB::SanitizeTeamLoadout(ct, false) == ct, "修复后的 CT 15 槽位完全合法唯一");
+            check(sm.GetSettings().menuColor[3] == 6, "损坏配装修复时保留小鸡外观");
+        }
+        PathUtils::SetBaseDir(prevBase);
+
+        // 3) 玩法集成：不同配装发枪、换边、死斗校验、退款与未配装拒绝
+        CS2DGame g;
+        WeaponDB::MatchLoadouts ml = WeaponDB::DefaultMatchLoadouts();
+        ml.ct.starting = WeaponId::P2000;
+        ml.ct.rifles[4] = WeaponId::AUG; // 移除 AWP
+        g.SetMatchLoadouts(ml);
+        g.SetMatchMode(MatchMode::BombDefusal);
+        g.SetPlayerTeam(Team::CT);
+        check(g.LoadMap(MapPath(), nullptr, true), "爆破模式加载地图");
+        check(g.GetPlayer().weapons[1] == WeaponId::P2000, "CT 选 P2000 后首回合获得 P2000");
+
+        // 购买闪光弹 2 枚，第 3 枚达上限，退 1 枚只退一份
+        g.GetPlayer().money = 16000;
+        check(g.ExecutePurchase(WeaponReq(WeaponId::GrenadeFlash)).code == Presentation::BuyCode::Ok, "闪光 #1");
+        check(g.ExecutePurchase(WeaponReq(WeaponId::GrenadeFlash)).code == Presentation::BuyCode::Ok, "闪光 #2");
+        check(g.ExecutePurchase(WeaponReq(WeaponId::GrenadeFlash)).code == Presentation::BuyCode::ItemLimitReached, "闪光 #3 达上限");
+        const int moneyAfter2Flash = g.GetPlayerMoney();
+        check(g.ExecuteRefund(WeaponReq(WeaponId::GrenadeFlash)) &&
+              g.GetPlayerMoney() == moneyAfter2Flash + 200 &&
+              g.GetPlayer().CountGrenade(WeaponId::GrenadeFlash) == 1,
+              "闪光弹退一枚只退一份");
+
+        // 死斗记忆项校验：切换配装后旧主武若不在新配装内则不保留
+        CS2DGame dm;
+        dm.SetMatchLoadouts(WeaponDB::DefaultMatchLoadouts());
+        dm.SetMatchMode(MatchMode::DeathMatch);
+        dm.LoadMap(MapPath(), nullptr, true);
+        dm.GetPlayer().money = 16000;
+        check(dm.ExecutePurchase(WeaponReq(WeaponId::AWP)).code == Presentation::BuyCode::Ok, "死斗购买 AWP");
+        dm.SetMatchLoadouts(ml); // 移除 AWP 并改 P2000
+        dm.GetPlayer().alive = false;
+        dm.Update(3.5f, false, 0, 0, false, false, false, false, false, false, false, nullptr);
+        check(dm.GetPlayer().weapons[0] == WeaponId::None &&
+              dm.GetPlayer().weapons[1] == WeaponId::P2000,
+              "死斗重生按本场配装校验记忆项，失效主武回退合法出生配置");
+    }
+
+    EngineTestAccess::TestWheelAndLoadoutAcceptance();
 
     std::printf("\n===== 结果: %d 通过, %d 失败 =====\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

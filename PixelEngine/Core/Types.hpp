@@ -9,6 +9,7 @@
 // 游戏状态机
 enum GameState {
     MAIN_MENU,      // 主菜单
+    LOADOUT,        // 赛前武器配装
     MAP_SELECT,     // 选择地图（爆破模式）
     HISTORY,        // 历史记录
     SETTINGS,       // 设置
