@@ -1,6 +1,6 @@
 #pragma once
 #include "WeaponDef.hpp"
-#include <SDL2/SDL.h>
+#include "../../Core/Vec2.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -369,7 +369,7 @@ inline float Spread(WeaponId id, float speedFraction, float scope, float accumul
     const float stage = id == WeaponId::Negev && shot < 3 ? 1.0f + (3 - shot) * .5f : 1.0f;
     return std::atan((mode(p.spread) + mode(p.stand) + mode(p.move) * movement + accumulated) * stage);
 }
-inline SDL_FPoint Recoil(WeaponId id, unsigned shot, float scope) {
+inline Vec2 Recoil(WeaponId id, unsigned shot, float scope) {
     const auto &p = Get(id);
     std::mt19937 random(p.seed);
     std::uniform_real_distribution<float> sample(-1, 1);
@@ -386,7 +386,7 @@ inline SDL_FPoint Recoil(WeaponId id, unsigned shot, float scope) {
     const float gain = std::tan(.6f * Tuning::DegreesToRadians) / 30;
     return {x * gain, y * gain};
 }
-inline SDL_FPoint RemoveKick(SDL_FPoint effective, SDL_FPoint kick) {
+inline Vec2 RemoveKick(Vec2 effective, Vec2 kick) {
     const float scale = 1 - kick.x * kick.x - kick.y * kick.y;
     const float dot = effective.x * kick.x + effective.y * kick.y;
     const float squared = effective.x * effective.x + effective.y * effective.y;

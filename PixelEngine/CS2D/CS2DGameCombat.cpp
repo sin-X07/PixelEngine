@@ -3,7 +3,6 @@
 #include "Tuning.hpp"
 #include "Weapons/Ballistics.hpp"
 #include "NadePhysics.hpp"
-#include "../Audio/AudioManager.hpp"
 #include <iostream>
 #include <cmath>
 #include <algorithm>
@@ -120,7 +119,7 @@ void CS2DGame::MoveWithCollision(Player& entity, float dt) {
 }
 
 void CS2DGame::UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, float worldMY,
-                                    AudioManager* audio) {
+                                    IAudioSink* audio) {
     if (!player_.alive) return;
 
     player_.aimAngle = std::atan2(worldMY - player_.y, worldMX - player_.x);
@@ -277,7 +276,7 @@ void CS2DGame::AddBulletVisual(const Bullet& b, float fromX, float fromY,
     }
 }
 
-void CS2DGame::UpdateBullets(float dt, AudioManager *audio) {
+void CS2DGame::UpdateBullets(float dt, IAudioSink *audio) {
     // 先让旧段随时间淡出，再加入本帧新段（寿命只在模拟里推进，Render 不消费）
     for (auto &seg : bulletVisuals_)
         seg.remainingSeconds -= dt;
@@ -467,7 +466,7 @@ void CS2DGame::UpdateBullets(float dt, AudioManager *audio) {
 // 手雷
 // ============================================================================
 
-void CS2DGame::ThrowGrenade(Player &thrower, float aimAngle, AudioManager *audio, float targetDistance) {
+void CS2DGame::ThrowGrenade(Player &thrower, float aimAngle, IAudioSink *audio, float targetDistance) {
     if (thrower.grenadeCount <= 0)
         return;
 
@@ -548,7 +547,7 @@ void CS2DGame::ThrowGrenade(Player &thrower, float aimAngle, AudioManager *audio
     }
 }
 
-void CS2DGame::UpdateGrenades(float dt, AudioManager *audio) {
+void CS2DGame::UpdateGrenades(float dt, IAudioSink *audio) {
     // 投掷物飞行 + 撞墙反弹 + 引信
     for (auto &g : grenades_) {
         if (!g.active)
@@ -689,7 +688,7 @@ void CS2DGame::UpdateGrenades(float dt, AudioManager *audio) {
                     counters_.fireDamage += std::min(p.health, Tuning::FireTickDamage);
                     ++counters_.fireTicks;
                     if (ApplyDamage(p, Tuning::FireTickDamage, 1.0f))
-                        OnCombatantKilled(p, audio, DamageOwner(f.owner), f.weapon,f.equipmentId,SDL_FPoint{f.x,f.y}); // 火区无视护甲（CS2 同）
+                        OnCombatantKilled(p, audio, DamageOwner(f.owner), f.weapon,f.equipmentId,Vec2{f.x,f.y}); // 火区无视护甲（CS2 同）
                     break;
                 }
             }
@@ -756,14 +755,14 @@ void CS2DGame::RebuildFireCells(FireZone &fire) const {
     fire.cellExtent = extent;
     fire.cellCoverage.assign(width * width, 0);
     std::vector<bool> visited(width * width, false);
-    std::vector<SDL_Point> queue;
+    std::vector<Vec2i> queue;
     fire.cells.clear();
     auto legal = [&](int x, int y) {
         const float px = fire.x + x * step, py = fire.y + y * step;
         return x * x + y * y <= extent * extent &&
                !world_->CheckRectCollision(px - step * .5f, py - step * .5f, step, step);
     };
-    SDL_Point seed{};
+    Vec2i seed{};
     if (!legal(0, 0)) {
         int nearest = 1000;
         for (int y = -2; y <= 2; ++y)
@@ -783,7 +782,7 @@ void CS2DGame::RebuildFireCells(FireZone &fire) const {
         const auto p = queue[i];
         fire.cells.push_back({fire.x + p.x * step, fire.y + p.y * step});
         fire.cellCoverage[(p.y + extent) * width + p.x + extent] = 1;
-        const SDL_Point next[] = {{p.x - 1, p.y}, {p.x + 1, p.y}, {p.x, p.y - 1}, {p.x, p.y + 1}};
+        const Vec2i next[] = {{p.x - 1, p.y}, {p.x + 1, p.y}, {p.x, p.y - 1}, {p.x, p.y + 1}};
         for (auto n : next) {
             if (std::abs(n.x) > extent || std::abs(n.y) > extent)
                 continue;
@@ -819,7 +818,7 @@ bool CS2DGame::FireContains(const FireZone &fire, float x, float y) const {
     return false;
 }
 
-void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
+void CS2DGame::ExplodeGrenade(const Grenade& g, IAudioSink* audio) {
     switch (g.type) {
         case WeaponId::GrenadeHE: {
             const float RADIUS  = Tuning::NadeBlastRadius;
@@ -832,7 +831,7 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, AudioManager* audio) {
                 if (d > RADIUS) return;
                 // 平方衰减：贴近中心才有高伤害，边缘伤害很低
                 if (ApplyDamage(p, static_cast<int>(ExpectedBlastDamage(g.x,g.y,p)), 0.5f)) {   // 爆炸按 50% 穿透
-                    OnCombatantKilled(p, audio, DamageOwner(g.owner), g.type,g.equipmentId,SDL_FPoint{g.x,g.y});
+                    OnCombatantKilled(p, audio, DamageOwner(g.owner), g.type,g.equipmentId,Vec2{g.x,g.y});
                 }
             };
 
@@ -978,11 +977,11 @@ bool CS2DGame::SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) con
 // 死亡处理
 // ============================================================================
 
-void CS2DGame::OnCombatantKilled(Player &victim, AudioManager *audio, Player *killer, WeaponId weapon, std::uint64_t equipmentId, std::optional<SDL_FPoint> sourcePosition) {
-    if (audio)
-        audio->StopChannel(victim.defuseChannel);
-    else if (victim.defuseChannel >= 0 && Mix_QuerySpec(nullptr, nullptr, nullptr))
-        Mix_HaltChannel(victim.defuseChannel);
+void CS2DGame::OnCombatantKilled(Player &victim, IAudioSink *audio, Player *killer, WeaponId weapon, std::uint64_t equipmentId, std::optional<Vec2> sourcePosition) {
+    if (audio) audioSink_ = audio;
+    IAudioSink* sink = audio ? audio : (audioSink_ ? audioSink_ : IAudioSink::Active());
+    if (sink)
+        sink->StopChannel(victim.defuseChannel);
     victim.defuseChannel = -1;
     victim.defuseProgress = 0;
     if (!victim.alive)
@@ -993,7 +992,7 @@ void CS2DGame::OnCombatantKilled(Player &victim, AudioManager *audio, Player *ki
     if (!event.equipmentId && killer) {
         for(int slot=0;slot<5;++slot) if (killer->weapons[slot]==weapon) event.equipmentId=killer->equipment[slot].id;
     }
-    event.sourcePosition=sourcePosition.value_or(killer ? SDL_FPoint{killer->x,killer->y} : SDL_FPoint{victim.x,victim.y});
+    event.sourcePosition=sourcePosition.value_or(killer ? Vec2{killer->x,killer->y} : Vec2{victim.x,victim.y});
     event.id = nextKillEventId_++;
     event.timestamp = clockSec_;
     event.killer = killer == &player_ ? "你" : killer ? killer->name : "环境";
@@ -1019,10 +1018,8 @@ void CS2DGame::OnCombatantKilled(Player &victim, AudioManager *audio, Player *ki
         deathPresentation_.event = event;
         deathPresentation_.remaining = DeathFreezeSeconds;
         hitMarkerTimer_ = 0.0f;
-        if (audio) {
-            audio->StopChannel(plantingChannel_);
-        } else if (plantingChannel_ >= 0 && Mix_QuerySpec(nullptr, nullptr, nullptr)) {
-            Mix_HaltChannel(plantingChannel_);
+        if (sink) {
+            sink->StopChannel(plantingChannel_);
         }
         plantingChannel_ = -1;
         plantProgress_ = 0.0f;
@@ -1172,7 +1169,7 @@ bool CS2DGame::ApplyDamage(Player& victim, int amount, float armorPen) {
 // 换弹 / 视野 / 安全距离
 // ============================================================================
 
-void CS2DGame::StartReload(Player& p, AudioManager* audio) {
+void CS2DGame::StartReload(Player& p, IAudioSink* audio) {
     if (p.reloading) return;
 
     const WeaponDef& def = p.CurrentWeapon();
@@ -1353,7 +1350,7 @@ void CS2DGame::DropEquipmentOnDeath(Player& victim) {
               << static_cast<int>(victim.y) << ")" << std::endl;
 }
 
-void CS2DGame::TryPickupDrops(bool manual, AudioManager *audio) {
+void CS2DGame::TryPickupDrops(bool manual, IAudioSink *audio) {
 
     // CT participants can recover a dropped kit independently of weapon pickup.
     for (auto &drop : drops_) {

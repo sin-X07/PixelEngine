@@ -1,6 +1,5 @@
 #include "CS2DGame.hpp"
 #include "Tuning.hpp"
-#include "../Audio/AudioManager.hpp"
 #include <iostream>
 #include <cmath>
 #include <algorithm>
@@ -571,7 +570,7 @@ static bool BombSafePoint(const PathFinder& pf, float bombX, float bombY,
     return false;
 }
 
-void CS2DGame::UpdateBOTs(float dt, AudioManager* audio) {
+void CS2DGame::UpdateBOTs(float dt, IAudioSink* audio) {
     // 小队协同：刷新集火目标（内部 0.5s 节流）
     UpdateSquadFocus(dt);
 

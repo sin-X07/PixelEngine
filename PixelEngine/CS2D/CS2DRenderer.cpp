@@ -1760,7 +1760,7 @@ void CS2DRenderer::EnsureFireTiles() {
     }
 }
 
-void CS2DRenderer::DrawFireCells(const std::vector<SDL_FPoint> &cells, float x, float y, float radius,
+void CS2DRenderer::DrawFireCells(const std::vector<Vec2> &cells, float x, float y, float radius,
                                  float age, float life, float seed) {
     const float activeRadius = Tuning::FireEffectiveRadius(radius, age, life);
     const float fade = std::clamp(life / .6f, 0.0f, 1.0f);

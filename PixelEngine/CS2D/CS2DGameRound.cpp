@@ -1,5 +1,4 @@
 #include "CS2DGame.hpp"
-#include "../Audio/AudioManager.hpp"
 #include <iostream>
 #include <cmath>
 #include <algorithm>
@@ -9,7 +8,7 @@
 // 回合流程
 // ============================================================================
 
-void CS2DGame::UpdateRoundFlow(float dt, AudioManager* audio) {
+void CS2DGame::UpdateRoundFlow(float dt, IAudioSink* audio) {
     if (mode_ == MatchMode::DeathMatch) return;   // 死斗无回合
 
     // 比赛已结束：冻结回合状态机，停在最后一回合的结算画面上。
@@ -53,7 +52,7 @@ void CS2DGame::UpdateRoundFlow(float dt, AudioManager* audio) {
     prevPhase_ = after;
 }
 
-void CS2DGame::BeginNewRound(AudioManager* audio) {
+void CS2DGame::BeginNewRound(IAudioSink* audio) {
     StopObjectiveAudio(audio);
     if (teams_.MatchOver()) return;
     CoachResetRound();
@@ -489,7 +488,7 @@ void CS2DGame::UpdateBotBuy(float dt) {
     }
 }
 
-void CS2DGame::CheckWinConditions(AudioManager* audio) {
+void CS2DGame::CheckWinConditions(IAudioSink* audio) {
     if (mode_ == MatchMode::DeathMatch) return;
     if (!round_.IsLive()) return;
     if (round_.IsDecided()) return;
@@ -532,7 +531,7 @@ void CS2DGame::CheckWinConditions(AudioManager* audio) {
     round_.EndRound(winner);
 }
 
-void CS2DGame::ApplyRoundResult(Team winner, AudioManager* audio) {
+void CS2DGame::ApplyRoundResult(Team winner, IAudioSink* audio) {
     StopObjectiveAudio(audio);
     if (round_.IsDecided()) return;   // 防重复结算（目标物与歼灭可能同帧触发）
 

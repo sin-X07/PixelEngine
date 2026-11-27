@@ -1,7 +1,6 @@
 #include "CS2DGame.hpp"
 #include "Tuning.hpp"
 #include "Visibility/BodyGeometry.hpp"
-#include "../Audio/AudioManager.hpp"
 #include <iostream>
 #include <cmath>
 #include <algorithm>
@@ -358,8 +357,8 @@ CS2DGame::BodyVisibility CS2DGame::QueryBodyVisibility(const Player &observer, c
     int count = 0;
     const float cosine=std::cos(targetAim+Tuning::Pi*.5f), sine=std::sin(targetAim+Tuning::Pi*.5f);
     for (const auto local : pose.samples) {
-        const SDL_FPoint point{center.x+target.size*(local.x*cosine-local.y*sine),
-                               center.y+target.size*(local.x*sine+local.y*cosine)};
+        const Vec2 point{center.x+target.size*(local.x*cosine-local.y*sine),
+                         center.y+target.size*(local.x*sine+local.y*cosine)};
         if (!CanSeePoint(observer, point.x, point.y))
             continue;
         const int x = static_cast<int>((local.x + .5f) * BodyGeometry::Resolution);

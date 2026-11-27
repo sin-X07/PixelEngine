@@ -104,17 +104,44 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(SDL2)
 FetchContent_MakeAvailable(SDL2_mixer SDL2_image)
 
-# ---- 源码 ----
-set(SOURCES
+# ---- 纯 C++17 无头仿真核心库（零 SDL2 / SDL2_image / SDL2_mixer / OpenGL 依赖）----
+set(PIXEL_SIM_SOURCES
+    Core/IniFile.cpp
+    CS2D/TMJParser.cpp
+    CS2D/CS2DWorld.cpp
+    CS2D/Visibility/VisibilityQuery.cpp
+    CS2D/Visibility/BodyGeometry.cpp
+    CS2D/TacticalIntel.cpp
+    CS2D/Navigation/PathFinder.cpp
+    CS2D/Rounds/RoundManager.cpp
+    CS2D/CS2DGame.cpp
+    CS2D/CS2DGameRound.cpp
+    CS2D/CS2DGameCombat.cpp
+    CS2D/CS2DGameBots.cpp
+    CS2D/CS2DGameSpectate.cpp
+    CS2D/CS2DGameSound.cpp
+    CS2D/CS2DGameBomb.cpp
+    CS2D/CS2DGameSquad.cpp
+    CS2D/CS2DGameObjective.cpp
+    CS2D/CS2DGameCoach.cpp
+    CS2D/CS2DGameCoachAI.cpp
+)
+
+add_library(PixelSim STATIC ${PIXEL_SIM_SOURCES})
+target_include_directories(PixelSim PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+# ---- 客户端源码（渲染 / 音频 / 输入 / UI / 外壳）----
+set(CLIENT_SOURCES
     main.cpp
     Engine.cpp
     Engine.hpp
     Core/Types.hpp
+    Core/Vec2.hpp
+    Core/IAudioSink.hpp
     Core/PresentationContract.hpp
     Core/PathUtils.hpp
     Core/UiTextChars.hpp
     Core/IniFile.hpp
-    Core/IniFile.cpp
     Audio/AudioManager.cpp
     Input/InputManager.cpp
     Graphics/ImGuiUI.cpp
@@ -128,33 +155,19 @@ set(SOURCES
     Storage/MatchHistory.cpp
     CS2D/CS2DTypes.hpp
     CS2D/MiniJSON.hpp
-    CS2D/TMJParser.cpp
-    CS2D/CS2DWorld.cpp
+    CS2D/CS2DWorld.hpp
     CS2D/CS2DRenderer.cpp
-    CS2D/CS2DGame.cpp
-    CS2D/CS2DGameRound.cpp
-    CS2D/CS2DGameCombat.cpp
-    CS2D/CS2DGameBots.cpp
-    CS2D/CS2DGameSpectate.cpp
-    CS2D/Visibility/VisibilityQuery.cpp
+    CS2D/CS2DGame.hpp
+    CS2D/CS2DGameRender.cpp
     CS2D/Visibility/VisibilityQuery.hpp
     CS2D/TacticalIntel.hpp
-    CS2D/TacticalIntel.cpp
     CS2D/SoundEvents.hpp
-    CS2D/CS2DGameSound.cpp
     CS2D/NadePhysics.hpp
-    CS2D/CS2DGameBomb.cpp
-    CS2D/CS2DGameSquad.cpp
-    CS2D/CS2DGameObjective.cpp
-    CS2D/CS2DGameCoach.cpp
-    CS2D/CS2DGameCoachAI.cpp
     CS2D/Coach/CoachTypes.hpp
     CS2D/Navigation/PathFinder.hpp
-    CS2D/Navigation/PathFinder.cpp
     CS2D/CS2DOverlay.cpp
     CS2D/Teams/TeamManager.hpp
     CS2D/Rounds/RoundManager.hpp
-    CS2D/Rounds/RoundManager.cpp
     ThirdParty/imgui/imgui.cpp
     ThirdParty/imgui/imgui_draw.cpp
     ThirdParty/imgui/imgui_tables.cpp
@@ -164,13 +177,14 @@ set(SOURCES
 )
 
 if(WIN32)
-    list(APPEND SOURCES LLM/LLMBotController.cpp)
+    set(LLM_SOURCES LLM/LLMBotController.cpp)
 else()
     # macOS / Linux: WinHTTP 不可用，使用桩实现（LLM 教练自动回退规则引擎）
-    list(APPEND SOURCES LLM/LLMBotController_stub.cpp)
+    set(LLM_SOURCES LLM/LLMBotController_stub.cpp)
 endif()
+list(APPEND CLIENT_SOURCES ${LLM_SOURCES})
 
-add_executable(EngineApp ${SOURCES})
+add_executable(EngineApp ${CLIENT_SOURCES})
 
 target_include_directories(EngineApp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/imgui
@@ -178,6 +192,7 @@ target_include_directories(EngineApp PRIVATE
 )
 
 target_link_libraries(EngineApp PRIVATE
+    PixelSim
     SDL2::SDL2main
     SDL2::SDL2
     SDL2_mixer::SDL2_mixer-static
@@ -211,11 +226,13 @@ add_dependencies(EngineApp SyncEngineAssets)
 option(BUILD_GAMEPLAY_TESTS "Build headless gameplay regression tests" OFF)
 if(BUILD_GAMEPLAY_TESTS)
     add_executable(map_perimeter_review ../tools/map_perimeter_review.cpp
-        CS2D/CS2DRenderer.cpp CS2D/CS2DWorld.cpp CS2D/TMJParser.cpp
-        CS2D/Visibility/VisibilityQuery.cpp)
-    target_include_directories(map_perimeter_review PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        CS2D/CS2DRenderer.cpp)
     target_compile_definitions(map_perimeter_review PRIVATE SDL_MAIN_HANDLED)
-    target_link_libraries(map_perimeter_review PRIVATE SDL2::SDL2 SDL2_image::SDL2_image-static)
+    target_link_libraries(map_perimeter_review PRIVATE
+        PixelSim
+        SDL2::SDL2
+        SDL2_image::SDL2_image-static
+    )
     if(MINGW)
         target_link_options(map_perimeter_review PRIVATE -mconsole -static -static-libgcc -static-libstdc++)
     endif()
@@ -233,7 +250,7 @@ if(BUILD_GAMEPLAY_TESTS)
     if(MINGW)
         target_link_options(menu_art_review PRIVATE -mconsole -static -static-libgcc -static-libstdc++)
     endif()
-    set(TEST_SOURCES ${SOURCES})
+    set(TEST_SOURCES ${CLIENT_SOURCES})
     list(REMOVE_ITEM TEST_SOURCES main.cpp)
     add_executable(gameplay_tests
         "${CMAKE_CURRENT_SOURCE_DIR}/../tools/buy_scope_test.cpp"
@@ -247,6 +264,7 @@ if(BUILD_GAMEPLAY_TESTS)
     # 不链接 SDL2main，也不让 SDL_main.h 把 main 重命名成 SDL_main
     target_compile_definitions(gameplay_tests PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(gameplay_tests PRIVATE
+        PixelSim
         SDL2::SDL2
         SDL2_mixer::SDL2_mixer-static
         SDL2_image::SDL2_image-static
@@ -283,30 +301,17 @@ option(BUILD_DEV_REPLAY_TOOLS "Build dev-only determinism/replay runner" OFF)
 if(BUILD_DEV_REPLAY_TOOLS)
     # 让 EngineApp 编译 --record 输入录制代码（生产构建不定义，代码完全不存在）
     target_compile_definitions(EngineApp PRIVATE PIXEL_DEV_REPLAY)
-    set(DEV_TOOL_SOURCES ${SOURCES})
-    list(REMOVE_ITEM DEV_TOOL_SOURCES main.cpp Engine.cpp Engine.hpp)
     add_executable(dev_replay_runner
-        ${DEV_TOOL_SOURCES}
+        ${LLM_SOURCES}
         "${CMAKE_CURRENT_SOURCE_DIR}/../tools/dev_replay/dev_replay_runner.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../tools/dev_replay/digest.cpp"
     )
-    target_include_directories(dev_replay_runner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/imgui
-        ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/imgui/backends
-    )
-    target_compile_definitions(dev_replay_runner PRIVATE SDL_MAIN_HANDLED)
-    target_link_libraries(dev_replay_runner PRIVATE
-        SDL2::SDL2
-        SDL2_mixer::SDL2_mixer-static
-        SDL2_image::SDL2_image-static
-    )
+    target_link_libraries(dev_replay_runner PRIVATE PixelSim)
     if(WIN32)
-        target_link_libraries(dev_replay_runner PRIVATE ws2_32 winhttp opengl32)
-    elseif(APPLE)
-        target_link_libraries(dev_replay_runner PRIVATE ${OPENGL_FRAMEWORK})
+        target_link_libraries(dev_replay_runner PRIVATE ws2_32 winhttp)
     endif()
     if(MINGW)
-        target_link_options(dev_replay_runner PRIVATE -mconsole)
+        target_link_options(dev_replay_runner PRIVATE -mconsole -static -static-libgcc -static-libstdc++)
     endif()
+    add_dependencies(dev_replay_runner SyncEngineAssets)
 endif()

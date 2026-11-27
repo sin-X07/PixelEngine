@@ -282,7 +282,7 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
 
     const std::string mapPath =
         PathUtils::ResolveAppPath("assets/cs2d/maps/" + map + ".tmj");
-    if (!game.LoadMap(mapPath, nullptr, true)) {
+    if (!game.LoadMapHeadless(mapPath, true)) {
         std::fprintf(stderr, "[dev_replay] 地图加载失败: %s\n", mapPath.c_str());
         return s;
     }
@@ -561,7 +561,7 @@ int RunReplay(const Options& opt) {
 
     const std::string mapPath =
         PathUtils::ResolveAppPath("assets/cs2d/maps/" + jh.map + ".tmj");
-    if (!game.LoadMap(mapPath, nullptr, true)) {
+    if (!game.LoadMapHeadless(mapPath, true)) {
         std::fprintf(stderr, "[replay] 地图加载失败: %s\n", mapPath.c_str());
         return 2;
     }

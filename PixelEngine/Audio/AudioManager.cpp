@@ -103,6 +103,7 @@ bool AudioManager::Initialize() {
     // 过程音结束后保留通道归属，取消操作时不会停止其他新播放的声音。
     Mix_ReserveChannels(kReservedChannels);
     audioInitialized = true;
+    IAudioSink::SetActive(this);
 
     int failedAudio = 0;
     auto loadChunk = [&failedAudio](const std::string& relPath, const char* name) -> Mix_Chunk* {
@@ -313,6 +314,9 @@ void AudioManager::Clean() {
     Mix_CloseAudio();
     SDL_QuitSubSystem(SDL_INIT_AUDIO);
     audioInitialized = false;
+    if (IAudioSink::Active() == this) {
+        IAudioSink::SetActive(nullptr);
+    }
 }
 
 void AudioManager::PlayMusic(const std::string& filename) {
@@ -578,8 +582,14 @@ void AudioManager::SetMuted(bool mute) {
 
 void AudioManager::StopChannel(int& channel) {
     if (channel < 0) return;
-    Mix_HaltChannel(channel);
+    if (audioInitialized) Mix_HaltChannel(channel);
     channel = -1;
+}
+
+void AudioManager::SetChannelPaused(int channel, bool paused) {
+    if (!audioInitialized || channel < 0) return;
+    if (paused) Mix_Pause(channel);
+    else Mix_Resume(channel);
 }
 
 int AudioManager::PlaySoundTracked(SoundEffect effect, int channel) {

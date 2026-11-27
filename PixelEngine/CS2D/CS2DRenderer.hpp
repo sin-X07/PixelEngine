@@ -152,7 +152,7 @@ public:
     void DrawSmokeCloud(float worldX, float worldY, float worldRadius,
                         float age, float expandTime, float life, float maxLife, float seed);
     // 燃烧弹火区：地面火焰贴图（火焰全部走地图贴图逻辑，不再叠矢量火焰）
-    void DrawFireCells(const std::vector<SDL_FPoint>& cells,float x,float y,float radius,float age,float life,float seed);
+    void DrawFireCells(const std::vector<Vec2>& cells,float x,float y,float radius,float age,float life,float seed);
     void DrawFlashOverlay(Uint8 alpha);
 
     // 命中反馈（屏幕坐标，X 形准星）与受伤红色边缘

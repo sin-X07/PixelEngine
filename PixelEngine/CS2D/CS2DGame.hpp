@@ -1,7 +1,6 @@
 #pragma once
 #include "CS2DWorld.hpp"
 #include "Visibility/VisibilityQuery.hpp"
-#include "CS2DRenderer.hpp"
 #include "Weapons/Ballistics.hpp"
 #include "Teams/TeamManager.hpp"
 #include "Coach/CoachTypes.hpp"
@@ -15,7 +14,8 @@
 #include "Navigation/PathFinder.hpp"
 #include "../Core/Types.hpp"
 #include "../Core/PresentationContract.hpp"
-#include <SDL2/SDL.h>
+#include "../Core/Vec2.hpp"
+#include "../Core/IAudioSink.hpp"
 #include <string>
 #include <chrono>
 #include <map>
@@ -29,8 +29,11 @@
 #include <memory>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <array>
 
-class AudioManager;
+class CS2DRenderer;
+struct SpriteDrawParams;
 
 // 对局模式
 enum class MatchMode {
@@ -96,7 +99,7 @@ public:
             WeaponId weapon = WeaponId::None;
             unsigned shot = 0;
             float inaccuracy = 0;
-            SDL_FPoint kick{};
+            Vec2 kick{};
             void Recover(float dt) {
                 if (weapon == WeaponId::None)
                     return;
@@ -125,9 +128,9 @@ public:
         EquipmentRecord kitEquipment{};
         std::vector<EquipmentRecord> armorEquipment;
 
-        SDL_FPoint BallisticKick() const {
+        Vec2 BallisticKick() const {
             const auto &state = fireStates[weaponSlot];
-            return state.weapon == CurrentWeapon().id ? state.kick : SDL_FPoint{};
+            return state.weapon == CurrentWeapon().id ? state.kick : Vec2{};
         }
         float BallisticInaccuracy() const {
             const auto &state = fireStates[weaponSlot];
@@ -156,7 +159,7 @@ public:
             for (auto &state : fireStates)
                 state.Recover(dt);
         }
-        SDL_FPoint EffectiveAimVector() const {
+        Vec2 EffectiveAimVector() const {
             const auto kick = BallisticKick();
             const float x = std::cos(aimAngle) + kick.x, y = std::sin(aimAngle) + kick.y;
             return {x * std::cos(aimKick) - y * std::sin(aimKick),
@@ -511,7 +514,7 @@ public:
 
     struct Bullet {
         std::uint64_t equipmentId=0;
-        SDL_FPoint sourcePosition{};
+        Vec2 sourcePosition{};
         float x  = 0.0f;
         float y  = 0.0f;
         float vx = 0.0f;
@@ -557,7 +560,7 @@ public:
         float x = 0.0f, y = 0.0f;
         int owner = -2;
         WeaponId weapon = WeaponId::GrenadeMolotov;
-        std::vector<SDL_FPoint> cells;
+        std::vector<Vec2> cells;
         std::vector<uint8_t> cellCoverage;
         int cellExtent = 0;
         std::uint64_t terrainRevision = 0;
@@ -580,7 +583,7 @@ public:
     // 击杀播报条目
     struct KillFeedEntry {
         std::uint64_t equipmentId=0;
-        SDL_FPoint sourcePosition{};
+        Vec2 sourcePosition{};
         std::uint64_t id=0;
         float timestamp=0;
         std::string text;
@@ -613,8 +616,11 @@ public:
     CS2DGame();
     ~CS2DGame() = default;
 
+    bool LoadMapHeadless(const std::string& resolvedTMJPath, bool resetMatch = true,
+                         float visionRadius = Tuning::VisionRadius);
     bool LoadMap(const std::string& resolvedTMJPath, CS2DRenderer* renderer,
                  bool resetMatch = true);
+    void SetAudioSink(IAudioSink* audio) { audioSink_ = audio; }
     void Reset();
 
     // 选阵营阶段：只画地图，不生成玩家/BOT。
@@ -694,7 +700,7 @@ public:
                 bool wPressed, bool aPressed, bool sPressed, bool dPressed,
                 bool shiftPressed, bool rPressed,
                 bool interactHeld,
-                class AudioManager* audio = nullptr);
+                IAudioSink* audio = nullptr);
 
     void Render(int viewW = 800, int viewH = 600);
 
@@ -936,11 +942,11 @@ public:
     bool PlayerHoldingC4() const { return playerHoldingC4_; }
     bool IsBombDropped() const { return bombDropped_; }
     int GetBombCarrierId() const { return GetBombCarrierPos() ? bombCarrier_ : -2; }
-    std::optional<SDL_FPoint> GetBombCarrierPos() const {
-        if (ActorHasC4(player_)) return SDL_FPoint{player_.x, player_.y};
+    std::optional<Vec2> GetBombCarrierPos() const {
+        if (ActorHasC4(player_)) return Vec2{player_.x, player_.y};
         if (bombCarrier_ >= 0 && bombCarrier_ < static_cast<int>(bots_.size())) {
             const auto& carrier = bots_[bombCarrier_];
-            if (ActorHasC4(carrier)) return SDL_FPoint{carrier.x, carrier.y};
+            if (ActorHasC4(carrier)) return Vec2{carrier.x, carrier.y};
         }
         return std::nullopt;
     }
@@ -1060,8 +1066,8 @@ public:
     DmLoadout dmLoadout_;   // 死斗重生装配用（Reset 时清空）
     float ListenerX() const;
     float ListenerY() const;
-    void SetObjectiveAudioPaused(bool paused);
-    void StopObjectiveAudio(AudioManager* audio);
+    void SetObjectiveAudioPaused(bool paused, IAudioSink* audio = nullptr);
+    void StopObjectiveAudio(IAudioSink* audio);
     Team GetMatchWinner() const { return teams_.MatchWinner(); }
 #ifdef PIXEL_DEV_REPLAY
     // 开发期：直接把比分推到赛点，用于预览结算页（release 构建不存在）
@@ -1093,9 +1099,9 @@ public:
     // 玩家当前是否处于购买区内（地图未定义购买区时视为全图可买）
     bool IsPlayerInBuyZone() const;
     // 尝试购买；成功返回 true（已扣款并装备）
-    bool TryBuy(WeaponId id, class AudioManager* audio = nullptr);
+    bool TryBuy(WeaponId id, IAudioSink* audio = nullptr);
     // 购买护甲：tier 1=护甲 2=护甲+头盔
-    bool TryBuyArmor(int tier, class AudioManager* audio = nullptr);
+    bool TryBuyArmor(int tier, IAudioSink* audio = nullptr);
 
     // ---- 购买契约 v1（第 3 节）----
     // EvaluatePurchase：纯判定，无扣款/装备/音效副作用，供 UI 逐项显示可用性。
@@ -1105,7 +1111,7 @@ public:
     Presentation::BuyCode EvaluatePurchase(const Presentation::BuyRequest& request) const;
     // ExecutePurchase：点击时重新判定，Ok 才执行一次原装备/扣款与 EQUIP 音效。
     Presentation::BuyResult ExecutePurchase(const Presentation::BuyRequest& request,
-                                            class AudioManager* audio = nullptr);
+                                            IAudioSink* audio = nullptr);
 
     // ---- 开镜契约 v1（第 4 节）----
     // Engine 每帧在 game.Update 之前调用一次；gameplayInputAllowed=false 时立即归零。
@@ -1189,7 +1195,7 @@ public:
     void CoachDrainLlm();
     void CoachWarmupPlaybook();   // 换图后预加载战术库并校验区域名
     // 玩家操作：主动拾取（E）/ 丢弃当前武器（G）
-    void TryPickupDrops(bool manual, AudioManager* audio = nullptr);
+    void TryPickupDrops(bool manual, IAudioSink* audio = nullptr);
     void DropCurrentWeapon();
     // 把指定槽位的武器丢到地面（换枪 / 被替换时用）
     void DropWeaponToGround(int slot, float x, float y);
@@ -1391,7 +1397,7 @@ private:
     void  ResetFootstepStride();
     // 返回本帧触发的步数（0..Tuning::FootstepMaxPerFrame），供玩法与回归共用同一实现。
     int   AccumulateFootstep(Player& actor, float& stride, float& lastX, float& lastY,
-                             bool& lastValid, AudioManager* audio, bool positional);
+                             bool& lastValid, IAudioSink* audio, bool positional);
     bool spectateTogglePending_ = false;
     int previousEquipSlot_ = 2;
     WeaponId previousEquipWeapon_ = WeaponId::Knife;
@@ -1528,8 +1534,8 @@ private:
     void SpawnBOT(Player& bot, Team team);
     bool PickSpawnForTeam(Team team, float& outX, float& outY);
     void UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bool stealth);
-    void UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, float worldMY, class AudioManager* audio);
-    void UpdateBOTs(float dt, class AudioManager* audio);
+    void UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, float worldMY, IAudioSink* audio);
+    void UpdateBOTs(float dt, IAudioSink* audio);
     // 找一个能挡住威胁点视线的掩体位置（就近优先）
     // 卡墙脱困：尝试在周围找一个可行走点并侧移过去（返回是否成功）
     bool NudgeOutOfStuck(Player& bot, BotRuntime& ai);
@@ -1589,7 +1595,7 @@ private:
                                                        &actor == &bots_[bombCarrier_];
         return planting ? 4 : actor.weaponSlot;
     }
-    struct BodyVisibility { float fraction = 0; SDL_FPoint aim{}; };
+    struct BodyVisibility { float fraction = 0; Vec2 aim{}; };
     struct BodyVisibilityCache {
         const Player* observer=nullptr;
         const Player* target=nullptr;
@@ -1608,16 +1614,16 @@ private:
     void AccumulateSeparation(const Player& self, float& outX, float& outY) const;
     // 把期望速度与分离向量合成，并按最大速度钳制
     void ApplyAvoidance(float& vx, float& vy, float sepX, float sepY) const;
-    void UpdateBullets(float dt, class AudioManager* audio);
-    void UpdateGrenades(float dt, class AudioManager* audio);
-    void ThrowGrenade(Player& thrower, float aimAngle, class AudioManager* audio = nullptr, float targetDistance = -1.0f);
+    void UpdateBullets(float dt, IAudioSink* audio);
+    void UpdateGrenades(float dt, IAudioSink* audio);
+    void ThrowGrenade(Player& thrower, float aimAngle, IAudioSink* audio = nullptr, float targetDistance = -1.0f);
     // 投掷前校验：落点可行走 + 有视线 + 距离合理；失败则尝试偏移角度，全失败就不扔。
     bool PlanGrenadeThrow(const Player& bot, float tx, float ty, float& outAngle) const;
     float ExpectedBlastDamage(float x,float y,const Player& target) const;
     void RebuildFireCells(FireZone& fire) const;
     bool FireContains(const FireZone& fire,float x,float y) const;
     Player* DamageOwner(int index) { return index == -1 ? &player_ : index >= 0 && index < static_cast<int>(bots_.size()) ? &bots_[index] : nullptr; }
-    void ExplodeGrenade(const Grenade& g, class AudioManager* audio);
+    void ExplodeGrenade(const Grenade& g, IAudioSink* audio);
     bool SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) const;
     void RespawnBOT(Player& bot);
 
@@ -1627,15 +1633,15 @@ private:
     bool BotCanSeePlayer(const Player& bot) const;
     bool PlayerCanSeeBot(const Player& bot) const;
 
-    void StartReload(Player& p, class AudioManager* audio = nullptr);
+    void StartReload(Player& p, IAudioSink* audio = nullptr);
     void UpdateReload(Player& p, float dt);
 
     // 半径内是否存在「敌对阵营」的存活单位（队友不计入）
     bool IsEnemyNearby(float x, float y, float safeRadius, Team myTeam) const;
 
     // 回合流程
-    void UpdateRoundFlow(float dt, class AudioManager* audio);
-    void BeginNewRound(class AudioManager* audio = nullptr);
+    void UpdateRoundFlow(float dt, IAudioSink* audio);
+    void BeginNewRound(IAudioSink* audio = nullptr);
     // carryWeapons: 上一回合存活者保留武器（false=全部重置，用于新开一局）
     void RespawnAllForRound(bool carryWeapons = true);
     void BotBuyLoadout(Player& bot);   // BOT 按经济买枪与护甲
@@ -1646,18 +1652,19 @@ private:
     bool  botBuyDoneT_   = false;
     bool  botBuyDoneCT_  = false;
     float botBuyTimer_   = 0.0f;
-    void CheckWinConditions(class AudioManager* audio);
-    void ApplyRoundResult(Team winner, class AudioManager* audio = nullptr);
+    void CheckWinConditions(IAudioSink* audio);
+    void ApplyRoundResult(Team winner, IAudioSink* audio = nullptr);
     // 统一伤害入口：先扣护甲再扣血。返回 true 表示本次伤害致死。
     bool ApplyDamage(Player& victim, int amount, float armorPen = 1.0f);
     void GrantRoundMoney(Team winner);   // 发放回合金钱并重置本回合装备
 
     // 目标物
     void SetupObjective();                  // 按模式初始化包点 / C4
-    void UpdateObjective(float dt, bool interactHeld, class AudioManager* audio);
-    void PlantBomb(float x, float y, class AudioManager* audio);
-    void DetonateBomb(class AudioManager* audio);
-    void OnCombatantKilled(Player& victim, class AudioManager* audio,
+    void UpdateObjective(float dt, bool interactHeld, IAudioSink* audio);
+    void PlantBomb(float x, float y, IAudioSink* audio);
+    void DetonateBomb(IAudioSink* audio);
+    void OnCombatantKilled(Player& victim, IAudioSink* audio,
                            Player* killer = nullptr, WeaponId weapon = WeaponId::None,
-                           std::uint64_t equipmentId=0, std::optional<SDL_FPoint> sourcePosition=std::nullopt);
+                           std::uint64_t equipmentId=0, std::optional<Vec2> sourcePosition=std::nullopt);
+    IAudioSink* audioSink_ = nullptr;
 };

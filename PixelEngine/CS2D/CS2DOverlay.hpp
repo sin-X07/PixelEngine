@@ -59,7 +59,7 @@ public:
     void UpdateCursor(int relX, int relY, float sensitivity, float zoom,
                       float camX, float camY, int viewW, int viewH, float playerX, float playerY,
                       float& outWorldX, float& outWorldY, float recoilAngle = 0.0f,
-                      SDL_FPoint renderOffset = {0.0f, 0.0f}, SDL_FPoint ballisticKick = {});
+                      Vec2 renderOffset = {0.0f, 0.0f}, Vec2 ballisticKick = {});
     static std::vector<CS2DRenderer::RadarDot> CollectRadarDots(const CS2DGame& game);
 
     // ---- 渲染 ----

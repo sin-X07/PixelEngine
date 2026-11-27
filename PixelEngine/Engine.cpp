@@ -227,7 +227,7 @@ GameUI::Actions Engine::BuildActions() {
         SDL_SetRelativeMouseMode(sideChoicePending_ ? SDL_FALSE : SDL_TRUE);
         SDL_ShowCursor(sideChoicePending_ ? SDL_ENABLE : SDL_DISABLE);
         audioManager->ResumeMusic();
-        cs2dGame->SetObjectiveAudioPaused(false);
+        cs2dGame->SetObjectiveAudioPaused(false, audioManager.get());
     };
     a.confirmExit = [this](bool toDesktop) { exitReturnState_ = currentState; exitToDesktop = toDesktop; currentState = EXIT_CONFIRM; };
     a.quitApp = [this] {
@@ -945,7 +945,7 @@ void Engine::HandleInput() {
             SDL_SetRelativeMouseMode(SDL_FALSE);
             SDL_ShowCursor(SDL_ENABLE);
             audioManager->PauseMusic();
-            cs2dGame->SetObjectiveAudioPaused(true);
+            cs2dGame->SetObjectiveAudioPaused(true, audioManager.get());
         } else if (currentState == PAUSED) {
             if (sidePauseStartMs_) {
                 sidePhaseStartMs_ += SDL_GetTicks64() - sidePauseStartMs_;
@@ -957,7 +957,7 @@ void Engine::HandleInput() {
             SDL_SetRelativeMouseMode(sideChoicePending_ ? SDL_FALSE : SDL_TRUE);
             SDL_ShowCursor(sideChoicePending_ ? SDL_ENABLE : SDL_DISABLE);
             audioManager->ResumeMusic();
-            cs2dGame->SetObjectiveAudioPaused(false);
+            cs2dGame->SetObjectiveAudioPaused(false, audioManager.get());
         } else if (currentState == SETTINGS) {
             saveManager->Save();
             SaveAudioConfig();
@@ -1413,6 +1413,7 @@ void Engine::StartMatchWithMap(MatchMode mode, const std::string& mapFile, Team 
 
     // 阵营与赛前配装快照必须在 LoadMap 之前交付：LoadMap 会立刻生成玩家与初始手枪
     if (cs2dGame) {
+        cs2dGame->SetAudioSink(audioManager.get());
         if (saveManager) cs2dGame->SetMatchLoadouts(saveManager->GetSettings().loadouts);
         cs2dGame->SetPlayerTeam(playerTeam);
     }

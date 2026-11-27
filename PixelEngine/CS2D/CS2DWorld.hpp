@@ -1,7 +1,6 @@
 #pragma once
 #include <cstdint>
 #include "CS2DTypes.hpp"
-#include <SDL2/SDL.h>
 #include <vector>
 #include <string>
 #include <unordered_map>

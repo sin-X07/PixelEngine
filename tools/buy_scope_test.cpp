@@ -19,6 +19,12 @@
 #include <cmath>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 #include "Engine.hpp"
 #include "CS2D/CS2DGame.hpp"
@@ -4399,7 +4405,7 @@ struct CS2DGameTestAccess {
             SDL_RenderClear(software);
             renderer.SetZoom(1.0f);
             renderer.SetPreviewCamera(320, 240, 1.0f, false);
-            std::vector<SDL_FPoint> cells;
+            std::vector<Vec2> cells;
             for (int y = 180; y <= 300; y += 4)
                 for (int x = 260; x <= 380; x += 4) cells.push_back({float(x), float(y)});
             renderer.DrawFireCells(cells, 320, 240, 60, 2.0f, 5.0f, 0.3f);
@@ -4675,7 +4681,7 @@ struct CS2DGameTestAccess {
             SDL_SetRenderDrawColor(software, 18, 22, 28, 255);
             SDL_RenderClear(software);
             renderer.SetPreviewCamera(320, 240, 1.0f, false);
-            std::vector<SDL_FPoint> cells;
+            std::vector<Vec2> cells;
             for (int y = 180; y <= 300; y += 4)
                 for (int x = 260; x <= 380; x += 4) cells.push_back({float(x), float(y)});
             renderer.DrawFireCells(cells, 320, 240, 60, 2.0f, 5.0f, 0.3f);
@@ -4699,11 +4705,11 @@ struct CS2DGameTestAccess {
         std::printf("\n===== PIX-38 描边抖动 =====\n");
         // BodyGeometry::Transform 是描边遮罩与命中几何的唯一变换；
         // 行走态必须与站立态给出同一个中心点（不再有 sin(timer*12) 的纵向偏移）。
-        const SDL_FPoint idle = BodyGeometry::Transform({0.0f, 0.0f}, 100.0f, 200.0f, 14.0f,
+        const Vec2 idle = BodyGeometry::Transform({0.0f, 0.0f}, 100.0f, 200.0f, 14.0f,
                                                         0.7f, 1 /* Walk */, 0.0f);
         bool stable = true;
         for (float timer : {0.0f, 0.05f, 0.11f, 0.17f, 0.26f, 0.33f, 0.44f, 0.52f}) {
-            const SDL_FPoint walk = BodyGeometry::Transform({0.0f, 0.0f}, 100.0f, 200.0f, 14.0f,
+            const Vec2 walk = BodyGeometry::Transform({0.0f, 0.0f}, 100.0f, 200.0f, 14.0f,
                                                             0.7f, 1 /* Walk */, timer);
             stable = stable && std::fabs(walk.x - idle.x) < 1e-4f &&
                      std::fabs(walk.y - idle.y) < 1e-4f;
@@ -4719,7 +4725,7 @@ struct CS2DGameTestAccess {
         check(sameHit, "PIX-38 the body centre stays inside the body at every walk phase");
 
         // 射击后坐（animState 2）仍保留它应有的位移，说明只去掉了 bob
-        const SDL_FPoint kick = BodyGeometry::Transform({0.0f, 0.0f}, 100.0f, 200.0f, 14.0f,
+        const Vec2 kick = BodyGeometry::Transform({0.0f, 0.0f}, 100.0f, 200.0f, 14.0f,
                                                         0.7f, 2, 0.0f);
         check(kick.x < idle.x, "PIX-38 the shooting recoil offset is preserved");
     }
@@ -5494,7 +5500,7 @@ static void TestRound2RadarRendering() {
         SDL_SetRenderDrawColor(software,18,22,28,255);
         SDL_RenderClear(software);
         renderer.SetZoom(1);
-        std::vector<SDL_FPoint> fireCells;
+        std::vector<Vec2> fireCells;
         for (int y=200; y<=280; y+=4)
             for (int x=280; x<=360; x+=4) fireCells.push_back({float(x),float(y)});
         renderer.DrawFireCells(fireCells,320,240,45,2,5,.3f);
@@ -6424,6 +6430,10 @@ static void TestExperienceRendering(bool gpu) {
 }
 
 int main(int argc,char** argv) {
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+#endif
     if (argc>1 && std::string(argv[1])=="--spotlight-menu") {
         for (int height : {720, 800})
             EngineTestAccess::CaptureSceneryMenu(0, std::filesystem::path("build-evidence/spotlight/ui") / std::to_string(height), height, true);

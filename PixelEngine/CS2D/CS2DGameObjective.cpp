@@ -1,5 +1,4 @@
 #include "CS2DGame.hpp"
-#include "../Audio/AudioManager.hpp"
 #include <iostream>
 #include <cmath>
 #include <algorithm>
@@ -75,7 +74,9 @@ void CS2DGame::SetupObjective() {
 }
 
 // 每帧推进目标物（仅交战期）
-void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio) {
+void CS2DGame::UpdateObjective(float dt, bool interactHeld, IAudioSink* audio) {
+    if (audio) audioSink_ = audio;
+    IAudioSink* sink = audio ? audio : (audioSink_ ? audioSink_ : IAudioSink::Active());
     if (mode_ != MatchMode::BombDefusal || !round_.IsLive()) {
         StopObjectiveAudio(audio);
         return;
@@ -156,8 +157,7 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
             float bestRemaining = std::numeric_limits<float>::infinity();
             auto updateDefuser = [&](Player& actor, int id, bool eligible) {
                 if (!eligible) {
-                    if (audio) audio->StopChannel(actor.defuseChannel);
-                    else if (actor.defuseChannel >= 0 && Mix_QuerySpec(nullptr,nullptr,nullptr)) Mix_HaltChannel(actor.defuseChannel);
+                    if (sink) sink->StopChannel(actor.defuseChannel);
                     actor.defuseChannel = -1;
                     actor.defuseProgress = 0;
                     return;
@@ -224,7 +224,7 @@ void CS2DGame::UpdateObjective(float dt, bool interactHeld, AudioManager* audio)
     }
 }
 
-void CS2DGame::PlantBomb(float x, float y, AudioManager* audio) {
+void CS2DGame::PlantBomb(float x, float y, IAudioSink* audio) {
     StopObjectiveAudio(audio);
     // C4 已安装：从玩家手里/槽位里移除
     bombPlanter_ = bombCarrier_;
@@ -269,7 +269,7 @@ void CS2DGame::PlantBomb(float x, float y, AudioManager* audio) {
     if (audio) audio->PlaySound(SoundEffect::BOMB_PLANT);
 }
 
-void CS2DGame::DetonateBomb(AudioManager* audio) {
+void CS2DGame::DetonateBomb(IAudioSink* audio) {
     StopObjectiveAudio(audio);
     bombPlanted_ = false;
     bombTimer_ = 0.0f;
@@ -286,7 +286,7 @@ void CS2DGame::DetonateBomb(AudioManager* audio) {
         if (d > RADIUS) return;
         const float f = 1.0f - d / RADIUS;
         if (ApplyDamage(p, static_cast<int>(200.0f * f), 1.0f)) {   // C4 爆炸无视护甲
-            OnCombatantKilled(p, audio, DamageOwner(bombPlanter_), WeaponId::C4,c4EquipmentId_,SDL_FPoint{bombX_,bombY_});
+            OnCombatantKilled(p, audio, DamageOwner(bombPlanter_), WeaponId::C4,c4EquipmentId_,Vec2{bombX_,bombY_});
         }
     };
     damageAt(player_);
@@ -322,22 +322,20 @@ void CS2DGame::AssignBombCarrier() {
     }
 }
 
-void CS2DGame::SetObjectiveAudioPaused(bool paused) {
-    if (!Mix_QuerySpec(nullptr,nullptr,nullptr)) return;
-    auto setPaused = [paused](int channel) {
-        if (channel < 0) return;
-        if (paused) Mix_Pause(channel);
-        else Mix_Resume(channel);
-    };
-    setPaused(plantingChannel_);
-    setPaused(player_.defuseChannel);
-    for (const auto& bot : bots_) setPaused(bot.defuseChannel);
+void CS2DGame::SetObjectiveAudioPaused(bool paused, IAudioSink* audio) {
+    if (audio) audioSink_ = audio;
+    IAudioSink* sink = audio ? audio : (audioSink_ ? audioSink_ : IAudioSink::Active());
+    if (!sink) return;
+    sink->SetChannelPaused(plantingChannel_, paused);
+    sink->SetChannelPaused(player_.defuseChannel, paused);
+    for (const auto& bot : bots_) sink->SetChannelPaused(bot.defuseChannel, paused);
 }
 
-void CS2DGame::StopObjectiveAudio(AudioManager* audio) {
+void CS2DGame::StopObjectiveAudio(IAudioSink* audio) {
+    if (audio) audioSink_ = audio;
+    IAudioSink* sink = audio ? audio : (audioSink_ ? audioSink_ : IAudioSink::Active());
     auto stop = [&](int& channel) {
-        if (audio) audio->StopChannel(channel);
-        else if (channel >= 0 && Mix_QuerySpec(nullptr,nullptr,nullptr)) Mix_HaltChannel(channel);
+        if (sink) sink->StopChannel(channel);
         channel = -1;
     };
     stop(plantingChannel_);

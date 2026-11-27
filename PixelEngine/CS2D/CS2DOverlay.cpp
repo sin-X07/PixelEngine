@@ -53,7 +53,7 @@ void CS2DOverlay::SyncScopeCursor(bool scoped, bool closing, bool cameraReady, f
 void CS2DOverlay::UpdateCursor(int relX, int relY, float sensitivity, float zoom,
                               float camX, float camY, int viewW, int viewH,
                               float playerX, float playerY, float& outWorldX, float& outWorldY,
-                              float recoilAngle, SDL_FPoint renderOffset, SDL_FPoint ballisticKick) {
+                              float recoilAngle, Vec2 renderOffset, Vec2 ballisticKick) {
     zoom = std::max(zoom, 0.001f);
     const float motionX = static_cast<float>(relX) * sensitivity;
     const float motionY = static_cast<float>(relY) * sensitivity;

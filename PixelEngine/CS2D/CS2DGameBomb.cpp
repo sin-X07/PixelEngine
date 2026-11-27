@@ -63,7 +63,7 @@ void CS2DGame::UpdateBombItem(float dt) {
         bombIntelAge_ -= dt;
         if (bombIntelAge_ <= 0.0f) bombIntel_ = false;
     }
-    if (bombDropped_ && renderer_) {
+    if (bombDropped_) {
         auto ctSees = [&](const Player& p) {
             if (!p.alive || p.team != Team::CT) return false;
             return CanSeePoint(p, bombDropX_, bombDropY_);

@@ -3,7 +3,7 @@
 #include <SDL_mixer.h>
 #include <array>
 #include <string>
-#include "../CS2D/Weapons/WeaponDef.hpp"
+#include "../Core/IAudioSink.hpp"
 
 // ============================================================================
 // AudioManager —— 音效播放
@@ -19,82 +19,7 @@
 // 子弹都会调用一次 PlayWeaponFire，素材里的第二声会变成凭空多出的一枪。
 // ============================================================================
 
-enum class SoundEffect {
-    PICKUP,
-    BUTTON_HOVER,
-    CLICK,
-    DAGGER_FIRE,
-    HIT,          // 命中
-    KILL,         // 击杀
-    KATANA_SWING, // 武士刀挥砍
-
-    // ---- 战局事件 ----
-    GRENADE_EXPLODE,
-    EQUIP,           // 购买装备
-    GRENADE_THROW,   // 投掷出手（通用兜底）
-    THROW_HE,        // 高爆雷出手
-    THROW_FLASH,     // 闪光弹出手
-    THROW_SMOKE,     // 烟雾弹出手
-    FLASH,
-    SMOKE,
-    FIRE_IGNITE,     // 燃烧弹点燃
-    DECOY_EXPLODE,   // 诱饵弹爆炸
-    BOMB_PLANT,
-    BOMB_DEFUSE,
-    BOMB_BEEP,
-    ROUND_WIN,
-    FOOTSTEP,
-    ARMOR_HIT,
-
-    // ---- 换弹音效（时长与各武器 reloadTime 对齐）----
-    RELOAD_GLOCK,
-    RELOAD_USP,
-    RELOAD_DEAGLE,
-    RELOAD_GALIL,
-    RELOAD_AK47,
-    RELOAD_M4A1,
-    RELOAD_SHOTGUN,
-    RELOAD_AWP,
-    DEATH,
-    PULL_PIN,
-    BOMB_EXPLODE,
-    BOMB_PLANTING,
-    BOMB_DEFUSING_KIT,
-    BOMB_DEFUSING,
-    RELOAD_P2000,
-    RELOAD_DUALBERETTAS,
-    RELOAD_P250,
-    RELOAD_FN57,
-    RELOAD_TEC9,
-    RELOAD_CZ75,
-    RELOAD_R8,
-    RELOAD_MAC10,
-    RELOAD_MP9,
-    RELOAD_MP7,
-    RELOAD_MP5SD,
-    RELOAD_UMP45,
-    RELOAD_P90,
-    RELOAD_FAMAS,
-    RELOAD_M4A4,
-    RELOAD_SG553,
-    RELOAD_AUG,
-    RELOAD_SSG08,
-    RELOAD_SCAR20,
-    RELOAD_G3SG1,
-    RELOAD_XM1014,
-    RELOAD_SAWEDOFF,
-    RELOAD_MAG7,
-    RELOAD_M249,
-    RELOAD_NEGEV,
-    DRYFIRE,
-};
-
-// 自动武器专用通道：新枪声覆盖上一发，避免通道耗尽后失声
-constexpr int CHANNEL_AUTO_FIRE = 0;
-// 保留通道数：0 自动开火，1 玩家下包，2 玩家拆包，3–11 九名 BOT 拆包
-constexpr int kReservedChannels = 12;
-
-class AudioManager {
+class AudioManager : public IAudioSink {
 private:
     std::array<Mix_Chunk*, 32> additionalSounds_{};
     std::array<Mix_Chunk*, static_cast<size_t>(WeaponId::Count)> weaponSwitchById_{};
@@ -192,25 +117,26 @@ public:
     void SetClickSound(int index);
     int  GetClickSound() const { return clickSoundIndex_; }
 
-    void PlaySound(SoundEffect effect, float volume = 1.0f);
-    int PlaySoundTracked(SoundEffect effect, int channel = -1);
-    void StopChannel(int& channel);
-    int PlaySoundTrackedAt(SoundEffect effect, float x, float y, float listenerX, float listenerY, int channel = -1);
+    void PlaySound(SoundEffect effect, float volume = 1.0f) override;
+    int PlaySoundTracked(SoundEffect effect, int channel = -1) override;
+    void StopChannel(int& channel) override;
+    void SetChannelPaused(int channel, bool paused) override;
+    int PlaySoundTrackedAt(SoundEffect effect, float x, float y, float listenerX, float listenerY, int channel = -1) override;
     void UpdateTrackedSoundAt(int channel, SoundEffect effect, float x, float y,
-                              float listenerX, float listenerY);
+                              float listenerX, float listenerY) override;
     // 3D 音效：声像由声源的世界位置相对听者决定（与听者朝向无关）
     void PlaySoundAt(SoundEffect effect, float sourceX, float sourceY,
-                     float listenerX, float listenerY);
+                     float listenerX, float listenerY) override;
 
     // 枪声：每开一枪调用一次，素材必须是单发
-    void PlayWeaponFire(WeaponId id);
+    void PlayWeaponFire(WeaponId id) override;
     void PlayWeaponFireAt(WeaponId id, float sourceX, float sourceY,
-                          float listenerX, float listenerY);
+                          float listenerX, float listenerY) override;
 
     // 切枪：优先使用该武器的独立素材，未配置时使用类别兜底。
-    void PlayWeaponSwitch(WeaponId id);
+    void PlayWeaponSwitch(WeaponId id) override;
     void PlayWeaponSwitchAt(WeaponId id, float sourceX, float sourceY,
-                            float listenerX, float listenerY);
+                            float listenerX, float listenerY) override;
 
     void UpdateVolumes();
 
