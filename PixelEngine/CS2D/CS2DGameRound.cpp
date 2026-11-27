@@ -88,138 +88,127 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
     smokes_.clear();
     fires_.clear();
     decoys_.clear();
-    for (auto &bot : bots_)
-        bot.fireStates = {};
-    player_.fireStates = {};
+    for (auto& actor : actors_)
+        actor.fireStates = {};
     // 新回合：开镜归零 + 枪弹视觉段清空（契约 v1 第 5、6 节）
     ResetScope(Presentation::ScopeResetReason::RoundRestart);
     bulletVisuals_.clear();
     nextBulletVisualId_ = 1;
-
-    // 玩家：上回合存活 → 保留原有武器/护甲/投掷物；阵亡 → 回到起始手枪
-    const bool playerSurvived = carryWeapons && player_.alive;
-
-    const WeaponId keepW0 = player_.weapons[0];
-    const WeaponId keepW1 = player_.weapons[1];
-    const WeaponId keepW3 = player_.weapons[3];
-    const int keepNade = player_.grenadeCount;
-    const int keepArmor = player_.armor;
-    const bool keepHelmet = player_.helmet;
 
     // 新回合必须退出观战，否则会以观战状态继续下一局
     SpectatorEnd();
     deathPresentation_ = {};
     deathCam_ = false;
 
-    player_.health = player_.maxHealth;
-    player_.alive = true;
-    player_.reloading = false;
-    player_.reloadTimer = 0.0f;
-    player_.deathTimer = 0.0f;
-    player_.vx = player_.vy = 0.0f;
-    PickSpawnForTeam(player_.team, player_.x, player_.y);
-
-    if (playerSurvived) {
-        player_.weapons[0] = keepW0;
-        player_.weapons[1] = keepW1;
-        player_.weapons[2] = WeaponId::Knife;
-        player_.weapons[3] = keepW3;
-        player_.grenadeCount = keepNade;
-        player_.armor = keepArmor;
-        player_.helmet = keepHelmet;
-        player_.weaponSlot = (keepW0 != WeaponId::None) ? 0 : 1;
-    } else {
-        player_.equipment = {};
-        player_.grenadeEquipment = {};
-        player_.armorEquipment.clear();
-        player_.kitEquipment = {};
-        player_.hasDefuseKit = false;
-        player_.weapons[0] = WeaponId::None;
-        // 起始手枪按本场阵营配装起始槽位
-        player_.weapons[1] = LoadoutForTeam(player_.team).starting;
-        player_.weapons[2] = WeaponId::Knife;
-        player_.weapons[3] = WeaponId::None;
-        player_.grenadeCount = 0;
-        player_.armor = 0;
-        player_.helmet = false;
-        player_.weaponSlot = 1;
-    }
-
-    // 每个槽位的武器各自填满弹夹，再把当前槽读出来
-    for (int sl = 0; sl < 5; ++sl) {
-        const WeaponId wid = player_.weapons[sl];
-        if (wid == WeaponId::None) {
-            player_.ClearSlotWeapon(sl);
-        } else {
-            player_.SetSlotWeapon(sl, wid);
-        }
-    }
-    if (player_.weapons[player_.weaponSlot] == WeaponId::None)
-        player_.weaponSlot = 1;
-    for (int slot = 0; slot < 5; ++slot)
-        if (player_.weapons[slot] != WeaponId::None && !player_.equipment[slot].id) {
-            player_.equipment[slot].id = nextEquipmentId_++;
-            player_.equipment[slot].epoch = purchaseEpoch_;
-        }
-    player_.LoadAmmoFromSlot();
-    player_.reloading = false;
-    player_.reloadTimer = 0.0f;
-
-    // BOT：同样的规则
     EnsureBotAi();
-    for (size_t i = 0; i < bots_.size(); ++i) {
-        auto &bot = bots_[i];
-        const bool survived = carryWeapons && bot.alive;
+    for (size_t i = 0; i < actors_.size(); ++i) {
+        auto& actor = actors_[i];
+        if (!actor.IsActive()) continue;
+        const bool survived = carryWeapons && actor.alive;
 
-        const WeaponId w0 = bot.weapons[0];
-        const WeaponId w1 = bot.weapons[1];
-        const WeaponId w3 = bot.weapons[3];
-        const int nade = bot.grenadeCount;
-        const int armor = bot.armor;
-        const bool helmet = bot.helmet;
+        const WeaponId w0 = actor.weapons[0];
+        const WeaponId w1 = actor.weapons[1];
+        const WeaponId w3 = actor.weapons[3];
+        const int nade = actor.grenadeCount;
+        const int armor = actor.armor;
+        const bool helmet = actor.helmet;
 
-        const auto equipment = bot.equipment;
-        const auto grenadeEquipment = bot.grenadeEquipment;
-        const auto kitEquipment = bot.kitEquipment;
-        const auto armorEquipment = bot.armorEquipment;
-        const bool hadKit = bot.hasDefuseKit;
-        const int activeGrenade = bot.grenadeSlot;
+        const auto equipment = actor.equipment;
+        const auto grenadeEquipment = actor.grenadeEquipment;
+        const auto kitEquipment = actor.kitEquipment;
+        const auto armorEquipment = actor.armorEquipment;
+        const bool hadKit = actor.hasDefuseKit;
+        const int activeGrenade = actor.grenadeSlot;
         std::array<WeaponId, Player::MAX_GRENADES> grenades;
-        std::copy(std::begin(bot.grenades), std::end(bot.grenades), grenades.begin());
-        SpawnBOT(bot, bot.team); // 先重置为手枪基准
-        ResetBotAi(i);           // AI 运行时状态一并清空
+        std::copy(std::begin(actor.grenades), std::end(actor.grenades), grenades.begin());
 
-        if (survived) {
-            bot.equipment = equipment;
-            bot.grenadeEquipment = grenadeEquipment;
-            bot.kitEquipment = kitEquipment;
-            bot.hasDefuseKit = hadKit;
-            bot.armorEquipment = armorEquipment;
-            std::copy(grenades.begin(), grenades.end(), std::begin(bot.grenades));
-            bot.grenadeSlot = activeGrenade;
-            bot.weapons[0] = w0;
-            bot.weapons[1] = w1;
-            bot.weapons[3] = w3;
-            bot.grenadeCount = nade;
-            bot.armor = armor;
-            bot.helmet = helmet;
-            bot.weaponSlot = (w0 != WeaponId::None) ? 0 : 1;
-            const WeaponDef &w = WeaponDB::Get(bot.weapons[bot.weaponSlot]);
-            bot.ammo = w.magazine;
-            bot.maxAmmo = w.magazine;
-            bot.reserve = Player::ReserveCapacity(w);
-            // 所有槽位按满配重置（幸存者本回合携带的枪全部补满）
-            for (int sl = 0; sl < 5; ++sl) {
-                if (bot.weapons[sl] == WeaponId::None)
-                    bot.ClearSlotWeapon(sl);
-                else
-                    bot.SetSlotWeapon(sl, bot.weapons[sl]);
+        if (actor.IsHuman()) {
+            actor.health = actor.maxHealth;
+            actor.alive = true;
+            actor.reloading = false;
+            actor.reloadTimer = 0.0f;
+            actor.deathTimer = 0.0f;
+            actor.vx = actor.vy = 0.0f;
+            actor.holdingC4 = false;
+            actor.plantProgress = 0.0f;
+            actor.plantingChannel = -1;
+            actor.flashTimer = 0.0f;
+            actor.flashPeak = 0.0f;
+            actor.defuseProgress = 0.0f;
+            actor.defuseChannel = -1;
+            PickSpawnForTeam(actor.team, actor.x, actor.y);
+
+            if (survived) {
+                actor.weapons[0] = w0;
+                actor.weapons[1] = w1;
+                actor.weapons[2] = WeaponId::Knife;
+                actor.weapons[3] = w3;
+                actor.grenadeCount = nade;
+                actor.armor = armor;
+                actor.helmet = helmet;
+                actor.weaponSlot = (w0 != WeaponId::None) ? 0 : 1;
+            } else {
+                actor.equipment = {};
+                actor.grenadeEquipment = {};
+                actor.armorEquipment.clear();
+                actor.kitEquipment = {};
+                actor.hasDefuseKit = false;
+                actor.weapons[0] = WeaponId::None;
+                actor.weapons[1] = LoadoutForTeam(actor.team).starting;
+                actor.weapons[2] = WeaponId::Knife;
+                actor.weapons[3] = WeaponId::None;
+                actor.grenadeCount = 0;
+                actor.armor = 0;
+                actor.helmet = false;
+                actor.weaponSlot = 1;
             }
-            bot.SaveAmmoToSlot();
-        }
 
-        // 购买不在这里立刻执行：交给 UpdateBotBuy 等教练 save/eco 决策。
-        // 否则 LLM 的 save 回包总是晚于购买，BOT 会把钱花光。
+            for (int sl = 0; sl < 5; ++sl) {
+                const WeaponId wid = actor.weapons[sl];
+                if (wid == WeaponId::None) actor.ClearSlotWeapon(sl);
+                else actor.SetSlotWeapon(sl, wid);
+            }
+            if (actor.weapons[actor.weaponSlot] == WeaponId::None) actor.weaponSlot = 1;
+            for (int slot = 0; slot < 5; ++slot)
+                if (actor.weapons[slot] != WeaponId::None && !actor.equipment[slot].id) {
+                    actor.equipment[slot].id = nextEquipmentId_++;
+                    actor.equipment[slot].epoch = purchaseEpoch_;
+                }
+            actor.LoadAmmoFromSlot();
+            actor.reloading = false;
+            actor.reloadTimer = 0.0f;
+        } else {
+            SpawnBOT(actor, actor.team); // 先重置为手枪基准
+            ResetBotAi(i);               // AI 运行时状态一并清空
+
+            if (survived) {
+                actor.equipment = equipment;
+                actor.grenadeEquipment = grenadeEquipment;
+                actor.kitEquipment = kitEquipment;
+                actor.hasDefuseKit = hadKit;
+                actor.armorEquipment = armorEquipment;
+                std::copy(grenades.begin(), grenades.end(), std::begin(actor.grenades));
+                actor.grenadeSlot = activeGrenade;
+                actor.weapons[0] = w0;
+                actor.weapons[1] = w1;
+                actor.weapons[3] = w3;
+                actor.grenadeCount = nade;
+                actor.armor = armor;
+                actor.helmet = helmet;
+                actor.weaponSlot = (w0 != WeaponId::None) ? 0 : 1;
+                const WeaponDef &w = WeaponDB::Get(actor.weapons[actor.weaponSlot]);
+                actor.ammo = w.magazine;
+                actor.maxAmmo = w.magazine;
+                actor.reserve = Player::ReserveCapacity(w);
+                for (int sl = 0; sl < 5; ++sl) {
+                    if (actor.weapons[sl] == WeaponId::None)
+                        actor.ClearSlotWeapon(sl);
+                    else
+                        actor.SetSlotWeapon(sl, actor.weapons[sl]);
+                }
+                actor.SaveAmmoToSlot();
+            }
+        }
     }
     bullets_.clear();
     drops_.clear(); // 掉落物只保留到本回合结束
@@ -300,7 +289,7 @@ void CS2DGame::BotBuyLoadout(Player& bot) {
                 if (gid == fireGrenade) {
                     ++counters_.molotovBuys;
                     std::cout << "[Buy] " << (isT ? "T" : "CT") << " BOT #"
-                              << static_cast<int>(&bot - bots_.data()) + 1
+                              << ActorIdOf(bot)
                               << (isT ? " Molotov ($400)" : " Incendiary ($600)")
                               << " balance $" << bot.money << std::endl;
                 }
@@ -403,7 +392,7 @@ void CS2DGame::BotBuyLoadout(Player& bot) {
                 Player::EquipmentRecord receipt;
                 receipt.id = nextEquipmentId_++;
                 receipt.epoch = purchaseEpoch_;
-                receipt.buyer = static_cast<int>(&bot - bots_.data()) + 1;
+                receipt.buyer = ActorIdOf(bot);
                 receipt.paid = kDefuseKitPrice;
                 bot.kitEquipment = receipt;
                 bot.money -= kDefuseKitPrice;
@@ -420,7 +409,7 @@ void CS2DGame::BotBuyLoadout(Player& bot) {
         DropWeaponToGround(bot,0,bot.x,bot.y);
         Player::EquipmentRecord receipt;
         receipt.id=nextEquipmentId_++;receipt.epoch=purchaseEpoch_;
-        receipt.buyer=static_cast<int>(&bot-bots_.data())+1;receipt.paid=primaryPaid;
+        receipt.buyer=ActorIdOf(bot);receipt.paid=primaryPaid;
         bot.equipment[0]=receipt;bot.fireStates[0]={};
     }
     bot.weapons[0] = primary;
@@ -472,9 +461,9 @@ void CS2DGame::UpdateBotBuy(float dt) {
         }
 
         int bought = 0;
-        for (auto& b : bots_) {
-            if (b.team != t || !b.alive) continue;
-            BotBuyLoadout(b);
+        for (auto& actor : actors_) {
+            if (!actor.IsBot() || actor.team != t || !actor.alive) continue;
+            BotBuyLoadout(actor);
             ++bought;
         }
         done = true;
@@ -541,12 +530,13 @@ void CS2DGame::ApplyRoundResult(Team winner, IAudioSink* audio) {
     CoachRecordRound(Team::CT, winner == Team::CT);
     }
 
-    // 回合胜负音效（以玩家阵营视角）
-    if (audio && winner != Team::None && winner == player_.team) {
+    const Team viewerTeam = LocalActor().team;
+    // 回合胜负音效（以本地玩家阵营视角）
+    if (audio && winner != Team::None && winner == viewerTeam) {
         audio->PlaySound(SoundEffect::ROUND_WIN);
     }
     if (winner != Team::None) {
-        announcement_ = (winner == player_.team) ? "回合胜利" : "回合失败";
+        announcement_ = (winner == viewerTeam) ? "回合胜利" : "回合失败";
         announcementTimer_ = 2.4f;
     }
 
@@ -561,25 +551,20 @@ void CS2DGame::ApplyRoundResult(Team winner, IAudioSink* audio) {
 
 // 回合结算：发放金钱，并重置为下一回合的初始装备
 void CS2DGame::GrantRoundMoney(Team winner) {
-    // 玩家（CT）
-    player_.money += economy_.GrantRoundResult(winner, player_.team);
-    economy_.Clamp(player_.money);
-
-    // BOT 同样参与经济（否则永远只有初始余额）
-    for (auto& bot : bots_) {
-        bot.money += economy_.GrantRoundResult(winner, bot.team);
-        economy_.Clamp(bot.money);
+    for (auto& actor : actors_) {
+        if (!actor.IsActive()) continue;
+        actor.money += economy_.GrantRoundResult(winner, actor.team);
+        economy_.Clamp(actor.money);
     }
 
-    std::cout << "[Economy] 回合结算 → 玩家 $" << player_.money << std::endl;
+    std::cout << "[Economy] 回合结算 → 玩家 $" << LocalActor().money << std::endl;
 }
 
 int CS2DGame::AliveCount(Team t) const {
-    int n = 0;
     if (t == Team::None) return 0;
-    if (player_.alive && player_.team == t) ++n;
-    for (const auto& b : bots_) {
-        if (b.alive && b.team == t) ++n;
+    int n = 0;
+    for (const auto& a : actors_) {
+        if (a.IsActive() && a.alive && a.team == t) ++n;
     }
     return n;
 }

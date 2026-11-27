@@ -700,9 +700,9 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
         }
 
         // T20：钳子感知——有钳 4s 拆完，mustRush 阈值 5s；无钳 10s 拆完，阈值 11s。
-        bool anyKit = (player_.team == Team::CT && player_.alive && player_.hasDefuseKit);
-        for (const auto& b : bots_) {
-            if (b.team == Team::CT && b.alive && b.hasDefuseKit) { anyKit = true; break; }
+        bool anyKit = false;
+        for (const auto& b : actors_) {
+            if (b.IsActive() && b.team == Team::CT && b.alive && b.hasDefuseKit) { anyKit = true; break; }
         }
         const float rushThreshold = anyKit ? 5.0f : 11.0f;
         const bool mustRush = (bombLeft <= rushThreshold);
@@ -971,8 +971,8 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
 
     // T14：道具明细——烟 ≥1 才能道具开点。
     int smokeCount = 0;
-    for (const auto& b : bots_) {
-        if (!b.alive || b.team != t) continue;
+    for (const auto& b : actors_) {
+        if (!b.IsActive() || !b.alive || b.team != t) continue;
         for (int gi = 0; gi < b.grenadeCount; ++gi) {
             if (b.grenades[gi] == WeaponId::GrenadeSmoke) ++smokeCount;
         }
@@ -982,8 +982,8 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
     const float heatB = intel_.HeatOfSide(world_.get(), "B");
     // T32：分侧敌人数（存活 + 近期接触，区别于 heat）。
     int enemyCountA = 0, enemyCountB = 0;
-    for (const auto& b : bots_) {
-        if (!b.alive || b.team == t) continue;
+    for (const auto& b : actors_) {
+        if (!b.IsActive() || !b.alive || b.team == t) continue;
         const std::string ea = world_ ? world_->FindAreaAt(b.x, b.y) : std::string();
         const char cs = AreaSideOf(ea);
         if (cs == 'A') ++enemyCountA;
@@ -998,14 +998,10 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
     // T31：我方站位分布——某区我方 ≥1 人存活且无近期接触 → "已控"。
     auto sideAllyCount = [&](char side) -> int {
         int n = 0;
-        for (const auto& b : bots_) {
-            if (!b.alive || b.team != t) continue;
+        for (const auto& b : actors_) {
+            if (!b.IsActive() || !b.alive || b.team != t) continue;
             const std::string a = world_ ? world_->FindAreaAt(b.x, b.y) : std::string();
             if (AreaSideOf(a) == side) ++n;
-        }
-        if (player_.alive && player_.team == t) {
-            const std::string pa = world_ ? world_->FindAreaAt(player_.x, player_.y) : std::string();
-            if (AreaSideOf(pa) == side) ++n;
         }
         return n;
     };
@@ -1266,8 +1262,8 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
 
         // T14：敌枪构成——敌狙多 → 慢打/避长廊（tempo=Slow，不冒进）。
         int sniper = 0;
-        for (const auto& b : bots_) {
-            if (!b.alive || b.team == t) continue;
+        for (const auto& b : actors_) {
+            if (!b.IsActive() || !b.alive || b.team == t) continue;
             WeaponId bestW = WeaponId::None;
             for (int slot = 0; slot <= 1; ++slot) {
                 if (b.weapons[slot] != WeaponId::None) { bestW = b.weapons[slot]; break; }
@@ -1651,8 +1647,8 @@ void CS2DGame::TraceWiring(Team t, const char* guard, const char* sanitized, con
     o += ",\"heatB\":" + std::to_string(intel_.HeatOfSide(world_.get(), "B"));
     // 敌枪构成（五类计数）
     int sniper = 0, rifle = 0, smg = 0, shotgun = 0, pistol = 0;
-    for (const auto& b : bots_) {
-        if (!b.alive || b.team == t) continue;
+    for (const auto& b : actors_) {
+        if (!b.IsActive() || !b.alive || b.team == t) continue;
         WeaponId bestW = WeaponId::None;
         for (int w = 0; w <= 1; ++w) if (b.weapons[w] != WeaponId::None) { bestW = b.weapons[w]; break; }
         if (bestW == WeaponId::None) continue;
@@ -1671,8 +1667,8 @@ void CS2DGame::TraceWiring(Team t, const char* guard, const char* sanitized, con
          + ",\"pistol\":" + std::to_string(pistol) + "}";
     // 道具明细（烟/闪/火/雷）
     int smoke = 0, flash = 0, fire = 0, he = 0;
-    for (const auto& b : bots_) {
-        if (!b.alive || b.team != t) continue;
+    for (const auto& b : actors_) {
+        if (!b.IsActive() || !b.alive || b.team != t) continue;
         for (int gi = 0; gi < b.grenadeCount; ++gi) {
             switch (b.grenades[gi]) {
                 case WeaponId::GrenadeSmoke: ++smoke; break;
@@ -1693,9 +1689,9 @@ void CS2DGame::TraceWiring(Team t, const char* guard, const char* sanitized, con
     o += ",\"changesThisRound\":" + std::to_string(st.changesThisRound);   // T05：变更预算计数
     // T20：钳子感知回防信号（有钳持有者 → mustRush 阈值 5s；无钳 → 11s）。
     {
-        bool anyKit = (player_.team == Team::CT && player_.alive && player_.hasDefuseKit);
-        for (const auto& b : bots_) {
-            if (b.team == Team::CT && b.alive && b.hasDefuseKit) { anyKit = true; break; }
+        bool anyKit = false;
+        for (const auto& b : actors_) {
+            if (b.IsActive() && b.team == Team::CT && b.alive && b.hasDefuseKit) { anyKit = true; break; }
         }
         o += ",\"anyKit\":" + std::string(anyKit ? "true" : "false");
         o += ",\"mustRushAt\":" + std::to_string(anyKit ? 5.0f : 11.0f);
@@ -1705,8 +1701,8 @@ void CS2DGame::TraceWiring(Team t, const char* guard, const char* sanitized, con
     const std::string enemySide = st.memory.empty() ? "" : st.memory.back().enemyAttackSide;
     o += ",\"enemyLastAttackSide\":\"" + JsonEscape(enemySide) + "\"";
     int ecA = 0, ecB = 0;
-    for (const auto& b : bots_) {
-        if (!b.alive || b.team == t) continue;
+    for (const auto& b : actors_) {
+        if (!b.IsActive() || !b.alive || b.team == t) continue;
         const char cs = AreaSideOf(world_ ? world_->FindAreaAt(b.x, b.y) : "");
         if (cs == 'A') ++ecA; else if (cs == 'B') ++ecB;
     }
@@ -1719,13 +1715,9 @@ void CS2DGame::TraceWiring(Team t, const char* guard, const char* sanitized, con
     {
         auto allyCount = [&](char side) -> int {
             int n = 0;
-            for (const auto& b : bots_) {
-                if (!b.alive || b.team != t) continue;
+            for (const auto& b : actors_) {
+                if (!b.IsActive() || !b.alive || b.team != t) continue;
                 const char cs = AreaSideOf(world_ ? world_->FindAreaAt(b.x, b.y) : "");
-                if (cs == side) ++n;
-            }
-            if (player_.alive && player_.team == t) {
-                const char cs = AreaSideOf(world_ ? world_->FindAreaAt(player_.x, player_.y) : "");
                 if (cs == side) ++n;
             }
             return n;
@@ -1763,9 +1755,8 @@ static float RoleSpeedMulRaw(BotRole role) {
 float CS2DGame::RoleSpeedMul(size_t botIdx, BotRole role) {
     const float target = RoleSpeedMulRaw(role);
     // T27：换角色后 3 秒内从旧倍率插值过渡到新倍率（RoleTransitionSec）。
-    if (roleChangedAt_.size() != bots_.size()) roleChangedAt_.assign(bots_.size(), -100.0f);
-    if (roleFromMul_.size() != bots_.size()) roleFromMul_.assign(bots_.size(), target);
-    if (botIdx >= bots_.size()) return target;
+    EnsureBotAi();
+    if (botIdx >= actors_.size()) return target;
 
     const float since = clockSec_ - roleChangedAt_[botIdx];
     const float transition = Tuning::ai::RoleTransitionSec;
@@ -1776,14 +1767,13 @@ float CS2DGame::RoleSpeedMul(size_t botIdx, BotRole role) {
 }
 
 void CS2DGame::SetRoleWithTransition(size_t botIdx, BotRole role) {
-    if (botIdx >= bots_.size()) return;
-    if (roleChangedAt_.size() != bots_.size()) roleChangedAt_.assign(bots_.size(), -100.0f);
-    if (roleFromMul_.size() != bots_.size()) roleFromMul_.assign(bots_.size(), Tuning::SpeedMulSupport);
-    if (squad_[botIdx].role != role) {
-        roleFromMul_[botIdx] = RoleSpeedMul(botIdx, squad_[botIdx].role);
+    EnsureBotAi();
+    if (botIdx >= actors_.size()) return;
+    if (actorSquad_[botIdx].role != role) {
+        roleFromMul_[botIdx] = RoleSpeedMul(botIdx, actorSquad_[botIdx].role);
         roleChangedAt_[botIdx] = clockSec_;
     }
-    squad_[botIdx].role = role;
+    actorSquad_[botIdx].role = role;
 }
 
 // ---------------------------------------------------------------------------
@@ -2009,34 +1999,35 @@ void CS2DGame::CoachApplyPlan(Team t) {
     int holdOk = 0, holdFail = 0;
     std::ostringstream detail;
 
-    // T22：按能力分槽——不再按 BOT 下标顺序分。先把本队存活 BOT 收集起来，
+    // T22：按能力分槽——先把本队存活 BOT 收集起来，
     // 用确定性键（拿 AWP / 金钱 / 难度）排序，再按槽位角色匹配。
+    EnsureBotAi();
     std::vector<size_t> alive;
-    for (size_t i = 0; i < bots_.size(); ++i) {
-        if (bots_[i].alive && bots_[i].team == t) alive.push_back(i);
+    for (size_t i = 0; i < actors_.size(); ++i) {
+        if (actors_[i].IsBot() && actors_[i].alive && actors_[i].team == t) alive.push_back(i);
     }
     auto hasSniper = [&](size_t i) {
         for (int w = 0; w <= 1; ++w) {
-            const WeaponId wid = bots_[i].weapons[w];
+            const WeaponId wid = actors_[i].weapons[w];
             if (wid != WeaponId::None && WeaponDB::Get(wid).cls == WeaponClass::Sniper) return true;
         }
         return false;
     };
     // 保枪时优先低余额；其余计划按难度优先分配前置岗位。
     std::sort(alive.begin(), alive.end(), [&](size_t a, size_t b) {
-        if (st.plan.intent == PlanIntent::Save && bots_[a].money != bots_[b].money)
-            return bots_[a].money < bots_[b].money;
+        if (st.plan.intent == PlanIntent::Save && actors_[a].money != actors_[b].money)
+            return actors_[a].money < actors_[b].money;
         if (AiAt(a).difficulty != AiAt(b).difficulty) return AiAt(a).difficulty > AiAt(b).difficulty;
         return a < b;
     });
-    const size_t unassigned = bots_.size();
+    const size_t unassigned = actors_.size();
     std::array<size_t, 5> assigned;
     assigned.fill(unassigned);
     if (st.plan.intent != PlanIntent::Save) {
         for (size_t si = 0; si < assigned.size(); ++si) {
             if (st.plan.slots[si].role != CoachRole::Awper) continue;
             auto sniper = std::find_if(alive.begin(), alive.end(), [&](size_t i) {
-                return bots_[i].weapons[0] == WeaponId::AWP;
+                return actors_[i].weapons[0] == WeaponId::AWP;
             });
             if (sniper == alive.end()) sniper = std::find_if(alive.begin(), alive.end(), hasSniper);
             if (sniper == alive.end()) break;
@@ -2049,17 +2040,13 @@ void CS2DGame::CoachApplyPlan(Team t) {
         if (assignedBot == unassigned && next != alive.end()) assignedBot = *next++;
     }
 
-    // P1-5：本计划内已分配的驻守点 + 各存活队友的当前驻守点（跨计划残留）。
-    // 后者必须算进去：上一轮计划的旧点若不避开，会和本轮 dup=0 新点重合
-    // （实测：R1 末 bot1 守 A 锚点，某计划又把 bot2 派到同一锚点）。
-    // 只有目标点与已用点 <40px 时才散开——同一计划反复 Apply 时不抖动。
     std::vector<std::pair<float, float>> usedHoldPts;
-    std::vector<char> holdReassigned(bots_.size(), 0);
+    std::vector<char> holdReassigned(actors_.size(), 0);
     auto collectUsed = [&](size_t self) {
         std::vector<std::pair<float, float>> used = usedHoldPts;
-        for (size_t j = 0; j < bots_.size(); ++j) {
-            if (j == self || bots_[j].team != t || !bots_[j].alive) continue;
-            if (holdReassigned[j]) continue;  // 已在本计划内重派，旧点失效
+        for (size_t j = 0; j < actors_.size(); ++j) {
+            if (j == self || !actors_[j].IsBot() || actors_[j].team != t || !actors_[j].alive) continue;
+            if (holdReassigned[j]) continue;
             const auto& aj = AiAt(j);
             if (aj.hasPlanHold) used.emplace_back(aj.planHoldX, aj.planHoldY);
         }
@@ -2077,14 +2064,14 @@ void CS2DGame::CoachApplyPlan(Team t) {
         const size_t i = assigned[si];
         if (i == unassigned) continue;
         const SlotOrder& so = st.plan.slots[si];
-        auto& bot = bots_[i];
+        auto& bot = actors_[i];
         auto& ai = AiAt(i);
 
         switch (so.role) {
             case CoachRole::Entry:  SetRoleWithTransition(i, BotRole::Entry);   break;
             case CoachRole::Anchor: SetRoleWithTransition(i, BotRole::Anchor);  break;
-            case CoachRole::Lurk:   SetRoleWithTransition(i, BotRole::Lurk);    break;   // T26：真角色
-            case CoachRole::Awper:  SetRoleWithTransition(i, BotRole::Awper);   break;   // T26：真角色
+            case CoachRole::Lurk:   SetRoleWithTransition(i, BotRole::Lurk);    break;
+            case CoachRole::Awper:  SetRoleWithTransition(i, BotRole::Awper);   break;
             default:                SetRoleWithTransition(i, BotRole::Support); break;
         }
 
@@ -2094,22 +2081,18 @@ void CS2DGame::CoachApplyPlan(Team t) {
             std::uniform_real_distribution<float> jit(-36.0f, 36.0f);
             cx = bot.x + jit(rng_);
             cy = bot.y + jit(rng_);
-            // goalArea 必须在 SetBotGoal 之前写好：SetBotGoal 用它查战术表 [look] 的守点朝向
             ai.goalArea = std::string();
             SetBotGoal(i, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
-            // 计划点到达后不要退回默认包点：把小队岗位固定在当前点。
-            squad_[i].site = -1;
+            actorSquad_[i].site = -1;
             ++holdOk;
             detail << " #" << si << "=(save)";
-            squad_[i].canTrade  = false;
-            squad_[i].canRotate = false;
+            actorSquad_[i].canTrade  = false;
+            actorSquad_[i].canRotate = false;
             ++slot;
             continue;
         }
         if (!so.area.empty() && AreaCenterByName(so.area, cx, cy)) {
             const int areaSite = areaSiteIndex(so.area);
-            // T 进攻期：真正的推进目标是「目标包点中心」，区域中心只当集结/架枪点。
-            // 否则 T 会停在区域边缘（例如 A_Long 中心）磨时间，进攻节奏变慢。
             bool toSiteCenter = false;
             if (t == Team::T && !bombPlanted_ && !st.plan.target.empty()) {
                 const auto& sites = world_->GetBombSites();
@@ -2120,12 +2103,8 @@ void CS2DGame::CoachApplyPlan(Team t) {
                     toSiteCenter = true;
                 }
             }
-            ai.goalArea = so.area;   // 先写区域名，SetBotGoal 才能查到 [look] 朝向
+            ai.goalArea = so.area;
 
-            // 锚点优先：战术表 [anchor.<area>]（按阵营）给出"该站的具体点"，
-            // 比区域中心更贴近真实架点；没有锚点才用中心。
-            // T24：放开"仅 hold≠Default 才用锚点"的限制——槽位带 look/hold 数据
-            // （来自 @ 模板或显式站姿）就用锚点，规则模板也能用上锚点。
             const bool useAnchor = (so.hold != HoldStyle::Default) ||
                                    !so.lookArea.empty() || so.lookAngle > -90.0f;
             if (useAnchor) {
@@ -2138,8 +2117,6 @@ void CS2DGame::CoachApplyPlan(Team t) {
                     cy = a2->second;
                 }
             }
-            // P1-5：驻守点不要和队友重合——本计划内已分配的点 + 其余存活队友
-            // 的当前驻守点（跨计划残留）都要避开；重合才散开，不重合不动。
             {
                 std::vector<std::pair<float, float>> used = collectUsed(i);
                 if (tooClose(used, cx, cy))
@@ -2149,12 +2126,6 @@ void CS2DGame::CoachApplyPlan(Team t) {
             }
             SetBotGoal(i, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
 
-            // ---- 可执行字段：朝向 / 站姿 / 投掷 ----
-            // P1-2: write the coach-specified look back into the plan slot so
-            // wiring records the effective look direction (lookDeg as-is, or
-            // the angle resolved from lookArea). The SetBotGoal fallback
-            // direction is deliberately NOT written back: a slot with no
-            // coach look must stay -99 in wiring.
             if (so.lookAngle > -90.0f) {
                 ai.lookAngle = so.lookAngle;
                 st.plan.slots[si].lookAngle = so.lookAngle;
@@ -2173,81 +2144,75 @@ void CS2DGame::CoachApplyPlan(Team t) {
                 float ux = 0.0f, uy = 0.0f;
                 if (AreaCenterByName(so.utilArea, ux, uy)) { ai.utilX = ux; ai.utilY = uy; }
             }
-            // 小队岗位与教练计划保持一致；计划点到达后继续守这个区域，
-            // 而不是被 AssignSquadRoles 的轮转岗位拉回另一侧。
-            squad_[i].site = areaSite;
+            actorSquad_[i].site = areaSite;
             ++holdOk;
             detail << " #" << si << "=" << so.area;
         } else {
             ClearBotGoal(i);
-            squad_[i].site = -1;
+            actorSquad_[i].site = -1;
             ++holdFail;
             detail << " #" << si << "=" << (so.area.empty() ? "(empty)" : so.area + "!");
         }
-        squad_[i].canTrade  = so.canTrade;
-        squad_[i].canRotate = so.canRotate;
+        actorSquad_[i].canTrade  = so.canTrade;
+        actorSquad_[i].canRotate = so.canRotate;
         ++slot;
     }
-    // C4 携带者必须跟主攻侧走：否则他可能被分到另一侧/中路，
-    // 队友在 A 打，他一个人在中路或 B 转，永远没人下包。
+    // C4 携带者若是 BOT，必须跟主攻侧走
     if (t == Team::T && !bombPlanted_ && !bombDropped_ &&
-        st.plan.intent != PlanIntent::Save &&
-        bombCarrier_ >= 0 && bombCarrier_ < static_cast<int>(bots_.size()) &&
-        bots_[static_cast<size_t>(bombCarrier_)].team == Team::T &&
-        bots_[static_cast<size_t>(bombCarrier_)].alive) {
-        std::string side = st.plan.target;
-        if (side != "A" && side != "B") {
-            // default 分兵没有 target：让携带者跟随人数最多/自己槽位所在的一侧。
-            int a = 0, b = 0;
-            const auto& sites = world_->GetBombSites();
-            for (const auto& so : st.plan.slots) {
-                const int idx = areaSiteIndex(so.area);
-                if (idx < 0 || idx >= static_cast<int>(sites.size())) continue;
-                if (sites[static_cast<size_t>(idx)].name == "A") ++a;
-                else if (sites[static_cast<size_t>(idx)].name == "B") ++b;
-            }
-            const int ownSite = squad_[static_cast<size_t>(bombCarrier_)].site;
-            if (ownSite >= 0 && ownSite < static_cast<int>(sites.size())) {
-                side = sites[static_cast<size_t>(ownSite)].name;
-            }
-            if (side != "A" && side != "B") side = (a >= b) ? "A" : "B";
-        }
-
-        const std::string siteArea = AreaHint(side + "_Site");
-        const int siteIdx = areaSiteIndex(siteArea);
-        float cx = 0.0f, cy = 0.0f;
-        bool havePoint = false;
-        if (siteIdx >= 0 && siteIdx < static_cast<int>(world_->GetBombSites().size())) {
-            cx = world_->GetBombSites()[static_cast<size_t>(siteIdx)].cx;
-            cy = world_->GetBombSites()[static_cast<size_t>(siteIdx)].cy;
-            havePoint = true;
-        } else if (AreaCenterByName(siteArea, cx, cy)) {
-            havePoint = true;
-        }
-        if (havePoint) {
-            const size_t ci = static_cast<size_t>(bombCarrier_);
-            auto& cai = AiAt(ci);
-            auto& csq = squad_[ci];
-            cai.goalArea  = siteArea;   // 先写区域名，SetBotGoal 才能查到 [look] 朝向
-            // P1-5：携带者与主攻组共用包点中心——与队友驻守点重合才散开。
-            // （目标若与携带者自己的槽位点重合，说明覆盖前后是同一点，不散开。）
-            {
-                const auto& cai0 = AiAt(ci);
-                const float sdx = cx - cai0.planHoldX, sdy = cy - cai0.planHoldY;
-                const bool selfSame = cai0.hasPlanHold &&
-                                      (sdx * sdx + sdy * sdy < 40.0f * 40.0f);
-                if (!selfSame) {
-                    std::vector<std::pair<float, float>> used = collectUsed(ci);
-                    if (tooClose(used, cx, cy))
-                        SpreadHoldPoint(cx, cy, static_cast<int>(used.size()), cx, cy, used);
+        st.plan.intent != PlanIntent::Save) {
+        const Player* carrier = FindActor(bombCarrier_);
+        if (carrier && carrier->IsBot() && carrier->team == Team::T && carrier->alive) {
+            std::string side = st.plan.target;
+            if (side != "A" && side != "B") {
+                int a = 0, b = 0;
+                const auto& sites = world_->GetBombSites();
+                for (const auto& so : st.plan.slots) {
+                    const int idx = areaSiteIndex(so.area);
+                    if (idx < 0 || idx >= static_cast<int>(sites.size())) continue;
+                    if (sites[static_cast<size_t>(idx)].name == "A") ++a;
+                    else if (sites[static_cast<size_t>(idx)].name == "B") ++b;
                 }
+                const int ownSite = actorSquad_[static_cast<size_t>(carrier->id)].site;
+                if (ownSite >= 0 && ownSite < static_cast<int>(sites.size())) {
+                    side = sites[static_cast<size_t>(ownSite)].name;
+                }
+                if (side != "A" && side != "B") side = (a >= b) ? "A" : "B";
             }
-            SetBotGoal(ci, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
-            csq.site      = siteIdx;
-            csq.role      = BotRole::Entry;   // 跟突破组进点，而不是当断后
-            csq.canRotate = false;
-            std::cout << "[Coach] T C4携带者 #" << bombCarrier_
-                      << " 跟随主攻 " << side << std::endl;
+
+            const std::string siteArea = AreaHint(side + "_Site");
+            const int siteIdx = areaSiteIndex(siteArea);
+            float cx = 0.0f, cy = 0.0f;
+            bool havePoint = false;
+            if (siteIdx >= 0 && siteIdx < static_cast<int>(world_->GetBombSites().size())) {
+                cx = world_->GetBombSites()[static_cast<size_t>(siteIdx)].cx;
+                cy = world_->GetBombSites()[static_cast<size_t>(siteIdx)].cy;
+                havePoint = true;
+            } else if (AreaCenterByName(siteArea, cx, cy)) {
+                havePoint = true;
+            }
+            if (havePoint) {
+                const size_t ci = static_cast<size_t>(carrier->id);
+                auto& cai = AiAt(ci);
+                auto& csq = actorSquad_[ci];
+                cai.goalArea  = siteArea;
+                {
+                    const auto& cai0 = AiAt(ci);
+                    const float sdx = cx - cai0.planHoldX, sdy = cy - cai0.planHoldY;
+                    const bool selfSame = cai0.hasPlanHold &&
+                                          (sdx * sdx + sdy * sdy < 40.0f * 40.0f);
+                    if (!selfSame) {
+                        std::vector<std::pair<float, float>> used = collectUsed(ci);
+                        if (tooClose(used, cx, cy))
+                            SpreadHoldPoint(cx, cy, static_cast<int>(used.size()), cx, cy, used);
+                    }
+                }
+                SetBotGoal(ci, cx, cy, BotRuntime::GoalSource::Coach, /*force=*/true);
+                csq.site      = siteIdx;
+                csq.role      = BotRole::Entry;
+                csq.canRotate = false;
+                std::cout << "[Coach] T C4携带者 #" << bombCarrier_
+                          << " 跟随主攻 " << side << std::endl;
+            }
         }
     }
 
@@ -2333,7 +2298,7 @@ void CS2DGame::CoachResetRound() {
         st.llmPending      = false;
         st.llmAnswered     = false;
     }
-    for (size_t i = 0; i < bots_.size(); ++i) ClearBotGoal(i);
+    for (size_t i = 0; i < actors_.size(); ++i) ClearBotGoal(i);
 }
 
 
@@ -2385,9 +2350,8 @@ int CS2DGame::GetRoundStartEconomy(Team t) const {
         return (t == Team::T) ? roundStartAvgMoneyT_ : roundStartAvgMoneyCT_;
     }
     int sum = 0, n = 0;
-    if (player_.team == t) { sum += player_.money; ++n; }
-    for (const auto& b : bots_) {
-        if (b.team == t) { sum += b.money; ++n; }
+    for (const auto& b : actors_) {
+        if (b.IsActive() && b.team == t) { sum += b.money; ++n; }
     }
     return (n > 0) ? sum / n : 0;
 }
@@ -2395,9 +2359,8 @@ int CS2DGame::GetRoundStartEconomy(Team t) const {
 void CS2DGame::SnapshotRoundEconomy() {
     auto avg = [&](Team t) {
         int sum = 0, n = 0;
-        if (player_.team == t) { sum += player_.money; ++n; }
-        for (const auto& b : bots_) {
-            if (b.team == t) { sum += b.money; ++n; }
+        for (const auto& b : actors_) {
+            if (b.IsActive() && b.team == t) { sum += b.money; ++n; }
         }
         return (n > 0) ? sum / n : 0;
     };
@@ -2486,46 +2449,36 @@ bool CS2DGame::ShouldSaveNow(Team t) const {
 
     // T 已经站上包点 = 已经拿到主动权，再保枪等于把包点白送
     if (t == Team::T && world_) {
-        for (const auto& b : bots_) {
-            if (!b.alive || b.team != Team::T) continue;
+        for (const auto& b : actors_) {
+            if (!b.IsActive() || !b.alive || b.team != Team::T) continue;
             if (world_->FindBombSiteAt(b.x, b.y)) return false;
         }
     }
     return LowEconomyAverage(t);
 }
 
-// ============================================================================
-// 转点（信息驱动）
-//
-//   判定顺序：时间 -> 人数 -> 冷却 -> 证据
-//   证据 = 两个包点的威胁度差；未知的包点不会被当成「空」
-// ============================================================================
-
 bool CS2DGame::CanRotateNow(Team t) const {
     if (mode_ != MatchMode::BombDefusal) return false;
-    if (bombPlanted_) return false;                       // 下包后不转
-    if (bombDropped_) return false;                       // C4 掉了先回收
-    if (t != Team::T) return false;                       // 目前只做进攻方转点
+    if (bombPlanted_) return false;
+    if (bombDropped_) return false;
+    if (t != Team::T) return false;
     if (!round_.IsLive()) return false;
-    if (round_.PhaseRemaining() < 30.0f) return false;    // 留足执行 + 下包时间
-    if (AliveCount(t) + 1 < AliveCount(TeamManager::Opponent(t))) return false;  // 少两个不转
-    if (clockSec_ - lastRotateAt_ < 8.0f) return false;   // 8 秒冷却，防来回抖
-    if (intel_.ObservationCount() < Tuning::ai::RotateMinIntel) return false;      // 至少两条情报
+    if (round_.PhaseRemaining() < 30.0f) return false;
+    if (AliveCount(t) + 1 < AliveCount(TeamManager::Opponent(t))) return false;
+    if (clockSec_ - lastRotateAt_ < 8.0f) return false;
+    if (intel_.ObservationCount() < Tuning::ai::RotateMinIntel) return false;
 
-    // 只有「默认分兵」阶段才允许转点；rush/split/stack/fake/save 都是已承诺的
-    // 执行，不能被情报轻易拉回另一侧，否则会在两点之间来回走。
     const CoachState& st = CoachFor(t);
     if (!st.plan.valid) return false;
     if (st.plan.intent != PlanIntent::Default) return false;
-    if (clockSec_ - st.plan.createdAt < Tuning::ai::RotateMinPlanAge) return false;   // 新计划先执行一段
+    if (clockSec_ - st.plan.createdAt < Tuning::ai::RotateMinPlanAge) return false;
 
     // 已经有人进包点 / C4 携带者接近包点：优先下包，不转点。
     if (world_) {
-        for (size_t i = 0; i < bots_.size(); ++i) {
-            const auto& b = bots_[i];
-            if (!b.alive || b.team != Team::T) continue;
+        for (const auto& b : actors_) {
+            if (!b.IsActive() || !b.alive || b.team != Team::T) continue;
             if (world_->FindBombSiteAt(b.x, b.y)) return false;
-            if (static_cast<int>(i) == bombCarrier_) {
+            if (b.id == bombCarrier_) {
                 for (const auto& s : world_->GetBombSites()) {
                     const float dx = s.cx - b.x, dy = s.cy - b.y;
                     if (dx * dx + dy * dy < 280.0f * 280.0f) return false;

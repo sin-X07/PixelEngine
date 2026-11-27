@@ -250,6 +250,15 @@ if(BUILD_GAMEPLAY_TESTS)
     if(MINGW)
         target_link_options(menu_art_review PRIVATE -mconsole -static -static-libgcc -static-libstdc++)
     endif()
+    add_executable(pixelsim_actor_test
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/pixelsim_actor_test.cpp"
+    )
+    target_link_libraries(pixelsim_actor_test PRIVATE PixelSim)
+    if(MINGW)
+        target_link_options(pixelsim_actor_test PRIVATE -mconsole -static -static-libgcc -static-libstdc++)
+    endif()
+    add_dependencies(pixelsim_actor_test SyncEngineAssets)
+
     set(TEST_SOURCES ${CLIENT_SOURCES})
     list(REMOVE_ITEM TEST_SOURCES main.cpp)
     add_executable(gameplay_tests

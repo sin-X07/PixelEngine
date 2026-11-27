@@ -52,15 +52,15 @@ public:
     }
 
     void Check(const CS2DGame& game, uint64_t tick, std::FILE* out) {
-        const auto& bots = game.GetBOTs();
+        const auto& actors = game.GetActors();
         const auto& squad = game.GetSquadOrders();
         const bool planted = game.GetBombTimer() > 0.0f;
         const bool live = game.GetRoundPhase() == RoundPhase::Live;
         const int round = game.GetRoundNumber();
 
-        for (size_t i = 0; i < bots.size(); ++i) {
-            const auto& b = bots[i];
-            if (!b.alive) continue;
+        for (size_t i = 0; i < actors.size(); ++i) {
+            const auto& b = actors[i];
+            if (!b.IsBot() || !b.alive) continue;
             const auto& ai = game.AiAt(i);
 
             const float speed = std::sqrt(b.vx * b.vx + b.vy * b.vy);
@@ -104,12 +104,12 @@ public:
         }
 
         if (!enableNoisy_ || ignore_["duplicate_hold"]) return;
-        for (size_t i = 0; i < bots.size(); ++i) {
-            if (!bots[i].alive) continue;
+        for (size_t i = 0; i < actors.size(); ++i) {
+            if (!actors[i].IsBot() || !actors[i].alive) continue;
             const auto& ai = game.AiAt(i);
             if (!ai.hasPlanHold) continue;
-            for (size_t j = i + 1; j < bots.size(); ++j) {
-                if (!bots[j].alive || bots[j].team != bots[i].team) continue;
+            for (size_t j = i + 1; j < actors.size(); ++j) {
+                if (!actors[j].IsBot() || !actors[j].alive || actors[j].team != actors[i].team) continue;
                 const auto& aj = game.AiAt(j);
                 if (!aj.hasPlanHold) continue;
                 const double dx = ai.planHoldX - aj.planHoldX;

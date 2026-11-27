@@ -152,10 +152,8 @@ private:
     int reloads_ = 0, empties_ = 0, emptyReloaded_ = 0;
 
     static const CS2DGame::Player& Actor(const CS2DGame& game, int i) {
-        if (i == 0) return game.GetPlayer();
-        const auto& bots = game.GetBOTs();
-        const size_t idx = static_cast<size_t>(i - 1);
-        return idx < bots.size() ? bots[idx] : game.GetPlayer();
+        const auto* p = game.FindActor(i);
+        return p ? *p : game.GetPlayer();
     }
 
     static unsigned ShotsOf(const CS2DGame::Player& p) {

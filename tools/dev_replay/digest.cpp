@@ -33,6 +33,10 @@ void MixPlayer(TickHasher& h, const CS2DGame::Player& p) {
     h.Mix(static_cast<uint8_t>(p.reloading ? 1 : 0));
     h.MixFloat(p.reloadTimer);
     h.MixFloat(p.shootCooldown);
+    h.MixFloat(p.flashTimer);
+    h.MixFloat(p.flashPeak);
+    h.MixFloat(p.plantProgress);
+    h.Mix(static_cast<uint8_t>(p.holdingC4 ? 1 : 0));
 }
 
 // BOT 决策运行时：驱动朝向与移动，属于 gameplay
@@ -59,7 +63,6 @@ void MixBotRuntime(TickHasher& h, const CS2DGame::BotRuntime& ai) {
     h.MixFloat(ai.threatY);
     h.MixFloat(ai.lastHitTimer);
     h.MixFloat(ai.defuseCooldown);
-    h.MixFloat(ai.blindTimer);
     h.Mix(static_cast<uint8_t>(ai.defusing ? 1 : 0));
     h.MixFloat(ai.alertTimer);
     h.MixFloat(ai.alertX);
@@ -101,14 +104,11 @@ uint64_t SnapshotTick(const CS2DGame& game, uint64_t tick) {
     h.MixFloat(game.GetDefuseProgress());
     h.MixFloat(game.GetPlantProgress());
 
-    // ---- 玩家 ----
-    MixPlayer(h, game.GetPlayer());
-
-    // ---- BOT：玩家/运行时按 bots_ 顺序一一对应 ----
-    const auto& bots = game.GetBOTs();
-    h.Mix(static_cast<uint32_t>(bots.size()));
-    for (size_t i = 0; i < bots.size(); ++i) {
-        MixPlayer(h, bots[i]);
+    // ---- 全部单位（真人 + BOT 按槽位顺序一一对应）----
+    const auto& actors = game.GetActors();
+    h.Mix(static_cast<uint32_t>(actors.size()));
+    for (size_t i = 0; i < actors.size(); ++i) {
+        MixPlayer(h, actors[i]);
         MixBotRuntime(h, game.AiAt(i));
     }
 
@@ -124,7 +124,7 @@ uint64_t SnapshotTick(const CS2DGame& game, uint64_t tick) {
         h.MixFloat(b.vy);
         h.MixFloat(b.traveled);
         h.Mix(b.damage);
-        h.Mix(b.ownerIdx);
+        h.Mix(b.ownerId);
         h.Mix(static_cast<int>(b.ownerTeam));
         h.Mix(static_cast<int>(b.weapon));
     }

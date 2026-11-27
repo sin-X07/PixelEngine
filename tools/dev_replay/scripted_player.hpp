@@ -166,8 +166,8 @@ private:
         const CS2DGame::Player& me = game.GetPlayer();
         const CS2DGame::Player* best = nullptr;
         float bestD2 = range * range;
-        for (const auto& b : game.GetBOTs()) {
-            if (!b.alive || !game.IsHostile(me, b)) continue;
+        for (const auto& b : game.GetActors()) {
+            if (&b == &me || !b.IsActive() || !b.alive || !game.IsHostile(me, b)) continue;
             const float dx = b.x - me.x;
             const float dy = b.y - me.y;
             const float d2 = dx * dx + dy * dy;
@@ -180,20 +180,18 @@ private:
     }
 
     // P2-5: follow the mate who is in combat or most advanced, not the nearest one.
-    // Re-evaluated every 300 ticks (5s); the pick is cached in between so the
-    // scripted player does not flicker between mates every tick.
     const CS2DGame::Player* PickFollowMate(CS2DGame& game) {
         const CS2DGame::Player& me = game.GetPlayer();
         if (followMate_ && followMate_->alive && tick_ - followEvalTick_ < 300) return followMate_;
         followEvalTick_ = tick_;
         const CS2DGame::Player* best = nullptr;
         double bestScore = 1e18;
-        for (const auto& b : game.GetBOTs()) {
-            if (!b.alive || game.IsHostile(me, b)) continue;
+        for (const auto& b : game.GetActors()) {
+            if (&b == &me || !b.IsActive() || !b.alive || game.IsHostile(me, b)) continue;
             double nearestFoeD2 = 1e18;
             bool inCombat = false;
-            for (const auto& e : game.GetBOTs()) {
-                if (!e.alive || !game.IsHostile(b, e)) continue;
+            for (const auto& e : game.GetActors()) {
+                if (&e == &b || !e.IsActive() || !e.alive || !game.IsHostile(b, e)) continue;
                 const double dx = static_cast<double>(e.x - b.x);
                 const double dy = static_cast<double>(e.y - b.y);
                 const double d2 = dx * dx + dy * dy;
@@ -203,9 +201,6 @@ private:
             }
             const double dMe = std::sqrt(static_cast<double>(b.x - me.x) * (b.x - me.x) +
                                          static_cast<double>(b.y - me.y) * (b.y - me.y));
-            // Combat mates first (score = distance to their nearest foe), then the
-            // most advanced mate (smallest distance to any foe); distance to me is
-            // only a tie-break. 1e12 separates the two groups.
             const double score = (inCombat ? nearestFoeD2 : 1e12 + nearestFoeD2) + dMe * 0.001;
             if (score < bestScore) { bestScore = score; best = &b; }
         }
@@ -218,8 +213,8 @@ private:
         const CS2DGame::Player& me = game.GetPlayer();
         const CS2DGame::Player* best = nullptr;
         float bestD2 = 1e18f;
-        for (const auto& b : game.GetBOTs()) {
-            if (!b.alive || !game.IsHostile(me, b)) continue;
+        for (const auto& b : game.GetActors()) {
+            if (&b == &me || !b.IsActive() || !b.alive || !game.IsHostile(me, b)) continue;
             const float dx = b.x - me.x;
             const float dy = b.y - me.y;
             const float d2 = dx * dx + dy * dy;

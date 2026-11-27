@@ -24,6 +24,50 @@ CS2DGame::CS2DGame()
     world_ = std::make_unique<CS2DWorld>();
     std::random_device rd;
     rng_.seed(rd());
+    actors_.resize(1);
+    actors_[0].id = 0;
+    actors_[0].controller = ControllerKind::Human;
+    actors_[0].team = desiredPlayerTeam_;
+    localActorId_ = 0;
+    EnsureBotAi();
+}
+
+CS2DGame::Player* CS2DGame::FindActor(ActorId id) {
+    if (id < 0 || id >= static_cast<ActorId>(actors_.size())) return nullptr;
+    return &actors_[static_cast<size_t>(id)];
+}
+
+const CS2DGame::Player* CS2DGame::FindActor(ActorId id) const {
+    if (id < 0 || id >= static_cast<ActorId>(actors_.size())) return nullptr;
+    return &actors_[static_cast<size_t>(id)];
+}
+
+ActorId CS2DGame::ActorIdOf(const Player& actor) const {
+    if (actors_.empty()) return kInvalidActorId;
+    const Player* base = actors_.data();
+    const Player* ptr  = &actor;
+    if (ptr < base || ptr >= base + actors_.size()) return kInvalidActorId;
+    return static_cast<ActorId>(ptr - base);
+}
+
+void CS2DGame::SetLocalActorId(ActorId id) {
+    if (id >= 0 && id < static_cast<ActorId>(actors_.size())) {
+        localActorId_ = id;
+    }
+}
+
+bool CS2DGame::SetActorController(ActorId id, ControllerKind kind,
+                                  std::uint32_t peerId, const std::string& name) {
+    Player* actor = FindActor(id);
+    if (!actor) return false;
+    actor->controller = kind;
+    actor->peerId = peerId;
+    if (!name.empty()) actor->name = name;
+    if (kind == ControllerKind::Human && id < static_cast<ActorId>(actorAi_.size())) {
+        actorAi_[static_cast<size_t>(id)].defusing = false;
+        actorAi_[static_cast<size_t>(id)].hasPlanHold = false;
+    }
+    return true;
 }
 
 // ============================================================================
@@ -99,15 +143,17 @@ bool CS2DGame::LoadMapHeadless(const std::string& resolvedTMJPath, bool resetMat
         ResetToNewMatch();
     } else {
         // 选阵营前只保留地图世界，不生成玩家和 BOT。
-        player_.hasDefuseKit = false;
-    bots_.clear();
-        botAi_.clear();
+        actors_.assign(1, Player{});
+        actors_[0].id = 0;
+        actors_[0].controller = ControllerKind::Human;
+        actors_[0].team = desiredPlayerTeam_;
+        actors_[0].alive = false;
+        localActorId_ = 0;
+        EnsureBotAi();
         bullets_.clear();
         bulletVisuals_.clear();
         nextBulletVisualId_ = 1;
         ResetScope(Presentation::ScopeResetReason::MatchExit);
-        player_ = Player{};
-        player_.alive = false;
     }
     intel_.Build(world_.get(), clockSec_);
     return true;
@@ -118,9 +164,8 @@ void CS2DGame::ResetToNewMatch() {
     StopObjectiveAudio(nullptr);
     damageDirections_ = {};
     damageFlashTimer_ = hitMarkerTimer_ = 0.0f;
-    dryFireHintTimer_ = dryFireCooldown_ = 0.0f;
+    dryFireHintTimer_ = 0.0f;
     hitMarkerKind_ = HitMarkerKind::Normal;
-    bots_.clear();
     bullets_.clear();
     bulletVisuals_.clear();
     nextBulletVisualId_ = 1;
@@ -131,13 +176,10 @@ void CS2DGame::ResetToNewMatch() {
     fires_.clear();
     decoys_.clear();
     fireTickTimer_ = 0.0f;
-    playerKills_ = 0;
-    playerDeaths_ = 0;
     matchOverAnnounced_ = false;
     matchOverTimer_ = 0.0f;
     killFeed_.clear();
     deathPresentation_ = {};
-    ResetFootstepStride();
     contactsT_.clear();
     contactsCT_.clear();
 
@@ -147,38 +189,52 @@ void CS2DGame::ResetToNewMatch() {
     economy_.Reset();
     prevPhase_ = round_.Phase();
 
-    player_.team = desiredPlayerTeam_;
-    player_.kills = 0;
-    player_.teamKills = 0;
-    player_.deaths = 0;
-    player_.money = economy_.StartMoney();
-    SpawnPlayer();
+    actors_.assign(1, Player{});
+    localActorId_ = 0;
+    Player& local = actors_[0];
+    local.id = 0;
+    local.controller = ControllerKind::Human;
+    local.team = desiredPlayerTeam_;
+    local.kills = 0;
+    local.teamKills = 0;
+    local.deaths = 0;
+    local.money = economy_.StartMoney();
+    EnsureBotAi();
+    ResetFootstepStride();
+    SpawnPlayer(local);
     SetupObjective();
 
     // CT 侧：玩家 + (TEAM_SIZE-1) 个 BOT；T 侧：TEAM_SIZE 个 BOT
-    botAi_.clear();
-    bots_.clear();
     nextBotNameIndex_ = 0;
     // 玩家所在阵营 4 个 BOT（凑满 5 人），敌方 5 个 BOT
-    const Team mySide    = player_.team;
+    const Team mySide    = LocalActor().team;
     const Team enemySide = TeamManager::Opponent(mySide);
+    actors_.reserve(static_cast<size_t>(TOTAL_BOTS + 1));
     for (int i = 0; i < TOTAL_BOTS; ++i) {
         const Team t = (i < TEAM_SIZE) ? enemySide : mySide;
         Player bot;
+        bot.id = static_cast<ActorId>(actors_.size());
+        bot.controller = ControllerKind::Bot;
         SpawnBOT(bot, t);
-        bots_.push_back(bot);
-        botAi_.emplace_back();
-        botAi_.back().difficulty = tactics_.botProfile / 2;          // 与 bots_ 同下标
+        actors_.push_back(std::move(bot));
+    }
+    EnsureBotAi();
+    for (size_t i = 0; i < actors_.size(); ++i) {
+        if (actors_[i].IsBot()) {
+            actorAi_[i].difficulty = tactics_.botProfile / 2;
+        }
     }
 
-    int nT = (player_.team == Team::T) ? 1 : 0;
-    int nCT = (player_.team == Team::CT) ? 1 : 0;
-    for (const auto& b : bots_) (b.team == Team::T ? nT : nCT)++;
+    int nT = 0, nCT = 0;
+    for (const auto& a : actors_) {
+        if (!a.IsActive()) continue;
+        (a.team == Team::T ? nT : nCT)++;
+    }
     std::cout << "[CS2DGame] 对局开始: " << TEAM_SIZE << "v" << TEAM_SIZE
-              << " 玩家阵营=" << (player_.team == Team::T ? "T" : "CT")
+              << " 玩家阵营=" << (LocalActor().team == Team::T ? "T" : "CT")
               << " 实际人数 T=" << nT << " CT=" << nCT << std::endl;
 
-    AssignBombCarrier();   // bot 创建后再分配一次（首次开局时 bots_ 还为空）
+    AssignBombCarrier();   // 全员创建后再分配一次
     SnapshotRoundEconomy();
     AssignSquadRoles();
     CoachResetRound();
@@ -192,10 +248,11 @@ void CS2DGame::ResetToNewMatch() {
     botBuyTimer_   = (coachLlmEnabled_ && coachLlm_) ? 7.5f : 0.0f;
     CoachOnEvent(Team::T,  CoachEventType::RoundStart);
     CoachOnEvent(Team::CT, CoachEventType::RoundStart);
-    for (size_t i = 0; i < squad_.size(); ++i) {
-        std::cout << "  " << bots_[i].name << " (" << TeamName(bots_[i].team) << ") 角色: "
-                  << (squad_[i].role == BotRole::Entry ? "突破"
-                      : squad_[i].role == BotRole::Anchor ? "断后" : "支援")
+    for (size_t i = 0; i < actors_.size(); ++i) {
+        if (!actors_[i].IsBot()) continue;
+        std::cout << "  " << actors_[i].name << " (" << TeamName(actors_[i].team) << ") 角色: "
+                  << (actorSquad_[i].role == BotRole::Entry ? "突破"
+                      : actorSquad_[i].role == BotRole::Anchor ? "断后" : "支援")
                   << std::endl;
     }
 }
@@ -206,7 +263,7 @@ void CS2DGame::RestartMatchWithTeam(Team t) {
 }
 
 void CS2DGame::Reset() {
-    dmLoadout_ = DmLoadout{};   // 新对局不沿用上一局的死斗装备
+    for (auto& a : actors_) a.dmLoadout = DmLoadout{};   // 新对局不沿用上一局的死斗装备
     ResetToNewMatch();
 }
 
@@ -214,12 +271,14 @@ void CS2DGame::Reset() {
 // 经济 / 购买
 // ============================================================================
 
-// 玩家是否处于本方购买区（地图未定义购买区时视为全图可买）
-bool CS2DGame::IsPlayerInBuyZone() const {
+// 单位是否处于本方购买区（地图未定义购买区时视为全图可买）
+bool CS2DGame::IsActorInBuyZone(ActorId actorId) const {
+    const Player* actor = FindActor(actorId);
+    if (!actor || !world_) return false;
     const auto& zones = world_->GetBuyZones();
     if (zones.empty()) return true;
 
-    const char* myTeam = (player_.team == Team::CT) ? "ct" : "t";
+    const char* myTeam = (actor->team == Team::CT) ? "ct" : "t";
     for (const auto& z : zones) {
         // 阵营过滤：属性 team 为空或 both 时对所有阵营开放
         auto it = z.properties.find("team");
@@ -228,8 +287,8 @@ bool CS2DGame::IsPlayerInBuyZone() const {
             for (char& c : tag) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             if (tag != "both" && tag != myTeam) continue;
         }
-        if (player_.x >= z.x && player_.x <= z.x + z.width &&
-            player_.y >= z.y && player_.y <= z.y + z.height) {
+        if (actor->x >= z.x && actor->x <= z.x + z.width &&
+            actor->y >= z.y && actor->y <= z.y + z.height) {
             return true;
         }
     }
@@ -261,29 +320,32 @@ int CS2DGame::PurchasePriceOf(const Presentation::BuyRequest& request) const {
     return WeaponDB::Get(request.weapon).price;
 }
 
-int CS2DGame::PurchaseQuantityOf(const Presentation::BuyRequest& request) const {
-    if (request.kind == Presentation::BuyKind::DefuseKit) return player_.hasDefuseKit ? 1 : 0;
+int CS2DGame::PurchaseQuantityOf(const Player& actor, const Presentation::BuyRequest& request) const {
+    if (request.kind == Presentation::BuyKind::DefuseKit) return actor.hasDefuseKit ? 1 : 0;
     if (request.kind == Presentation::BuyKind::Armor) {
         // tier1 = 满甲即已拥有；tier2 = 满甲且有头盔才算已拥有
-        if (player_.armor >= 100 &&
-            (request.armorTier == 1 || player_.helmet)) {
+        if (actor.armor >= 100 &&
+            (request.armorTier == 1 || actor.helmet)) {
             return 1;
         }
         return 0;
     }
     const WeaponDef& def = WeaponDB::Get(request.weapon);
     switch (def.slot) {
-        case WeaponSlotKind::Primary:   return (player_.weapons[0] == request.weapon) ? 1 : 0;
-        case WeaponSlotKind::Secondary: return (player_.weapons[1] == request.weapon) ? 1 : 0;
-        case WeaponSlotKind::Melee:     return (player_.weapons[2] == request.weapon) ? 1 : 0;
-        case WeaponSlotKind::Grenade:   return player_.CountGrenade(request.weapon);
+        case WeaponSlotKind::Primary:   return (actor.weapons[0] == request.weapon) ? 1 : 0;
+        case WeaponSlotKind::Secondary: return (actor.weapons[1] == request.weapon) ? 1 : 0;
+        case WeaponSlotKind::Melee:     return (actor.weapons[2] == request.weapon) ? 1 : 0;
+        case WeaponSlotKind::Grenade:   return actor.CountGrenade(request.weapon);
     }
     return 0;
 }
 
-Presentation::BuyCode CS2DGame::EvaluatePurchase(
-    const Presentation::BuyRequest& request) const {
+Presentation::BuyCode CS2DGame::EvaluatePurchaseFor(
+    ActorId actorId, const Presentation::BuyRequest& request) const {
     using Presentation::BuyCode;
+    const Player* actorPtr = FindActor(actorId);
+    if (!actorPtr) return BuyCode::PlayerDead;
+    const Player& actor = *actorPtr;
 
     // 1) 非法请求 / 非售卖项：先校验 enum，再索引 WeaponDB
     if (request.kind != Presentation::BuyKind::Weapon &&
@@ -299,23 +361,22 @@ Presentation::BuyCode CS2DGame::EvaluatePurchase(
         if (def.slot == WeaponSlotKind::Melee) return BuyCode::InvalidItem;
     }
 
-    if (request.kind == Presentation::BuyKind::DefuseKit && player_.team != Team::CT)
+    if (request.kind == Presentation::BuyKind::DefuseKit && actor.team != Team::CT)
         return BuyCode::InvalidItem;
 
     // 2) 存活 → 时窗 → 区域 → 阵营 → 本场配装（固定优先序，保证失败原因稳定可测）
-    if (!player_.alive) return BuyCode::PlayerDead;
+    if (!actor.alive) return BuyCode::PlayerDead;
     if (!IsBuyWindowOpen()) return BuyCode::WindowClosed;
-    if (!IsPlayerInBuyZone()) return BuyCode::OutsideBuyZone;
+    if (!IsActorInBuyZone(actorId)) return BuyCode::OutsideBuyZone;
     if (request.kind == Presentation::BuyKind::Weapon &&
-        !WeaponDB::TeamAllowed(request.weapon, player_.team == Team::T)) {
+        !WeaponDB::TeamAllowed(request.weapon, actor.team == Team::T)) {
         return BuyCode::TeamRestricted;
     }
     if (request.kind == Presentation::BuyKind::Weapon &&
         WeaponDB::RequiresLoadoutSelection(request.weapon) &&
-        !WeaponDB::IsWeaponInLoadout(LoadoutForTeam(player_.team), request.weapon)) {
+        !WeaponDB::IsWeaponInLoadout(LoadoutForTeam(actor.team), request.weapon)) {
         return BuyCode::NotInLoadout;
     }
-
 
     // 3) 已拥有：同一把主/副武器不再重复扣款补弹；
     //    投掷物可叠加，容量由下一步的 InventoryFull / ItemLimitReached 判定
@@ -323,7 +384,7 @@ Presentation::BuyCode CS2DGame::EvaluatePurchase(
         const bool isGrenade =
             request.kind == Presentation::BuyKind::Weapon &&
             WeaponDB::Get(request.weapon).slot == WeaponSlotKind::Grenade;
-        if (!isGrenade && PurchaseQuantityOf(request) > 0) {
+        if (!isGrenade && PurchaseQuantityOf(actor, request) > 0) {
             return BuyCode::AlreadyEquipped;
         }
     }
@@ -332,9 +393,9 @@ Presentation::BuyCode CS2DGame::EvaluatePurchase(
     if (request.kind == Presentation::BuyKind::Weapon) {
         const WeaponDef& def = WeaponDB::Get(request.weapon);
         if (def.slot == WeaponSlotKind::Grenade) {
-            if (player_.grenadeCount >= Player::MAX_GRENADES) return BuyCode::InventoryFull;
+            if (actor.grenadeCount >= Player::MAX_GRENADES) return BuyCode::InventoryFull;
             const int limit = (request.weapon == WeaponId::GrenadeFlash) ? 2 : 1;
-            if (player_.CountGrenade(request.weapon) >= limit) {
+            if (actor.CountGrenade(request.weapon) >= limit) {
                 return BuyCode::ItemLimitReached;
             }
         }
@@ -343,19 +404,26 @@ Presentation::BuyCode CS2DGame::EvaluatePurchase(
     // 5) 金额
     const int price = PurchasePriceOf(request);
     if (price <= 0) return BuyCode::InvalidItem;
-    if (player_.money < price) return BuyCode::InsufficientFunds;
+    if (actor.money < price) return BuyCode::InsufficientFunds;
 
     return BuyCode::Ok;
 }
 
-Presentation::BuyResult CS2DGame::ExecutePurchase(
-    const Presentation::BuyRequest& request, IAudioSink* audio) {
+Presentation::BuyResult CS2DGame::ExecutePurchaseFor(
+    ActorId actorId, const Presentation::BuyRequest& request, IAudioSink* audio) {
     if (audio) audioSink_ = audio;
     Presentation::BuyResult result;
     result.request = request;
-    result.code = EvaluatePurchase(request);      // 点击时重新判定
-    result.moneyAfter = player_.money;
-    result.quantityAfter = PurchaseQuantityOf(request);
+    Player* actorPtr = FindActor(actorId);
+    if (!actorPtr) {
+        result.code = Presentation::BuyCode::PlayerDead;
+        return result;
+    }
+    Player& actor = *actorPtr;
+    const bool isLocal = (actorId == localActorId_);
+    result.code = EvaluatePurchaseFor(actorId, request);      // 点击时重新判定
+    result.moneyAfter = actor.money;
+    result.quantityAfter = PurchaseQuantityOf(actor, request);
 
     if (result.code != Presentation::BuyCode::Ok) {
         return result;                            // 失败：金额 / 装备 / 音效都不动
@@ -364,104 +432,107 @@ Presentation::BuyResult CS2DGame::ExecutePurchase(
     Player::EquipmentRecord receipt;
     receipt.id = nextEquipmentId_++;
     receipt.epoch = purchaseEpoch_;
-    receipt.buyer = 0;
+    receipt.buyer = actorId;
     receipt.paid = PurchasePriceOf(request);
-    receipt.armorTier=request.kind==Presentation::BuyKind::Armor ? request.armorTier : 0;
-    receipt.previousArmor = player_.armor;
-    receipt.previousHelmet = player_.helmet;
+    receipt.armorTier = request.kind == Presentation::BuyKind::Armor ? request.armorTier : 0;
+    receipt.previousArmor = actor.armor;
+    receipt.previousHelmet = actor.helmet;
     if (request.kind == Presentation::BuyKind::DefuseKit) {
-        player_.kitEquipment = receipt;
-        player_.money -= 400;
-        player_.hasDefuseKit = true;
+        actor.kitEquipment = receipt;
+        actor.money -= 400;
+        actor.hasDefuseKit = true;
     } else if (request.kind == Presentation::BuyKind::Armor) {
-        player_.armorEquipment.push_back(receipt);
+        actor.armorEquipment.push_back(receipt);
         const int tier  = request.armorTier;
         const int price = PurchasePriceOf(request);
-        player_.money -= price;
-        economy_.Clamp(player_.money);
-        player_.armor = 100;
-        if (tier == 2) player_.helmet = true;
+        actor.money -= price;
+        economy_.Clamp(actor.money);
+        actor.armor = 100;
+        if (tier == 2) actor.helmet = true;
         std::cout << "[Buy] " << (tier == 2 ? "护甲+头盔" : "护甲")
-                  << " ($" << price << ") 余额 $" << player_.money << std::endl;
+                  << " ($" << price << ") 余额 $" << actor.money << std::endl;
     } else {
-        const int oldSlot = player_.weaponSlot;
-        const WeaponId oldWeapon = player_.CurrentWeapon().id;
+        const int oldSlot = actor.weaponSlot;
+        const WeaponId oldWeapon = actor.CurrentWeapon().id;
         const WeaponDef& def = WeaponDB::Get(request.weapon);
         switch (def.slot) {
             case WeaponSlotKind::Primary:
-                DropWeaponToGround(0,player_.x,player_.y);
-                player_.SetSlotWeapon(0, request.weapon);
-                player_.equipment[0] = receipt;
-                player_.fireStates[0] = {};
-                player_.weaponSlot = 0;
-                player_.LoadAmmoFromSlot();
-                player_.reloading = false;
-                player_.reloadTimer = 0.0f;
-                playerHoldingC4_ = false;
+                DropWeaponToGround(actor, 0, actor.x, actor.y);
+                actor.SetSlotWeapon(0, request.weapon);
+                actor.equipment[0] = receipt;
+                actor.fireStates[0] = {};
+                actor.weaponSlot = 0;
+                actor.LoadAmmoFromSlot();
+                actor.reloading = false;
+                actor.reloadTimer = 0.0f;
+                actor.holdingC4 = false;
                 break;
             case WeaponSlotKind::Secondary:
-                DropWeaponToGround(1,player_.x,player_.y);
-                player_.SetSlotWeapon(1, request.weapon);
-                player_.equipment[1] = receipt;
-                player_.fireStates[1] = {};
-                player_.weaponSlot = 1;
-                player_.LoadAmmoFromSlot();
-                player_.reloading = false;
-                player_.reloadTimer = 0.0f;
-                playerHoldingC4_ = false;
+                DropWeaponToGround(actor, 1, actor.x, actor.y);
+                actor.SetSlotWeapon(1, request.weapon);
+                actor.equipment[1] = receipt;
+                actor.fireStates[1] = {};
+                actor.weaponSlot = 1;
+                actor.LoadAmmoFromSlot();
+                actor.reloading = false;
+                actor.reloadTimer = 0.0f;
+                actor.holdingC4 = false;
                 break;
             case WeaponSlotKind::Melee:
-                player_.weapons[2] = request.weapon;
+                actor.weapons[2] = request.weapon;
                 break;
             case WeaponSlotKind::Grenade:
-                player_.grenadeEquipment[player_.grenadeCount] = receipt;
-                player_.grenades[player_.grenadeCount++] = request.weapon;
-                player_.SyncActiveGrenade();
+                actor.grenadeEquipment[actor.grenadeCount] = receipt;
+                actor.grenades[actor.grenadeCount++] = request.weapon;
+                actor.SyncActiveGrenade();
                 break;
         }
         if (def.slot == WeaponSlotKind::Primary || def.slot == WeaponSlotKind::Secondary) {
-            previousEquipSlot_ = oldSlot;
-            previousEquipWeapon_ = oldWeapon;
-            switchSoundWeapon_ = request.weapon;
-            switchSoundPending_ = true;
+            actor.previousEquipSlot = oldSlot;
+            actor.previousEquipWeapon = oldWeapon;
+            actor.switchSoundWeapon = request.weapon;
+            actor.switchSoundPending = true;
         }
-        player_.money -= def.price;
-        economy_.Clamp(player_.money);
+        actor.money -= def.price;
+        economy_.Clamp(actor.money);
         std::cout << "[Buy] " << def.name << " ($" << def.price
-                  << ") 余额 $" << player_.money << std::endl;
+                  << ") 余额 $" << actor.money << std::endl;
         // 购买替换了当前手持武器 → 开镜必须归零
         if (def.slot == WeaponSlotKind::Primary || def.slot == WeaponSlotKind::Secondary) {
-            ResetScope(Presentation::ScopeResetReason::WeaponChanged);
+            if (isLocal) ResetScope(Presentation::ScopeResetReason::WeaponChanged);
             // 死斗：记住这次买到的装备，下次重生自动装配（仍可继续购买）
             if (mode_ == MatchMode::DeathMatch) {
-                dmLoadout_.primary   = player_.weapons[0];
-                dmLoadout_.secondary = player_.weapons[1];
-                dmLoadout_.valid     = true;
+                actor.dmLoadout.primary   = actor.weapons[0];
+                actor.dmLoadout.secondary = actor.weapons[1];
+                actor.dmLoadout.valid     = true;
             }
         }
     }
 
-    if (audio) audio->PlaySound(SoundEffect::EQUIP);
-    result.moneyAfter = player_.money;
-    result.quantityAfter = PurchaseQuantityOf(request);
+    if (audio) {
+        if (isLocal) audio->PlaySound(SoundEffect::EQUIP);
+        else audio->PlaySoundAt(SoundEffect::EQUIP, actor.x, actor.y, ListenerX(), ListenerY());
+    }
+    result.moneyAfter = actor.money;
+    result.quantityAfter = PurchaseQuantityOf(actor, request);
     return result;
 }
 
 // 兼容包装：旧调用点保持原签名，成功只执行一次，不递归、不重复扣款。
-bool CS2DGame::TryBuy(WeaponId id, IAudioSink* audio) {
+bool CS2DGame::TryBuyFor(ActorId actorId, WeaponId id, IAudioSink* audio) {
     Presentation::BuyRequest r;
     r.kind   = Presentation::BuyKind::Weapon;
     r.weapon = id;
-    return ExecutePurchase(r, audio).code == Presentation::BuyCode::Ok;
+    return ExecutePurchaseFor(actorId, r, audio).code == Presentation::BuyCode::Ok;
 }
 
 // 购买护甲：tier 1=护甲($650) 2=护甲+头盔($1000)
-bool CS2DGame::TryBuyArmor(int tier, IAudioSink* audio) {
+bool CS2DGame::TryBuyArmorFor(ActorId actorId, int tier, IAudioSink* audio) {
     Presentation::BuyRequest r;
     r.kind      = Presentation::BuyKind::Armor;
     r.weapon    = WeaponId::None;
     r.armorTier = tier;
-    return ExecutePurchase(r, audio).code == Presentation::BuyCode::Ok;
+    return ExecutePurchaseFor(actorId, r, audio).code == Presentation::BuyCode::Ok;
 }
 
 // ============================================================================
@@ -482,14 +553,12 @@ bool CS2DGame::PickSpawnForTeam(Team team, float& outX, float& outY) {
     constexpr float SPAWN_SEPARATION = 16.0f;
 
     auto occupied = [&](float x, float y) {
-        auto near = [&](const Player& u) {
-            if (!u.alive) return false;
+        for (const auto& u : actors_) {
+            if (!u.alive) continue;
             const float dx = u.x - x;
             const float dy = u.y - y;
-            return dx * dx + dy * dy < SPAWN_SEPARATION * SPAWN_SEPARATION;
-        };
-        if (near(player_)) return true;
-        for (const auto& b : bots_) if (near(b)) return true;
+            if (dx * dx + dy * dy < SPAWN_SEPARATION * SPAWN_SEPARATION) return true;
+        }
         return false;
     };
 
@@ -523,116 +592,125 @@ bool CS2DGame::PickSpawnForTeam(Team team, float& outX, float& outY) {
     return true;
 }
 
-void CS2DGame::SpawnPlayer() {
-    if (mode_ == MatchMode::DeathMatch)
+void CS2DGame::SpawnPlayer(Player& actor) {
+    const bool isLocal = (ActorIdOf(actor) == localActorId_);
+    if (mode_ == MatchMode::DeathMatch && isLocal)
         ++purchaseEpoch_;
-    ++playerSpawnVersion_;
-    player_.aimKick = 0.0f;
-    player_.fireStates = {};
-    player_.equipment = {};
-    player_.grenadeEquipment = {};
-    player_.armorEquipment.clear();
-    player_.kitEquipment = {};
-    player_.hasDefuseKit = false;
-    player_.recoilRecoveryTimer = 0.0f;
-    recoilShake_ = recoilShakeAge_ = 0.0f;
-    aimFollowsPlayer_ = false;
-    viewHistoryValid_ = false;
-    edgeZoom_ = previousEdgeZoom_ = edgeZoomFrom_ = edgeZoomTo_ = 0.0f;
-    edgeZoomTime_ = 1.0f;
-    edgeZoomRequested_ = false;
-    cameraDistanceTier_ = 0;
-    cameraPrepared_ = cameraScopeSettled_ = false;
-    SpectatorEnd();
-    deathPresentation_ = {};
-    deathCam_ = false; // 死斗重生：退出死亡镜头
-    ResetFootstepStride();   // 重生：清零脚步累计器，避免凭空补步
+    if (isLocal) {
+        ++playerSpawnVersion_;
+        recoilShake_ = recoilShakeAge_ = 0.0f;
+        aimFollowsPlayer_ = false;
+        viewHistoryValid_ = false;
+        edgeZoom_ = previousEdgeZoom_ = edgeZoomFrom_ = edgeZoomTo_ = 0.0f;
+        edgeZoomTime_ = 1.0f;
+        edgeZoomRequested_ = false;
+        cameraDistanceTier_ = 0;
+        cameraPrepared_ = cameraScopeSettled_ = false;
+        SpectatorEnd();
+        deathPresentation_ = {};
+        deathCam_ = false; // 死斗重生：退出死亡镜头
+        crosshairBloom_ = 0.0f;
+        aimMotionBlur_ = 0;
+    }
+    ResetFootstepStride(actor);   // 重生：清零脚步累计器，避免凭空补步
 
-    player_.alive = true;
-    player_.health = 100;
-    player_.maxHealth = 100;
-    player_.vx = player_.vy = 0.0f;
-    crosshairBloom_ = 0.0f;
-    aimMotionBlur_ = 0;
-    player_.shootCooldown = 0.0f;
-    player_.team = desiredPlayerTeam_;
+    actor.aimKick = 0.0f;
+    actor.fireStates = {};
+    actor.equipment = {};
+    actor.grenadeEquipment = {};
+    actor.armorEquipment.clear();
+    actor.kitEquipment = {};
+    actor.hasDefuseKit = false;
+    actor.recoilRecoveryTimer = 0.0f;
+    actor.holdingC4 = false;
+    actor.plantProgress = 0.0f;
+    actor.plantingChannel = -1;
+    actor.flashTimer = 0.0f;
+    actor.flashPeak = 0.0f;
+
+    actor.alive = true;
+    actor.health = 100;
+    actor.maxHealth = 100;
+    actor.vx = actor.vy = 0.0f;
+    actor.shootCooldown = 0.0f;
+    if (isLocal) actor.team = desiredPlayerTeam_;
     if (mode_ == MatchMode::DeathMatch)
-        player_.money = 16000;
-    player_.animState = AnimState::Idle;
-    player_.animTimer = 0.0f;
-    player_.deathTimer = 0.0f;
-    player_.shootAnimTimer = 0.0f;
-    player_.spriteKey = (desiredPlayerTeam_ == Team::CT) ? 0 : 1;
+        actor.money = 16000;
+    actor.animState = AnimState::Idle;
+    actor.animTimer = 0.0f;
+    actor.deathTimer = 0.0f;
+    actor.shootAnimTimer = 0.0f;
+    actor.spriteKey = (actor.team == Team::CT) ? 0 : 1;
     // 开局只有起始手枪（按本场阵营配装的起始槽位）：
-    const WeaponId startingPistol = LoadoutForTeam(desiredPlayerTeam_).starting;
-    player_.weapons[0] = WeaponId::None;
-    player_.weapons[1] = startingPistol;
-    player_.weapons[2] = WeaponId::Knife;
-    player_.weapons[3] = WeaponId::None;
-    player_.weapons[4] = WeaponId::None;
-    player_.grenadeCount = 0;
-    player_.grenadeSlot = 0;
+    const WeaponId startingPistol = LoadoutForTeam(actor.team).starting;
+    actor.weapons[0] = WeaponId::None;
+    actor.weapons[1] = startingPistol;
+    actor.weapons[2] = WeaponId::Knife;
+    actor.weapons[3] = WeaponId::None;
+    actor.weapons[4] = WeaponId::None;
+    actor.grenadeCount = 0;
+    actor.grenadeSlot = 0;
     for (int gi = 0; gi < Player::MAX_GRENADES; ++gi)
-        player_.grenades[gi] = WeaponId::None;
-    player_.weaponSlot = 1; // 默认持手枪
-    previousEquipSlot_ = 2;
-    previousEquipWeapon_ = WeaponId::Knife;
-    player_.armor = 0;
-    player_.helmet = false;
+        actor.grenades[gi] = WeaponId::None;
+    actor.weaponSlot = 1; // 默认持手枪
+    actor.previousEquipSlot = 2;
+    actor.previousEquipWeapon = WeaponId::Knife;
+    actor.armor = 0;
+    actor.helmet = false;
 
-    const WeaponDef &w = WeaponDB::Get(player_.weapons[1]);
-    player_.ammo = w.magazine;
-    player_.maxAmmo = w.magazine;
-    player_.reserve = Player::ReserveCapacity(w);
+    const WeaponDef &w = WeaponDB::Get(actor.weapons[1]);
+    actor.ammo = w.magazine;
+    actor.maxAmmo = w.magazine;
+    actor.reserve = Player::ReserveCapacity(w);
     // 各槽位弹药同步（避免旧局残留）
     for (int sl = 0; sl < 5; ++sl) {
-        if (player_.weapons[sl] == WeaponId::None)
-            player_.ClearSlotWeapon(sl);
+        if (actor.weapons[sl] == WeaponId::None)
+            actor.ClearSlotWeapon(sl);
         else
-            player_.SetSlotWeapon(sl, player_.weapons[sl]);
+            actor.SetSlotWeapon(sl, actor.weapons[sl]);
     }
-    player_.SaveAmmoToSlot();
+    actor.SaveAmmoToSlot();
 
     // 死斗：重生自动装配「上一次购买的武器」（按本场阵营与配装校验，失效则回退起始手枪）
-    if (mode_ == MatchMode::DeathMatch && dmLoadout_.valid) {
-        const auto& teamLoadout = LoadoutForTeam(player_.team);
-        const bool isT = (player_.team == Team::T);
+    if (mode_ == MatchMode::DeathMatch && actor.dmLoadout.valid) {
+        const auto& teamLoadout = LoadoutForTeam(actor.team);
+        const bool isT = (actor.team == Team::T);
         auto validDmWeapon = [&](WeaponId wid) {
             if (wid == WeaponId::None) return false;
             if (!WeaponDB::TeamAllowed(wid, isT)) return false;
             return !WeaponDB::RequiresLoadoutSelection(wid) ||
                    WeaponDB::IsWeaponInLoadout(teamLoadout, wid);
         };
-        if (validDmWeapon(dmLoadout_.primary)) {
-            player_.SetSlotWeapon(0, dmLoadout_.primary);
+        if (validDmWeapon(actor.dmLoadout.primary)) {
+            actor.SetSlotWeapon(0, actor.dmLoadout.primary);
         }
-        if (validDmWeapon(dmLoadout_.secondary)) {
-            player_.SetSlotWeapon(1, dmLoadout_.secondary);
+        if (validDmWeapon(actor.dmLoadout.secondary)) {
+            actor.SetSlotWeapon(1, actor.dmLoadout.secondary);
         } else {
-            player_.SetSlotWeapon(1, startingPistol);
+            actor.SetSlotWeapon(1, startingPistol);
         }
-        player_.weaponSlot = (player_.weapons[0] != WeaponId::None) ? 0 : 1;
-        player_.LoadAmmoFromSlot();
+        actor.weaponSlot = (actor.weapons[0] != WeaponId::None) ? 0 : 1;
+        actor.LoadAmmoFromSlot();
     }
 
-    player_.lastGun = player_.CurrentWeapon().id;
+    actor.lastGun = actor.CurrentWeapon().id;
     for (int slot = 0; slot < 5; ++slot)
-        if (player_.weapons[slot] != WeaponId::None) {
-            player_.equipment[slot].id = nextEquipmentId_++;
-            player_.equipment[slot].epoch = purchaseEpoch_;
+        if (actor.weapons[slot] != WeaponId::None) {
+            actor.equipment[slot].id = nextEquipmentId_++;
+            actor.equipment[slot].epoch = purchaseEpoch_;
         }
-    player_.reloading = false;
-    player_.reloadTimer = 0.0f;
-    player_.stealth = false;
+    actor.reloading = false;
+    actor.reloadTimer = 0.0f;
+    actor.stealth = false;
 
     for (int attempt = 0; attempt < 20; ++attempt) {
-        PickSpawnForTeam(player_.team, player_.x, player_.y);
-        if (!IsEnemyNearby(player_.x, player_.y, 120.0f, Team::CT))
+        PickSpawnForTeam(actor.team, actor.x, actor.y);
+        if (!IsEnemyNearby(actor.x, actor.y, 120.0f, actor.team))
             break;
     }
-    player_.aimDistance = Tuning::InitialAimDistance;
-    aimWorldX_ = player_.x + std::cos(player_.aimAngle) * player_.aimDistance;
-    aimWorldY_ = player_.y + std::sin(player_.aimAngle) * player_.aimDistance;
+    actor.aimDistance = Tuning::InitialAimDistance;
+    actor.aimWorldX = actor.x + std::cos(actor.aimAngle) * actor.aimDistance;
+    actor.aimWorldY = actor.y + std::sin(actor.aimAngle) * actor.aimDistance;
 }
 
 void CS2DGame::SpawnBOT(Player &bot, Team team) {
@@ -733,90 +811,97 @@ void CS2DGame::RespawnBOT(Player& bot) {
 // 武器
 // ============================================================================
 
-void CS2DGame::QuickSwitchWeapon() {
-    int slot = previousEquipSlot_;
-    const WeaponId weapon = previousEquipWeapon_;
+void CS2DGame::QuickSwitchWeaponFor(ActorId actorId) {
+    const Player* actorPtr = FindActor(actorId);
+    if (!actorPtr) return;
+    const Player& actor = *actorPtr;
+    int slot = actor.previousEquipSlot;
+    const WeaponId weapon = actor.previousEquipWeapon;
     if (slot == 3) {
         int grenade = -1;
-        for (int i = 0; i < player_.grenadeCount; ++i) if (player_.grenades[i] == weapon) grenade = i;
+        for (int i = 0; i < actor.grenadeCount; ++i) if (actor.grenades[i] == weapon) grenade = i;
         if (grenade < 0) slot = 2;
         else {
-            SwitchWeaponSlot(3, grenade);
+            SwitchWeaponSlotFor(actorId, 3, grenade);
             return;
         }
     } else if (slot == 4) {
-        if (!PlayerHasC4()) slot = 2;
-    } else if (slot < 0 || slot > 2 || player_.weapons[slot] != weapon) slot = 2;
-    SwitchWeaponSlot(slot);
+        if (!ActorCarriesC4(actor)) slot = 2;
+    } else if (slot < 0 || slot > 2 || actor.weapons[slot] != weapon) slot = 2;
+    SwitchWeaponSlotFor(actorId, slot);
 }
 
-void CS2DGame::SwitchWeaponSlot(int slot, int grenadeIndex) {
+void CS2DGame::SwitchWeaponSlotFor(ActorId actorId, int slot, int grenadeIndex) {
     if (slot < 0 || slot > 4) return;
+    Player* actorPtr = FindActor(actorId);
+    if (!actorPtr) return;
+    Player& actor = *actorPtr;
+    const bool isLocal = (actorId == localActorId_);
 
     // 目标槽校验
     if (slot == 4) {
-        if (!PlayerHasC4()) return;
-        player_.weapons[4] = WeaponId::C4;
-        player_.equipment[4]={};
-        player_.equipment[4].id=c4EquipmentId_;
-        player_.equipment[4].epoch=purchaseEpoch_;
+        if (!ActorCarriesC4(actor)) return;
+        actor.weapons[4] = WeaponId::C4;
+        actor.equipment[4] = {};
+        actor.equipment[4].id = c4EquipmentId_;
+        actor.equipment[4].epoch = purchaseEpoch_;
     } else if (slot == 3) {
-        if (player_.grenadeCount <= 0) return;
-        if (grenadeIndex < 0) grenadeIndex = slot == player_.weaponSlot ?
-            (player_.grenadeSlot + 1) % player_.grenadeCount : player_.grenadeSlot;
-        if (grenadeIndex >= player_.grenadeCount) return;
-    } else if (player_.weapons[slot] == WeaponId::None) {
+        if (actor.grenadeCount <= 0) return;
+        if (grenadeIndex < 0) grenadeIndex = slot == actor.weaponSlot ?
+            (actor.grenadeSlot + 1) % actor.grenadeCount : actor.grenadeSlot;
+        if (grenadeIndex >= actor.grenadeCount) return;
+    } else if (actor.weapons[slot] == WeaponId::None) {
         return;
     }
-    if (slot == player_.weaponSlot && (slot != 3 || grenadeIndex == player_.grenadeSlot)) return;
+    if (slot == actor.weaponSlot && (slot != 3 || grenadeIndex == actor.grenadeSlot)) return;
 
     // 记录「切到投掷物之前」的槽位：最后一颗雷扔完后自动切回这里
-    if (slot == 3 && player_.weaponSlot != 3) {
-        player_.prevWeaponSlot = player_.weaponSlot;
+    if (slot == 3 && actor.weaponSlot != 3) {
+        actor.prevWeaponSlot = actor.weaponSlot;
     }
 
     // 切走前把当前武器的弹药写回它自己的槽位
-    player_.SaveAmmoToSlot();
+    actor.SaveAmmoToSlot();
 
-    previousEquipSlot_ = player_.weaponSlot;
-    previousEquipWeapon_ = player_.CurrentWeapon().id;
-    if (slot == 3) player_.grenadeSlot = grenadeIndex;
-    player_.weaponSlot = slot;
-    player_.reloading   = false;
-    player_.reloadTimer = 0.0f;
-    playerHoldingC4_ = (slot == 4);
+    actor.previousEquipSlot = actor.weaponSlot;
+    actor.previousEquipWeapon = actor.CurrentWeapon().id;
+    if (slot == 3) actor.grenadeSlot = grenadeIndex;
+    actor.weaponSlot = slot;
+    actor.reloading   = false;
+    actor.reloadTimer = 0.0f;
+    actor.holdingC4 = (slot == 4);
     // 切枪（含投掷物自动切回）→ 开镜立即归零
-    ResetScope(Presentation::ScopeResetReason::WeaponChanged);
+    if (isLocal) ResetScope(Presentation::ScopeResetReason::WeaponChanged);
 
     // 切枪有金属声，附近敌人能听见（半径见 Tuning::HearSwitchRadius）
-    EmitSound(SoundEventType::WeaponSwitch, player_.x, player_.y, player_.team, -1);
+    EmitSound(SoundEventType::WeaponSwitch, actor.x, actor.y, actor.team, actorId);
 
     if (slot == 4) {
-        player_.ammo = 1;
-        player_.maxAmmo = 1;
-        player_.reserve = 0;
-        switchSoundWeapon_ = WeaponId::C4;
-        switchSoundPending_ = true;
+        actor.ammo = 1;
+        actor.maxAmmo = 1;
+        actor.reserve = 0;
+        actor.switchSoundWeapon = WeaponId::C4;
+        actor.switchSoundPending = true;
         return;
     }
     if (slot == 3) {
-        player_.SyncActiveGrenade();
-        player_.ammo = 1;
-        player_.maxAmmo = 1;
-        player_.reserve = 0;
-        switchSoundWeapon_ = player_.ActiveGrenade();
-        switchSoundPending_ = true;
+        actor.SyncActiveGrenade();
+        actor.ammo = 1;
+        actor.maxAmmo = 1;
+        actor.reserve = 0;
+        actor.switchSoundWeapon = actor.ActiveGrenade();
+        actor.switchSoundPending = true;
         return;
     }
 
     // 从目标槽读取它自己的弹药
-    player_.LoadAmmoFromSlot();
-    switchSoundWeapon_ = player_.weapons[slot];
-    switchSoundPending_ = true;
+    actor.LoadAmmoFromSlot();
+    actor.switchSoundWeapon = actor.weapons[slot];
+    actor.switchSoundPending = true;
 }
 
 std::string CS2DGame::GetWeaponName() const {
-    return GetWeaponNameFor(player_);
+    return GetWeaponNameFor(LocalActor());
 }
 
 std::string CS2DGame::GetWeaponNameFor(const Player& p) const {
@@ -838,7 +923,7 @@ bool CS2DGame::IsScopeSupported(WeaponId id) {
 
 void CS2DGame::ResetScope(Presentation::ScopeResetReason reason) {
     (void)reason;   // 重置原因只用于诊断；重置本身固定且幂等
-    const WeaponId cur = player_.CurrentWeapon().id;
+    const WeaponId cur = LocalActor().CurrentWeapon().id;
     scopeCloseOnRelease_ = false;
     scopeLevel_      = 0;
     scopeEngagement_ = 0.0f;
@@ -861,7 +946,8 @@ void CS2DGame::ResetScope(Presentation::ScopeResetReason reason) {
 
 Presentation::ScopeView CS2DGame::GetScopeView() const {
     Presentation::ScopeView view = scope_;
-    const WeaponId cur = player_.CurrentWeapon().id;
+    const auto& local = LocalActor();
+    const WeaponId cur = local.CurrentWeapon().id;
     const int level = std::clamp(scopeLevel_, 0, Presentation::kScopeLevelCount - 1);
 
     view.weapon    = cur;
@@ -872,7 +958,7 @@ Presentation::ScopeView CS2DGame::GetScopeView() const {
     view.zoomMultiplier = scopeZoom_;
     view.targetZoomMultiplier = Presentation::kScopeZoomLevels[level];
 
-    if (!view.supported || !player_.alive) {
+    if (!view.supported || !local.alive) {
         view.active         = false;
         view.level          = 0;
         view.transition     = 0.0f;
@@ -884,7 +970,7 @@ Presentation::ScopeView CS2DGame::GetScopeView() const {
 
 Presentation::ScopeView CS2DGame::GetRenderScopeView() const {
     auto view = GetScopeView();
-    if (viewHistoryValid_ && view.supported && player_.alive) {
+    if (viewHistoryValid_ && view.supported && LocalActor().alive) {
         view.zoomMultiplier = previousScopeZoom_ + (view.zoomMultiplier - previousScopeZoom_) * renderInterpolation_;
         view.transition = previousScopeEngagement_ + (view.transition - previousScopeEngagement_) * renderInterpolation_;
     }
@@ -892,14 +978,15 @@ Presentation::ScopeView CS2DGame::GetRenderScopeView() const {
 }
 
 void CS2DGame::UpdateScopeInput(bool rightClicked, bool gameplayInputAllowed) {
-    const WeaponId cur = player_.CurrentWeapon().id;
+    const auto& local = LocalActor();
+    const WeaponId cur = local.CurrentWeapon().id;
 
     // 输入被挡住（暂停 / 买枪 / 选边 / 失焦 / 转场）：立即归零，且不消费边沿
     if (!gameplayInputAllowed) {
         ResetScope(Presentation::ScopeResetReason::InputBlocked);
         return;
     }
-    if (!player_.alive) {
+    if (!local.alive) {
         ResetScope(Presentation::ScopeResetReason::PlayerDied);
         return;
     }
@@ -907,14 +994,14 @@ void CS2DGame::UpdateScopeInput(bool rightClicked, bool gameplayInputAllowed) {
     if (cur != scope_.weapon) {
         ResetScope(Presentation::ScopeResetReason::WeaponChanged);
     }
-    if (player_.reloading) {
+    if (local.reloading) {
         if (scopeLevel_ > 0) ResetScope(Presentation::ScopeResetReason::ReloadStarted);
         return;
     }
     // 单发狙拉栓冷却期间不能开镜（AWP 1.45s / SSG 的拉栓窗口）；连发武器不受影响
     {
-        const WeaponDef& def = player_.CurrentWeapon();
-        if (!def.automatic && player_.shootCooldown > 0.0f) return;
+        const WeaponDef& def = local.CurrentWeapon();
+        if (!def.automatic && local.shootCooldown > 0.0f) return;
     }
     if (!rightClicked) return;
     if (!IsScopeSupported(cur)) return;   // 不支持的武器不误触
@@ -935,10 +1022,11 @@ void CS2DGame::UpdateScopeInput(bool rightClicked, bool gameplayInputAllowed) {
 }
 
 void CS2DGame::TickScope(float dt) {
-    const WeaponId cur = player_.CurrentWeapon().id;
+    const auto& local = LocalActor();
+    const WeaponId cur = local.CurrentWeapon().id;
     scope_.weapon    = cur;
     scope_.supported = IsScopeSupported(cur);
-    if (!player_.alive) {
+    if (!local.alive) {
         ResetScope(Presentation::ScopeResetReason::PlayerDied);
         return;
     }
@@ -952,7 +1040,7 @@ void CS2DGame::TickScope(float dt) {
 
     // 修复：换弹期间不允许保持开镜（StartReload 会主动重置，这里每帧再兜一层，
     // 覆盖"空弹自动换弹"等不经过显式 StartReload 调用的路径）
-    if (player_.reloading) {
+    if (local.reloading) {
         if (scopeLevel_ > 0) ResetScope(Presentation::ScopeResetReason::ReloadStarted);
         return;
     }
@@ -990,47 +1078,146 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
                       bool wPressed, bool aPressed, bool sPressed, bool dPressed,
                       bool shiftPressed, bool rPressed, bool interactHeld,
                       IAudioSink* audio) {
+    ActorInput input;
+    input.moveUp      = wPressed;
+    input.moveLeft    = aPressed;
+    input.moveDown    = sPressed;
+    input.moveRight   = dPressed;
+    input.stealth     = shiftPressed;
+    input.fire        = mouseLeftDown;
+    input.reload      = rPressed;
+    input.interact    = interactHeld;
+    input.aimWorldX   = mouseWorldX;
+    input.aimWorldY   = mouseWorldY;
+    input.hasAimWorld = true;
+    UpdateMultiActor(dt, {{localActorId_, input}}, audio);
+}
+
+void CS2DGame::UpdateHumanActor(Player& actor, float dt, const ActorInput& input, IAudioSink* audio) {
+    const bool isLocal = (ActorIdOf(actor) == localActorId_);
+    const bool frozen  = (mode_ != MatchMode::DeathMatch) && round_.IsFrozen();
+    const bool canAct  = !frozen;
+    const bool canMove = !frozen;
+
+    float targetWorldX = input.hasAimWorld ? input.aimWorldX : actor.aimWorldX;
+    float targetWorldY = input.hasAimWorld ? input.aimWorldY : actor.aimWorldY;
+
+    if (isLocal && input.hasAimWorld) {
+        SetAimTarget(targetWorldX, targetWorldY, aimFollowsPlayer_);
+        if (aimFollowsPlayer_) {
+            targetWorldX = actor.x + aimOffsetX_;
+            targetWorldY = actor.y + aimOffsetY_;
+        }
+    }
+    actor.aimWorldX = targetWorldX;
+    actor.aimWorldY = targetWorldY;
+    actor.interactHeld = input.interact && canAct;
+    actor.fireHeld     = input.fire && canAct;
+
+    actor.stealth = input.stealth && canAct;
+
+    if (canAct && input.reload && !actor.reloading) {
+        if ((actor.weaponSlot == 0 || actor.weaponSlot == 1) &&
+            actor.ammo < actor.maxAmmo && actor.reserve > 0) {
+            StartReload(actor, audio);
+        }
+    }
+
+    if (actor.alive && canMove) {
+        UpdatePlayerMovement(actor, dt, input.moveUp, input.moveLeft, input.moveDown, input.moveRight, actor.stealth);
+        if (isLocal && aimFollowsPlayer_) {
+            targetWorldX = actor.x + aimOffsetX_;
+            targetWorldY = actor.y + aimOffsetY_;
+            actor.aimWorldX = targetWorldX;
+            actor.aimWorldY = targetWorldY;
+        }
+        UpdatePlayerShooting(actor, dt, input.fire, targetWorldX, targetWorldY, audio);
+    } else {
+        actor.vx = actor.vy = 0.0f;
+        if (actor.alive && frozen && input.hasAimWorld) {
+            actor.aimAngle = std::atan2(targetWorldY - actor.y, targetWorldX - actor.x);
+            actor.stealth = false;
+        }
+        if (mode_ == MatchMode::DeathMatch && !actor.alive) {
+            if (isLocal) {
+                botRespawnTimer_ -= dt;
+                if (botRespawnTimer_ <= 0.0f) SpawnPlayer(actor);
+            } else {
+                SpawnPlayer(actor);
+            }
+        }
+    }
+
+    // E 键：边沿触发主动拾取（拆包时不抢键）
+    if (canAct && input.interact && !actor.prevInteract && actor.alive) {
+        const bool busyDefusing = (mode_ == MatchMode::BombDefusal && bombPlanted_ &&
+                                   actor.defuseProgress > 0.0f);
+        if (!busyDefusing) TryPickupDropsFor(ActorIdOf(actor), true, audio);
+    }
+    actor.prevInteract = input.interact;
+}
+
+void CS2DGame::UpdateMultiActor(float dt, const std::vector<std::pair<ActorId, ActorInput>>& inputs,
+                                IAudioSink* audio) {
     if (audio) audioSink_ = audio;
     ++traceTick_;
     deathPresentation_.remaining = std::max(0.0f, deathPresentation_.remaining - dt);
     dryFireHintTimer_ = std::max(0.0f, dryFireHintTimer_ - dt);
-    dryFireCooldown_ = std::max(0.0f, dryFireCooldown_ - dt);
-    // ---- 观察者输入：空格切换视角，左右键切换队友，自由视角用 WASD ----
+    for (auto& a : actors_) {
+        a.dryFireCooldown = std::max(0.0f, a.dryFireCooldown - dt);
+    }
+
+    auto findInput = [&](ActorId id) -> const ActorInput* {
+        for (const auto& entry : inputs) {
+            if (entry.first == id) return &entry.second;
+        }
+        return nullptr;
+    };
+
+    // ---- 观察者输入：空格切换视角，自由视角用 WASD（来自本地玩家输入） ----
     if (IsSpectating()) {
         if (spectateTogglePending_) SpectatorToggle();
-
         if (specMode_ == SpectateMode::Free) {
-            const float fx = (dPressed ? 1.0f : 0.0f) - (aPressed ? 1.0f : 0.0f);
-            const float fy = (sPressed ? 1.0f : 0.0f) - (wPressed ? 1.0f : 0.0f);
-            SpectatorMoveFree(fx, fy, dt);
+            if (const ActorInput* localIn = findInput(localActorId_)) {
+                const float fx = (localIn->moveRight ? 1.0f : 0.0f) - (localIn->moveLeft ? 1.0f : 0.0f);
+                const float fy = (localIn->moveDown  ? 1.0f : 0.0f) - (localIn->moveUp   ? 1.0f : 0.0f);
+                SpectatorMoveFree(fx, fy, dt);
+            }
         }
     }
 
     spectateTogglePending_ = false;
     if (!world_) return;
 
+    EnsureBotAi();
     previousEdgeZoom_ = edgeZoom_;
     previousScopeZoom_ = scopeZoom_;
     previousScopeEngagement_ = scopeEngagement_;
-    previousPlayerView_ = {player_.x, player_.y, player_.alive, player_.EffectiveAim(), player_.animTimer, player_.animState};
-    previousBotViews_.clear();
-    previousBotViews_.reserve(bots_.size());
-    for (const auto& bot : bots_)
-        previousBotViews_.push_back({bot.x, bot.y, bot.alive, bot.EffectiveAim(), bot.animTimer, bot.animState});
+    previousActorViews_.clear();
+    previousActorViews_.reserve(actors_.size());
+    for (const auto& actor : actors_) {
+        previousActorViews_.push_back({actor.x, actor.y, actor.alive, actor.EffectiveAim(), actor.animTimer, actor.animState});
+    }
     viewHistoryValid_ = true;
     clockSec_ += dt;
 
-    // 准星世界坐标：开镜的圆形可见区与相机偏移都以它为中心
-    SetAimTarget(mouseWorldX, mouseWorldY, aimFollowsPlayer_);
+    if (const ActorInput* localIn = findInput(localActorId_)) {
+        if (localIn->hasAimWorld) {
+            SetAimTarget(localIn->aimWorldX, localIn->aimWorldY, aimFollowsPlayer_);
+        }
+    }
     recoilShakeAge_ += dt;
     recoilShake_ *= std::exp(-Tuning::RecoilShakeDecay * dt);
 
     // 开镜过渡：每帧按 dt 逼近目标档位（0.12s 线性），与输入边沿解耦
     TickScope(dt);
-    player_.RecoverBallistics(dt);
-    player_.recoilRecoveryTimer = std::max(0.0f, player_.recoilRecoveryTimer - dt);
-    if (player_.recoilRecoveryTimer <= 0.0f)
-        player_.aimKick *= std::exp(-player_.CurrentWeapon().recoilRecoverPerSec * dt);
+    for (auto& actor : actors_) {
+        if (!actor.IsHuman()) continue;
+        actor.RecoverBallistics(dt);
+        actor.recoilRecoveryTimer = std::max(0.0f, actor.recoilRecoveryTimer - dt);
+        if (actor.recoilRecoveryTimer <= 0.0f)
+            actor.aimKick *= std::exp(-actor.CurrentWeapon().recoilRecoverPerSec * dt);
+    }
     const float edgeTarget = !IsSpectating() ? static_cast<float>(cameraDistanceTier_) : 0.0f;
     if (edgeTarget != edgeZoomTo_) {
         edgeZoomFrom_ = edgeZoom_;
@@ -1041,17 +1228,25 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     const float edgeEase = edgeZoomTime_ * edgeZoomTime_ * (3.0f - 2.0f * edgeZoomTime_);
     edgeZoom_ = edgeZoomFrom_ + (edgeZoomTo_ - edgeZoomFrom_) * edgeEase;
 
-
-    // 契约 v1.2：开枪后「松手再关镜」的收尾（延迟关镜设置开启时才可能置位）
-    if (scopeCloseOnRelease_ && !mouseLeftDown) {
-        ResetScope(Presentation::ScopeResetReason::ShotFired);
+    // 契约 v1.2：开枪后「松手再关镜」的收尾
+    if (scopeCloseOnRelease_) {
+        const ActorInput* localIn = findInput(localActorId_);
+        if (!localIn || !localIn->fire) {
+            ResetScope(Presentation::ScopeResetReason::ShotFired);
+        }
     }
 
-    // 切枪音效：SwitchWeaponSlot 只挂起，这里按刚切到的武器播放
-    if (switchSoundPending_) {
-        switchSoundPending_ = false;
-        if (audio) audio->PlayWeaponSwitch(switchSoundWeapon_);
-        switchSoundWeapon_ = WeaponId::None;
+    // 切枪音效：SwitchWeaponSlotFor 只挂起，这里按刚切到的武器播放
+    for (auto& actor : actors_) {
+        if (!actor.switchSoundPending) continue;
+        actor.switchSoundPending = false;
+        if (audio && actor.switchSoundWeapon != WeaponId::None) {
+            if (ActorIdOf(actor) == localActorId_)
+                audio->PlayWeaponSwitch(actor.switchSoundWeapon);
+            else
+                audio->PlayWeaponSwitchAt(actor.switchSoundWeapon, actor.x, actor.y, ListenerX(), ListenerY());
+        }
+        actor.switchSoundWeapon = WeaponId::None;
     }
 
     UpdateRoundFlow(dt, audio);
@@ -1061,50 +1256,20 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
     intel_.Update(dt);
 
     const bool frozen  = (mode_ != MatchMode::DeathMatch) && round_.IsFrozen();
-    const bool canAct  = !frozen;
-    const bool canMove = !frozen;   // 已决展示窗口沿用交战行为
+    const bool canMove = !frozen;
 
-    player_.stealth = shiftPressed && canAct;
-
-    if (canAct && rPressed && !player_.reloading) {
-        if ((player_.weaponSlot == 0 || player_.weaponSlot == 1) &&
-            player_.ammo < player_.maxAmmo && player_.reserve > 0) {
-            StartReload(player_, audio);
-        }
+    for (auto& actor : actors_) {
+        if (!actor.IsHuman()) continue;
+        const ActorInput* in = findInput(actor.id);
+        ActorInput idleInput;
+        idleInput.hasAimWorld = false;
+        UpdateHumanActor(actor, dt, in ? *in : idleInput, audio);
     }
 
-    if (player_.alive && canMove) {
-        UpdatePlayerMovement(dt, wPressed, aPressed, sPressed, dPressed, player_.stealth);
-        if (aimFollowsPlayer_) {
-            mouseWorldX = player_.x + aimOffsetX_;
-            mouseWorldY = player_.y + aimOffsetY_;
-            aimWorldX_ = mouseWorldX;
-            aimWorldY_ = mouseWorldY;
-        }
-        // 结算展示期与回合中完全一致：可移动、可开枪、可投掷
-        UpdatePlayerShooting(dt, mouseLeftDown, mouseWorldX, mouseWorldY, audio);
-    } else {
-        player_.vx = player_.vy = 0.0f;
-
-        // 准备阶段（冻结）：允许转向瞄准，但不允许移动与开火
-        if (player_.alive && frozen) {
-            player_.aimAngle = std::atan2(mouseWorldY - player_.y,
-                                          mouseWorldX - player_.x);
-            player_.stealth = false;
-        }
-
-        // 死斗模式：玩家阵亡后自动重生
-        if (mode_ == MatchMode::DeathMatch && !player_.alive) {
-            botRespawnTimer_ -= dt;
-            if (botRespawnTimer_ <= 0.0f) SpawnPlayer();
-        }
-    }
-    UpdateReload(player_, dt);
     UpdateBombItem(dt);
 
-    // 不能移动的阶段（回合冻结 / 结算展示）：把移动模糊与准星扩散平滑收回到 0，
-    // 否则准备阶段会沿用上一回合跑动残留的模糊，瞄准线看起来发虚。
-    if (!canMove || !player_.alive) {
+    // 不能移动的阶段（回合冻结 / 结算展示）：把移动模糊与准星扩散平滑收回到 0
+    if (!canMove || !LocalActor().alive) {
         const float recover = 1.0f - std::exp(-12.0f * dt);
         aimMotionBlur_ += (0.0f - aimMotionBlur_) * recover;
         crosshairBloom_ += (0.0f - crosshairBloom_) * recover;
@@ -1112,45 +1277,36 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
         if (crosshairBloom_ < 0.002f) crosshairBloom_ = 0.0f;
     }
 
-
     if (canMove) {
         UpdateBOTs(dt, audio);
-
-    } else {        // 暂停 / 结算冻结：BOT 原地待命
-        for (auto& bot : bots_) { bot.vx = bot.vy = 0.0f; }
+    } else {
+        for (auto& actor : actors_) {
+            if (actor.IsBot()) { actor.vx = actor.vy = 0.0f; }
+        }
     }
 
-    // BOT 脚步声：与玩家同一套「按实际位移累计」（静步的 BOT 不累计、不出声）
-    for (size_t i = 0; i < bots_.size(); ++i) {
-        auto& b = bots_[i];
-        auto& bai = AiAt(i);
-        if (!b.alive) {
-            bai.footstepStride = 0.0f;
-            bai.footstepLastValid = false;
+    // 全员脚步声：按实际位移累计（静步不出声）
+    for (auto& actor : actors_) {
+        if (!actor.IsActive()) continue;
+        if (!actor.alive) {
+            actor.footstepStride = 0.0f;
+            actor.footstepLastValid = false;
             continue;
         }
-        AccumulateFootstep(b, bai.footstepStride, bai.footstepLastX, bai.footstepLastY,
-                           bai.footstepLastValid, audio, true);
+        const bool positional = !(actor.IsHuman() && ActorIdOf(actor) == localActorId_);
+        AccumulateFootstep(actor, audio, positional);
     }
-
-    // E 键：边沿触发主动拾取（拆包/救人时不抢键）
-    if (interactHeld && !prevInteract_ && player_.alive) {
-        const bool busyDefusing = (mode_ == MatchMode::BombDefusal && bombPlanted_ &&
-                                   player_.defuseProgress > 0.0f);
-        if (!busyDefusing) TryPickupDrops(true, audio);
-    }
-    prevInteract_ = interactHeld;
 
     CoachUpdate(dt);
     UpdateBotBuy(dt);
 
     UpdateBullets(dt, audio);
     UpdateGrenades(dt, audio);
-    UpdateObjective(dt, interactHeld, audio);
+    UpdateObjective(dt, audio);
     CheckWinConditions(audio);
     UpdateSpectatorState();
 
-    // ---- 动画状态机 ----
+    // ---- 动画状态机与装弹 ----
     auto updateAnim = [](Player& p) {
         if (!p.alive) {
             p.animState = AnimState::Dead;
@@ -1163,31 +1319,26 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
         }
     };
 
-    if (player_.alive) {
-        if (player_.shootAnimTimer > 0.0f) player_.shootAnimTimer -= dt;
-    } else {
-        player_.deathTimer += dt;
-    }
-    player_.animTimer += dt;
-    updateAnim(player_);
-
-    for (auto& bot : bots_) {
-        if (bot.shootAnimTimer > 0.0f) bot.shootAnimTimer -= dt;
-        if (!bot.alive) bot.deathTimer += dt;
-        bot.animTimer += dt;
-        updateAnim(bot);
-        UpdateReload(bot, dt);
-    }
-
-    // 死斗：经济恒定 16000（买完立即补满）
-    if (mode_ == MatchMode::DeathMatch) {
-        player_.money = 16000;
-        for (auto& b2 : bots_) b2.money = 16000;
+    for (auto& actor : actors_) {
+        if (!actor.IsActive()) continue;
+        if (actor.alive) {
+            if (actor.shootAnimTimer > 0.0f) actor.shootAnimTimer -= dt;
+        } else {
+            actor.deathTimer += dt;
+        }
+        actor.animTimer += dt;
+        updateAnim(actor);
+        UpdateReload(actor, dt);
+        if (mode_ == MatchMode::DeathMatch) {
+            actor.money = 16000;
+        }
+        if (actor.IsHuman()) {
+            const ActorInput* in = findInput(actor.id);
+            actor.prevMouseDown = in ? in->fire : false;
+        }
     }
 
-    prevMouseDown_ = mouseLeftDown;
-
-    // 掉落物：保留到回合结束（不再按时间消失），已拾取的移除
+    // 掉落物：保留到回合结束，已拾取的移除
     drops_.erase(std::remove_if(drops_.begin(), drops_.end(),
                                 [](const DroppedItem& d) { return d.id == WeaponId::None && !d.defuseKit; }),
                  drops_.end());
@@ -1195,7 +1346,7 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
         d.fireState.Recover(dt);
         if (d.pickupDelay > 0.0f) d.pickupDelay -= dt;
     }
-    TryPickupDrops(false, audio);
+    TryPickupDropsFor(localActorId_, false, audio);
 
     // 爆炸特效寿命
     for (auto& fx : blasts_) fx.life -= dt;
@@ -1218,64 +1369,58 @@ void CS2DGame::Update(float dt, bool mouseLeftDown, float mouseWorldX, float mou
         announcementTimer_ = std::max(0.0f, announcementTimer_ - dt);
         if (announcementTimer_ <= 0.0f) announcement_.clear();
     }
-
-    // 玩家脚步声：与 BOT 同一套「按实际位移累计」，潜行/静止/卡墙/死亡时不累计
-    AccumulateFootstep(player_, footstepStride_, footstepLastX_, footstepLastY_,
-                       footstepLastValid_, audio, false);
 }
 
 // ============================================================================
-// 脚步：按实际位移触发（玩家与 BOT 共用）
-//
-// 为什么用位移而不是计时：SDL_mixer 没有变速循环接口，固定录音无法跟随移速；
-// 而位移天然跟随持械倍率、开镜减速、潜行与卡墙——走满一个步幅就是一步。
-// 累计器保留余数（stride -= 步幅），长期步数与距离严格对应。
+// 脚步：按实际位移触发（真人与 BOT 共用）
 // ============================================================================
 void CS2DGame::ResetFootstepStride() {
-    footstepStride_ = 0.0f;
-    footstepLastValid_ = false;
+    for (auto& actor : actors_) ResetFootstepStride(actor);
 }
 
-int CS2DGame::AccumulateFootstep(Player& actor, float& stride, float& lastX, float& lastY,
-                                bool& lastValid, IAudioSink* audio, bool positional) {
+void CS2DGame::ResetFootstepStride(Player& actor) {
+    actor.footstepStride = 0.0f;
+    actor.footstepLastValid = false;
+}
+
+int CS2DGame::AccumulateFootstep(Player& actor, IAudioSink* audio, bool positional) {
     // 潜行：不累计、不出声（潜行的听觉半径设计保持不变）
     // 死亡/传送：重置累计器，避免重生后凭空补步
     if (!actor.alive || actor.stealth) {
-        stride = 0.0f;
-        lastValid = false;
+        actor.footstepStride = 0.0f;
+        actor.footstepLastValid = false;
         return 0;
     }
-    if (!lastValid) {
-        lastX = actor.x;
-        lastY = actor.y;
-        lastValid = true;
+    if (!actor.footstepLastValid) {
+        actor.footstepLastX = actor.x;
+        actor.footstepLastY = actor.y;
+        actor.footstepLastValid = true;
         return 0;
     }
-    const float dx = actor.x - lastX, dy = actor.y - lastY;
-    lastX = actor.x;
-    lastY = actor.y;
+    const float dx = actor.x - actor.footstepLastX, dy = actor.y - actor.footstepLastY;
+    actor.footstepLastX = actor.x;
+    actor.footstepLastY = actor.y;
     const float moved = std::sqrt(dx * dx + dy * dy);
     // 传送 / 重生（单帧位移超过 40 个身位）：不计步，直接重新取基准
     if (moved > Tuning::PlayerSize * 40.0f) {
-        stride = 0.0f;
+        actor.footstepStride = 0.0f;
         return 0;
     }
-    // 静止（本帧零位移）：不累计。用位移而不是输入速度——卡墙有输入无位移时也不出声。
+    // 静止（本帧零位移）：不累计。
     if (moved <= 0.0f) return 0;
-    stride += moved;
-    if (stride < Tuning::FootstepStride) return 0;
+    actor.footstepStride += moved;
+    if (actor.footstepStride < Tuning::FootstepStride) return 0;
 
-    // 单帧至多触发 N 步，余数保留：卡顿后不会一次连响
+    // 单帧至多触发 N 步，余数保留
     int steps = 0;
-    while (stride >= Tuning::FootstepStride && steps < Tuning::FootstepMaxPerFrame) {
-        stride -= Tuning::FootstepStride;
+    while (actor.footstepStride >= Tuning::FootstepStride && steps < Tuning::FootstepMaxPerFrame) {
+        actor.footstepStride -= Tuning::FootstepStride;
         ++steps;
     }
-    if (stride >= Tuning::FootstepStride) stride = std::fmod(stride, Tuning::FootstepStride);
+    if (actor.footstepStride >= Tuning::FootstepStride) actor.footstepStride = std::fmod(actor.footstepStride, Tuning::FootstepStride);
     if (steps <= 0) return 0;
 
-    // 音步与听觉事件严格同频：一声脚步 = 一条听觉事件
-    if (&actor == &player_) footstepCount_ += static_cast<std::uint64_t>(steps);
+    actor.footstepCount += static_cast<std::uint64_t>(steps);
     for (int i = 0; i < steps; ++i) {
         if (audio) {
             if (positional)
@@ -1306,14 +1451,15 @@ void CS2DGame::GetTeamSpawnCenter(Team team, float& outX, float& outY) const {
 }
 
 void CS2DGame::SetAimTarget(float x, float y, bool followsPlayer) {
-    aimWorldX_ = x;
-    aimWorldY_ = y;
+    auto& local = LocalActor();
+    local.aimWorldX = x;
+    local.aimWorldY = y;
     aimFollowsPlayer_ = followsPlayer;
-    aimOffsetX_ = x - player_.x;
-    aimOffsetY_ = y - player_.y;
-    if (player_.alive) {
-        player_.aimAngle = std::atan2(y - player_.y, x - player_.x);
-        player_.aimDistance = std::max(std::hypot(x - player_.x, y - player_.y), 0.001f);
+    aimOffsetX_ = x - local.x;
+    aimOffsetY_ = y - local.y;
+    if (local.alive) {
+        local.aimAngle = std::atan2(y - local.y, x - local.x);
+        local.aimDistance = std::max(std::hypot(x - local.x, y - local.y), 0.001f);
     }
 }
 
@@ -1321,11 +1467,9 @@ CS2DGame::ActorView CS2DGame::GetActorView(const Player& actor) const {
     const ActorView current{actor.x, actor.y, actor.alive, actor.EffectiveAim(), actor.animTimer, actor.animState};
     if (!viewHistoryValid_) return current;
     const ActorView* previous = nullptr;
-    if (&actor == &player_) previous = &previousPlayerView_;
-    else {
-        for (size_t i = 0; i < bots_.size() && i < previousBotViews_.size(); ++i) {
-            if (&actor == &bots_[i]) { previous = &previousBotViews_[i]; break; }
-        }
+    const ActorId id = ActorIdOf(actor);
+    if (id >= 0 && static_cast<size_t>(id) < previousActorViews_.size()) {
+        previous = &previousActorViews_[static_cast<size_t>(id)];
     }
     // Spawn, death and teleports snap immediately instead of sweeping through the map.
     if (!previous || previous->alive != current.alive ||
@@ -1339,112 +1483,120 @@ CS2DGame::ActorView CS2DGame::GetActorView(const Player& actor) const {
 }
 
 float CS2DGame::GetRenderAimAngle() const {
-    const auto view = GetActorView(player_);
+    const auto view = GetActorView(LocalActor());
     return std::atan2(GetRenderAimY() - view.y, GetRenderAimX() - view.x);
 }
 float CS2DGame::GetRenderAimX() const {
-    return aimFollowsPlayer_ ? GetActorView(player_).x + std::cos(player_.aimAngle) * player_.aimDistance + player_.RecoilOffsetX()
-                             : aimWorldX_ + player_.RecoilOffsetX();
+    const auto& local = LocalActor();
+    return aimFollowsPlayer_ ? GetActorView(local).x + std::cos(local.aimAngle) * local.aimDistance + local.RecoilOffsetX()
+                             : local.aimWorldX + local.RecoilOffsetX();
 }
 float CS2DGame::GetRenderAimY() const {
-    return aimFollowsPlayer_ ? GetActorView(player_).y + std::sin(player_.aimAngle) * player_.aimDistance + player_.RecoilOffsetY()
-                             : aimWorldY_ + player_.RecoilOffsetY();
+    const auto& local = LocalActor();
+    return aimFollowsPlayer_ ? GetActorView(local).y + std::sin(local.aimAngle) * local.aimDistance + local.RecoilOffsetY()
+                             : local.aimWorldY + local.RecoilOffsetY();
 }
 
-CS2DGame::RefundQuote CS2DGame::EvaluateRefund(const Presentation::BuyRequest &request) const {
+CS2DGame::RefundQuote CS2DGame::EvaluateRefundFor(ActorId actorId, const Presentation::BuyRequest &request) const {
     RefundQuote quote;
-    if (!player_.alive) {
+    const Player* actorPtr = FindActor(actorId);
+    if (!actorPtr || !actorPtr->alive) {
         quote.reason = "阵亡后无法退款";
         return quote;
     }
+    const Player& actor = *actorPtr;
     if (!IsBuyWindowOpen()) {
         quote.reason = "购买时限已结束";
         return quote;
     }
-    bool inZone = IsPlayerInBuyZone();
+    bool inZone = IsActorInBuyZone(actorId);
     if (world_ && world_->GetBuyZones().empty()) {
         inZone = false;
-        for (const auto *spawn : world_->SpawnsForTeam(player_.team == Team::CT))
-            inZone = inZone || std::hypot(player_.x - spawn->x, player_.y - spawn->y) <= 80;
+        for (const auto *spawn : world_->SpawnsForTeam(actor.team == Team::CT))
+            inZone = inZone || std::hypot(actor.x - spawn->x, actor.y - spawn->y) <= 80;
     }
     if (!inZone) {
         quote.reason = "返回本方出生点退款";
         return quote;
     }
     auto consider = [&](const Player::EquipmentRecord &record) {
-        if (record.id && record.epoch == purchaseEpoch_ && record.buyer == 0 && !record.used) {
+        if (record.id && record.epoch == purchaseEpoch_ && record.buyer == actorId && !record.used) {
             ++quote.quantity;
             quote.amount = record.paid;
         }
     };
-    if (request.kind == Presentation::BuyKind::DefuseKit && player_.hasDefuseKit)
-        consider(player_.kitEquipment);
-    if (request.kind == Presentation::BuyKind::Armor && !player_.armorEquipment.empty()) {
-        const auto &record = player_.armorEquipment.back();
+    if (request.kind == Presentation::BuyKind::DefuseKit && actor.hasDefuseKit)
+        consider(actor.kitEquipment);
+    if (request.kind == Presentation::BuyKind::Armor && !actor.armorEquipment.empty()) {
+        const auto &record = actor.armorEquipment.back();
         if (record.armorTier == request.armorTier)
             consider(record);
     }
     if (request.kind == Presentation::BuyKind::Weapon) {
         for (int slot = 0; slot < 3; ++slot)
-            if (player_.weapons[slot] == request.weapon)
-                consider(player_.equipment[slot]);
-        for (int i = 0; i < player_.grenadeCount; ++i)
-            if (player_.grenades[i] == request.weapon)
-                consider(player_.grenadeEquipment[i]);
+            if (actor.weapons[slot] == request.weapon)
+                consider(actor.equipment[slot]);
+        for (int i = 0; i < actor.grenadeCount; ++i)
+            if (actor.grenades[i] == request.weapon)
+                consider(actor.grenadeEquipment[i]);
     }
     if (!quote.amount)
         quote.reason = "需为本轮本人购买且尚未使用的装备";
-    else if (player_.money + quote.amount > 16000) {
+    else if (actor.money + quote.amount > 16000) {
         quote.amount = quote.quantity = 0;
         quote.reason = "余额无法容纳全额退款";
     }
     return quote;
 }
 
-bool CS2DGame::ExecuteRefund(const Presentation::BuyRequest &request) {
-    const auto quote = EvaluateRefund(request);
+bool CS2DGame::ExecuteRefundFor(ActorId actorId, const Presentation::BuyRequest &request) {
+    const auto quote = EvaluateRefundFor(actorId, request);
     if (quote.amount <= 0)
         return false;
+    Player* actorPtr = FindActor(actorId);
+    if (!actorPtr) return false;
+    Player& actor = *actorPtr;
+    const bool isLocal = (actorId == localActorId_);
     if (request.kind == Presentation::BuyKind::DefuseKit) {
-        player_.hasDefuseKit = false;
-        player_.kitEquipment = {};
+        actor.hasDefuseKit = false;
+        actor.kitEquipment = {};
     } else if (request.kind == Presentation::BuyKind::Armor) {
-        const auto receipt = player_.armorEquipment.back();
-        player_.armor = receipt.previousArmor;
-        player_.helmet = receipt.previousHelmet;
-        player_.armorEquipment.pop_back();
+        const auto receipt = actor.armorEquipment.back();
+        actor.armor = receipt.previousArmor;
+        actor.helmet = receipt.previousHelmet;
+        actor.armorEquipment.pop_back();
     } else {
         if (WeaponDB::Get(request.weapon).cls == WeaponClass::Grenade) {
             int selected = -1;
             std::uint64_t newest = 0;
-            for (int i = 0; i < player_.grenadeCount; ++i) {
-                const auto &record = player_.grenadeEquipment[i];
-                if (player_.grenades[i] == request.weapon && record.buyer == 0 &&
+            for (int i = 0; i < actor.grenadeCount; ++i) {
+                const auto &record = actor.grenadeEquipment[i];
+                if (actor.grenades[i] == request.weapon && record.buyer == actorId &&
                     record.epoch == purchaseEpoch_ && !record.used && record.id > newest) {
                     selected = i;
                     newest = record.id;
                 }
             }
-            const int previousIndex = player_.grenadeSlot;
-            player_.grenadeSlot = selected;
-            player_.ConsumeActiveGrenade();
-            player_.grenadeSlot = std::min(previousIndex, std::max(0, player_.grenadeCount - 1));
-            player_.SyncActiveGrenade();
+            const int previousIndex = actor.grenadeSlot;
+            actor.grenadeSlot = selected;
+            actor.ConsumeActiveGrenade();
+            actor.grenadeSlot = std::min(previousIndex, std::max(0, actor.grenadeCount - 1));
+            actor.SyncActiveGrenade();
         } else
             for (int slot = 0; slot < 3; ++slot)
-                if (player_.weapons[slot] == request.weapon) {
-                    player_.ClearSlotWeapon(slot);
-                    player_.equipment[slot] = {};
-                    player_.fireStates[slot] = {};
+                if (actor.weapons[slot] == request.weapon) {
+                    actor.ClearSlotWeapon(slot);
+                    actor.equipment[slot] = {};
+                    actor.fireStates[slot] = {};
                 }
-        if (player_.weapons[player_.weaponSlot] == WeaponId::None)
-            EquipFallbackWeapon();
-        previousEquipSlot_ = 2;
-        previousEquipWeapon_ = WeaponId::Knife;
-        player_.reloading = false;
-        player_.reloadTimer = 0;
-        ResetScope(Presentation::ScopeResetReason::WeaponChanged);
+        if (actor.weapons[actor.weaponSlot] == WeaponId::None)
+            EquipFallbackWeaponFor(actor);
+        actor.previousEquipSlot = 2;
+        actor.previousEquipWeapon = WeaponId::Knife;
+        actor.reloading = false;
+        actor.reloadTimer = 0;
+        if (isLocal) ResetScope(Presentation::ScopeResetReason::WeaponChanged);
     }
-    player_.money += quote.amount;
+    actor.money += quote.amount;
     return true;
 }

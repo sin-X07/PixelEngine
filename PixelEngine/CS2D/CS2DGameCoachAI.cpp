@@ -587,22 +587,12 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
     {
         std::map<std::string, int> byArea;
         int util = 0;
-        for (const auto& b : game.GetBOTs()) {
-            if (!b.alive || b.team != team) continue;
+        int smoke = 0, flash = 0, molotov = 0, he = 0;
+        for (const auto& b : game.GetActors()) {
+            if (!b.IsActive() || !b.alive || b.team != team) continue;
             util += b.grenadeCount;
             const std::string a = world ? world->FindAreaAt(b.x, b.y) : std::string();
             if (!a.empty()) ++byArea[a];
-        }
-        o << "\n我方:";
-        int shown = 0;
-        for (const auto& [name, cnt] : byArea) {
-            if (shown++ >= 4) break;
-            o << " " << name << "x" << cnt;
-        }
-        // 道具明细（烟/闪/火/雷）：决定能不能"道具开点"
-        int smoke = 0, flash = 0, molotov = 0, he = 0;
-        for (const auto& b : game.GetBOTs()) {
-            if (!b.alive || b.team != team) continue;
             for (WeaponId g : b.grenades) {
                 switch (g) {
                     case WeaponId::GrenadeSmoke:      ++smoke;   break;
@@ -614,6 +604,12 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
                 }
             }
         }
+        o << "\n我方:";
+        int shown = 0;
+        for (const auto& [name, cnt] : byArea) {
+            if (shown++ >= 4) break;
+            o << " " << name << "x" << cnt;
+        }
         o << " 道具" << util << "枚(烟" << smoke << "闪" << flash
           << "火" << molotov << "雷" << he << ")";
     }
@@ -621,8 +617,8 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
     // ---- 敌方武器构成（决定对枪距离/是否吃 AWP）----
     {
         int rifle = 0, sniper = 0, smg = 0, shotgun = 0, pistol = 0;
-        for (const auto& b : game.GetBOTs()) {
-            if (!b.alive || b.team == team) continue;
+        for (const auto& b : game.GetActors()) {
+            if (!b.IsActive() || !b.alive || b.team == team) continue;
             WeaponId best = WeaponId::None;
             for (int slot = 0; slot <= 1; ++slot) {
                 if (b.weapons[slot] != WeaponId::None) { best = b.weapons[slot]; break; }

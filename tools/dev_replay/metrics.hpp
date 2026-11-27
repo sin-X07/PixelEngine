@@ -110,8 +110,8 @@ public:
         for (const auto* p : AllPlayers(game)) prevHealth_.push_back(p->health);
 
         acc_.clear();
-        acc_.reserve(game.GetBOTs().size());
-        for (const auto& b : game.GetBOTs()) {
+        acc_.reserve(game.GetActors().size());
+        for (const auto& b : game.GetActors()) {
             BotAccum a;
             a.lastX = b.x;
             a.lastY = b.y;
@@ -166,10 +166,10 @@ public:
             // P3-savegun: settle save-gun counts while the round is decided
             // (BotRuntime is reset at the next round start, so count here).
             saveGunTrig_ = 0; saveGunAlive_ = 0; saveGunKept_ = 0;
-            const auto& botsSG = game.GetBOTs();
-            for (size_t i = 0; i < botsSG.size(); ++i) {
-                const auto& b = botsSG[i];
-                if (b.team != Team::CT) continue;
+            const auto& actorsSG = game.GetActors();
+            for (size_t i = 0; i < actorsSG.size(); ++i) {
+                const auto& b = actorsSG[i];
+                if (!b.IsBot() || b.team != Team::CT) continue;
                 if (!game.AiAt(i).saveGun) continue;
                 ++saveGunTrig_;
                 if (!b.alive) continue;
@@ -179,9 +179,10 @@ public:
         }
 
         // 移动质量（只统计 BOT；玩家是脚本，单独看意义不大）
-        const auto& bots = game.GetBOTs();
-        for (size_t i = 0; i < bots.size() && i < acc_.size(); ++i) {
-            const auto& b = bots[i];
+        const auto& actors = game.GetActors();
+        for (size_t i = 0; i < actors.size() && i < acc_.size(); ++i) {
+            const auto& b = actors[i];
+            if (!b.IsBot()) continue;
             const int ti = TeamIndex(b.team);
             if (ti < 0) continue;
             if (!b.alive) { acc_[i].lastX = b.x; acc_[i].lastY = b.y; continue; }
@@ -258,20 +259,17 @@ public:
 
     static int KillsOf(const CS2DGame& g, Team t) {
         int sum = 0;
-        if (g.GetPlayerTeam() == t) sum += g.GetPlayer().kills;
-        for (const auto& b : g.GetBOTs()) if (b.team == t) sum += b.kills;
+        for (const auto& a : g.GetActors()) if (a.IsActive() && a.team == t) sum += a.kills;
         return sum;
     }
     static int TeamKillsOf(const CS2DGame& g, Team t) {
         int sum = 0;
-        if (g.GetPlayerTeam() == t) sum += g.GetPlayer().teamKills;
-        for (const auto& b : g.GetBOTs()) if (b.team == t) sum += b.teamKills;
+        for (const auto& a : g.GetActors()) if (a.IsActive() && a.team == t) sum += a.teamKills;
         return sum;
     }
     static int AliveOf(const CS2DGame& g, Team t) {
         int n = 0;
-        if (g.GetPlayerTeam() == t && g.GetPlayer().alive) ++n;
-        for (const auto& b : g.GetBOTs()) if (b.team == t && b.alive) ++n;
+        for (const auto& a : g.GetActors()) if (a.IsActive() && a.alive && a.team == t) ++n;
         return n;
     }
 
@@ -300,33 +298,29 @@ private:
 
     static std::vector<const CS2DGame::Player*> AllPlayers(const CS2DGame& g) {
         std::vector<const CS2DGame::Player*> v;
-        v.push_back(&g.GetPlayer());
-        for (const auto& b : g.GetBOTs()) v.push_back(&b);
+        v.reserve(g.GetActors().size());
+        for (const auto& a : g.GetActors()) if (a.IsActive()) v.push_back(&a);
         return v;
     }
 
     static int CountNear(const CS2DGame& g, Team team, float x, float y, float radius) {
         int n = 0;
-        auto hit = [&](const CS2DGame::Player& p) {
-            if (!p.alive || p.team != team) return;
+        for (const auto& p : g.GetActors()) {
+            if (!p.IsActive() || !p.alive || p.team != team) continue;
             const float dx = p.x - x;
             const float dy = p.y - y;
             if (dx * dx + dy * dy <= radius * radius) ++n;
-        };
-        hit(g.GetPlayer());
-        for (const auto& b : g.GetBOTs()) hit(b);
+        }
         return n;
     }
 
     static int AvgMoney(const CS2DGame& g, Team t) {
         int sum = 0, n = 0;
-        auto add = [&](const CS2DGame::Player& p) {
-            if (p.team != t) return;
+        for (const auto& p : g.GetActors()) {
+            if (!p.IsActive() || p.team != t) continue;
             sum += p.money;
             ++n;
-        };
-        add(g.GetPlayer());
-        for (const auto& b : g.GetBOTs()) add(b);
+        }
         return n > 0 ? sum / n : 0;
     }
 
@@ -377,9 +371,10 @@ private:
         // 路径效率：只统计"寻路 episode"，避免把原地微抖算成绕路
         double straight[2] = {0.0, 0.0};
         double traveled[2] = {0.0, 0.0};
-        const auto& bots = game.GetBOTs();
-        for (size_t i = 0; i < bots.size() && i < acc_.size(); ++i) {
-            const int ti = TeamIndex(bots[i].team);
+        const auto& actors = game.GetActors();
+        for (size_t i = 0; i < actors.size() && i < acc_.size(); ++i) {
+            if (!actors[i].IsBot()) continue;
+            const int ti = TeamIndex(actors[i].team);
             if (ti < 0) continue;
             straight[ti] += acc_[i].epStraightSum;
             traveled[ti] += acc_[i].epTravelSum;
@@ -395,7 +390,8 @@ private:
         double bStraight[3] = {0.0, 0.0, 0.0};
         double bTravel[3]   = {0.0, 0.0, 0.0};
         int    bCount[3]    = {0, 0, 0};
-        for (size_t i = 0; i < bots.size() && i < acc_.size(); ++i) {
+        for (size_t i = 0; i < actors.size() && i < acc_.size(); ++i) {
+            if (!actors[i].IsBot()) continue;
             for (int b = 0; b < 3; ++b) {
                 bStraight[b] += acc_[i].bucketStraight[b];
                 bTravel[b]   += acc_[i].bucketTravel[b];

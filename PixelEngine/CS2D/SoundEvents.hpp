@@ -18,6 +18,7 @@
 // ============================================================================
 
 #include "../Core/Types.hpp"
+#include "../Core/ActorTypes.hpp"
 #include "Tuning.hpp"
 #include "Weapons/WeaponDef.hpp"
 
@@ -39,13 +40,13 @@ enum class SoundEventType {
     Count
 };
 
-// 一次发声：位置 + 阵营 + 半径。sourceIdx：-1=玩家, >=0=BOT 下标, -2=环境
+// 一次发声：位置 + 阵营 + 半径。sourceId：>=0=ActorId, kEnvironmentActorId=环境
 struct SoundEvent {
     SoundEventType type = SoundEventType::Footstep;
     float x = 0.0f;
     float y = 0.0f;
     Team  team = Team::None;
-    int   sourceIdx = -2;
+    ActorId sourceId = kEnvironmentActorId;
     float radius = 0.0f;
 };
 
@@ -57,7 +58,7 @@ struct HeardSound {
     float age = 0.0f;        // 秒；超过 Tuning::SoundMemory 丢弃
     float strength = 0.0f;   // 1=贴脸，0=恰好在半径上
     Team  team = Team::None; // 发声方阵营
-    int   sourceIdx = -2;
+    ActorId sourceId = kEnvironmentActorId;
     bool  hostile = false;   // 发声方是否是听者的敌人
     WeaponId hazardWeapon = WeaponId::None;
     float dangerDelay = 0;

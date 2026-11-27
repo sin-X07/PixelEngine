@@ -1247,8 +1247,9 @@ static void TestReactionBenchmark() {
             CS2DGame game;
             game.SetRngSeed(seed);
             if (!LoadDeathMatch(game)) return;
-            game.GetBOTs().resize(1);
-            auto& bot = game.GetBOTs()[0];
+            game.GetActors().resize(2);
+            game.EnsureBotAi();
+            auto& bot = game.GetActors()[1];
             auto& player = game.GetPlayer();
             bot.x = player.x + 0.1f;
             bot.y = player.y;
@@ -1256,8 +1257,8 @@ static void TestReactionBenchmark() {
             bot.shootAnimTimer = 0.0f;
             bot.shootCooldown = 0.0f;
             player.health = bot.health = 100000;
-            game.SetBotProfile(0, difficulty * 2);
-            game.ResetBotAi(0);
+            game.SetBotProfile(1, difficulty * 2);
+            game.ResetBotAi(1);
             for (int tick = 0; tick < 300; ++tick) {
                 game.Update(1.0f / 60.0f, false, player.x, player.y,
                             false, false, false, false, false, false, false, nullptr);
@@ -1505,7 +1506,8 @@ static void TestMovementFrameInterpolation() {
             game.SetRngSeed(31);
             game.SetMatchMode(MatchMode::DeathMatch);
             if (!game.LoadMap(MapPath(), &renderer, true)) continue;
-            game.GetBOTs().clear();
+            game.GetActors().resize(1);
+            game.EnsureBotAi();
             auto& player = game.GetPlayer();
             const auto& world = game.GetWorld();
             bool found = false;
@@ -1988,20 +1990,34 @@ static void TestHdMapNavigation() {
 }
 
 struct CS2DGameTestAccess {
+    static void ClearBots(CS2DGame& g) { g.actors_.resize(1); g.EnsureBotAi(); }
+    static void ResizeBots(CS2DGame& g, size_t n) { g.actors_.resize(1 + n); g.EnsureBotAi(); }
+    static CS2DGame::Player& AddBot(CS2DGame& g, CS2DGame::Player p) {
+        p.controller = ControllerKind::Bot;
+        g.actors_.push_back(std::move(p));
+        g.EnsureBotAi();
+        return g.actors_.back();
+    }
+    static CS2DGame::Player& Bot(CS2DGame& g, size_t k) { return g.actors_[1 + k]; }
+    static void StepObjective(CS2DGame& g, float dt, bool interactHeld, IAudioSink* audio) {
+        g.LocalActor().interactHeld = interactHeld;
+        g.UpdateObjective(dt, audio);
+    }
+
     static void EquipExperienceActor(CS2DGame& game) {
-        game.bots_.clear();game.botAi_.clear();
-        game.player_.SetSlotWeapon(0,WeaponId::AWP);
-        game.player_.weaponSlot=0;
-        game.player_.ammo=10;
-        game.player_.armor=100;
-        game.player_.helmet=true;
-        game.SetAimTarget(game.player_.x+80,game.player_.y,true);
+        ClearBots(game);
+        game.actors_[0].SetSlotWeapon(0,WeaponId::AWP);
+        game.actors_[0].weaponSlot=0;
+        game.actors_[0].ammo=10;
+        game.actors_[0].armor=100;
+        game.actors_[0].helmet=true;
+        game.SetAimTarget(game.actors_[0].x+80,game.actors_[0].y,true);
     }
     static void PlaceExperienceBomb(CS2DGame& game) {
-        game.player_.team=Team::T;
+        game.actors_[0].team=Team::T;
         game.bombPlanted_=true;
-        game.bombX_=game.player_.x+50;
-        game.bombY_=game.player_.y;
+        game.bombX_=game.actors_[0].x+50;
+        game.bombY_=game.actors_[0].y;
         game.bombTimer_=40;
         game.UpdateSpectatorState();
     }
@@ -2010,61 +2026,59 @@ struct CS2DGameTestAccess {
     // 雾区应点亮两块（任一队友看得见即点亮）。相机镜头仍由 specFreeX/Y 控制。
     static void PlaceFreeUnionSpectator(CS2DGame& game) {
         game.specMode_ = CS2DGame::SpectateMode::Free;
-        game.specTarget_ = 0;
-        for (size_t i = 0; i < game.bots_.size(); ++i) {
-            game.bots_[i].alive = true;
-            game.bots_[i].team = game.player_.team;
-            game.bots_[i].aimAngle = (i % 2 == 0) ? 0.0f : Tuning::Pi;
+        game.specTarget_ = 1;
+        for (size_t i = 1; i < game.actors_.size(); ++i) {
+            game.actors_[i].alive = true;
+            game.actors_[i].team = game.actors_[0].team;
+            game.actors_[i].aimAngle = ((i - 1) % 2 == 0) ? 0.0f : Tuning::Pi;
         }
-        if (!game.bots_.empty()) {
-            game.specFreeX_ = game.bots_[0].x;
-            game.specFreeY_ = game.bots_[0].y;
+        if (game.actors_.size() > 1) {
+            game.specFreeX_ = game.actors_[1].x;
+            game.specFreeY_ = game.actors_[1].y;
         } else {
-            game.specFreeX_ = game.player_.x;
-            game.specFreeY_ = game.player_.y;
+            game.specFreeX_ = game.actors_[0].x;
+            game.specFreeY_ = game.actors_[0].y;
         }
     }
 
     static void KillExperienceActor(CS2DGame& game) {
         CS2DGame::Player attacker;
         attacker.name="长风";attacker.team=Team::T;
-        game.OnCombatantKilled(game.player_,nullptr,&attacker,WeaponId::AK47);
+        game.OnCombatantKilled(game.actors_[0],nullptr,&attacker,WeaponId::AK47);
     }
 
     static void TestExperienceStates() {
         CS2DGame game;
         game.SetMatchMode(MatchMode::BombDefusal);
         if (!game.LoadMap(MapPath(),nullptr,true)) return;
-        game.player_.team = Team::CT;
-        game.bots_.clear();
-        game.botAi_.clear();
+        game.actors_[0].team = Team::CT;
+        ClearBots(game);
         for (int i=0;i<2;++i) {
             CS2DGame::Player teammate;
             teammate.team=Team::CT;
             teammate.alive=true;
             teammate.name="teammate"+std::to_string(i);
-            teammate.x=game.player_.x; teammate.y=game.player_.y;
-            game.bots_.push_back(teammate);
-            game.botAi_.emplace_back();
+            teammate.x=game.actors_[0].x; teammate.y=game.actors_[0].y;
+            AddBot(game, teammate);
         }
         CS2DGame::Player attacker;
         attacker.name="attacker";
         attacker.team=Team::T;
-        game.OnCombatantKilled(game.player_,nullptr,&attacker,WeaponId::AK47);
+        game.OnCombatantKilled(game.actors_[0],nullptr,&attacker,WeaponId::AK47);
         check(game.IsDeathFreeze() && !game.IsSpectating(),"experience death begins with a frozen presentation");
         check(game.GetDeathPresentation().event.killer=="attacker" &&
               game.GetDeathPresentation().event.weapon==WeaponId::AK47,"experience death snapshots actual killer and weapon");
         game.killFeed_.clear();
         check(game.GetDeathPresentation().event.killer=="attacker","experience death attribution survives kill-feed eviction");
-        game.Update(1.79f,false,game.player_.x,game.player_.y,false,false,false,false,false,false,false,nullptr);
+        game.Update(1.79f,false,game.actors_[0].x,game.actors_[0].y,false,false,false,false,false,false,false,nullptr);
         check(game.IsDeathFreeze() && !game.IsSpectating(),"experience death holds for the full 1.8 seconds");
-        game.Update(.02f,false,game.player_.x,game.player_.y,false,false,false,false,false,false,false,nullptr);
+        game.Update(.02f,false,game.actors_[0].x,game.actors_[0].y,false,false,false,false,false,false,false,nullptr);
         check(!game.IsDeathFreeze() && game.GetSpectatedPlayer(),"experience death hands off to a live teammate");
         const int target=game.specTarget_;
-        game.bots_[target].alive=false;
+        game.actors_[target].alive=false;
         game.UpdateSpectatorState();
         check(game.GetSpectatedPlayer() && game.specTarget_!=target,"experience spectator automatically replaces a dead target");
-        for (auto& bot:game.bots_) bot.alive=false;
+        for (size_t i = 1; i < game.actors_.size(); ++i) game.actors_[i].alive = false;
         game.bombPlanted_=true;
         game.bombX_=310; game.bombY_=420;
         game.specMode_=CS2DGame::SpectateMode::Free;
@@ -2079,13 +2093,13 @@ struct CS2DGameTestAccess {
         game.RespawnAllForRound();
         check(!game.IsDeathFreeze() && !game.IsSpectating(),"experience round respawn clears death and spectator presentation");
         game.SetCameraDistanceTier(1);
-        game.Update(.2f,false,game.player_.x+80,game.player_.y,false,false,false,false,false,false,false,nullptr);
+        game.Update(.2f,false,game.actors_[0].x+80,game.actors_[0].y,false,false,false,false,false,false,false,nullptr);
         const float halfTransition=game.EdgeZoomAmount();
         game.SetCameraDistanceTier(0);
-        game.Update(.001f,false,game.player_.x+80,game.player_.y,false,false,false,false,false,false,false,nullptr);
+        game.Update(.001f,false,game.actors_[0].x+80,game.actors_[0].y,false,false,false,false,false,false,false,nullptr);
         check(std::abs(halfTransition-.5f)<.001f && std::abs(game.EdgeZoomAmount()-halfTransition)<.001f,
               "experience edge transition reverses from its current smoothstep position");
-        game.Update(.4f,false,game.player_.x+80,game.player_.y,false,false,false,false,false,false,false,nullptr);
+        game.Update(.4f,false,game.actors_[0].x+80,game.actors_[0].y,false,false,false,false,false,false,false,nullptr);
         check(game.EdgeZoomAmount()==0,"experience reversed edge transition reaches its new target in 0.4 seconds");
 
         SDL_setenv("SDL_AUDIODRIVER","dummy",1);
@@ -2098,24 +2112,24 @@ struct CS2DGameTestAccess {
         check(Mix_Volume(channel,-1)>midVolume,"experience moving listener refreshes an active process sound");
         audio.UpdateTrackedSoundAt(channel,SoundEffect::BOMB_DEFUSING,600,0,0,0);
         check(Mix_Volume(channel,-1)==0,"experience defuse audio reaches zero at the configured hearing radius");
-        game.bots_[0].defuseChannel=channel;
-        game.bots_[0].defuseProgress=.3f;
+        Bot(game, 0).defuseChannel=channel;
+        Bot(game, 0).defuseProgress=.3f;
         game.SetObjectiveAudioPaused(true);
         check(Mix_Paused(channel),"experience pause suspends the owned process sound");
         game.SetObjectiveAudioPaused(false);
         check(!Mix_Paused(channel) && Mix_Playing(channel),"experience resume continues the same process sound");
-        game.player_.alive=true;
-        game.player_.defuseChannel=audio.PlaySoundTracked(SoundEffect::BOMB_DEFUSING,2);
-        game.OnCombatantKilled(game.player_,&audio,&attacker,WeaponId::AK47);
+        game.actors_[0].alive=true;
+        game.actors_[0].defuseChannel=audio.PlaySoundTracked(SoundEffect::BOMB_DEFUSING,2);
+        game.OnCombatantKilled(game.actors_[0],&audio,&attacker,WeaponId::AK47);
         check(Mix_Playing(channel) && !Mix_Playing(2),"experience player death preserves the teammate defuse voice");
-        audio.StopChannel(game.bots_[0].defuseChannel);
+        audio.StopChannel(Bot(game, 0).defuseChannel);
     }
 
     static void TestPerformanceInterpolation() {
         CS2DGame game;
-        game.player_.alive=true;
-        game.player_.SetSlotWeapon(0,WeaponId::AWP);
-        game.player_.weaponSlot=0;
+        game.actors_[0].alive=true;
+        game.actors_[0].SetSlotWeapon(0,WeaponId::AWP);
+        game.actors_[0].weaponSlot=0;
         game.scope_.weapon=WeaponId::AWP;
         game.scopeLevel_=1;
         game.scopeZoom_=1.5f;
@@ -2234,12 +2248,12 @@ struct CS2DGameTestAccess {
             game.SetMatchMode(MatchMode::DeathMatch);
             if (!game.LoadMap(MapPath(), &renderer, true))
                 return 1;
-            game.bots_.resize(9);
-            game.player_.x = 1100;
-            game.player_.y = 100;
-            game.player_.aimAngle = 1.5707963f;
+            ResizeBots(game, 9);
+            game.actors_[0].x = 1100;
+            game.actors_[0].y = 100;
+            game.actors_[0].aimAngle = 1.5707963f;
             for (int index = 0; index < 9; ++index) {
-                auto &actor = game.bots_[index];
+                auto &actor = Bot(game, index);
                 actor.alive = true;
                 actor.team = Team::T;
                 actor.spriteKey = 1 + index % 2;
@@ -2248,7 +2262,7 @@ struct CS2DGameTestAccess {
                 actor.aimAngle = 1.5707963f;
                 actor.weaponSlot = index % 3;
             }
-            const auto visible = [&](float x, float y) { return game.CanSeePoint(game.player_, x, y); };
+            const auto visible = [&](float x, float y) { return game.CanSeePoint(game.actors_[0], x, y); };
             SDL_RendererInfo info{};
             SDL_GetRendererInfo(output, &info);
             const double toMilliseconds = 1000.0 / SDL_GetPerformanceFrequency();
@@ -2259,8 +2273,8 @@ struct CS2DGameTestAccess {
                     const Uint64 beforeQuery = SDL_GetPerformanceCounter();
                     for (int index = 0; index < 9; ++index)
                         seen[index] =
-                            mode ? game.QueryBodyVisibility(game.player_, game.bots_[index]).fraction > 0
-                                 : game.CanSeePoint(game.player_, game.bots_[index].x, game.bots_[index].y);
+                            mode ? game.QueryBodyVisibility(game.actors_[0], Bot(game, index)).fraction > 0
+                                 : game.CanSeePoint(game.actors_[0], Bot(game, index).x, Bot(game, index).y);
                     const Uint64 beforeRender = SDL_GetPerformanceCounter();
                     renderer.SetPreviewCamera(1100, 200, 2, false);
                     SDL_SetRenderDrawColor(output, 0, 0, 0, 255);
@@ -2273,7 +2287,7 @@ struct CS2DGameTestAccess {
                     for (int index = 0; index < 9; ++index) {
                         if (!seen[index])
                             continue;
-                        const auto &actor = game.bots_[index];
+                        const auto &actor = Bot(game, index);
                         SpriteDrawParams sprite;
                         sprite.x = actor.x;
                         sprite.y = actor.y;
@@ -2287,7 +2301,7 @@ struct CS2DGameTestAccess {
                         renderer.DrawCharacter(sprite);
                     }
                     renderer.SetVisibilityFilter({});
-                    renderer.DrawVisionFog(game.player_.x, game.player_.y, game.player_.aimAngle);
+                    renderer.DrawVisionFog(game.actors_[0].x, game.actors_[0].y, game.actors_[0].aimAngle);
                     SDL_RenderPresent(output);
                     const Uint64 afterRender = SDL_GetPerformanceCounter();
                     if (frame >= 0)
@@ -2384,12 +2398,12 @@ struct CS2DGameTestAccess {
                     hud.roundPhase = scene=="buy"?2:3;
                     hud.money = scene=="buy"?buy.money:4200;
                     if (scene=="carrier" || scene=="dropped") {
-                        game.player_.team=Team::T;
-                        game.bots_.clear();game.bots_.resize(1);
-                        auto& carrier=game.bots_[0];
+                        game.actors_[0].team=Team::T;
+                        ResizeBots(game, 1);
+                        auto& carrier=Bot(game, 0);
                         carrier.alive=true;carrier.team=Team::T;carrier.spriteKey=1;
-                        carrier.x=game.player_.x+20;carrier.y=game.player_.y;
-                        game.bombCarrier_=scene=="carrier"?0:-2;
+                        carrier.x=game.actors_[0].x+20;carrier.y=game.actors_[0].y;
+                        game.bombCarrier_=scene=="carrier"?1:kInvalidActorId;
                         game.bombDropped_=scene=="dropped";
                         game.bombDropX_=carrier.x;game.bombDropY_=carrier.y;
                     }
@@ -2479,18 +2493,18 @@ struct CS2DGameTestAccess {
 
         CS2DGame game;
         if (!LoadDeathMatch(game)) return;
-        game.bots_.clear();
-        auto& player = game.player_;
+        ClearBots(game);
+        auto& player = game.actors_[0];
         player.SetSlotWeapon(0, WeaponId::M4A4);
         player.weaponSlot = 0;
         player.LoadAmmoFromSlot();
         player.ammo = 0;
         player.reserve = 0;
-        game.UpdatePlayerShooting(.01f, true, player.x + 100, player.y, nullptr);
-        check(game.GetDryFireHintTimer() == 1 && game.dryFireCooldown_ == .3f && !player.reloading,
+        game.UpdatePlayerShooting(player, .01f, true, player.x + 100, player.y, nullptr);
+        check(game.GetDryFireHintTimer() == 1 && player.dryFireCooldown == .3f && !player.reloading,
               "PIX35 0/0 trigger produces throttled dry-fire hint");
         game.dryFireHintTimer_ = .8f;
-        game.UpdatePlayerShooting(.01f, true, player.x + 100, player.y, nullptr);
+        game.UpdatePlayerShooting(player, .01f, true, player.x + 100, player.y, nullptr);
         check(game.GetDryFireHintTimer() == .8f, "PIX35 held trigger respects dry-fire cooldown");
         player.reserve = 90;
         game.StartReload(player, nullptr);
@@ -2507,22 +2521,22 @@ struct CS2DGameTestAccess {
 
         game.mode_ = MatchMode::BombDefusal;
         player.team = Team::T;
-        game.bombCarrier_ = -1;
+        game.bombCarrier_ = 0;
         game.bombPlanted_ = game.bombDropped_ = false;
         auto dots = CS2DOverlay::CollectRadarDots(game);
         using Shape = CS2DRenderer::RadarDot::Shape;
         check(game.GetBombCarrierPos() && dots.size() == 1 && dots[0].shape == Shape::Carrier,
               "PIX35 self T carrier has orange radar marker");
-        game.bots_.resize(1);
-        auto& bot = game.bots_[0];
+        ResizeBots(game, 1);
+        auto& bot = Bot(game, 0);
         bot.alive = true;
         bot.team = Team::T;
         bot.x = player.x + 80;
         bot.y = player.y;
-        game.bombCarrier_ = 0;
+        game.bombCarrier_ = 1;
         player.team = Team::CT;
         check(CS2DOverlay::CollectRadarDots(game).empty(), "PIX35 CT cannot discover unknown carrier through radar");
-        game.contactsCT_ = {{0, bot.x - 30, bot.y - 20, 5}};
+        game.contactsCT_ = {{1, bot.x - 30, bot.y - 20, 5}};
         dots = CS2DOverlay::CollectRadarDots(game);
         check(dots.size() == 1 && dots[0].shape == Shape::Carrier && dots[0].x == bot.x - 30 && dots[0].alpha < 255,
               "PIX35 CT carrier uses fading last-known contact position");
@@ -2533,7 +2547,7 @@ struct CS2DGameTestAccess {
         check(dots.size() == 1 && dots[0].x == bot.x && dots[0].shape == Shape::Carrier,
               "PIX35 T teammate carrier remains known");
         game.bombDropped_ = true;
-        game.bombCarrier_ = -2;
+        game.bombCarrier_ = kInvalidActorId;
         dots = CS2DOverlay::CollectRadarDots(game);
         check(!game.GetBombCarrierPos() && dots.back().shape == Shape::DroppedBomb,
               "PIX35 dropped C4 changes to square marker");
@@ -2570,7 +2584,7 @@ struct CS2DGameTestAccess {
             const auto& samples = BodyGeometry::Get(bot.spriteKey, game.ActorPoseSlot(bot)).samples;
             const auto point = BodyGeometry::Transform(samples[samples.size()/2], bot.x, bot.y, bot.size,
                 bot.EffectiveAim(), static_cast<int>(bot.animState), bot.animTimer);
-            game.FireBullet(point.x, point.y, 0, WeaponDB::Get(WeaponId::M4A4), -1, Team::CT);
+            game.FireBullet(point.x, point.y, 0, WeaponDB::Get(WeaponId::M4A4), 0, Team::CT);
             game.UpdateBullets(.001f, nullptr);
         };
         hit(100, 0);
@@ -2588,7 +2602,7 @@ struct CS2DGameTestAccess {
         player.health = 100;
         player.armor = 0;
         game.bullets_.clear();
-        game.FireBullet(player.x, player.y, 0, WeaponDB::Get(WeaponId::Glock18), 0, Team::T);
+        game.FireBullet(player.x, player.y, 0, WeaponDB::Get(WeaponId::Glock18), 1, Team::T);
         game.UpdateBullets(.001f, nullptr);
         check(game.GetDamageFlashTimer() == .3f && std::any_of(game.damageDirections_.begin(),game.damageDirections_.end(),
               [](const auto& d) { return d.remaining == .5f; }), "PIX35 damage vignette and existing direction arc trigger together");
@@ -2613,7 +2627,7 @@ struct CS2DGameTestAccess {
         player.reloading = false;
         player.shootCooldown = 0;
         player.ammo = 5;
-        game.prevMouseDown_ = false;
+        player.prevMouseDown = false;
         game.Update(.05f, true, player.x + 100, player.y, false,false,false,false,false,false,false,nullptr);
         check(player.ammo == 4, "PIX35 decided Live permits shooting through normal Update entry");
         for (int i=0;i<8;++i) game.teams_.AddScore(Team::CT);
@@ -2634,8 +2648,8 @@ struct CS2DGameTestAccess {
         CS2DGame game;
         if (!LoadDeathMatch(game))
             return;
-        game.bots_.clear();
-        auto &player = game.player_;
+        ClearBots(game);
+        auto &player = game.actors_[0];
         player.team = Team::CT;
         const auto spawns = game.world_->SpawnsForTeam(true);
         if (!spawns.empty()) {
@@ -2691,8 +2705,8 @@ struct CS2DGameTestAccess {
         const auto borrowedIdentity = player.equipment[0].id;
         game.DropCurrentWeapon();
         const float returnX = player.x, returnY = player.y;
-        game.bots_.resize(1);
-        auto &borrower = game.bots_[0];
+        ResizeBots(game, 1);
+        auto &borrower = Bot(game, 0);
         borrower.alive = true;
         borrower.team = Team::T;
         borrower.x = game.drops_.back().x;
@@ -2715,7 +2729,7 @@ struct CS2DGameTestAccess {
         check(player.equipment[0].id == borrowedIdentity && player.equipment[0].used &&
                   game.EvaluateRefund(WeaponReq(WeaponId::FAMAS)).amount == 0,
               "round3 another actor's use remains attached after original buyer recovers equipment");
-        game.bots_.clear();
+        ClearBots(game);
         game.ExecutePurchase(WeaponReq(WeaponId::GrenadeFlash));
         game.ExecutePurchase(WeaponReq(WeaponId::GrenadeFlash));
         const auto newest = player.grenadeEquipment[1].id;
@@ -2744,7 +2758,7 @@ struct CS2DGameTestAccess {
         game.round_.Update(2.1f);
         game.round_.Update(6.1f);
         game.PlantBomb(player.x, player.y, nullptr);
-        game.UpdateObjective(.1f, true, nullptr);
+        StepObjective(game, .1f, true, nullptr);
         check(player.kitEquipment.used && game.EvaluateRefund(kit).amount == 0,
               "round3 kit becomes nonrefundable only after real defuse progress advances");
         game.mode_ = MatchMode::DeathMatch;
@@ -2756,8 +2770,8 @@ struct CS2DGameTestAccess {
                                                              drop.equipment.id == kitIdentity;
                                                   }),
               "round3 death drops kit with its own identity");
-        game.bots_.resize(1);
-        auto &bot = game.bots_[0];
+        ResizeBots(game, 1);
+        auto &bot = Bot(game, 0);
         bot.alive = true;
         bot.team = Team::CT;
         bot.x = player.x;
@@ -2770,8 +2784,7 @@ struct CS2DGameTestAccess {
         game.TryPickupDrops(false, nullptr);
         check(bot.hasDefuseKit && bot.kitEquipment.id == kitIdentity,
               "round3 living CT bot recovers kit while human is dead");
-        game.bots_.emplace_back();
-        auto &starter = game.bots_.back();
+        auto &starter = AddBot(game, CS2DGame::Player{});
         starter.alive = true;
         starter.team = Team::T;
         starter.x = returnX;
@@ -2785,7 +2798,7 @@ struct CS2DGameTestAccess {
         const auto feed = game.killFeed_.size();
         game.OnCombatantKilled(player, nullptr);
         check(game.killFeed_.size() == feed, "round3 repeated death emits one structured kill event");
-        game.bots_.clear();
+        ClearBots(game);
         CS2DMapData data;
         data.mapWidth = data.mapHeight = 100;
         data.tileWidth = data.tileHeight = 8;
@@ -2814,8 +2827,8 @@ struct CS2DGameTestAccess {
         data.objectLayers[0].objects[0].y = 400;
         data.objectLayers[0].objects[0].height = 400;
         game.world_->Build(data);
-        game.bots_.resize(1);
-        auto &exposedActor = game.bots_[0];
+        ResizeBots(game, 1);
+        auto &exposedActor = Bot(game, 0);
         exposedActor.alive = true;
         exposedActor.team = Team::T;
         exposedActor.x = 240;
@@ -2831,7 +2844,7 @@ struct CS2DGameTestAccess {
         check(game.visibility_.HasLineOfSight(170, 400, exposed.aim.x, exposed.aim.y),
               "round3 largest visible component supplies a valid exposed aim point");
         game.FireBullet(170, 400, std::atan2(exposed.aim.y - 400, exposed.aim.x - 170),
-                        WeaponDB::Get(WeaponId::USP_S), -1, Team::CT);
+                        WeaponDB::Get(WeaponId::USP_S), 0, Team::CT);
         game.UpdateBullets(.1f, nullptr);
         check(exposedActor.health < 1000, "round3 bullet intersects exposed alpha geometry before wall");
         data.objectLayers[0].objects[0].y = 0;
@@ -2839,12 +2852,12 @@ struct CS2DGameTestAccess {
         game.world_->Build(data);
         game.bullets_.clear();
         const int beforeWallShot = exposedActor.health;
-        game.FireBullet(170, 400, 0, WeaponDB::Get(WeaponId::AWP), -1, Team::CT);
+        game.FireBullet(170, 400, 0, WeaponDB::Get(WeaponId::AWP), 0, Team::CT);
         game.UpdateBullets(.1f, nullptr);
         check(exposedActor.health == beforeWallShot &&
                   game.QueryBodyVisibility(player, exposedActor).fraction == 0,
               "round3 closest wall blocks both body visibility and bullet damage");
-        game.bots_.clear();
+        ClearBots(game);
         CS2DGame::Player recoilActor;
         recoilActor.SetSlotWeapon(0, WeaponId::AK47);
         recoilActor.weaponSlot = 0;
@@ -2860,14 +2873,14 @@ struct CS2DGameTestAccess {
         recovered.Recover(10);
         check(recovered.weapon == WeaponId::None,
               "round3 dropped instance uses the same complete recoil recovery");
-        const auto savedObserver = game.player_;
+        const auto savedObserver = game.actors_[0];
         const float savedCone = game.visibility_.ConeAngleDeg();
         bool visibilityMatches = true;
         for (int sample=0; sample<48; ++sample) {
             game.visibility_.SetConeAngleDeg(80+(sample%3)*100);
-            game.player_.x=120+sample%6*20;
-            game.player_.y=350+sample/6*12;
-            game.player_.aimAngle=sample*.31f;
+            game.actors_[0].x=120+sample%6*20;
+            game.actors_[0].y=350+sample/6*12;
+            game.actors_[0].aimAngle=sample*.31f;
             CS2DGame::Player target;
             target.alive=true;
             target.x=160+sample%9*9;
@@ -2878,12 +2891,12 @@ struct CS2DGameTestAccess {
             for (const auto local:pose.samples) {
                 const auto point=BodyGeometry::Transform(local,target.x,target.y,target.size,target.EffectiveAim(),
                     static_cast<int>(target.animState),target.animTimer);
-                visible+=game.CanSeePoint(game.player_,point.x,point.y);
+                visible+=game.CanSeePoint(game.actors_[0],point.x,point.y);
             }
             const float expected=pose.samples.empty()?0:float(visible)/pose.samples.size();
-            visibilityMatches &= std::abs(game.QueryBodyVisibility(game.player_,target).fraction-expected)<.00001f;
+            visibilityMatches &= std::abs(game.QueryBodyVisibility(game.actors_[0],target).fraction-expected)<.00001f;
         }
-        game.player_=savedObserver;
+        game.actors_[0]=savedObserver;
         game.visibility_.SetConeAngleDeg(savedCone);
         check(visibilityMatches,"performance visibility bounds preserve exhaustive body pixel results");
         CS2DGame::FireZone fire;
@@ -2915,12 +2928,12 @@ struct CS2DGameTestAccess {
         game.RebuildFireCells(wallFire);
         check(!wallFire.cells.empty() && !game.FireContains(wallFire, 220, 400),
               "round3 wall-adjacent impact ignites connected legal floor on its own side");
-        fire.owner = -1;
+        fire.ownerId = 0;
         fire.weapon = WeaponId::GrenadeIncendiary;
         game.fires_ = {fire};
         game.fireTickTimer_ = 0;
-        game.bots_.resize(1);
-        auto &burnVictim = game.bots_[0];
+        ResizeBots(game, 1);
+        auto &burnVictim = Bot(game, 0);
         burnVictim.alive = true;
         burnVictim.team = Team::T;
         burnVictim.x = 180;
@@ -2936,7 +2949,7 @@ struct CS2DGameTestAccess {
         player.alive = false;
         CS2DGame::Grenade delayed;
         delayed.type = WeaponId::GrenadeHE;
-        delayed.owner = -1;
+        delayed.ownerId = 0;
         delayed.x = 180;
         delayed.y = 400;
         game.ExplodeGrenade(delayed, nullptr);
@@ -2944,7 +2957,7 @@ struct CS2DGameTestAccess {
                   game.killFeed_.front().killer == "你",
               "round3 delayed grenade kill retains weapon and attribution after owner death");
         player.alive = true;
-        game.bots_.clear();
+        ClearBots(game);
         game.smokes_.push_back({});
         game.smokes_[0].x = 170;
         game.smokes_[0].y = 400;
@@ -2957,7 +2970,7 @@ struct CS2DGameTestAccess {
         CS2DGame::Grenade decoy;
         decoy.type = WeaponId::GrenadeDecoy;
         decoy.imitate = WeaponId::AWP;
-        decoy.owner = -1;
+        decoy.ownerId = 0;
         decoy.x = 170;
         decoy.y = 400;
         game.ExplodeGrenade(decoy, nullptr);
@@ -2970,7 +2983,7 @@ struct CS2DGameTestAccess {
         check(game.decoys_.empty(), "round3 decoy expires once after its final explosion event");
         CS2DGame epochs;
         if (LoadDeathMatch(epochs)) {
-            auto &buyer = epochs.player_;
+            auto &buyer = epochs.actors_[0];
             epochs.ExecutePurchase(WeaponReq(WeaponId::M4A4));
             check(epochs.EvaluateRefund(WeaponReq(WeaponId::M4A4)).amount == 3100,
                   "round3 newly purchased deathmatch equipment starts refundable");
@@ -2981,7 +2994,7 @@ struct CS2DGameTestAccess {
             epochs.mode_ = MatchMode::TeamElimination;
             epochs.ExecutePurchase(WeaponReq(WeaponId::FAMAS));
             const auto rifleIdentity = buyer.equipment[0].id;
-            auto &survivor = epochs.bots_[0];
+            auto &survivor = Bot(epochs, 0);
             const auto pistolIdentity = survivor.equipment[1].id;
             survivor.grenades[0] = WeaponId::GrenadeSmoke;
             survivor.grenadeCount = 1;
@@ -3024,37 +3037,37 @@ struct CS2DGameTestAccess {
         data.mapWidth = data.mapHeight = 200;
         data.tileWidth = data.tileHeight = 8;
         game.GetWorld().Build(data);
-        game.bots_.resize(1);
-        game.player_.x = game.player_.y = 400;
-        game.player_.SetSlotWeapon(2, WeaponId::Knife);
+        ResizeBots(game, 1);
+        game.actors_[0].x = game.actors_[0].y = 400;
+        game.actors_[0].SetSlotWeapon(2, WeaponId::Knife);
         game.SwitchWeaponSlot(2);
-        auto& bot = game.bots_.front();
+        auto& bot = Bot(game, 0);
         bot.alive = true;
         bot.team = Team::T;
-        game.player_.team = Team::CT;
+        game.actors_[0].team = Team::CT;
         bot.x = 380; bot.y = 400; bot.health = 100;
-        game.UpdatePlayerShooting(0, true, 600, 400, nullptr);
+        game.UpdatePlayerShooting(game.actors_[0], 0, true, 600, 400, nullptr);
         check(bot.health == 100, "PIX-34 melee misses enemy behind attacker");
-        game.prevMouseDown_ = false;
-        game.player_.shootCooldown = 0;
+        game.actors_[0].prevMouseDown = false;
+        game.actors_[0].shootCooldown = 0;
         bot.x = 420;
-        game.UpdatePlayerShooting(0, true, 600, 400, nullptr);
+        game.UpdatePlayerShooting(game.actors_[0], 0, true, 600, 400, nullptr);
         check(bot.health < 100, "PIX-34 melee hits enemy in forward cone");
-        game.player_.alive = false;
+        game.actors_[0].alive = false;
         bot.health = bot.maxHealth = 100;
         bot.aimAngle = 0;
-        auto& hitAi = game.AiAt(0);
+        auto& hitAi = game.AiAt(1);
         hitAi.lastHitTimer = 2;
         hitAi.threatX = bot.x - 100;
         hitAi.threatY = bot.y;
         game.UpdateBOTs(1.0f/60, nullptr);
         check(std::abs(bot.aimAngle) > 0 && std::abs(bot.aimAngle) <= Tuning::BotMaxTurnRate/60 + 0.001f,
               "PIX-34 hit response obeys turn limit across movement and scanning");
-        game.player_.alive = true;
-        game.bots_.clear();
+        game.actors_[0].alive = true;
+        ClearBots(game);
         for (float distance : {200.0f, 400.0f}) {
             game.grenades_.clear();
-            auto& player = game.player_;
+            auto& player = game.actors_[0];
             player.grenades[0] = WeaponId::GrenadeHE;
             player.grenadeCount = 1; player.grenadeSlot = 0;
             player.SyncActiveGrenade();
@@ -3066,178 +3079,178 @@ struct CS2DGameTestAccess {
             std::printf("[PIX-34] target=%.0f travelled=%.2f error=%.2f\n", distance, travelled, std::abs(travelled-distance));
         }
         game.SetBotDifficulty(3);
-        for (auto& ai : game.botAi_) check(ai.difficulty == 3, "PIX-34 difficulty applied");
+        for (auto& ai : game.actorAi_) check(ai.difficulty == 3, "PIX-34 difficulty applied");
     }
 
     static void TestPix34Round2() {
         CS2DGame game;
         if (!LoadDeathMatch(game)) return;
         game.QuickSwitchWeapon();
-        check(game.player_.weaponSlot == 2, "round2 initial Q equips knife");
+        check(game.actors_[0].weaponSlot == 2, "round2 initial Q equips knife");
         game.QuickSwitchWeapon();
-        check(game.player_.weaponSlot == 1, "round2 Q returns to starting pistol");
-        game.player_.grenades[0]=WeaponId::GrenadeHE;
-        game.player_.grenades[1]=WeaponId::GrenadeFlash;
-        game.player_.grenadeCount=2;
-        game.player_.grenadeSlot=0;
-        game.player_.SyncActiveGrenade();
+        check(game.actors_[0].weaponSlot == 1, "round2 Q returns to starting pistol");
+        game.actors_[0].grenades[0]=WeaponId::GrenadeHE;
+        game.actors_[0].grenades[1]=WeaponId::GrenadeFlash;
+        game.actors_[0].grenadeCount=2;
+        game.actors_[0].grenadeSlot=0;
+        game.actors_[0].SyncActiveGrenade();
         game.SwitchWeaponSlot(3);
         game.SwitchWeaponSlot(3);
         game.QuickSwitchWeapon();
-        check(game.player_.ActiveGrenade()==WeaponId::GrenadeHE, "round2 Q remembers grenade identity inside one slot");
+        check(game.actors_[0].ActiveGrenade()==WeaponId::GrenadeHE, "round2 Q remembers grenade identity inside one slot");
         game.QuickSwitchWeapon();
-        check(game.player_.ActiveGrenade()==WeaponId::GrenadeFlash, "round2 grenade Q switches both ways");
-        game.player_.grenades[0]=WeaponId::GrenadeFlash;
-        game.player_.grenadeCount=1;
-        game.player_.grenadeSlot=0;
-        game.player_.SyncActiveGrenade();
+        check(game.actors_[0].ActiveGrenade()==WeaponId::GrenadeFlash, "round2 grenade Q switches both ways");
+        game.actors_[0].grenades[0]=WeaponId::GrenadeFlash;
+        game.actors_[0].grenadeCount=1;
+        game.actors_[0].grenadeSlot=0;
+        game.actors_[0].SyncActiveGrenade();
         game.QuickSwitchWeapon();
-        check(game.player_.weaponSlot==2, "round2 consumed previous grenade falls back to knife");
-        game.player_.team = Team::T;
-        game.bombCarrier_ = -1;
+        check(game.actors_[0].weaponSlot==2, "round2 consumed previous grenade falls back to knife");
+        game.actors_[0].team = Team::T;
+        game.bombCarrier_ = 0;
         game.bombPlanted_ = game.bombDropped_ = false;
         game.ToggleHoldC4();
         game.QuickSwitchWeapon();
-        check(game.player_.weaponSlot == 2 && !game.PlayerHoldingC4(), "round2 Q stows C4 and restores the previous equipment");
+        check(game.actors_[0].weaponSlot == 2 && !game.PlayerHoldingC4(), "round2 Q stows C4 and restores the previous equipment");
         game.QuickSwitchWeapon();
-        check(game.player_.weaponSlot == 4 && game.PlayerHoldingC4(), "round2 Q restores held C4");
+        check(game.actors_[0].weaponSlot == 4 && game.PlayerHoldingC4(), "round2 Q restores held C4");
         game.SwitchWeaponSlot(1);
-        const int previousSlot = game.previousEquipSlot_;
+        const int previousSlot = game.actors_[0].previousEquipSlot;
         game.SwitchWeaponSlot(-1);
-        check(game.previousEquipSlot_ == previousSlot && game.player_.weaponSlot == 1,
+        check(game.actors_[0].previousEquipSlot == previousSlot && game.actors_[0].weaponSlot == 1,
               "round2 invalid switch leaves equipment history unchanged");
-        game.player_.SetSlotWeapon(0, WeaponId::AK47);
+        game.actors_[0].SetSlotWeapon(0, WeaponId::AK47);
         game.SwitchWeaponSlot(0);
         game.DropCurrentWeapon();
         game.QuickSwitchWeapon();
-        check(game.player_.weaponSlot == 2, "round2 Q after dropping a gun falls back to knife");
-        game.player_.SetSlotWeapon(0, WeaponId::AK47);
+        check(game.actors_[0].weaponSlot == 2, "round2 Q after dropping a gun falls back to knife");
+        game.actors_[0].SetSlotWeapon(0, WeaponId::AK47);
         game.SwitchWeaponSlot(0);
         CS2DGame::DroppedItem incoming;
         incoming.id = WeaponId::AWP;
-        incoming.x = game.player_.x;
-        incoming.y = game.player_.y;
+        incoming.x = game.actors_[0].x;
+        incoming.y = game.actors_[0].y;
         incoming.pickupDelay = 0;
         game.drops_.push_back(incoming);
         game.drops_.shrink_to_fit();
         game.TryPickupDrops(true,nullptr);
-        check(game.player_.weapons[0] == WeaponId::AWP, "round2 replacing held weapon survives dropped item vector growth");
+        check(game.actors_[0].weapons[0] == WeaponId::AWP, "round2 replacing held weapon survives dropped item vector growth");
         game.QuickSwitchWeapon();
-        check(game.player_.weaponSlot == 2, "round2 Q after replacing its previous weapon falls back to knife");
+        check(game.actors_[0].weaponSlot == 2, "round2 Q after replacing its previous weapon falls back to knife");
 
         CS2DMapData data;
         data.mapWidth=data.mapHeight=100;
         data.tileWidth=data.tileHeight=8;
         game.GetWorld().Build(data);
-        game.player_.x = game.player_.y = 400;
-        game.player_.vx = game.player_.vy = 0;
-        for (int frame = 0; frame < 60; ++frame) game.UpdatePlayerMovement(1.0f/60,false,false,false,true,false);
+        game.actors_[0].x = game.actors_[0].y = 400;
+        game.actors_[0].vx = game.actors_[0].vy = 0;
+        for (int frame = 0; frame < 60; ++frame) game.UpdatePlayerMovement(game.actors_[0], 1.0f/60,false,false,false,true,false);
         const float runningBlur = game.GetAimMotionBlur();
-        for (int frame = 0; frame < 60; ++frame) game.UpdatePlayerMovement(1.0f/60,false,false,false,true,true);
+        for (int frame = 0; frame < 60; ++frame) game.UpdatePlayerMovement(game.actors_[0], 1.0f/60,false,false,false,true,true);
         check(runningBlur > game.GetAimMotionBlur() && game.GetAimMotionBlur() > 0,
               "round2 running produces stronger reticle blur than stealth");
-        for (int frame = 0; frame < 120; ++frame) game.UpdatePlayerMovement(1.0f/60,false,false,false,false,false);
+        for (int frame = 0; frame < 120; ++frame) game.UpdatePlayerMovement(game.actors_[0], 1.0f/60,false,false,false,false,false);
         check(game.GetAimMotionBlur() < .05f, "round2 stopping smoothly restores reticle clarity");
-        game.bots_.resize(2);
+        ResizeBots(game, 2);
         game.mode_=MatchMode::BombDefusal;
         auto setup = [&] {
             game.round_.Reset(RoundConfig{});
             game.round_.Update(2.1f);
             game.round_.Update(6.1f);
-            game.player_.alive=true;
-            game.player_.team=Team::CT;
-            game.player_.x=game.player_.y=400;
-            game.player_.hasDefuseKit=false;
-            for (size_t i=0;i<game.bots_.size();++i) {
-                auto& bot=game.bots_[i];
+            game.actors_[0].alive=true;
+            game.actors_[0].team=Team::CT;
+            game.actors_[0].x=game.actors_[0].y=400;
+            game.actors_[0].hasDefuseKit=false;
+            for (size_t i=0;i<2;++i) {
+                auto& bot=Bot(game, i);
                 bot.alive=true; bot.team=Team::CT; bot.x=bot.y=400;
                 bot.hasDefuseKit=i==0;
-                game.AiAt(i).lastHitTimer=0;
-                game.AiAt(i).defuseCooldown=0;
+                game.AiAt(1 + i).lastHitTimer=0;
+                game.AiAt(1 + i).defuseCooldown=0;
             }
             game.PlantBomb(400,400,nullptr);
         };
         setup();
-        game.UpdateObjective(1,true,nullptr);
-        check(std::abs(game.player_.defuseProgress-.1f)<.001f && std::abs(game.bots_[0].defuseProgress-.25f)<.001f &&
-            std::abs(game.bots_[1].defuseProgress-.1f)<.001f, "round2 player and multiple BOTs progress independently");
-        check(game.activeDefuser_==0 && std::abs(game.GetDefuseRemaining()-3)<.001f, "round2 kit BOT leads by estimated finish time");
-        game.UpdateObjective(1,false,nullptr);
-        check(game.player_.defuseProgress==0 && std::abs(game.bots_[0].defuseProgress-.5f)<.001f,
+        StepObjective(game, 1, true, nullptr);
+        check(std::abs(game.actors_[0].defuseProgress-.1f)<.001f && std::abs(Bot(game, 0).defuseProgress-.25f)<.001f &&
+            std::abs(Bot(game, 1).defuseProgress-.1f)<.001f, "round2 player and multiple BOTs progress independently");
+        check(game.activeDefuser_==1 && std::abs(game.GetDefuseRemaining()-3)<.001f, "round2 kit BOT leads by estimated finish time");
+        StepObjective(game, 1, false, nullptr);
+        check(game.actors_[0].defuseProgress==0 && std::abs(Bot(game, 0).defuseProgress-.5f)<.001f,
             "round2 releasing player interact preserves BOT progress");
-        game.bots_[0].alive=false;
-        game.UpdateObjective(.5f,false,nullptr);
-        check(game.activeDefuser_==1 && std::abs(game.GetDefuseProgress()-.25f)<.001f,
+        Bot(game, 0).alive=false;
+        StepObjective(game, .5f, false, nullptr);
+        check(game.activeDefuser_==2 && std::abs(game.GetDefuseProgress()-.25f)<.001f,
             "round2 leading defuser death promotes next independent progress");
         setup();
-        game.player_.defuseProgress=.4f;
-        game.bots_[0].defuseProgress=.1f;
-        game.bots_[1].alive=false;
-        game.UpdateObjective(.1f,true,nullptr);
-        check(game.activeDefuser_==0 && game.player_.defuseProgress>game.bots_[0].defuseProgress,
+        game.actors_[0].defuseProgress=.4f;
+        Bot(game, 0).defuseProgress=.1f;
+        Bot(game, 1).alive=false;
+        StepObjective(game, .1f, true, nullptr);
+        check(game.activeDefuser_==1 && game.actors_[0].defuseProgress>Bot(game, 0).defuseProgress,
             "round2 HUD selects earliest completion instead of highest percentage");
         setup();
-        game.player_.hasDefuseKit=true;
-        game.player_.defuseProgress=.99f;
-        for (auto& bot:game.bots_) bot.alive=false;
+        game.actors_[0].hasDefuseKit=true;
+        game.actors_[0].defuseProgress=.99f;
+        for (size_t i=1;i<game.actors_.size();++i) game.actors_[i].alive=false;
         game.bombTimer_=.05f;
-        game.UpdateObjective(.1f,true,nullptr);
+        StepObjective(game, .1f, true, nullptr);
         check(!game.bombPlanted_ && game.round_.LastWinner()==Team::CT, "round2 completion before fuse wins within a large simulation step");
         setup();
-        game.player_.hasDefuseKit=true;
-        game.player_.defuseProgress=.99f;
-        for (auto& bot:game.bots_) bot.alive=false;
+        game.actors_[0].hasDefuseKit=true;
+        game.actors_[0].defuseProgress=.99f;
+        for (size_t i=1;i<game.actors_.size();++i) game.actors_[i].alive=false;
         game.bombTimer_=.01f;
-        game.UpdateObjective(.1f,true,nullptr);
+        StepObjective(game, .1f, true, nullptr);
         check(!game.bombPlanted_ && game.round_.LastWinner()==Team::T, "round2 fuse deadline prevents late defuse");
         setup();
-        game.player_.hasDefuseKit = true;
-        game.player_.money = game.bots_[0].money = 0;
-        game.player_.defuseProgress = game.bots_[0].defuseProgress = .99f;
+        game.actors_[0].hasDefuseKit = true;
+        game.actors_[0].money = Bot(game, 0).money = 0;
+        game.actors_[0].defuseProgress = Bot(game, 0).defuseProgress = .99f;
         const int scoreBefore = game.GetScoreCT();
-        game.UpdateObjective(.1f,true,nullptr);
-        const int moneyAfter = game.player_.money;
-        check(game.player_.money == game.bots_[0].money+300 && game.GetScoreCT() == scoreBefore+1,
+        StepObjective(game, .1f, true, nullptr);
+        const int moneyAfter = game.actors_[0].money;
+        check(game.actors_[0].money == Bot(game, 0).money+300 && game.GetScoreCT() == scoreBefore+1,
               "round2 simultaneous completion chooses stable winner and awards one personal bonus");
-        game.UpdateObjective(.1f,true,nullptr);
-        check(game.player_.money == moneyAfter && game.GetScoreCT() == scoreBefore+1,
+        StepObjective(game, .1f, true, nullptr);
+        check(game.actors_[0].money == moneyAfter && game.GetScoreCT() == scoreBefore+1,
               "round2 repeated objective update cannot duplicate reward or round result");
     }
 
     static void TestPix33() {
         CS2DGame game;
         if (!LoadDeathMatch(game)) return;
-        game.bots_.clear();
-        game.player_.team = Team::CT;
+        ClearBots(game);
+        game.actors_[0].team = Team::CT;
         Presentation::BuyRequest kit;
         kit.kind = Presentation::BuyKind::DefuseKit;
-        const int money = game.player_.money;
+        const int money = game.actors_[0].money;
         check(game.ExecutePurchase(kit).code == Presentation::BuyCode::Ok, "PIX-33 kit purchase succeeds");
-        check(game.player_.money == money - 400 && game.player_.hasDefuseKit, "PIX-33 kit costs $400");
+        check(game.actors_[0].money == money - 400 && game.actors_[0].hasDefuseKit, "PIX-33 kit costs $400");
         check(game.EvaluatePurchase(kit) == Presentation::BuyCode::AlreadyEquipped, "PIX-33 duplicate kit rejected");
-        game.OnCombatantKilled(game.player_, nullptr);
+        game.OnCombatantKilled(game.actors_[0], nullptr);
         check(std::any_of(game.drops_.begin(),game.drops_.end(),[](const auto& drop) { return drop.defuseKit; }),
               "round3 death creates an independent dropped kit");
         game.RespawnAllForRound(false);
-        check(!game.player_.hasDefuseKit, "round3 kit drops on death and is absent after respawn");
-        game.player_.team = Team::T;
+        check(!game.actors_[0].hasDefuseKit, "round3 kit drops on death and is absent after respawn");
+        game.actors_[0].team = Team::T;
         check(game.EvaluatePurchase(kit) == Presentation::BuyCode::InvalidItem, "PIX-33 T kit purchase invalid");
-        game.player_.team = Team::CT;
+        game.actors_[0].team = Team::CT;
         game.mode_ = MatchMode::BombDefusal;
         for (bool hasKit : {false, true}) {
-            game.player_.hasDefuseKit = hasKit;
+            game.actors_[0].hasDefuseKit = hasKit;
             game.round_.Reset(RoundConfig{});
             game.round_.Update(2.1f);
             game.round_.Update(6.1f);
-            game.PlantBomb(game.player_.x, game.player_.y, nullptr);
-            game.UpdateObjective(1.0f, true, nullptr);
+            game.PlantBomb(game.actors_[0].x, game.actors_[0].y, nullptr);
+            StepObjective(game, 1.0f, true, nullptr);
             check(std::abs(game.defuseProgress_ - (hasKit ? .25f : .1f)) < .001f,
                 "PIX-33 defuse advances at 4s/10s rate");
-            game.UpdateObjective(.1f, false, nullptr);
+            StepObjective(game, .1f, false, nullptr);
             check(game.defuseProgress_ == 0, "PIX-33 release cancels defuse progress");
-            game.UpdateObjective(hasKit ? 3.9f : 9.9f, true, nullptr);
+            StepObjective(game, hasKit ? 3.9f : 9.9f, true, nullptr);
             check(game.bombPlanted_, "PIX-33 defuse incomplete before deadline");
-            game.UpdateObjective(.11f, true, nullptr);
+            StepObjective(game, .11f, true, nullptr);
             check(!game.bombPlanted_, "PIX-33 defuse succeeds at deadline");
         }
         SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
@@ -3268,17 +3281,17 @@ struct CS2DGameTestAccess {
         check(!Mix_Playing(2) && Mix_Playing(3), "round2 cancelling one participant preserves another participant audio");
         int effectChannel = audio.PlaySoundTracked(SoundEffect::PICKUP);
         check(effectChannel >= 12, "round2 ordinary sounds cannot reuse objective participant channels");
-        game.player_.alive = true;
-        game.player_.defuseProgress = .5f;
-        game.player_.defuseChannel = audio.PlaySoundTracked(SoundEffect::BOMB_DEFUSING,2);
-        game.OnCombatantKilled(game.player_,nullptr);
-        check(!Mix_Playing(2) && Mix_Playing(3) && game.player_.defuseProgress == 0,
+        game.actors_[0].alive = true;
+        game.actors_[0].defuseProgress = .5f;
+        game.actors_[0].defuseChannel = audio.PlaySoundTracked(SoundEffect::BOMB_DEFUSING,2);
+        game.OnCombatantKilled(game.actors_[0],nullptr);
+        check(!Mix_Playing(2) && Mix_Playing(3) && game.actors_[0].defuseProgress == 0,
               "round2 death without an audio argument stops only the victim defuse voice");
         audio.StopChannel(botChannel);
         audio.StopChannel(effectChannel);
     }
 
-    static void Move(CS2DGame& game) { game.UpdatePlayerMovement(1.0f/60, false, false, false, true, false); }
+    static void Move(CS2DGame& game) { game.UpdatePlayerMovement(game.LocalActor(), 1.0f/60, false, false, false, true, false); }
     static void TestBotScopeMovement() {
         CS2DGame game;
         if (!LoadDeathMatch(game)) return;
@@ -3287,11 +3300,11 @@ struct CS2DGameTestAccess {
         data.tileWidth = data.tileHeight = 8;
         game.GetWorld().Build(data);
         game.pathFinder_.Build(game.GetWorld(), Tuning::PathAgentRadius);
-        auto& bot = game.GetBOTs().front();
+        auto& bot = game.GetActors()[1];
         bot.SetSlotWeapon(0, WeaponId::AWP);
         bot.weaponSlot = 0;
         bot.stealth = false;
-        auto& ai = game.AiAt(0);
+        auto& ai = game.AiAt(1);
         bot.x = bot.y = 100;
         ai.scoped = false;
         game.FollowPathTo(bot, ai, 600, 100, 1.0f/60);
@@ -3312,10 +3325,11 @@ struct CS2DGameTestAccess {
         data.mapHeight = 40;
         data.tileWidth = data.tileHeight = 8;
         game.GetWorld().Build(data);
-        game.GetBOTs().resize(1);
-        game.ResetBotAi(0);
+        game.GetActors().resize(2);
+        game.EnsureBotAi();
+        game.ResetBotAi(1);
         auto& player = game.GetPlayer();
-        auto& bot = game.GetBOTs()[0];
+        auto& bot = game.GetActors()[1];
         player.alive = bot.alive = true;
         player.team = Team::CT;
         bot.team = Team::T;
@@ -3416,9 +3430,8 @@ struct CS2DGameTestAccess {
         game.SetRngSeed(47);
         game.SetMatchMode(MatchMode::DeathMatch);
         if (!game.LoadMap(MapPath(), nullptr, true)) return;
-        game.bots_.clear();
-        game.botAi_.clear();
-        auto& player = game.player_;
+        ClearBots(game);
+        auto& player = game.actors_[0];
         player.health = player.maxHealth = 100000;
         player.alive = true;
         // 用一面 200×100 瓦片的空地图替换世界，保证有一条干净的 1600 px 直线
@@ -3443,20 +3456,19 @@ struct CS2DGameTestAccess {
         target.size = Tuning::PlayerSize;
         target.spriteKey = 0;
         target.aimAngle = Tuning::Pi;   // 面向射手，命中盒完整
-        game.bots_.push_back(target);
-        game.botAi_.emplace_back();
+        AddBot(game, target);
 
         game.bullets_.clear();
         game.FireBullet(player.x, player.y, std::atan2(dirY, dirX),
-                        WeaponDB::Get(WeaponId::AWP), -1, player.team);
+                        WeaponDB::Get(WeaponId::AWP), 0, player.team);
         // 按 60fps 推进：AWP 每帧约 93 px，扫掠检测必须在到达目标前登记命中
         int framesToHit = -1;
         for (int frame = 0; frame < 60; ++frame) {
             game.UpdateBullets(1.0f / 60.0f, nullptr);
-            if (game.bots_[0].health < 100000) { framesToHit = frame + 1; break; }
+            if (Bot(game, 0).health < 100000) { framesToHit = frame + 1; break; }
             if (game.bullets_.empty()) break;
         }
-        check(game.bots_[0].health < 100000,
+        check(Bot(game, 0).health < 100000,
               "PIX-36 AWP 5600 px/s hits a distant target without tunneling");
         check(framesToHit > 0 && framesToHit <= 30,
               "PIX-36 AWP reaches a 1600 px target within the expected sub-second flight time");
@@ -3472,16 +3484,16 @@ struct CS2DGameTestAccess {
         CS2DGame stepGame;
         stepGame.SetMatchMode(MatchMode::DeathMatch);
         if (stepGame.LoadMap(MapPath(), nullptr, true)) {
-            stepGame.bots_.clear(); stepGame.botAi_.clear();
+            ClearBots(stepGame);
             CS2DMapData open2;
             open2.mapWidth = 200; open2.mapHeight = 100;
             open2.tileWidth = open2.tileHeight = 16;
             stepGame.world_->Build(open2);
             stepGame.visibility_.SetWorld(stepGame.world_.get());
-            stepGame.player_.x = 240.0f; stepGame.player_.y = 240.0f;
+            stepGame.actors_[0].x = 240.0f; stepGame.actors_[0].y = 240.0f;
             stepGame.bullets_.clear();
-            stepGame.FireBullet(stepGame.player_.x, stepGame.player_.y, 0.0f,
-                                WeaponDB::Get(WeaponId::AWP), -1, stepGame.player_.team);
+            stepGame.FireBullet(stepGame.actors_[0].x, stepGame.actors_[0].y, 0.0f,
+                                WeaponDB::Get(WeaponId::AWP), 0, stepGame.actors_[0].team);
             check(!stepGame.bullets_.empty() && stepGame.bullets_.front().maxDist ==
                       WeaponDB::Get(WeaponId::AWP).range,
                   "PIX-36 AWP bullet carries the AWP range");
@@ -3562,9 +3574,8 @@ struct CS2DGameTestAccess {
         CS2DGame game;
         game.SetMatchMode(MatchMode::BombDefusal);
         if (!game.LoadMap(MapPath(), nullptr, true)) return;
-        game.player_.team = Team::CT;
-        game.bots_.clear();
-        game.botAi_.clear();
+        game.actors_[0].team = Team::CT;
+        ClearBots(game);
         for (int i = 0; i < 2; ++i) {
             CS2DGame::Player mate;
             mate.team = Team::CT;
@@ -3573,11 +3584,10 @@ struct CS2DGameTestAccess {
             mate.x = 400.0f + i * 40.0f;
             mate.y = 400.0f;
             mate.aimAngle = (i == 0) ? 0.0f : Tuning::Pi;   // 两人朝向相反
-            game.bots_.push_back(mate);
-            game.botAi_.emplace_back();
+            AddBot(game, mate);
         }
         game.specMode_ = CS2DGame::SpectateMode::Free;
-        game.specTarget_ = 0;
+        game.specTarget_ = 1;
         game.specFreeX_ = 380.0f;
         game.specFreeY_ = 400.0f;
         VisibilityQuery::Observer observers[VisibilityQuery::kMaxObservers];
@@ -3599,8 +3609,8 @@ struct CS2DGameTestAccess {
             unionQuery.SetConeAngleDeg(Tuning::VisionConeDeg);
             return unionQuery.ComputeVisibilityUnion(observers, count, 700.0f, 400.0f);
         }();
-        game.specTarget_ = 1;
-        game.bots_[1].aimAngle = -Tuning::Pi * 0.5f;
+        game.specTarget_ = 2;
+        Bot(game, 1).aimAngle = -Tuning::Pi * 0.5f;
         VisibilityQuery::Observer observers2[VisibilityQuery::kMaxObservers];
         const std::size_t count2 = game.CollectFreeSpectateObservers(observers2,
                                                                     VisibilityQuery::kMaxObservers);
@@ -3633,9 +3643,8 @@ struct CS2DGameTestAccess {
         CS2DGame game;
         game.SetMatchMode(MatchMode::DeathMatch);
         if (!game.LoadMap(MapPath(), nullptr, true)) return;
-        game.bots_.clear();
-        game.botAi_.clear();
-        auto& player = game.player_;
+        ClearBots(game);
+        auto& player = game.actors_[0];
         player.health = player.maxHealth = 100000;
         player.alive = true;
         player.stealth = false;
@@ -3655,9 +3664,7 @@ struct CS2DGameTestAccess {
         for (int frame = 0; frame < frames; ++frame) {
             player.x += stepDistance;
             walked += stepDistance;
-            observed += game.AccumulateFootstep(player, game.footstepStride_,
-                                                game.footstepLastX_, game.footstepLastY_,
-                                                game.footstepLastValid_, nullptr, false);
+            observed += game.AccumulateFootstep(player, nullptr, false);
         }
         const float expectedSteps = walked / Tuning::FootstepStride;
         check(std::fabs(walked - 560.0f) < 0.001f, "PIX-36 walked exactly 560 px (20 strides)");
@@ -3668,12 +3675,9 @@ struct CS2DGameTestAccess {
 
         // 单帧最多 2 步：一次瞬移 5 个步幅只允许触发 2 步（防卡顿后连响）
         game.ResetFootstepStride();
-        game.AccumulateFootstep(player, game.footstepStride_, game.footstepLastX_,
-                                game.footstepLastY_, game.footstepLastValid_, nullptr, false);
+        game.AccumulateFootstep(player, nullptr, false);
         player.x += Tuning::FootstepStride * 5.0f;
-        const int burst = game.AccumulateFootstep(player, game.footstepStride_,
-                                                  game.footstepLastX_, game.footstepLastY_,
-                                                  game.footstepLastValid_, nullptr, false);
+        const int burst = game.AccumulateFootstep(player, nullptr, false);
         check(burst <= Tuning::FootstepMaxPerFrame,
               "PIX-36 a single frame never emits more than the per-frame step cap");
 
@@ -3683,9 +3687,7 @@ struct CS2DGameTestAccess {
         player.vx = 120.0f;   // 速度不为零，但位置不变（顶墙）
         int wallSteps = 0;
         for (int frame = 0; frame < 120; ++frame) {
-            wallSteps += game.AccumulateFootstep(player, game.footstepStride_,
-                                                 game.footstepLastX_, game.footstepLastY_,
-                                                 game.footstepLastValid_, nullptr, false);
+            wallSteps += game.AccumulateFootstep(player, nullptr, false);
         }
         check(wallSteps == 0, "PIX-36 pushing into a wall (speed but no displacement) never emits a step");
 
@@ -3696,11 +3698,9 @@ struct CS2DGameTestAccess {
         int stealthSteps = 0;
         for (int frame = 0; frame < 60; ++frame) {
             player.x += 50.0f / 60.0f;
-            stealthSteps += game.AccumulateFootstep(player, game.footstepStride_,
-                                                    game.footstepLastX_, game.footstepLastY_,
-                                                    game.footstepLastValid_, nullptr, false);
+            stealthSteps += game.AccumulateFootstep(player, nullptr, false);
         }
-        check(stealthSteps == 0 && game.footstepStride_ == 0.0f,
+        check(stealthSteps == 0 && player.footstepStride == 0.0f,
               "PIX-36 stealth never accumulates stride and stays silent");
         player.stealth = false;
 
@@ -3714,7 +3714,7 @@ struct CS2DGameTestAccess {
             float total = 0.0f;
             for (int frame = 0; frame < static_cast<int>(seconds * 60.0f); ++frame) {
                 const float bx = player.x, by = player.y;
-                game.UpdatePlayerMovement(1.0f / 60.0f, false, false, false, true, false);
+                game.UpdatePlayerMovement(player, 1.0f / 60.0f, false, false, false, true, false);
                 total += std::hypot(player.x - bx, player.y - by);
             }
             game.scopeLevel_ = 0;
@@ -3726,8 +3726,7 @@ struct CS2DGameTestAccess {
               "PIX-36 scoped movement covers less ground so the step cadence slows down");
 
         // ---- BOT 同一套：各自累计器，步频 ≈ 移速 / 28 ----
-        game.bots_.clear();
-        game.botAi_.clear();
+        ClearBots(game);
         CS2DGame::Player bot;
         bot.team = Team::T;
         bot.alive = true;
@@ -3736,30 +3735,24 @@ struct CS2DGameTestAccess {
         bot.x = 600.0f; bot.y = 600.0f;
         bot.vx = 120.0f;
         bot.spriteKey = 0;
-        game.bots_.push_back(bot);
-        game.botAi_.emplace_back();
-        game.botAi_[0].footstepStride = 0.0f;
-        game.botAi_[0].footstepLastValid = false;
+        auto& botActor = AddBot(game, bot);
+        botActor.footstepStride = 0.0f;
+        botActor.footstepLastValid = false;
         int botSteps = 0;
         float botWalked = 0.0f;
         for (int frame = 0; frame < 120; ++frame) {
-            game.bots_[0].x += 120.0f / 60.0f;
+            botActor.x += 120.0f / 60.0f;
             botWalked += 120.0f / 60.0f;
-            botSteps += game.AccumulateFootstep(game.bots_[0], game.botAi_[0].footstepStride,
-                                                game.botAi_[0].footstepLastX,
-                                                game.botAi_[0].footstepLastY,
-                                                game.botAi_[0].footstepLastValid, nullptr, true);
+            botSteps += game.AccumulateFootstep(botActor, nullptr, true);
         }
         // 2 秒 × 120 px/s = 240 px → 240/28 ≈ 8.57 → 8..9 步
         const float expectedBotSteps = botWalked / Tuning::FootstepStride;
         check(std::abs(static_cast<float>(botSteps) - expectedBotSteps) <= 1.0f,
               "PIX-36 a BOT's step cadence follows its own speed / stride");
         // BOT 阵亡后累计器清零
-        game.bots_[0].alive = false;
-        game.AccumulateFootstep(game.bots_[0], game.botAi_[0].footstepStride,
-                                game.botAi_[0].footstepLastX, game.botAi_[0].footstepLastY,
-                                game.botAi_[0].footstepLastValid, nullptr, true);
-        check(game.botAi_[0].footstepStride == 0.0f && !game.botAi_[0].footstepLastValid,
+        botActor.alive = false;
+        game.AccumulateFootstep(botActor, nullptr, true);
+        check(botActor.footstepStride == 0.0f && !botActor.footstepLastValid,
               "PIX-36 a dead BOT resets its stride accumulator");
     }
 
@@ -3770,25 +3763,23 @@ struct CS2DGameTestAccess {
         game.SetMatchMode(MatchMode::BombDefusal);
         if (!game.LoadMap(MapPath(), nullptr, true)) return;
         // T 方玩家 + 一名 CT 队友在 5 人里：直接构造拆包者
-        game.player_.team = Team::T;
-        game.bots_.clear();
-        game.botAi_.clear();
+        game.actors_[0].team = Team::T;
+        ClearBots(game);
         CS2DGame::Player defuser;
         defuser.team = Team::CT;
         defuser.alive = true;
         defuser.name = "CT-defuser";
         defuser.x = 400.0f; defuser.y = 400.0f;
         defuser.defuseProgress = 0.4f;
-        game.bots_.push_back(defuser);
-        game.botAi_.emplace_back();
+        AddBot(game, defuser);
         game.bombPlanted_ = true;
-        game.activeDefuser_ = 0;
+        game.activeDefuser_ = 1;
         game.defuseProgress_ = 0.4f;
         game.defuseRemaining_ = 6.0f;
         check(!game.IsDefuseVisibleToViewer(),
               "PIX-36 a T-side viewer cannot see an enemy defuse");
         // CT 观看者 → 可见
-        game.player_.team = Team::CT;
+        game.actors_[0].team = Team::CT;
         check(game.IsDefuseVisibleToViewer(),
               "PIX-36 a CT-side viewer sees their teammate's defuse");
         // 无人拆包 → 不可见
@@ -3797,17 +3788,17 @@ struct CS2DGameTestAccess {
               "PIX-36 no progress means nothing is visible");
         // 观战：阵亡玩家仍按自己的阵营判断
         game.defuseProgress_ = 0.4f;
-        game.player_.alive = false;
-        game.player_.team = Team::CT;
+        game.actors_[0].alive = false;
+        game.actors_[0].team = Team::CT;
         check(game.IsDefuseVisibleToViewer(),
               "PIX-36 a dead CT spectator still sees the defuse (own team)");
-        game.player_.team = Team::T;
+        game.actors_[0].team = Team::T;
         check(!game.IsDefuseVisibleToViewer(),
               "PIX-36 a dead T spectator cannot see the defuse (own team)");
-        // 玩家本人拆包（activeDefuser_ == -1）→ 自己阵营自然可见；对手侧看不到
-        game.player_.alive = true;
-        game.player_.team = Team::CT;
-        game.activeDefuser_ = -1;
+        // 玩家本人拆包（activeDefuser_ == 0）→ 自己阵营自然可见；对手侧看不到
+        game.actors_[0].alive = true;
+        game.actors_[0].team = Team::CT;
+        game.activeDefuser_ = 0;
         check(game.IsDefuseVisibleToViewer(), "PIX-36 the defuser himself sees his own progress");
         // HUD 层：不可见时整行不画、横幅位置也恒定
         GameUI::InGameCtx hidden;
@@ -3976,9 +3967,9 @@ struct CS2DGameTestAccess {
         check(ct.changesThisRound == 0, "PIX-37 T05 new round clears intent budget");
 
         std::vector<size_t> teammates;
-        for (size_t i = 0; i < game.bots_.size(); ++i) {
-            auto& bot = game.bots_[i];
-            if (bot.team != Team::CT || !bot.alive) continue;
+        for (size_t i = 1; i < game.actors_.size(); ++i) {
+            auto& bot = game.actors_[i];
+            if (!bot.IsBot() || bot.team != Team::CT || !bot.alive) continue;
             teammates.push_back(i);
             bot.SetSlotWeapon(0, WeaponId::AK47);
             bot.money = 4000;
@@ -3987,21 +3978,21 @@ struct CS2DGameTestAccess {
         check(teammates.size() >= 3, "PIX-37 fixture has at least three CT bots");
         if (teammates.size() < 3) return;
         const size_t sniper = teammates.front(), poorest = teammates.back(), entry = teammates[1];
-        game.bots_[sniper].SetSlotWeapon(0, WeaponId::AWP);
-        game.bots_[entry].SetSlotWeapon(0, WeaponId::SSG08);
+        game.actors_[sniper].SetSlotWeapon(0, WeaponId::AWP);
+        game.actors_[entry].SetSlotWeapon(0, WeaponId::SSG08);
         game.AiAt(sniper).difficulty = 2;
         game.AiAt(entry).difficulty = 3;
-        game.bots_[poorest].money = 0;
+        game.actors_[poorest].money = 0;
         ct.plan = {};
         ct.plan.valid = true;
         ct.plan.slots[0].role = CoachRole::Entry;
         ct.plan.slots[2].role = CoachRole::Awper;
         game.CoachApplyPlan(Team::CT);
-        check(game.squad_[sniper].role == BotRole::Awper && game.squad_[entry].role == BotRole::Entry,
+        check(game.actorSquad_[sniper].role == BotRole::Awper && game.actorSquad_[entry].role == BotRole::Entry,
               "PIX-37 T22 reserves the only AWP holder for a later Awper slot");
         ct.plan.intent = PlanIntent::Save;
         game.CoachApplyPlan(Team::CT);
-        check(game.squad_[poorest].role == BotRole::Entry && !game.squad_[poorest].canTrade &&
+        check(game.actorSquad_[poorest].role == BotRole::Entry && !game.actorSquad_[poorest].canTrade &&
               game.AiAt(poorest).hasPlanHold, "PIX-37 T22 lowest balance gets first Save assignment");
 
         const auto* slots = game.tactics_.Slots("CT", "StackA@A");
@@ -4009,8 +4000,7 @@ struct CS2DGameTestAccess {
         check(slots && anchor, "PIX-37 Mirage rule flank template and Palace anchor load");
         if (!slots || !anchor) return;
         // Keep a single active BOT so the trace measures the rule route without enemy contact.
-        for (size_t i = 0; i < game.bots_.size(); ++i) game.bots_[i].alive = i == sniper;
-        game.player_.alive = false;
+        for (size_t i = 0; i < game.actors_.size(); ++i) game.actors_[i].alive = (i == sniper);
         ct.plan = {};
         ct.plan.valid = true;
         ct.plan.intent = PlanIntent::StackA;
@@ -4023,12 +4013,12 @@ struct CS2DGameTestAccess {
         if (lurk == slots->end()) return;
         ct.plan.slots[0] = *lurk;
         game.CoachApplyPlan(Team::CT);
-        auto& bot = game.bots_[sniper];
+        auto& bot = game.actors_[sniper];
         auto& ai = game.AiAt(sniper);
         auto distance = [&] { return std::hypot(bot.x - anchor->first, bot.y - anchor->second); };
         check(ai.hasPlanHold && ai.planHoldX == anchor->first && ai.planHoldY == anchor->second,
               "PIX-37 T24 rule plan uses the configured flank anchor");
-        check(game.squad_[sniper].role == BotRole::Lurk && ai.goalArea == "Palace" &&
+        check(game.actorSquad_[sniper].role == BotRole::Lurk && ai.goalArea == "Palace" &&
               ai.holdStyle == static_cast<int>(HoldStyle::Passive), "PIX-37 T26 Lurk receives passive flank order");
         const float initialDistance = distance();
         game.lastDeathTeam_ = Team::CT;
@@ -4108,7 +4098,7 @@ struct CS2DGameTestAccess {
         game.round_.Update(game.round_.Config().freezeTime);
         game.round_.Update(game.round_.Config().buyTime);
         game.clockSec_ = 25.0f;
-        game.bombCarrier_ = -1;
+        game.bombCarrier_ = 0;
         game.bombDropped_ = false;
         const auto& site = game.world_->GetBombSites().front();
         game.intel_.OnEnemySeen(site.cx, site.cy, game.clockSec_);
@@ -4224,9 +4214,8 @@ struct CS2DGameTestAccess {
         CS2DGame game;
         game.SetMatchMode(MatchMode::BombDefusal);
         if (!game.LoadMap(MapPath(), nullptr, true)) return;
-        game.player_.team = Team::CT;
-        game.bots_.clear();
-        game.botAi_.clear();
+        game.actors_[0].team = Team::CT;
+        ClearBots(game);
         game.bombPlanted_ = true;
         game.bombX_ = 400.0f;
         game.bombY_ = 400.0f;
@@ -4333,7 +4322,7 @@ struct CS2DGameTestAccess {
         CS2DGame game;
         game.SetMatchMode(MatchMode::BombDefusal);
         if (!game.LoadMap(MapPath(), nullptr, true)) return;
-        game.player_.alive = true;
+        game.actors_[0].alive = true;
         // 冻结阶段：不能移动
         game.round_.Reset(RoundConfig{});
         check(game.round_.IsFrozen(), "PIX-37 round starts frozen");
@@ -4344,7 +4333,7 @@ struct CS2DGameTestAccess {
         game.aimMotionBlur_ = 5.0f;
         game.crosshairBloom_ = 1.0f;
         for (int frame = 0; frame < 40; ++frame) {
-            game.Update(1.0f / 60.0f, false, game.player_.x + 80, game.player_.y,
+            game.Update(1.0f / 60.0f, false, game.actors_[0].x + 80, game.actors_[0].y,
                         false, false, false, false, false, false, false, nullptr);
         }
         check(game.GetAimMotionBlur() < 0.05f,
@@ -4464,9 +4453,8 @@ struct CS2DGameTestAccess {
         CS2DGame game;
         game.SetMatchMode(MatchMode::BombDefusal);
         if (!game.LoadMap(MapPath(), nullptr, true)) return;
-        game.player_.team = Team::T;
-        game.bots_.clear();
-        game.botAi_.clear();
+        game.actors_[0].team = Team::T;
+        ClearBots(game);
 
         CS2DGame::Player carrier;
         carrier.team = Team::T;
@@ -4475,11 +4463,10 @@ struct CS2DGameTestAccess {
         carrier.x = 400.0f; carrier.y = 400.0f;
         carrier.aimAngle = 0.0f;
         carrier.spriteKey = 1;
-        game.bots_.push_back(carrier);
-        game.botAi_.emplace_back();
-        game.bombCarrier_ = 0;
+        AddBot(game, carrier);
+        game.bombCarrier_ = 1;
 
-        check(game.ActorHasC4(game.bots_[0]),
+        check(game.ActorHasC4(Bot(game, 0)),
               "PIX-37 the designated BOT is recognised as the C4 carrier");
 
         // 雷达：携带者应产出 Carrier 形状的圆点（渲染层已改为小 C4 图标）
@@ -4736,9 +4723,8 @@ struct CS2DGameTestAccess {
         CS2DGame game;
         game.SetMatchMode(MatchMode::BombDefusal);
         if (!game.LoadMap(MapPath(), nullptr, true)) return;
-        game.player_.team = Team::T;
-        game.bots_.clear();
-        game.botAi_.clear();
+        game.actors_[0].team = Team::T;
+        ClearBots(game);
 
         CS2DGame::Player mate;
         mate.team = Team::T;
@@ -4746,11 +4732,10 @@ struct CS2DGameTestAccess {
         mate.name = "mate";
         mate.x = 400.0f; mate.y = 400.0f;
         mate.spriteKey = 1;
-        game.bots_.push_back(mate);
-        game.botAi_.emplace_back();
+        AddBot(game, mate);
 
         // 无烟：alpha 满
-        const auto clear = game.MakeActorDrawParams(game.bots_[0], &game.player_);
+        const auto clear = game.MakeActorDrawParams(Bot(game, 0), &game.actors_[0]);
         check(clear.alpha == 255, "PIX-38 without smoke the actor is fully opaque");
 
         // 中心浓烟：alpha 显著下降，但不需要靠可见性过滤
@@ -4760,7 +4745,7 @@ struct CS2DGameTestAccess {
         s.age = 3.0f; s.expandTime = 1.6f;
         s.life = 12.0f; s.maxLife = 12.0f;
         game.smokes_.push_back(s);
-        const auto inSmoke = game.MakeActorDrawParams(game.bots_[0], &game.player_);
+        const auto inSmoke = game.MakeActorDrawParams(Bot(game, 0), &game.actors_[0]);
         check(inSmoke.alpha < clear.alpha,
               "PIX-38 a smoked actor gets a reduced alpha instead of disappearing");
         check(inSmoke.alpha > 0,
@@ -4776,21 +4761,21 @@ struct CS2DGameTestAccess {
         // 边缘比中心可见度更高（渐隐随稀疏程度变化）
         const float edgeAlpha =
             [&] {
-                game.bots_[0].x = 400.0f + Tuning::SmokeEffectiveRadius(s.radius, s.age, s.expandTime, s.life) * 0.95f;
-                return game.MakeActorDrawParams(game.bots_[0], &game.player_).alpha;
+                Bot(game, 0).x = 400.0f + Tuning::SmokeEffectiveRadius(s.radius, s.age, s.expandTime, s.life) * 0.95f;
+                return game.MakeActorDrawParams(Bot(game, 0), &game.actors_[0]).alpha;
             }();
         check(edgeAlpha > inSmoke.alpha,
               "PIX-38 the smoke edge keeps the actor more visible than the centre");
 
         // 烟散：alpha 回升（渐显）
-        game.bots_[0].x = 400.0f;
+        Bot(game, 0).x = 400.0f;
         game.smokes_[0].life = 0.03f;
-        const auto dispersing = game.MakeActorDrawParams(game.bots_[0], &game.player_);
+        const auto dispersing = game.MakeActorDrawParams(Bot(game, 0), &game.actors_[0]);
         check(dispersing.alpha > inSmoke.alpha,
               "PIX-38 the actor becomes visible again as the smoke dissipates");
 
         game.smokes_.clear();
-        check(game.MakeActorDrawParams(game.bots_[0], &game.player_).alpha == 255,
+        check(game.MakeActorDrawParams(Bot(game, 0), &game.actors_[0]).alpha == 255,
               "PIX-38 clearing the smoke restores full opacity");
     }
 
@@ -4935,7 +4920,8 @@ struct CS2DGameTestAccess {
 static void TestScopeBoundsAndMovement() {
     CS2DGame game;
     if (!LoadDeathMatch(game)) return;
-    game.GetBOTs().clear();
+    game.GetActors().resize(1);
+    game.EnsureBotAi();
     CS2DMapData open;
     open.mapWidth = 400;
     open.mapHeight = 400;

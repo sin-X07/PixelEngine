@@ -149,20 +149,18 @@ std::vector<CS2DRenderer::RadarDot> CS2DOverlay::CollectRadarDots(const CS2DGame
     std::vector<CS2DRenderer::RadarDot> dots;
     if (game.IsDeathMatch()) return dots;
     const Team myTeam = game.GetPlayer().team;
-    const auto& bots = game.GetBOTs();
-    const int carrier = game.GetBombCarrierId();
-    for (size_t i = 0; i < bots.size(); ++i) {
-        const auto& bot = bots[i];
-        if (!bot.alive || bot.team != myTeam) continue;
-        if (static_cast<int>(i) != carrier)
-            dots.push_back({bot.x, bot.y, 90, 220, 130});
+    const ActorId localId = game.GetLocalActorId();
+    const ActorId carrier = game.GetBombCarrierId();
+    for (const auto& actor : game.GetActors()) {
+        if (!actor.IsActive() || !actor.alive || actor.team != myTeam || actor.id == localId) continue;
+        if (actor.id != carrier)
+            dots.push_back({actor.x, actor.y, 90, 220, 130});
     }
     for (const auto& contact : game.GetContactsOfTeam(myTeam)) {
         if (contact.age > Tuning::RadarFadeEnd) continue;
         const auto alpha = static_cast<Uint8>(255.0f * std::clamp(
             (Tuning::RadarFadeEnd - contact.age) / (Tuning::RadarFadeEnd - Tuning::RadarFadeStart), 0.0f, 1.0f));
-        if (carrier != -2 && contact.id == carrier) {
-            // 使用上次目击坐标和同一衰减，不通过持包标记跟踪失去视野的敌人。
+        if (carrier != kInvalidActorId && contact.id == carrier) {
             dots.push_back({contact.x, contact.y, 255, 170, 60, alpha, Shape::Carrier});
         } else {
             dots.push_back({contact.x, contact.y, 235, 75, 70, alpha});

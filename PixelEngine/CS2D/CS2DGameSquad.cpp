@@ -12,36 +12,40 @@
 // ============================================================================
 
 void CS2DGame::EnsureBotAi() {
-    if (botAi_.size() != bots_.size()) botAi_.resize(bots_.size());
+    const size_t n = actors_.size();
+    for (size_t i = 0; i < n; ++i) {
+        actors_[i].id = static_cast<ActorId>(i);
+    }
+    if (actorAi_.size() != n) actorAi_.resize(n);
+    if (actorSquad_.size() != n) actorSquad_.resize(n);
+    if (roleChangedAt_.size() != n) roleChangedAt_.assign(n, -100.0f);
+    if (roleFromMul_.size() != n) roleFromMul_.assign(n, Tuning::SpeedMulSupport);
 }
 
 CS2DGame::BotRuntime& CS2DGame::AiAt(size_t i) {
     EnsureBotAi();
-    if (botAi_.empty()) { static BotRuntime fallback; return fallback; }
-    if (i >= botAi_.size()) i = botAi_.size() - 1;
-    return botAi_[i];
+    if (actorAi_.empty()) { static BotRuntime fallback; return fallback; }
+    if (i >= actorAi_.size()) i = actorAi_.size() - 1;
+    return actorAi_[i];
 }
 
 const CS2DGame::BotRuntime& CS2DGame::AiAt(size_t i) const {
-    if (botAi_.empty()) { static const BotRuntime fallback; return fallback; }
-    if (i >= botAi_.size()) i = botAi_.size() - 1;
-    return botAi_[i];
+    if (actorAi_.empty()) { static const BotRuntime fallback; return fallback; }
+    if (i >= actorAi_.size()) i = actorAi_.size() - 1;
+    return actorAi_[i];
 }
 
 size_t CS2DGame::AiIndexOf(const Player& p) const {
-    if (bots_.empty()) return 0;
-    const Player* base = bots_.data();
-    const Player* ptr  = &p;
-    if (ptr < base || ptr >= base + bots_.size()) return 0;
-    return static_cast<size_t>(ptr - base);
+    const ActorId id = ActorIdOf(p);
+    return id >= 0 ? static_cast<size_t>(id) : 0;
 }
 
 void CS2DGame::ResetBotAi(size_t i) {
     EnsureBotAi();
-    if (i < botAi_.size()) {
-        const int difficulty = botAi_[i].difficulty;
-        botAi_[i] = BotRuntime{};
-        botAi_[i].difficulty = difficulty;
+    if (i < actorAi_.size()) {
+        const int difficulty = actorAi_[i].difficulty;
+        actorAi_[i] = BotRuntime{};
+        actorAi_[i].difficulty = difficulty;
     }
 }
 
@@ -193,8 +197,8 @@ const std::vector<CS2DGame::EnemyContact>& CS2DGame::ContactsOf(Team t) const {
     return (t == Team::T) ? contactsT_ : contactsCT_;
 }
 
-void CS2DGame::ReportContact(Team team, int id, float x, float y) {
-    if (team == Team::None) return;
+void CS2DGame::ReportContact(Team team, ActorId id, float x, float y) {
+    if (team == Team::None || id == kInvalidActorId) return;
 
     auto& list = ContactsOf(team);
     for (auto& c : list) {
@@ -215,14 +219,8 @@ const CS2DGame::EnemyContact* CS2DGame::FindNearestContact(Team team, float x, f
     float bestD2 = 1e18f;
 
     for (const auto& c : list) {
-        // 目标必须仍然存活，否则情报作废
-        bool aliveTarget = false;
-        if (c.id == -1) {
-            aliveTarget = player_.alive && player_.team != team;
-        } else if (c.id >= 0 && c.id < static_cast<int>(bots_.size())) {
-            aliveTarget = bots_[c.id].alive && bots_[c.id].team != team;
-        }
-        if (!aliveTarget) continue;
+        const Player* target = FindActor(c.id);
+        if (!target || !target->IsActive() || !target->alive || target->team == team) continue;
 
         const float dx = c.x - x;
         const float dy = c.y - y;
@@ -232,8 +230,7 @@ const CS2DGame::EnemyContact* CS2DGame::FindNearestContact(Team team, float x, f
     return best;
 }
 
-// 每帧：情报老化 + 各 BOT 在探点半径内上报
-
+// 每帧：情报老化 + 全体存活单位上报视野内敌情
 void CS2DGame::UpdateTeamContacts(float dt) {
     for (int side = 0; side < 2; ++side) {
         auto& list = (side == 0) ? contactsT_ : contactsCT_;
@@ -243,33 +240,17 @@ void CS2DGame::UpdateTeamContacts(float dt) {
                    list.end());
     }
 
-    for (size_t i = 0; i < bots_.size(); ++i) {
-        const Player& b = bots_[i];
-        if (!b.alive) continue;
-        if (AiAt(i).blindTimer > 0.0f) continue;   // 致盲：看不见任何东西，也无法上报情报
+    for (size_t i = 0; i < actors_.size(); ++i) {
+        const Player& observer = actors_[i];
+        if (!observer.IsActive() || !observer.alive) continue;
+        if (observer.flashTimer > 0.0f) continue;   // 致盲：看不见任何东西，也无法上报情报
 
-        auto scan = [&](const Player& e, int id) {
-            if (!e.alive || e.team == b.team) return;
-
-            if (!CanSeeActor(b, e)) return;
-
-            ReportContact(b.team, id, e.x, e.y);
-        };
-
-        scan(player_, -1);
-        for (size_t j = 0; j < bots_.size(); ++j) {
+        for (size_t j = 0; j < actors_.size(); ++j) {
             if (j == i) continue;
-            scan(bots_[j], static_cast<int>(j));
-        }
-    }
-
-    // 玩家自己的视野同样接入情报网：他看到的人立刻共享给所有队友（雷达/集火都会用）
-    if (player_.alive && flashTimer_ <= 0.0f) {
-        for (size_t j = 0; j < bots_.size(); ++j) {
-            const Player& e = bots_[j];
-            if (!e.alive || e.team == player_.team) continue;
-            if (!PlayerCanSeeBot(e)) continue;      // 距离 + 视野扇形 + 烟雾 + LOS
-            ReportContact(player_.team, static_cast<int>(j), e.x, e.y);
+            const Player& enemy = actors_[j];
+            if (!enemy.IsActive() || !enemy.alive || enemy.team == observer.team) continue;
+            if (!CanSeeActor(observer, enemy)) continue;
+            ReportContact(observer.team, enemy.id, enemy.x, enemy.y);
         }
     }
 }
@@ -283,6 +264,8 @@ CS2DGame::BodyVisibility CS2DGame::QueryBodyVisibility(const Player &observer, c
         bodyVisibilityClock_ = clockSec_;
         bodyVisibilityTerrain_ = revision;
     }
+    const bool observerIsBot = observer.IsBot();
+    const float observerFlash = observer.flashTimer;
     const std::array<float, 15> signature = {
         observer.x,
         observer.y,
@@ -295,10 +278,10 @@ CS2DGame::BodyVisibility CS2DGame::QueryBodyVisibility(const Player &observer, c
         static_cast<float>(ActorPoseSlot(target)),
         static_cast<float>(target.animState),
         target.animTimer,
-        flashTimer_,
+        observerFlash,
         static_cast<float>(smokes_.size()),
         observer.alive ? 1.f : 0.f,
-        &observer == &player_ ? 0.f : static_cast<float>(AiAt(AiIndexOf(observer)).difficulty)};
+        observerIsBot ? static_cast<float>(AiAt(AiIndexOf(observer)).difficulty) : 0.f};
     for (const auto &entry : bodyVisibilityCache_)
         if (entry.observer == &observer && entry.target == &target && entry.signature == signature)
             return entry.result;
@@ -312,11 +295,9 @@ CS2DGame::BodyVisibility CS2DGame::QueryBodyVisibility(const Player &observer, c
     const float dx=center.x-observer.x, dy=center.y-observer.y;
     const float distance=std::hypot(dx,dy);
     float cone = visibility_.ConeAngleDeg();
-    bool blind = !observer.alive;
-    if (&observer == &player_) blind |= flashTimer_ > 0;
-    else {
-        const auto& ai=AiAt(AiIndexOf(observer));
-        blind |= ai.blindTimer > 0;
+    bool blind = !observer.alive || (observer.flashTimer > 0.0f);
+    if (observerIsBot) {
+        const auto& ai = AiAt(AiIndexOf(observer));
         cone = Tuning::VisionConeDeg * tactics_.perception[std::clamp(ai.difficulty,0,3)].angle;
     }
     cone = std::clamp(cone,1.0f,360.0f);
@@ -423,13 +404,10 @@ bool CS2DGame::CanSeeActor(const Player& observer, const Player& target) const {
 }
 
 bool CS2DGame::CanSeePoint(const Player& observer, float x, float y) const {
-    if (!observer.alive) return false;
+    if (!observer.alive || observer.flashTimer > 0.0f) return false;
     VisibilityQuery query = visibility_;
-    if (&observer == &player_) {
-        if (flashTimer_ > 0.0f) return false;
-    } else {
+    if (observer.IsBot()) {
         const auto& ai = AiAt(AiIndexOf(observer));
-        if (ai.blindTimer > 0.0f) return false;
         const auto& perception = tactics_.perception[std::clamp(ai.difficulty, 0, 3)];
         query.SetVisionRadius(Tuning::VisionRadius * perception.radius);
         query.SetConeAngleDeg(Tuning::VisionConeDeg * perception.angle);
@@ -441,26 +419,18 @@ bool CS2DGame::CanSeePoint(const Player& observer, float x, float y) const {
 
 const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& outDist) const {
     outDist = 0.0f;
-    if (AiAt(AiIndexOf(self)).blindTimer > 0.0f) return nullptr;   // 被闪光致盲，看不到任何人
+    if (self.flashTimer > 0.0f) return nullptr;   // 被闪光致盲，看不到任何人
 
     const Player* best = nullptr;
     float bestD2 = 1e18f;
 
-    auto consider = [&](const Player& e) {
-        if (!e.alive || !IsHostile(e, self)) return;   // 死斗 FFA：除自己外都是目标
-
+    for (const auto& e : actors_) {
+        if (&e == &self || !e.IsActive() || !e.alive || !IsHostile(e, self)) continue;
         const float dx = e.x - self.x;
         const float dy = e.y - self.y;
         const float d2 = dx * dx + dy * dy;
-        if (!CanSeeActor(self, e)) return;
-
+        if (!CanSeeActor(self, e)) continue;
         if (d2 < bestD2) { bestD2 = d2; best = &e; }
-    };
-
-    consider(player_);
-    for (const auto& b : bots_) {
-        if (&b == &self) continue;
-        consider(b);
     }
 
     outDist = best ? std::sqrt(bestD2) : 0.0f;
@@ -471,15 +441,10 @@ const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& ou
 // 小队协同：分工与集火
 // ============================================================================
 
-// 只补"断档"的角色：某队没有 Entry → 把最靠前的补成 Entry；
-// 没有 Anchor → 把最靠后的补成 Anchor。其它 BOT 的角色保持不动
-// （整队重排会让角色每 2 秒洗牌一次，速度倍率跟着变，表现为来回跑）。
 void CS2DGame::RefreshRolesForTeam(Team t) {
-    if (!world_ || bots_.empty()) return;
-    if (roleChangedAt_.size() != bots_.size()) roleChangedAt_.assign(bots_.size(), -100.0f);
+    if (!world_ || actors_.empty()) return;
+    EnsureBotAi();
 
-    // T25：护栏——补断档前先问教练计划。教练计划缺 Entry/Anchor 是有意的
-    // （如全员 Anchor 的 Save/守包计划）时，不把 Support 提上去。
     const TeamPlan& coachPlan = CoachFor(t).plan;
     if (coachPlan.valid) {
         bool planWantsEntry = false, planWantsAnchor = false;
@@ -487,36 +452,32 @@ void CS2DGame::RefreshRolesForTeam(Team t) {
             if (so.role == CoachRole::Entry)  planWantsEntry = true;
             if (so.role == CoachRole::Anchor) planWantsAnchor = true;
         }
-        // 计划里明确没有任何 Entry 槽位 → 缺 Entry 是有意的，不补。
-        // 计划里明确没有任何 Anchor 槽位 → 缺 Anchor 是有意的，不补。
         if (!planWantsEntry && !planWantsAnchor) return;
     }
 
     int entries = 0, anchors = 0;
-    for (size_t i = 0; i < bots_.size() && i < squad_.size(); ++i) {
-        if (!bots_[i].alive || bots_[i].team != t) continue;
-        if (squad_[i].role == BotRole::Entry)  ++entries;
-        if (squad_[i].role == BotRole::Anchor) ++anchors;
+    for (size_t i = 0; i < actors_.size() && i < actorSquad_.size(); ++i) {
+        if (!actors_[i].IsBot() || !actors_[i].alive || actors_[i].team != t) continue;
+        if (actorSquad_[i].role == BotRole::Entry)  ++entries;
+        if (actorSquad_[i].role == BotRole::Anchor) ++anchors;
     }
     if (entries > 0 && anchors > 0) return;
 
-    // 选候选：Entry 取"最靠前"（离敌方质心最近），Anchor 取"最靠后"，且不在冷却中
     float ex = 0.0f, ey = 0.0f;
     if (!EnemySpawnCentroid(t, ex, ey)) return;
 
     int bestEntry = -1, bestAnchor = -1;
     float bestEntryD2 = 1e18f, bestAnchorD2 = -1.0f;
-    for (size_t i = 0; i < bots_.size() && i < squad_.size(); ++i) {
-        if (!bots_[i].alive || bots_[i].team != t) continue;
+    for (size_t i = 0; i < actors_.size() && i < actorSquad_.size(); ++i) {
+        if (!actors_[i].IsBot() || !actors_[i].alive || actors_[i].team != t) continue;
         if (clockSec_ - roleChangedAt_[i] < Tuning::ai::RoleSwitchCooldown) continue;
-        if (squad_[i].role == BotRole::Entry || squad_[i].role == BotRole::Anchor) continue;
-        const float dx = bots_[i].x - ex, dy = bots_[i].y - ey;
+        if (actorSquad_[i].role == BotRole::Entry || actorSquad_[i].role == BotRole::Anchor) continue;
+        const float dx = actors_[i].x - ex, dy = actors_[i].y - ey;
         const float d2 = dx * dx + dy * dy;
         if (d2 < bestEntryD2)  { bestEntryD2 = d2;  bestEntry = static_cast<int>(i); }
         if (d2 > bestAnchorD2) { bestAnchorD2 = d2; bestAnchor = static_cast<int>(i); }
     }
 
-    // T25：只补教练计划本身要求的角色（缺 Entry 且计划要 Entry 才补）。
     if (coachPlan.valid) {
         bool planWantsEntry = false, planWantsAnchor = false;
         for (const auto& so : coachPlan.slots) {
@@ -554,12 +515,10 @@ void CS2DGame::RefreshSearchAreas() {
 }
 
 void CS2DGame::AssignSquadRoles(bool dynamic) {
-    // 动态重算只更新角色，不动已有驻守点/许可，否则每 2 秒会把计划打散
-    if (!dynamic) squad_.assign(bots_.size(), SquadOrder{});
-    else if (squad_.size() != bots_.size()) squad_.assign(bots_.size(), SquadOrder{});
-    if (bots_.empty() || !world_) return;
+    if (!dynamic) actorSquad_.assign(actors_.size(), SquadOrder{});
+    else EnsureBotAi();
+    if (actors_.empty() || !world_) return;
 
-    // ---- 爆破图：T 分队进攻 A/B，CT 分兵守 A/B/中路 ----
     const auto& sites = world_->GetBombSites();
     const int siteCount = static_cast<int>(sites.size());
     float midX = 0.0f, midY = 0.0f;
@@ -575,17 +534,13 @@ void CS2DGame::AssignSquadRoles(bool dynamic) {
 
     if (!dynamic && mode_ == MatchMode::BombDefusal && siteCount > 0) {
         int tIdx = 0, ctIdx = 0;
-        // P1-5：同包点多 BOT 时取包点内不同锚点——5 名 T 分 2 个包点必有 3 人
-        // 同点，回合开始即刷 duplicate_hold；与已用点 <40px 才环形散开。
-        // （实测：只按序号试角度不够，dup=1 与 dup=2 会落在同一个首个可行走
-        //  环点上；且上一轮计划的旧点不避开会和新点重合——都要用点集避让。）
         std::vector<std::pair<float, float>> usedHoldPts;
-        std::vector<char> holdReassigned(bots_.size(), 0);
+        std::vector<char> holdReassigned(actors_.size(), 0);
         auto collectUsed = [&](size_t self) {
             std::vector<std::pair<float, float>> used = usedHoldPts;
-            for (size_t j = 0; j < bots_.size(); ++j) {
-                if (j == self || !bots_[j].alive) continue;
-                if (holdReassigned[j]) continue;  // 已在本轮重派，旧点失效
+            for (size_t j = 0; j < actors_.size(); ++j) {
+                if (j == self || !actors_[j].IsBot() || !actors_[j].alive) continue;
+                if (holdReassigned[j]) continue;
                 const auto& aj = AiAt(j);
                 if (aj.hasPlanHold) used.emplace_back(aj.planHoldX, aj.planHoldY);
             }
@@ -605,27 +560,26 @@ void CS2DGame::AssignSquadRoles(bool dynamic) {
             usedHoldPts.emplace_back(gx, gy);
             holdReassigned[self] = 1;
         };
-        for (size_t i = 0; i < bots_.size(); ++i) {            Player& b = bots_[i];
+        for (size_t i = 0; i < actors_.size(); ++i) {
+            Player& b = actors_[i];
+            if (!b.IsBot()) continue;
             if (b.team == Team::T) {
-                // T：轮转分配包点，保证 A/B 都有人去
-                // 统一走 SetBotGoal：教练已指定驻守点时不覆盖（GoalSource 优先级）
                 const int site = tIdx % siteCount;
                 ++tIdx;
-                squad_[i].site = site;
+                actorSquad_[i].site = site;
                 float gx = sites[site].cx, gy = sites[site].cy;
                 spreadIfClose(i, gx, gy);
                 SetBotGoal(i, gx, gy, BotRuntime::GoalSource::Squad);
             } else {
-                // CT：A / B / 中路 三线轮转
                 const int slot = ctIdx % (siteCount + 1);
                 ++ctIdx;
                 if (slot < siteCount) {
-                    squad_[i].site = slot;
+                    actorSquad_[i].site = slot;
                     float gx = sites[slot].cx, gy = sites[slot].cy;
                     spreadIfClose(i, gx, gy);
                     SetBotGoal(i, gx, gy, BotRuntime::GoalSource::Squad);
                 } else {
-                    squad_[i].site = -1;             // 中路
+                    actorSquad_[i].site = -1;             // 中路
                     float gx = midX, gy = midY;
                     spreadIfClose(i, gx, gy);
                     SetBotGoal(i, gx, gy, BotRuntime::GoalSource::Squad);
@@ -634,20 +588,19 @@ void CS2DGame::AssignSquadRoles(bool dynamic) {
         }
     }
 
-    // 按阵营分别排序：离敌方质心越近 → 越靠前（Entry）
     {
         auto isSide = [&](int idx, const char* side) {
             return idx >= 0 && idx < siteCount && sites[idx].name == side;
         };
         int tA = 0, tB = 0, ctA = 0, ctB = 0, ctMid = 0;
-        for (size_t i = 0; i < bots_.size() && i < squad_.size(); ++i) {
-            if (!bots_[i].alive || !squad_[i].hasHold) continue;
-            if (bots_[i].team == Team::T) {
-                if (isSide(squad_[i].site, "A")) ++tA;
-                else if (isSide(squad_[i].site, "B")) ++tB;
+        for (size_t i = 0; i < actors_.size() && i < actorSquad_.size(); ++i) {
+            if (!actors_[i].IsBot() || !actors_[i].alive || !actorSquad_[i].hasHold) continue;
+            if (actors_[i].team == Team::T) {
+                if (isSide(actorSquad_[i].site, "A")) ++tA;
+                else if (isSide(actorSquad_[i].site, "B")) ++tB;
             } else {
-                if (isSide(squad_[i].site, "A")) ++ctA;
-                else if (isSide(squad_[i].site, "B")) ++ctB;
+                if (isSide(actorSquad_[i].site, "A")) ++ctA;
+                else if (isSide(actorSquad_[i].site, "B")) ++ctB;
                 else ++ctMid;
             }
         }
@@ -660,17 +613,15 @@ void CS2DGame::AssignSquadRoles(bool dynamic) {
         const Team t = (side == 0) ? Team::T : Team::CT;
 
         std::vector<size_t> members;
-        for (size_t i = 0; i < bots_.size(); ++i) {
-            if (bots_[i].team == t) members.push_back(i);
+        for (size_t i = 0; i < actors_.size(); ++i) {
+            if (actors_[i].IsBot() && actors_[i].team == t) members.push_back(i);
         }
         if (members.empty()) continue;
 
-        // 敌方质心
         float ex = 0.0f, ey = 0.0f;
         int   n  = 0;
-        if (player_.alive && player_.team != t) { ex += player_.x; ey += player_.y; ++n; }
-        for (const auto& b : bots_) {
-            if (b.alive && b.team != t) { ex += b.x; ey += b.y; ++n; }
+        for (const auto& b : actors_) {
+            if (b.IsActive() && b.alive && b.team != t) { ex += b.x; ey += b.y; ++n; }
         }
         if (n > 0) { ex /= static_cast<float>(n); ey /= static_cast<float>(n); }
         else {
@@ -680,8 +631,8 @@ void CS2DGame::AssignSquadRoles(bool dynamic) {
 
         std::sort(members.begin(), members.end(), [&](size_t a, size_t b) {
             auto d2 = [&](size_t i) {
-                const float dx = bots_[i].x - ex;
-                const float dy = bots_[i].y - ey;
+                const float dx = actors_[i].x - ex;
+                const float dy = actors_[i].y - ey;
                 return dx * dx + dy * dy;
             };
             return d2(a) < d2(b);
@@ -691,19 +642,18 @@ void CS2DGame::AssignSquadRoles(bool dynamic) {
         const size_t entryCount  = std::max<size_t>(1, (cnt + 2) / 3);
         const size_t anchorCount = std::max<size_t>(1, (cnt + 3) / 4);
 
-        if (roleChangedAt_.size() != bots_.size()) roleChangedAt_.assign(bots_.size(), -100.0f);
+        if (roleChangedAt_.size() != actors_.size()) roleChangedAt_.assign(actors_.size(), -100.0f);
         for (size_t k = 0; k < cnt; ++k) {
             BotRole role = BotRole::Support;
             if (k < entryCount)                        role = BotRole::Entry;
             else if (k >= cnt - anchorCount)           role = BotRole::Anchor;
 
             const size_t bi = members[k];
-            // 动态重算带冷却：同一个 BOT 不会几秒内反复换角色（换了速度倍率就变，会来回跑）
             if (dynamic && bi < roleChangedAt_.size() &&
                 clockSec_ - roleChangedAt_[bi] < Tuning::ai::RoleSwitchCooldown) {
                 continue;
             }
-            if (squad_[bi].role != role) {
+            if (actorSquad_[bi].role != role) {
                 SetRoleWithTransition(bi, role);
                 if (dynamic) ++counters_.roleSwitches;
             }
@@ -712,55 +662,44 @@ void CS2DGame::AssignSquadRoles(bool dynamic) {
     }
 }
 
-// 周期性选集火目标（含集火/掩护偏好），0.5s 一次
-
 void CS2DGame::UpdateSquadFocus(float dt) {
-    if (squad_.size() != bots_.size()) squad_.assign(bots_.size(), SquadOrder{});
+    EnsureBotAi();
 
     squadFocusTimer_ -= dt;
     if (squadFocusTimer_ > 0.0f) return;
     squadFocusTimer_ = Tuning::FocusUpdateInterval;
 
-    for (size_t i = 0; i < bots_.size(); ++i) {
-        const Player& bot = bots_[i];
-        if (!bot.alive) { squad_[i].focus = -2; continue; }
+    for (size_t i = 0; i < actors_.size(); ++i) {
+        const Player& bot = actors_[i];
+        if (!bot.IsBot() || !bot.alive) { actorSquad_[i].focus = kInvalidActorId; continue; }
 
-        int   bestFocus = -2;
+        ActorId bestFocus = kInvalidActorId;
         float bestScore = 1e18f;
 
-        // 只评估「团队情报」里的敌人（视野外靠队友共享，不再全图透视）
         for (const auto& c : ContactsOf(bot.team)) {
-            bool aliveTarget = false;
-            if (c.id == -1) {
-                aliveTarget = player_.alive && player_.team != bot.team;
-            } else if (c.id >= 0 && c.id < static_cast<int>(bots_.size())) {
-                aliveTarget = bots_[c.id].alive && bots_[c.id].team != bot.team;
-            }
-            if (!aliveTarget) continue;
+            const Player* enemy = FindActor(c.id);
+            if (!enemy || !enemy->IsActive() || !enemy->alive || enemy->team == bot.team) continue;
 
             const float dx = c.x - bot.x;
             const float dy = c.y - bot.y;
             float score = std::sqrt(dx * dx + dy * dy);
 
-            // 守包优先：已下包时，靠近包点的敌人（很可能在拆包）最优先
             if (mode_ == MatchMode::BombDefusal && bombPlanted_ && bot.team == Team::T) {
                 const float bdx = c.x - bombX_;
                 const float bdy = c.y - bombY_;
                 if (bdx * bdx + bdy * bdy < 280.0f * 280.0f) score -= 300.0f;
             }
 
-            // 集火偏好：情报点周围队友越多越优先
             int mates = 0;
-            for (const auto& m : bots_) {
-                if (&m == &bot || !m.alive || m.team != bot.team) continue;
+            for (const auto& m : actors_) {
+                if (&m == &bot || !m.IsActive() || !m.alive || m.team != bot.team) continue;
                 const float mx = m.x - c.x, my = m.y - c.y;
                 if (mx * mx + my * my < Tuning::FocusMateRadius * Tuning::FocusMateRadius) ++mates;
             }
             score -= static_cast<float>(mates) * Tuning::FocusMateWeight;
 
-            // 掩护偏好：正在换弹或低血的队友附近的敌人优先
-            for (const auto& m : bots_) {
-                if (&m == &bot || !m.alive || m.team != bot.team) continue;
+            for (const auto& m : actors_) {
+                if (&m == &bot || !m.IsActive() || !m.alive || m.team != bot.team) continue;
                 if (!(m.reloading || m.health < 40)) continue;
                 const float mx = m.x - c.x, my = m.y - c.y;
                 if (mx * mx + my * my < Tuning::FocusCoverRadius * Tuning::FocusCoverRadius) {
@@ -775,17 +714,13 @@ void CS2DGame::UpdateSquadFocus(float dt) {
             }
         }
 
-        squad_[i].focus = bestFocus;
+        actorSquad_[i].focus = bestFocus;
     }
 }
 
 const CS2DGame::Player* CS2DGame::ResolveFocus(const SquadOrder& order) const {
-    if (order.focus == -1) return player_.alive ? &player_ : nullptr;
-    if (order.focus >= 0 && order.focus < static_cast<int>(bots_.size())) {
-        const Player& b = bots_[order.focus];
-        if (b.alive) return &b;
-    }
-    return nullptr;
+    const Player* p = FindActor(order.focus);
+    return (p && p->IsActive() && p->alive) ? p : nullptr;
 }
 
 // ============================================================================
@@ -801,19 +736,15 @@ void CS2DGame::AccumulateSeparation(const Player& self, float& outX, float& outY
     outX = 0.0f;
     outY = 0.0f;
 
-    auto consider = [&](const Player& other) {
-        if (&other == &self || !other.alive) return;
+    for (const auto& other : actors_) {
+        if (&other == &self || !other.IsActive() || !other.alive) continue;
 
         const float dx = self.x - other.x;
         const float dy = self.y - other.y;
         const float d2 = dx * dx + dy * dy;
-        // 死区：只有真的靠近才推。P1-5：死区从 28.6px（52×0.55）收到约 20px，
-        // 与 FollowPathTo 的到达死区 28px 错开 8px 以上——否则 BOT 走进 28px 圈
-        // 即停，队友分离力在 28.6px 内又把它推出圈外，来回震荡。
         constexpr float kSepDeadZone = SEP_RADIUS * Tuning::SepDeadZoneFrac;
-        if (d2 >= kSepDeadZone * kSepDeadZone) return;
+        if (d2 >= kSepDeadZone * kSepDeadZone) continue;
 
-        // 完全重叠时给一个确定性的偏移，避免除零与抖动
         if (d2 < 0.01f) {
             outX += (self.team == Team::T) ? 1.0f : -1.0f;
             outY += 1.0f;
@@ -821,16 +752,11 @@ void CS2DGame::AccumulateSeparation(const Player& self, float& outX, float& outY
         }
 
         const float d = std::sqrt(d2);
-        // 线性衰减权重：越近越强
-        // 平方衰减：死区边界处从 0 平滑增长，避免推力突变造成抽搐
         const float t = 1.0f - d / kSepDeadZone;
         const float w = t * t;
         outX += dx / d * w;
         outY += dy / d * w;
-    };
-
-    consider(player_);
-    for (const auto& b : bots_) consider(b);
+    }
 
     // 归一化到 0..1，避免人多时力叠加爆表
     const float len = std::sqrt(outX * outX + outY * outY);

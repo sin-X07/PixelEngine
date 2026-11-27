@@ -13,6 +13,7 @@
 #include "Economy/EconomySystem.hpp"
 #include "Navigation/PathFinder.hpp"
 #include "../Core/Types.hpp"
+#include "../Core/ActorTypes.hpp"
 #include "../Core/PresentationContract.hpp"
 #include "../Core/Vec2.hpp"
 #include "../Core/IAudioSink.hpp"
@@ -65,7 +66,7 @@ enum class BotRole {
 // 每名 BOT 的小队指令
 struct SquadOrder {
     BotRole role  = BotRole::Support;
-    int     focus = -2;    // 集火目标：-2=无, -1=玩家, >=0=BOT 索引
+    ActorId focus = kInvalidActorId; // 集火目标：kInvalidActorId=无, >=0=ActorId
     int     site  = -1;    // 负责的包点索引（-1 = 无 / 中路）
     bool    hasHold = false;
     float   holdX = 0.0f;
@@ -81,8 +82,23 @@ class CS2DGame {
 public:
     enum class AnimState { Idle, Walk, Shoot, Dead };
 
-    // ---- 战斗单位（玩家与 BOT 共用）----
+    // ---- 死斗重装配装快照 ----
+    struct DmLoadout {
+        WeaponId primary = WeaponId::None;
+        WeaponId secondary = WeaponId::None;
+        bool valid = false;
+    };
+
+    // ---- 战斗单位（真人与 BOT 统一共用）----
     struct Player {
+        ActorId id = kInvalidActorId;
+        ControllerKind controller = ControllerKind::Bot;
+        std::uint32_t peerId = 0;
+
+        bool IsHuman() const { return controller == ControllerKind::Human; }
+        bool IsBot() const { return controller == ControllerKind::Bot; }
+        bool IsActive() const { return controller != ControllerKind::Empty; }
+
         bool hasDefuseKit = false;
         float x       = 0.0f;
         float y       = 0.0f;
@@ -91,6 +107,29 @@ public:
         float size    = Tuning::PlayerSize;
         float defuseProgress = 0.0f;
         int defuseChannel = -1;
+        float plantProgress = 0.0f;
+        int plantingChannel = -1;
+        bool holdingC4 = false;
+        float flashTimer = 0.0f;
+        float flashPeak = 0.0f;
+        float footstepStride = 0.0f;
+        float footstepLastX = 0.0f;
+        float footstepLastY = 0.0f;
+        bool  footstepLastValid = false;
+        std::uint64_t footstepCount = 0;
+        int previousEquipSlot = 2;
+        WeaponId previousEquipWeapon = WeaponId::Knife;
+        bool prevMouseDown = false;
+        bool prevInteract = false;
+        bool interactHeld = false;
+        bool fireHeld = false;
+        float aimWorldX = 0.0f;
+        float aimWorldY = 0.0f;
+        float dryFireCooldown = 0.0f;
+        bool switchSoundPending = false;
+        WeaponId switchSoundWeapon = WeaponId::None;
+        bool scoped = false;
+        DmLoadout dmLoadout{};
         float aimAngle = 0.0f;
         float aimKick = 0.0f;
         float aimDistance = Tuning::RecoilReferenceDistance;
@@ -116,7 +155,7 @@ public:
         struct EquipmentRecord {
             std::uint64_t id = 0;
             unsigned epoch = 0;
-            int buyer = -1;
+            ActorId buyer = kInvalidActorId;
             int paid = 0;
             int armorTier = 0;
             bool used = false;
@@ -392,32 +431,32 @@ public:
     };
 
     // ========================================================================
-    // BOT 运行时状态（与 Player 分离，玩家实体不再背这些字段）
-    // 与 bots_ 按下标一一对应，统一由 EnsureBotAi() 保证长度
+    // BOT 运行时状态（与 Player 分离，非 BOT 槽位保持闲置）
+    // 与 actors_ 按下标一一对应，统一由 EnsureBotAi() 保证长度
     // ========================================================================
     struct BotRuntime {
         int difficulty = 2;
         float settleTimer = 0.0f;
-        int perceivedTarget = -2;
+        ActorId perceivedTarget = kInvalidActorId;
         float dodgeX = 0.0f, dodgeY = 0.0f;
         bool wasMoving = false;
-        struct Alert { int enemyId = -2; float perceivedAt = 0.0f, expireAt = 0.0f, lastPerceivedAt = 0.0f; };
+        struct Alert { ActorId enemyId = kInvalidActorId; float perceivedAt = 0.0f, expireAt = 0.0f, lastPerceivedAt = 0.0f; };
         std::array<Alert, 3> alerts{};
-        void Perceive(int id, float now, float delay) {
+        void Perceive(ActorId id, float now, float delay) {
             for (auto& alert : alerts) {
                 if (alert.enemyId == id) {
                     alert.lastPerceivedAt = now;
                     return;
                 }
             }
-            auto slot = std::find_if(alerts.begin(), alerts.end(), [](const Alert& a) { return a.enemyId == -2; });
+            auto slot = std::find_if(alerts.begin(), alerts.end(), [](const Alert& a) { return a.enemyId == kInvalidActorId; });
             if (slot == alerts.end()) {
                 slot = std::max_element(alerts.begin(), alerts.end(), [](const Alert& a, const Alert& b) { return a.expireAt < b.expireAt; });
                 if (slot->expireAt < now + delay) return;
             }
             *slot = {id, now, now + delay, now};
         }
-        bool Ready(int id, float now) const {
+        bool Ready(ActorId id, float now) const {
             for (const auto& alert : alerts) if (alert.enemyId == id && now >= alert.expireAt) return true;
             return false;
         }
@@ -440,7 +479,6 @@ public:
         float defuseCooldown = 0.0f; // 放弃拆包后的冷却，避免立刻又贴回去
 
         // 状态标记
-        float blindTimer     = 0.0f;   // 闪光致盲剩余秒数
         bool  defusing       = false;  // 正在拆包
         float heardLogCooldown = 0.0f; // 听声日志节流（调试用）
         float reactionLogCooldown = 0.0f; // 听声决策日志节流（调试用）
@@ -464,12 +502,6 @@ public:
         float detourX = 0.0f, detourY = 0.0f;   // 卡住时的绕行方向（单位向量）
         float detourTimer = 0.0f;               // >0 时沿 detour 方向走
         bool  scanBaseValid   = false;
-        // 脚步：按实际位移累计（与玩家同一套）。累计满 Tuning::FootstepStride 触发一步，
-        // 余数保留，长期精确；死亡/重生/传送由 ResetFootstepStride() 清零。
-        float footstepStride  = 0.0f;  // 已累计的位移（px）
-        float footstepLastX   = 0.0f;  // 上一帧位置（算 |Δpos|）
-        float footstepLastY   = 0.0f;
-        bool  footstepLastValid = false;
 
         // 卡墙检测
         float lastX = 0.0f, lastY = 0.0f;
@@ -504,7 +536,7 @@ public:
         float nadeFailAt = -1e9f;                  // P1-4: clockSec_ of that failure
 
         // ---- 决策 trace 的上一帧快照（仅在开启 trace 时写入，不影响玩法）----
-        int   traceTarget   = -2;    // 上一帧锁定的敌人（-2 无）
+        ActorId traceTarget = kInvalidActorId; // 上一帧锁定的敌人（kInvalidActorId 无）
         int   traceStance   = 0;
         int   traceManeuver = 0;
         int   traceGoalSrc  = 0;
@@ -522,7 +554,7 @@ public:
         float traveled = 0.0f;
         float maxDist  = 1600.0f;
         int   damage   = 25;
-        int   ownerIdx  = -1;        // -1=玩家, >=0=BOT索引
+        ActorId ownerId = kInvalidActorId;
         Team  ownerTeam = Team::None;
         // 发射该子弹的武器：击杀奖励按武器类型发放（照抄 CS2）
         WeaponId weapon = WeaponId::None;
@@ -538,7 +570,7 @@ public:
         WeaponId type = WeaponId::GrenadeHE;
         Team     team = Team::None;
         bool     active = true;
-        int owner = -2;
+        ActorId  ownerId = kInvalidActorId;
         WeaponId imitate = WeaponId::None;
         bool     landingWarned = false;   // 落点预警已广播（只发一次）
         int      wallBounces = 0;         // 撞墙反弹次数
@@ -551,14 +583,14 @@ public:
     struct Decoy {
         float x=0,y=0,life=15,nextShot=0;
         int shot=0;
-        int owner=-2;
+        ActorId ownerId = kInvalidActorId;
         Team team=Team::None;
         WeaponId weapon=WeaponId::Glock18;
     };
     struct FireZone {
         std::uint64_t equipmentId=0;
         float x = 0.0f, y = 0.0f;
-        int owner = -2;
+        ActorId ownerId = kInvalidActorId;
         WeaponId weapon = WeaponId::GrenadeMolotov;
         std::vector<Vec2> cells;
         std::vector<uint8_t> cellCoverage;
@@ -598,11 +630,12 @@ public:
         float remaining = 0.0f;
     };
     static constexpr float DeathFreezeSeconds = 1.8f;
-    bool IsDeathFreeze() const { return !player_.alive && deathPresentation_.remaining > 0.0f; }
+    bool IsDeathFreeze() const { return !LocalActor().alive && deathPresentation_.remaining > 0.0f; }
     const DeathPresentation& GetDeathPresentation() const { return deathPresentation_; }
 
     // 记分板行
     struct ScoreRow {
+        ActorId id = kInvalidActorId;
         std::string name;
         Team team = Team::None;
         int  kills = 0;
@@ -610,6 +643,7 @@ public:
         int  deaths = 0;
         int  money = 0;
         bool alive = true;
+        bool isHuman = false;
         bool isPlayer = false;
     };
 
@@ -696,6 +730,8 @@ public:
     // 当前地图使用的战术库 id（MapCatalog.playbook 可覆盖；空时同 mapId_）
     const std::string& GetPlaybookId() const { return playbookId_; }
 
+    void UpdateMultiActor(float dt, const std::vector<std::pair<ActorId, ActorInput>>& inputs,
+                          IAudioSink* audio = nullptr);
     void Update(float dt, bool mouseLeftDown, float mouseWorldX, float mouseWorldY,
                 bool wPressed, bool aPressed, bool sPressed, bool dPressed,
                 bool shiftPressed, bool rPressed,
@@ -712,17 +748,35 @@ public:
     const CS2DWorld& GetWorld() const { return *world_; }
     CS2DRenderer*    GetRenderer()    { return renderer_; }
 
-    Player&          GetPlayer()      { return player_; }
-    const Player&    GetPlayer() const { return player_; }
+    // 统一 Actor 槽位模型
+    std::vector<Player>&       GetActors()       { return actors_; }
+    const std::vector<Player>& GetActors() const { return actors_; }
+    Player*       FindActor(ActorId id);
+    const Player* FindActor(ActorId id) const;
+    ActorId       ActorIdOf(const Player& actor) const;
+    ActorId       GetLocalActorId() const { return localActorId_; }
+    void          SetLocalActorId(ActorId id);
+    Player&       LocalActor() {
+        if (auto* p = FindActor(localActorId_)) return *p;
+        return actors_.front();
+    }
+    const Player& LocalActor() const {
+        if (const auto* p = FindActor(localActorId_)) return *p;
+        return actors_.front();
+    }
+    bool SetActorController(ActorId id, ControllerKind kind,
+                            std::uint32_t peerId = 0, const std::string& name = {});
 
-    // 仅回归测试使用：走真实死亡流程（OnCombatantKilled）杀死玩家，
+    Player&          GetPlayer()      { return LocalActor(); }
+    const Player&    GetPlayer() const { return LocalActor(); }
+
+    // 仅回归测试使用：走真实死亡流程（OnCombatantKilled）杀死本地玩家，
     // 用来验证「死斗 = 原地死亡镜头、其它模式 = 观察者」这类模式相关的镜头行为。
     void DebugKillPlayerForTest() {
-        if (player_.alive) OnCombatantKilled(player_, nullptr, nullptr);
+        auto& me = LocalActor();
+        if (me.alive) OnCombatantKilled(me, nullptr, nullptr);
     }
 
-    std::vector<Player>&       GetBOTs()       { return bots_; }
-    const std::vector<Player>& GetBOTs() const { return bots_; }
     const std::vector<Bullet>& GetBullets() const { return bullets_; }
     // 枪弹视觉段（契约 v1 第 6 节）：玩法层生成的唯一数据源，UI 只绘制。
     const std::vector<Presentation::BulletVisualSegment>& GetBulletVisuals() const {
@@ -739,16 +793,17 @@ public:
     std::vector<ScoreRow> BuildScoreboard() const;
 
     // 玩家是否处于闪光致盲中（0..1 强度）
-    float GetFlashAmount() const { return (flashTimer_ > 0.0f) ? 1.0f : 0.0f; }
+    float GetFlashAmount() const { return (LocalActor().flashTimer > 0.0f) ? 1.0f : 0.0f; }
 
     // 命中 / 受伤反馈计时（秒，>0 表示需要绘制）
     void RequestSpectateToggle() { spectateTogglePending_ = true; }
-    void QuickSwitchWeapon();
+    void QuickSwitchWeaponFor(ActorId actorId);
+    void QuickSwitchWeapon() { QuickSwitchWeaponFor(localActorId_); }
     float GetAimMotionBlur() const { return aimMotionBlur_; }
     // 当前是否允许移动（回合冻结 / 结算展示等阶段为 false）。
     // 表现层用它决定「移动模糊」是否该生效：不能动的时候瞄准线不该发虚。
     bool IsMovementAllowed() const {
-        if (!player_.alive) return false;
+        if (!LocalActor().alive) return false;
         return mode_ == MatchMode::DeathMatch || !round_.IsFrozen();
     }
     enum class HitMarkerKind { Normal, Armor, Kill };
@@ -757,7 +812,7 @@ public:
     float GetDryFireHintTimer() const { return dryFireHintTimer_; }
     float GetReloadProgress() const {
         const auto* observed = GetSpectatedPlayer();
-        const auto& actor = observed ? *observed : player_;
+        const auto& actor = observed ? *observed : LocalActor();
         if (!actor.alive || !actor.reloading || actor.CurrentWeapon().reloadTime <= 0) return 0;
         return std::clamp(1.0f - actor.reloadTimer / actor.CurrentWeapon().reloadTime, 0.0f, 1.0f);
     }
@@ -765,16 +820,16 @@ public:
     const std::array<DamageDirection, 4>& GetDamageDirections() const { return damageDirections_; }
     float GetDamageFlashTimer() const { return damageFlashTimer_; }
 
-    // 敌人情报（团队共享；id: -1=玩家, >=0=BOT 索引）
+    // 敌人情报（团队共享；id: ActorId）
     struct EnemyContact {
-        int   id  = -1;
-        float x   = 0.0f;
-        float y   = 0.0f;
-        float age = 0.0f;
+        ActorId id  = kInvalidActorId;
+        float   x   = 0.0f;
+        float   y   = 0.0f;
+        float   age = 0.0f;
     };
 
     // ---- 供 LLM 提示词读取的战术态势 ----
-    const std::vector<SquadOrder>& GetSquadOrders() const { return squad_; }
+    const std::vector<SquadOrder>& GetSquadOrders() const { return actorSquad_; }
     const std::vector<EnemyContact>& GetContactsOfTeam(Team t) const { return ContactsOf(t); }
     float GetLastDeathX() const { return lastDeathX_; }
     float GetLastDeathY() const { return lastDeathY_; }
@@ -829,32 +884,36 @@ public:
         return visibility_.HasLineOfSight(x, y, bombX_, bombY_);
     }
     // 累计触发过的步数（玩家本人）：只读统计，供回归断言与调试，不影响玩法
-    std::uint64_t PlayerFootstepCount() const { return footstepCount_; }
+    std::uint64_t PlayerFootstepCount() const { return LocalActor().footstepCount; }
     // 拆包进度对观看者是否可见：拆包者与观看者同阵营才可见。
-    // 观看者恒为玩家本人的阵营（观战时仍是阵亡玩家自己的阵营，见 Sun 的决定）。
     // 对手侧完全不可见——不留名字、百分比、秒数或横幅位移等任何可推断的痕迹。
+    bool IsDefuseVisibleTo(Team viewerTeam) const {
+        if (defuseProgress_ <= 0.0f || viewerTeam == Team::None) return false;
+        const Player* defuser = FindActor(activeDefuser_);
+        if (!defuser || defuser->team == Team::None) return false;
+        return defuser->team == viewerTeam;
+    }
     bool IsDefuseVisibleToViewer() const {
-        if (defuseProgress_ <= 0.0f) return false;
-        const Team defuserTeam =
-            activeDefuser_ == -1
-                ? player_.team
-                : (activeDefuser_ >= 0 && activeDefuser_ < static_cast<int>(bots_.size())
-                       ? bots_[static_cast<size_t>(activeDefuser_)].team
-                       : Team::None);
-        if (defuserTeam == Team::None) return false;
-        return defuserTeam == player_.team;
+        return IsDefuseVisibleTo(LocalActor().team);
     }
     std::string GetDefuserName() const {
-        if (activeDefuser_ == -1) return "你";
-        if (activeDefuser_ >= 0 && activeDefuser_ < static_cast<int>(bots_.size())) return bots_[activeDefuser_].name;
-        return {};
+        const Player* defuser = FindActor(activeDefuser_);
+        if (!defuser) return {};
+        if (defuser->id == localActorId_) return "你";
+        if (!defuser->name.empty()) return defuser->name;
+        return (defuser->IsHuman() ? "P" : "BOT#") + std::to_string(defuser->id);
     }
 
-    int GetPlayerKills()  const { return playerKills_; }
-    int GetPlayerDeaths() const { return playerDeaths_; }
-    int GetBotCount()     const { return static_cast<int>(bots_.size()); }
-    void SetBotDifficulty(int difficulty) { for (auto& ai : botAi_) ai.difficulty = std::clamp(difficulty, 0, 3); }
-    void SetBotProfile(size_t bot, int profile) { AiAt(bot).difficulty = std::clamp(profile, 0, 7) / 2; }
+    int GetPlayerKills()  const { return LocalActor().kills; }
+    int GetPlayerDeaths() const { return LocalActor().deaths; }
+    int GetActorCount()   const { return static_cast<int>(actors_.size()); }
+    int GetBotCount()     const {
+        int n = 0;
+        for (const auto& a : actors_) if (a.IsBot()) ++n;
+        return n;
+    }
+    void SetBotDifficulty(int difficulty) { for (auto& ai : actorAi_) ai.difficulty = std::clamp(difficulty, 0, 3); }
+    void SetBotProfile(size_t actorIdx, int profile) { AiAt(actorIdx).difficulty = std::clamp(profile, 0, 7) / 2; }
     unsigned PlayerSpawnVersion() const { return playerSpawnVersion_; }
     void SetAimTarget(float x, float y, bool followsPlayer = false);
     void PrepareCamera(int viewW, int viewH, float interpolation = 1.0f);
@@ -876,7 +935,7 @@ public:
     void SetEdgeZoomRequested(bool requested) { edgeZoomRequested_ = requested; cameraDistanceTier_ = requested ? 1 : 0; }
     void SetCameraDistanceTier(int tier) { cameraDistanceTier_=std::clamp(tier,0,2);edgeZoomRequested_=tier>0; }
     bool AimFollowsPlayer() const { return aimFollowsPlayer_; }
-    float GetAimAngle()   const { return player_.EffectiveAim(); }
+    float GetAimAngle()   const { return LocalActor().EffectiveAim(); }
     // 0=静止，~0.42=静步，1=全速跑动。准星与弹道共用这一份移动扩散。
     float GetCrosshairBloom() const;
     // 开火后坐力造成的准星扩散 0..1：取当前武器弹道累积散布（inaccuracy）归一化。
@@ -922,32 +981,33 @@ public:
         return (t == Team::T) ? matchLoadouts_.t : matchLoadouts_.ct;
     }
     bool ActorHasC4(const Player& actor) const {
-        return mode_==MatchMode::BombDefusal && !bombPlanted_ && !bombDropped_ && actor.alive &&
-            ((bombCarrier_==-1 && &actor==&player_) || (bombCarrier_>=0 && bombCarrier_<static_cast<int>(bots_.size()) && &actor==&bots_[bombCarrier_]));
+        return mode_ == MatchMode::BombDefusal && !bombPlanted_ && !bombDropped_ && actor.alive &&
+               bombCarrier_ != kInvalidActorId && actor.id == bombCarrier_;
     }
-    bool PlayerHasC4() const {
-        return bombCarrier_ == -1 && player_.team == Team::T &&
-               !bombPlanted_ && !bombDropped_;
+    bool ActorCarriesC4(const Player& actor) const {
+        return bombCarrier_ != kInvalidActorId && actor.id == bombCarrier_ &&
+               actor.team == Team::T && !bombPlanted_ && !bombDropped_;
     }
+    bool PlayerHasC4() const { return ActorCarriesC4(LocalActor()); }
     // Team-only objective information: never expose the enemy carrier to CT.
-    std::string GetFriendlyC4CarrierName() const {
-        if (mode_ != MatchMode::BombDefusal || player_.team != Team::T ||
+    std::string GetFriendlyC4CarrierNameFor(Team viewerTeam) const {
+        if (mode_ != MatchMode::BombDefusal || viewerTeam != Team::T ||
             bombPlanted_ || bombDropped_) return {};
-        if (bombCarrier_ == -1 && player_.alive) return "你";
-        if (bombCarrier_ < 0 || bombCarrier_ >= static_cast<int>(bots_.size())) return {};
-        const auto& carrier = bots_[static_cast<size_t>(bombCarrier_)];
-        if (!carrier.alive || carrier.team != Team::T) return {};
-        return carrier.name.empty() ? "BOT#" + std::to_string(bombCarrier_) : carrier.name;
+        const Player* carrier = FindActor(bombCarrier_);
+        if (!carrier || !carrier->alive || carrier->team != Team::T) return {};
+        if (carrier->id == localActorId_) return "你";
+        if (!carrier->name.empty()) return carrier->name;
+        return (carrier->IsHuman() ? "P" : "BOT#") + std::to_string(carrier->id);
     }
-    bool PlayerHoldingC4() const { return playerHoldingC4_; }
+    std::string GetFriendlyC4CarrierName() const {
+        return GetFriendlyC4CarrierNameFor(LocalActor().team);
+    }
+    bool PlayerHoldingC4() const { return LocalActor().holdingC4; }
     bool IsBombDropped() const { return bombDropped_; }
-    int GetBombCarrierId() const { return GetBombCarrierPos() ? bombCarrier_ : -2; }
+    ActorId GetBombCarrierId() const { return GetBombCarrierPos() ? bombCarrier_ : kInvalidActorId; }
     std::optional<Vec2> GetBombCarrierPos() const {
-        if (ActorHasC4(player_)) return Vec2{player_.x, player_.y};
-        if (bombCarrier_ >= 0 && bombCarrier_ < static_cast<int>(bots_.size())) {
-            const auto& carrier = bots_[bombCarrier_];
-            if (ActorHasC4(carrier)) return Vec2{carrier.x, carrier.y};
-        }
+        const Player* carrier = FindActor(bombCarrier_);
+        if (carrier && ActorHasC4(*carrier)) return Vec2{carrier->x, carrier->y};
         return std::nullopt;
     }
     float BombDropX() const { return bombDropX_; }
@@ -955,16 +1015,22 @@ public:
     bool  HasBombIntel() const { return bombIntel_; }
     float BombIntelX() const { return bombIntelX_; }
     float BombIntelY() const { return bombIntelY_; }
-    void ToggleHoldC4();
+    void ToggleHoldC4For(ActorId actorId);
+    void ToggleHoldC4() { ToggleHoldC4For(localActorId_); }
     void UpdateBombItem(float dt);
     void DropC4(float x, float y);
-    void EquipFallbackWeapon();   // 当前槽不可用时切到有武器的槽并读弹药
+    void EquipFallbackWeaponFor(Player& actor);
+    void EquipFallbackWeapon() { EquipFallbackWeaponFor(LocalActor()); }   // 当前槽不可用时切到有武器的槽并读弹药
     void AssignBombCarrier();     // 每回合分配 C4 携带者（含 bot 创建后补一次）
-    float GetPlantProgress() const { return plantProgress_; }
+    float GetPlantProgressFor(ActorId actorId) const {
+        const Player* p = FindActor(actorId);
+        return p ? p->plantProgress : 0.0f;
+    }
+    float GetPlantProgress() const { return LocalActor().plantProgress; }
 
     // ---- 下包 / 拆包中的「发声者」 ----
     // 供 BOT 决策树做听声扑人：返回正在下包(planting=true)或正在拆包的目标。
-    // 没有人在做这两件事时返回 nullptr。
+    // 没有人在做这两件事时返回 false。
     struct SoundMaker {
         const Player* who   = nullptr;   // 执行者（可能是玩家或 BOT）
         float         x     = 0.0f;      // 发声位置
@@ -980,39 +1046,23 @@ public:
             out.x = bombX_;
             out.y = bombY_;
             out.isPlant = false;
-            if (activeDefuser_ == -1 && player_.alive && player_.defuseProgress > 0) {
-                out.who = &player_;
-                return true;
-            }
-            if (activeDefuser_ >= 0 && activeDefuser_ < static_cast<int>(bots_.size()) &&
-                bots_[activeDefuser_].alive && bots_[activeDefuser_].defuseProgress > 0) {
-                out.who = &bots_[activeDefuser_];
+            const Player* defuser = FindActor(activeDefuser_);
+            if (defuser && defuser->alive && defuser->defuseProgress > 0.0f) {
+                out.who = defuser;
                 return true;
             }
             return false;
         }
 
         // 下包：T 携带者站在包点内且已开始累积安装进度
-        const float plantProg = std::max(plantProgress_, botPlantProgress_);
-        if (!bombPlanted_ && !bombDropped_ && plantProg > 0.0f &&
-            bombCarrier_ >= -1) {
-            if (bombCarrier_ == -1 && player_.alive && player_.team == Team::T) {
-                out.who = &player_;
-                out.x = player_.x;
-                out.y = player_.y;
+        if (!bombPlanted_ && !bombDropped_) {
+            const Player* carrier = FindActor(bombCarrier_);
+            if (carrier && carrier->alive && carrier->team == Team::T && carrier->plantProgress > 0.0f) {
+                out.who = carrier;
+                out.x = carrier->x;
+                out.y = carrier->y;
                 out.isPlant = true;
                 return true;
-            }
-            if (bombCarrier_ >= 0 &&
-                bombCarrier_ < static_cast<int>(bots_.size())) {
-                const Player& carrier = bots_[static_cast<size_t>(bombCarrier_)];
-                if (carrier.alive && carrier.team == Team::T) {
-                    out.who = &carrier;
-                    out.x = carrier.x;
-                    out.y = carrier.y;
-                    out.isPlant = true;
-                    return true;
-                }
             }
         }
         return false;
@@ -1020,23 +1070,25 @@ public:
 
     // ---- 观察者（死亡后）----
     enum class SpectateMode { None = 0, Follow, Free, Bomb };
-    bool          IsSpectating() const { return specMode_ != SpectateMode::None && !player_.alive; }
+    bool          IsSpectating() const { return specMode_ != SpectateMode::None && !LocalActor().alive; }
     SpectateMode  GetSpectateMode() const { return specMode_; }
-    int           GetSpectateTarget() const { return specTarget_; }
-    // 当前被观战的 BOT。自由视角下返回 nullptr：那一视角的视野是「存活队友视锥的
+    ActorId       GetSpectateTarget() const { return specTarget_; }
+    // 当前被观战的存活队友。自由视角下返回 nullptr：那一视角的视野是「存活队友视锥的
     // 并集」，没有单一被观战者；specTarget_ 仅保留给切回跟随时恢复目标用。
     const Player* GetSpectatedPlayer() const {
-        if (specMode_ == SpectateMode::Follow && !IsDeathFreeze() &&
-            specTarget_ >= 0 && specTarget_ < static_cast<int>(bots_.size()) &&
-            bots_[static_cast<size_t>(specTarget_)].alive) {
-            return &bots_[static_cast<size_t>(specTarget_)];
+        if (specMode_ == SpectateMode::Follow && !IsDeathFreeze()) {
+            const Player* p = FindActor(specTarget_);
+            if (p && p->IsActive() && p->alive && p->id != localActorId_) return p;
         }
         return nullptr;
     }
     std::string GetSpectatedName() const {
         const Player* p = GetSpectatedPlayer();
-        if (p && !p->name.empty()) return p->name;
-        if (specTarget_ >= 0) return "BOT#" + std::to_string(specTarget_);
+        if (p) {
+            if (!p->name.empty()) return p->name;
+            return (p->IsHuman() ? "P" : "BOT#") + std::to_string(p->id);
+        }
+        if (specTarget_ != kInvalidActorId) return "BOT#" + std::to_string(specTarget_);
         return "-";
     }
     void SpectatorToggle();
@@ -1046,24 +1098,19 @@ public:
     void SpectatorEnd();
     // 音效听者位置：观战时以镜头/被观战者为准
     // 死斗：记住"上一次购买的武器"，每次重生自动装配（仍可在重生后继续购买）
-    struct DmLoadout {
-        WeaponId primary = WeaponId::None;
-        WeaponId secondary = WeaponId::None;
-        bool valid = false;
-    };
-    const DmLoadout& GetDmLoadout() const { return dmLoadout_; }
+    const DmLoadout& GetDmLoadout() const { return LocalActor().dmLoadout; }
     // 把当前武器槽记为"上一次购买的装备"（调试装备也走这里，便于验收重生装配）
     void RememberCurrentLoadoutAsDm() {
         if (mode_ != MatchMode::DeathMatch) return;
-        dmLoadout_.primary   = player_.weapons[0];
-        dmLoadout_.secondary = player_.weapons[1];
-        dmLoadout_.valid     = (dmLoadout_.primary != WeaponId::None ||
-                                dmLoadout_.secondary != WeaponId::None);
+        auto& me = LocalActor();
+        me.dmLoadout.primary   = me.weapons[0];
+        me.dmLoadout.secondary = me.weapons[1];
+        me.dmLoadout.valid     = (me.dmLoadout.primary != WeaponId::None ||
+                                  me.dmLoadout.secondary != WeaponId::None);
     }
     // 死斗：阵亡后原地停留（死亡镜头），不进入观察者、不切到其他 BOT
     bool IsDeathCam() const { return deathCam_; }
     bool deathCam_ = false;
-    DmLoadout dmLoadout_;   // 死斗重生装配用（Reset 时清空）
     float ListenerX() const;
     float ListenerY() const;
     void SetObjectiveAudioPaused(bool paused, IAudioSink* audio = nullptr);
@@ -1080,38 +1127,56 @@ public:
     int AliveCount(Team t) const;
 
     // ---- 经济 / 购买 ----
-    int  GetPlayerMoney() const { return player_.money; }
+    int  GetPlayerMoney() const { return LocalActor().money; }
     // 买枪前经济快照（team 的平均余额；给 LLM digest / 教练用）
     int  GetRoundStartEconomy(Team t) const;
     // 购买窗口：自回合开始起的前 BuyWindowSeconds 秒（覆盖冻结 + 购买 + 交战初期）
-    bool IsBuyPhase() const {
+    bool IsBuyPhaseFor(ActorId actorId) const {
+        const Player* p = FindActor(actorId);
+        if (!p || !p->alive) return false;
         // 死斗：只有站在出生点的购买区内才能买，离开就关闭
         if (mode_ == MatchMode::DeathMatch) {
-            return player_.alive && IsPlayerInBuyZone();
+            return IsActorInBuyZone(actorId);
         }
         if (teams_.MatchOver()) return false;
-        if (!player_.alive) return false;
         return round_.Elapsed() <= Tuning::BuyWindowSeconds;
     }
+    bool IsBuyPhase() const { return IsBuyPhaseFor(localActorId_); }
     float GetRoundElapsed() const { return round_.Elapsed(); }
     // 比赛结束后经过的时间（用于进入结算页）
     float GetMatchOverTimer() const { return matchOverTimer_; }
-    // 玩家当前是否处于购买区内（地图未定义购买区时视为全图可买）
-    bool IsPlayerInBuyZone() const;
+    // 单位当前是否处于购买区内（地图未定义购买区时视为全图可买）
+    bool IsActorInBuyZone(ActorId actorId) const;
+    bool IsPlayerInBuyZone() const { return IsActorInBuyZone(localActorId_); }
     // 尝试购买；成功返回 true（已扣款并装备）
-    bool TryBuy(WeaponId id, IAudioSink* audio = nullptr);
+    bool TryBuyFor(ActorId actorId, WeaponId id, IAudioSink* audio = nullptr);
+    bool TryBuy(WeaponId id, IAudioSink* audio = nullptr) { return TryBuyFor(localActorId_, id, audio); }
     // 购买护甲：tier 1=护甲 2=护甲+头盔
-    bool TryBuyArmor(int tier, IAudioSink* audio = nullptr);
+    bool TryBuyArmorFor(ActorId actorId, int tier, IAudioSink* audio = nullptr);
+    bool TryBuyArmor(int tier, IAudioSink* audio = nullptr) { return TryBuyArmorFor(localActorId_, tier, audio); }
 
     // ---- 购买契约 v1（第 3 节）----
     // EvaluatePurchase：纯判定，无扣款/装备/音效副作用，供 UI 逐项显示可用性。
     struct RefundQuote { int amount = 0; int quantity = 0; std::string reason; };
-    RefundQuote EvaluateRefund(const Presentation::BuyRequest& request) const;
-    bool ExecuteRefund(const Presentation::BuyRequest& request);
-    Presentation::BuyCode EvaluatePurchase(const Presentation::BuyRequest& request) const;
+    RefundQuote EvaluateRefundFor(ActorId actorId, const Presentation::BuyRequest& request) const;
+    bool ExecuteRefundFor(ActorId actorId, const Presentation::BuyRequest& request);
+    Presentation::BuyCode EvaluatePurchaseFor(ActorId actorId, const Presentation::BuyRequest& request) const;
+    Presentation::BuyResult ExecutePurchaseFor(ActorId actorId, const Presentation::BuyRequest& request,
+                                               IAudioSink* audio = nullptr);
+    RefundQuote EvaluateRefund(const Presentation::BuyRequest& request) const {
+        return EvaluateRefundFor(localActorId_, request);
+    }
+    bool ExecuteRefund(const Presentation::BuyRequest& request) {
+        return ExecuteRefundFor(localActorId_, request);
+    }
+    Presentation::BuyCode EvaluatePurchase(const Presentation::BuyRequest& request) const {
+        return EvaluatePurchaseFor(localActorId_, request);
+    }
     // ExecutePurchase：点击时重新判定，Ok 才执行一次原装备/扣款与 EQUIP 音效。
     Presentation::BuyResult ExecutePurchase(const Presentation::BuyRequest& request,
-                                            IAudioSink* audio = nullptr);
+                                            IAudioSink* audio = nullptr) {
+        return ExecutePurchaseFor(localActorId_, request, audio);
+    }
 
     // ---- 开镜契约 v1（第 4 节）----
     // Engine 每帧在 game.Update 之前调用一次；gameplayInputAllowed=false 时立即归零。
@@ -1151,9 +1216,9 @@ public:
         return &a != &b && IsHostileTeam(a.team, b.team);
     }
     bool IsDeathMatch() const { return mode_ == MatchMode::DeathMatch; }
-    int  GetPlayerArmor()  const { return player_.armor; }
-    int  GetPlayerHealth()    const { return player_.health; }
-    int  GetPlayerMaxHealth() const { return player_.maxHealth; }
+    int  GetPlayerArmor()     const { return LocalActor().armor; }
+    int  GetPlayerHealth()    const { return LocalActor().health; }
+    int  GetPlayerMaxHealth() const { return LocalActor().maxHealth; }
     // 闪光致盲：距离 → 秒数 / 强度（起爆与自检共用同一份公式）
     static float ComputeFlashBlind(float dist);
     static float ComputeFlashIntensity(float dist);
@@ -1195,15 +1260,18 @@ public:
     void CoachDrainLlm();
     void CoachWarmupPlaybook();   // 换图后预加载战术库并校验区域名
     // 玩家操作：主动拾取（E）/ 丢弃当前武器（G）
-    void TryPickupDrops(bool manual, IAudioSink* audio = nullptr);
-    void DropCurrentWeapon();
+    void TryPickupDropsFor(ActorId actorId, bool manual, IAudioSink* audio = nullptr);
+    void TryPickupDrops(bool manual, IAudioSink* audio = nullptr) { TryPickupDropsFor(localActorId_, manual, audio); }
+    void DropCurrentWeaponFor(ActorId actorId);
+    void DropCurrentWeapon() { DropCurrentWeaponFor(localActorId_); }
     // 把指定槽位的武器丢到地面（换枪 / 被替换时用）
-    void DropWeaponToGround(int slot, float x, float y);
+    void DropWeaponToGround(int slot, float x, float y) { DropWeaponToGround(LocalActor(), slot, x, y); }
     void DropWeaponToGround(Player& actor,int slot,float x,float y);
-    bool GetPlayerHelmet() const { return player_.helmet; }
+    bool GetPlayerHelmet() const { return LocalActor().helmet; }
 
     // ---- 武器 ----
-    void SwitchWeaponSlot(int slot, int grenadeIndex = -1);
+    void SwitchWeaponSlotFor(ActorId actorId, int slot, int grenadeIndex = -1);
+    void SwitchWeaponSlot(int slot, int grenadeIndex = -1) { SwitchWeaponSlotFor(localActorId_, slot, grenadeIndex); }
     std::string GetWeaponName() const;
     std::string GetWeaponNameFor(const Player& p) const;   // 观战/记分板用
 
@@ -1216,7 +1284,7 @@ public:
 
     // 每队人数（含玩家）
     static constexpr int TEAM_SIZE  = 5;
-    static constexpr int TOTAL_BOTS = TEAM_SIZE * 2 - 1;   // 玩家占 CT 一席 → 9 BOT
+    static constexpr int TOTAL_BOTS = TEAM_SIZE * 2 - 1;   // 单机玩家占 1 席 → 9 BOT
 
 private:
     friend struct CS2DGameTestAccess;
@@ -1229,8 +1297,8 @@ private:
     uint64_t   traceTick_ = 0;             // 当前 tick（由 Update 递增）
     DebugCounters counters_;
     // 角色动态重算（带冷却与滞回）
-    std::vector<float> roleChangedAt_;   // 每个 BOT 上次换角色时刻
-    std::vector<float> roleFromMul_;     // 每个 BOT 换角色那一刻的旧倍率（T27 过渡起点）
+    std::vector<float> roleChangedAt_;   // 每个单位上次换角色时刻
+    std::vector<float> roleFromMul_;     // 每个单位换角色那一刻的旧倍率（T27 过渡起点）
     float roleRefreshTimer_ = 0.0f;
     int   roleAliveSnapshot_ = -1;
     // 搜点白名单：每个区域最近一次被确认"已搜"的回合时刻（-100=未搜）
@@ -1238,9 +1306,10 @@ private:
     void RefreshSearchAreas();           // 回合开始重置白名单
     std::string playbookId_;       // 战术库文件名（不含 .txt）；空则回退 mapId_
 
-    Player player_;
-    ActorView previousPlayerView_;
-    std::vector<ActorView> previousBotViews_;
+    // 统一 Actor 槽位容器（0..N-1，单机默认 actors_[0]=本地真人, actors_[1..9]=BOT）
+    std::vector<Player> actors_;
+    ActorId localActorId_ = 0;
+    std::vector<ActorView> previousActorViews_;
     float renderInterpolation_ = 1.0f;
     bool viewHistoryValid_ = false;
     bool aimFollowsPlayer_ = false;
@@ -1259,7 +1328,6 @@ private:
     float previousScopeEngagement_ = 0.0f;
     float aimMotionBlur_ = 0;
     float crosshairBloom_ = 0.0f;  // 平滑后的移动扩散（0=静止，1=全速跑动）
-    std::vector<Player> bots_;
     int nextBotNameIndex_ = 0;      // 新 BOT 分配昵称的游标（每场重置）
     std::vector<Bullet> bullets_;
     std::vector<Grenade> grenades_;
@@ -1383,27 +1451,15 @@ private:
     std::string AreaHint(const std::string& intentTarget) const;
     unsigned purchaseEpoch_ = 1;
     std::uint64_t nextEquipmentId_ = 1;
-    bool prevInteract_ = false;   // E 键边沿检测
 
     void DropEquipmentOnDeath(Player& victim);
-    float flashTimer_ = 0.0f;      // 玩家闪光致盲剩余秒数
-    float flashPeak_  = 0.0f;      // 本次致盲的峰值强度 0~1（越近越白）
-    // 玩家脚步：按实际位移累计（与 BOT 同一套，见 BotRuntime::footstepStride）
-    float footstepStride_ = 0.0f;      // 已累计的位移（px）
-    float footstepLastX_ = 0.0f;       // 上一帧位置（算 |Δpos|）
-    float footstepLastY_ = 0.0f;
-    bool  footstepLastValid_ = false;
-    std::uint64_t footstepCount_ = 0;  // 已触发的步数（统计用）
     void  ResetFootstepStride();
+    void  ResetFootstepStride(Player& actor);
     // 返回本帧触发的步数（0..Tuning::FootstepMaxPerFrame），供玩法与回归共用同一实现。
-    int   AccumulateFootstep(Player& actor, float& stride, float& lastX, float& lastY,
-                             bool& lastValid, IAudioSink* audio, bool positional);
+    int   AccumulateFootstep(Player& actor, IAudioSink* audio, bool positional);
     bool spectateTogglePending_ = false;
-    int previousEquipSlot_ = 2;
-    WeaponId previousEquipWeapon_ = WeaponId::Knife;
     HitMarkerKind hitMarkerKind_ = HitMarkerKind::Normal;
     float dryFireHintTimer_ = 0.0f;
-    float dryFireCooldown_ = 0.0f;
     float hitMarkerTimer_ = 0.0f;   // 命中敌人反馈
     std::array<DamageDirection, 4> damageDirections_{};
     float damageFlashTimer_ = 0.0f; // 玩家受伤反馈
@@ -1424,7 +1480,6 @@ private:
     float lastDeathX_ = 0.0f, lastDeathY_ = 0.0f;
     Team  lastDeathTeam_ = Team::None;
     float lastDeathTimer_ = 0.0f;
-    float botPlantProgress_ = 0.0f;
     float defuseRemaining_ = 0.0f;
     float defuseProgress_ = 0.0f;  // 0..1
 
@@ -1436,40 +1491,29 @@ private:
 
     Team  desiredPlayerTeam_ = Team::CT;
     WeaponDB::MatchLoadouts matchLoadouts_ = WeaponDB::DefaultMatchLoadouts();
-    int bombPlanter_ = -2;
+    ActorId bombPlanter_ = kInvalidActorId;
     std::uint64_t c4EquipmentId_=0;
-    int   bombCarrier_ = -2;      // -2 无人, -1 玩家, >=0 BOT 索引
+    ActorId bombCarrier_ = kInvalidActorId;
     bool  bombDropped_ = false;    // C4 掉在地上
     float bombDropDelay_ = 0.0f;   // 丢下后 1 秒内不能被捡回（否则原地立刻捡起，像「丢不掉」）
     float bombDropX_ = 0.0f, bombDropY_ = 0.0f;
-    bool  playerHoldingC4_ = false; // 玩家把 C4 拿在手上（按 5）
-
-    // 切枪音效：SwitchWeaponSlot 没有 AudioManager 参数（内部切换/按键都可能调用），
-    // 先把「刚切到的武器」挂起，由 Update(audio) 统一播放。
-    bool     switchSoundPending_ = false;
-    WeaponId switchSoundWeapon_ = WeaponId::None;
 
     // CT 对「掉落 C4」的情报（像敌人情报一样会过期）
     bool  bombIntel_ = false;
     float bombIntelX_ = 0.0f, bombIntelY_ = 0.0f;
     float bombIntelAge_ = 0.0f;
-    int plantingChannel_ = -1;
-    int activeDefuser_ = -2;
-    float plantProgress_ = 0.0f;
+    ActorId activeDefuser_ = kInvalidActorId;
 
     SpectateMode specMode_ = SpectateMode::None;
     DeathPresentation deathPresentation_;
     void UpdateSpectatorState();
-    int   specTarget_ = -1;
+    ActorId specTarget_ = kInvalidActorId;
     float specFreeX_ = 0.0f, specFreeY_ = 0.0f;
-    int   NextTeammateBot(int from, int dir) const;
-    // 自由视角的视野观察者 = 存活队友（含玩家本人以外的己方角色）。
+    ActorId NextTeammateBot(ActorId from, int dir) const;
+    // 自由视角的视野观察者 = 存活队友（含本地玩家本人以外的己方角色）。
     // 返回实际写入数量；为 0 时调用方回退到「按自己」。
     std::size_t CollectFreeSpectateObservers(VisibilityQuery::Observer* out,
                                             std::size_t capacity) const;
-
-    int playerKills_  = 0;
-    int playerDeaths_ = 0;
 
     MatchMode  mode_ = MatchMode::TeamElimination;
     TeamManager teams_;
@@ -1478,11 +1522,11 @@ private:
     RoundPhase  prevPhase_ = RoundPhase::Freeze;
     bool        matchOverAnnounced_ = false;
 
-    // BOT 运行时状态（与 bots_ 同下标）
-    std::vector<BotRuntime> botAi_;
+    // BOT 运行时状态（与 actors_ 同下标）
+    std::vector<BotRuntime> actorAi_;
 
-    // 小队协同状态（索引与 bots_ 对齐）
-    std::vector<SquadOrder> squad_;
+    // 小队协同状态（索引与 actors_ 对齐）
+    std::vector<SquadOrder> actorSquad_;
     float squadFocusTimer_ = 0.0f;
 
     // 团队情报（按阵营分开）
@@ -1499,7 +1543,6 @@ private:
     std::uniform_real_distribution<float> angleDist_{0.0f, 6.283185f};
 
     float mouseSensitivity_ = 1.0f;
-    bool  prevMouseDown_    = false;
     // 契约 v1.3：开镜大十字设置
     float scopeCrossThickness_ = 2.0f;
     bool  scopeCrossDynamic_   = false;
@@ -1514,10 +1557,9 @@ private:
     float scopeEngFrom_ = 0.0f, scopeEngTo_ = 0.0f, scopeEngT_ = 1.0f;
     float scopeZoom_ = 1.0f;                        // 当前实际倍率
     float scopeZoomFrom_ = 1.0f, scopeZoomTo_ = 1.0f, scopeZoomT_ = 1.0f;
-    float aimWorldX_ = 0.0f, aimWorldY_ = 0.0f;     // 最近一次 Update 传入的准星世界坐标
     void TickScope(float dt);                       // 每帧按 dt 推进过渡
     // 相机向准星偏移的比例（1.5x≈0.35，2x≈0.5，按当前倍率线性）
-    int  PurchaseQuantityOf(const Presentation::BuyRequest& request) const;
+    int  PurchaseQuantityOf(const Player& actor, const Presentation::BuyRequest& request) const;
     int  PurchasePriceOf(const Presentation::BuyRequest& request) const;
     bool IsBuyWindowOpen() const;                          // 只看时窗（模式/回合）
 
@@ -1530,11 +1572,13 @@ private:
 
     // 内部方法
     void ResetToNewMatch();          // 清空比分与统计并重建所有战斗单位
-    void SpawnPlayer();
+    void SpawnPlayer(Player& actor);
+    void SpawnPlayer() { SpawnPlayer(LocalActor()); }
     void SpawnBOT(Player& bot, Team team);
     bool PickSpawnForTeam(Team team, float& outX, float& outY);
-    void UpdatePlayerMovement(float dt, bool w, bool a, bool s, bool d, bool stealth);
-    void UpdatePlayerShooting(float dt, bool mouseDown, float worldMX, float worldMY, IAudioSink* audio);
+    void UpdateHumanActor(Player& actor, float dt, const ActorInput& input, IAudioSink* audio);
+    void UpdatePlayerMovement(Player& actor, float dt, bool w, bool a, bool s, bool d, bool stealth);
+    void UpdatePlayerShooting(Player& actor, float dt, bool mouseDown, float worldMX, float worldMY, IAudioSink* audio);
     void UpdateBOTs(float dt, IAudioSink* audio);
     // 找一个能挡住威胁点视线的掩体位置（就近优先）
     // 卡墙脱困：尝试在周围找一个可行走点并侧移过去（返回是否成功）
@@ -1552,14 +1596,14 @@ private:
 
     // ---- 小队协同 ----
     void AssignSquadRoles(bool dynamic = false);
-    void RefreshRolesForTeam(Team t);   // 只补"断档"的角色，不重排全部（避免角色churn）            // 回合开始时分配 突破/支援/断后
+    void RefreshRolesForTeam(Team t);   // 只补"断档"的角色，不重排全部（避免角色churn）
     void UpdateSquadFocus(float dt);    // 周期性选集火目标（含掩护偏好）
     const Player* ResolveFocus(const SquadOrder& order) const;
 
     // ---- 团队情报共享 ----
     void UpdateTeamContacts(float dt);                 // 上报 + 老化
     void OnFootstepSound(const Player& source, float x, float y);  // 脚步声 → 附近敌对 BOT
-    void ReportContact(Team team, int id, float x, float y);
+    void ReportContact(Team team, ActorId id, float x, float y);
     const EnemyContact* FindNearestContact(Team team, float x, float y) const;
     std::vector<EnemyContact>&       ContactsOf(Team t);
     const std::vector<EnemyContact>& ContactsOf(Team t) const;
@@ -1568,7 +1612,7 @@ private:
     // 在声源位置发一次声：半径内的所有存活 BOT 都会收到一条 HeardSound；
     // 敌对声音同时把听者的警戒朝向指向声源。radius 为 0 时用 SoundRadius(type)。
     void EmitSound(SoundEventType type, float x, float y, Team team,
-                   int sourceIdx = -2, float radius = 0.0f, WeaponId hazardWeapon = WeaponId::None, float dangerDelay = 0);
+                   ActorId sourceId = kEnvironmentActorId, float radius = 0.0f, WeaponId hazardWeapon = WeaponId::None, float dangerDelay = 0);
     // 某个 BOT 最近听到的指定类型声音（只按 age 过滤）；没有返回 nullptr
     const HeardSound* NewestHeard(size_t botIdx, SoundEventType type,
                                   float maxAge = Tuning::SoundMemory) const;
@@ -1583,16 +1627,13 @@ private:
     // 拆包安全判定：最近受击 / 可见敌人时先放弃拆包反击；炸弹最后 6 秒强制拆。
     bool BotCanDefuse(size_t i, const Player& bot) const;
     // 下包后指定一个 CT 拆包手：优先安全、离炸弹最近；其余 CT 清点/掩护。
-    int  PickDefuseBot() const;
+    ActorId PickDefuseBot() const;
     // P0-3：下包后指定一个 CT 掩护手——离炸弹最近的存活 CT（拆包手除外），去拆包手附近架枪。
-    int  PickCoverBot(int defuser) const;
+    ActorId PickCoverBot(ActorId defuser) const;
     // 目标是否落在以 self 朝向为中心的视野扇形内（玩家/BOT 共用几何）
     bool CanSeePoint(const Player& observer, float x, float y) const;
-    int ActorPoseSlot(const Player &actor) const {
-        const bool planting = &actor == &player_ ? plantProgress_ > 0
-                                                 : botPlantProgress_ > 0 && bombCarrier_ >= 0 &&
-                                                       bombCarrier_ < static_cast<int>(bots_.size()) &&
-                                                       &actor == &bots_[bombCarrier_];
+    int ActorPoseSlot(const Player& actor) const {
+        const bool planting = actor.plantProgress > 0.0f && ActorHasC4(actor);
         return planting ? 4 : actor.weaponSlot;
     }
     struct BodyVisibility { float fraction = 0; Vec2 aim{}; };
@@ -1622,13 +1663,14 @@ private:
     float ExpectedBlastDamage(float x,float y,const Player& target) const;
     void RebuildFireCells(FireZone& fire) const;
     bool FireContains(const FireZone& fire,float x,float y) const;
-    Player* DamageOwner(int index) { return index == -1 ? &player_ : index >= 0 && index < static_cast<int>(bots_.size()) ? &bots_[index] : nullptr; }
+    Player* DamageOwner(ActorId id) { return FindActor(id); }
     void ExplodeGrenade(const Grenade& g, IAudioSink* audio);
     bool SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) const;
     void RespawnBOT(Player& bot);
 
-    void MoveWithCollision(Player& entity, float dt);    void FireBullet(float x, float y, float angle, const WeaponDef& def,
-                    int ownerIdx, Team ownerTeam);
+    void MoveWithCollision(Player& entity, float dt);
+    void FireBullet(float x, float y, float angle, const WeaponDef& def,
+                    ActorId ownerId, Team ownerTeam);
 
     bool BotCanSeePlayer(const Player& bot) const;
     bool PlayerCanSeeBot(const Player& bot) const;
@@ -1660,7 +1702,7 @@ private:
 
     // 目标物
     void SetupObjective();                  // 按模式初始化包点 / C4
-    void UpdateObjective(float dt, bool interactHeld, IAudioSink* audio);
+    void UpdateObjective(float dt, IAudioSink* audio);
     void PlantBomb(float x, float y, IAudioSink* audio);
     void DetonateBomb(IAudioSink* audio);
     void OnCombatantKilled(Player& victim, IAudioSink* audio,

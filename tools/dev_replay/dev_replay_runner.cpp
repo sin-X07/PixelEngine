@@ -213,10 +213,10 @@ struct Summary {
 void DumpTick(std::FILE* f, const CS2DGame& game, uint64_t tick) {
     if (!f) return;
     const auto& p = game.GetPlayer();
-    const auto& bots = game.GetBOTs();
+    const auto& actors = game.GetActors();
     const auto& planT = game.GetCoachPlan(Team::T);
     const auto& planCT = game.GetCoachPlan(Team::CT);
-    const auto& ai0 = game.AiAt(0);
+    const auto& ai0 = game.AiAt(actors.size() > 1 ? 1 : 0);
     int bullets = 0;
     for (const auto& b : game.GetBullets()) if (b.active) ++bullets;
     std::fprintf(f, "%llu r%d ph%d px%.2f py%.2f ammo%d money%d alive%d "
@@ -224,9 +224,9 @@ void DumpTick(std::FILE* f, const CS2DGame& game, uint64_t tick) {
                  static_cast<unsigned long long>(tick),
                  game.GetRoundNumber(), static_cast<int>(game.GetRoundPhase()),
                  p.x, p.y, p.ammo, p.money, p.alive ? 1 : 0,
-                 bots.empty() ? 0.0f : bots[0].x,
-                 bots.empty() ? 0.0f : bots[0].y,
-                 bots.empty() ? 0 : bots[0].health);
+                 actors.size() <= 1 ? 0.0f : actors[1].x,
+                 actors.size() <= 1 ? 0.0f : actors[1].y,
+                 actors.size() <= 1 ? 0 : actors[1].health);
     std::fprintf(f, " planT=%d,%d,%s,%d planCT=%d,%d,%s,%d ai0=%d,%d %.1f,%.1f hold%d " 
                  "bul%d gre%zu smoke%zu fire%zu aim%.9g\n",
                  static_cast<int>(planT.intent), planT.gen, planT.target.c_str(),
@@ -286,7 +286,9 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
         std::fprintf(stderr, "[dev_replay] 地图加载失败: %s\n", mapPath.c_str());
         return s;
     }
-    for (size_t i = 0; i < game.GetBOTs().size(); ++i) game.SetBotProfile(i, opt.botProfile);
+    for (size_t i = 0; i < game.GetActors().size(); ++i) {
+        if (game.GetActors()[i].IsBot()) game.SetBotProfile(i, opt.botProfile);
+    }
     game.Visibility().SetVisionRadius(
         VisibilityQuery::RadiusForViewport(opt.viewportW, opt.viewportH));
 
@@ -395,10 +397,11 @@ Summary RunOne(const Options& opt, const std::string& map, int seed,
         conflicts.Check(game, static_cast<uint64_t>(t), conflictFile);
         combatTracker.Sample(game, static_cast<uint64_t>(t), combatFile);
         if (positionsFile) {
-            const auto& bots = game.GetBOTs();
+            const auto& actors = game.GetActors();
             const int planted = game.IsBombPlanted() ? 1 : 0;
-            for (size_t bi = 0; bi < bots.size(); ++bi) {
-                const auto& b = bots[bi];
+            for (size_t bi = 0; bi < actors.size(); ++bi) {
+                const auto& b = actors[bi];
+                if (!b.IsBot()) continue;
                 const auto& ai = game.AiAt(bi);
                 std::fprintf(positionsFile, "%d,%d,%d,%zu,%d,%d,%.1f,%.1f,%.1f,%.1f,%d,%d,%d,%.1f,%.1f,%d,%.1f,%.1f,%d,%d,%d,%.1f\n",
                              t, game.GetRoundNumber(), planted, bi,
