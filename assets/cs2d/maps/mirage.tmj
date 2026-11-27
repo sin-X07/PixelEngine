@@ -2469,18 +2469,6 @@
                  "y":992
                 }, 
                 {
-                 "height":32,
-                 "id":424,
-                 "name":"",
-                 "opacity":1,
-                 "rotation":0,
-                 "type":"",
-                 "visible":true,
-                 "width":32,
-                 "x":2048,
-                 "y":1088
-                }, 
-                {
                  "height":48,
                  "id":425,
                  "name":"",
@@ -3148,8 +3136,8 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":164,
-                 "x":288,
+                 "width":100,
+                 "x":352,
                  "y":736
                 }, 
                 {
@@ -3435,7 +3423,7 @@
                  "y":1432
                 }, 
                 {
-                 "height":72,
+                 "height":84,
                  "id":792,
                  "name":"",
                  "opacity":1,
@@ -4544,18 +4532,6 @@
                  "y":224
                 }, 
                 {
-                 "height":112,
-                 "id":900,
-                 "name":"",
-                 "opacity":1,
-                 "rotation":0,
-                 "type":"",
-                 "visible":true,
-                 "width":24,
-                 "x":1828,
-                 "y":224
-                }, 
-                {
                  "height":24,
                  "id":901,
                  "name":"",
@@ -4791,8 +4767,8 @@
                  "rotation":0,
                  "type":"",
                  "visible":true,
-                 "width":148,
-                 "x":288,
+                 "width":84,
+                 "x":352,
                  "y":744
                 }, 
                 {
@@ -6621,25 +6597,13 @@
                         }, 
                         {
                          "height":32,
-                         "id":702,
-                         "name":"",
-                         "opacity":1,
-                         "rotation":0,
-                         "type":"",
-                         "visible":true,
-                         "width":20,
-                         "x":2080,
-                         "y":1088
-                        }, 
-                        {
-                         "height":32,
                          "id":703,
                          "name":"",
                          "opacity":1,
                          "rotation":0,
                          "type":"",
                          "visible":true,
-                         "width":32,
+                         "width":84,
                          "x":2016,
                          "y":1088
                         }, 
@@ -7124,7 +7088,7 @@
                          "y":412
                         }, 
                         {
-                         "height":76,
+                         "height":124,
                          "id":1249,
                          "name":"",
                          "opacity":1,
@@ -7133,7 +7097,7 @@
                          "visible":true,
                          "width":24,
                          "x":1828,
-                         "y":336
+                         "y":288
                         }, 
                         {
                          "height":28,
@@ -8324,7 +8288,7 @@
                  "name":"Market_door",
                  "objects":[
                         {
-                         "height":160,
+                         "height":184,
                          "id":574,
                          "name":"",
                          "opacity":1,
@@ -9498,6 +9462,18 @@
                          "width":4,
                          "x":1596,
                          "y":168
+                        }, 
+                        {
+                         "height":64,
+                         "id":1269,
+                         "name":"",
+                         "opacity":1,
+                         "rotation":0,
+                         "type":"",
+                         "visible":true,
+                         "width":72,
+                         "x":1780,
+                         "y":224
                         }],
                  "opacity":1,
                  "type":"objectgroup",
@@ -10448,7 +10424,7 @@
                  "name":"Bulcony",
                  "objects":[
                         {
-                         "height":128,
+                         "height":116,
                          "id":687,
                          "name":"",
                          "opacity":1,
@@ -10457,7 +10433,7 @@
                          "visible":true,
                          "width":36,
                          "x":1404,
-                         "y":1504
+                         "y":1516
                         }, 
                         {
                          "height":84,
@@ -10520,7 +10496,7 @@
                          "y":1536
                         }, 
                         {
-                         "height":32,
+                         "height":20,
                          "id":1267,
                          "name":"",
                          "opacity":1,
@@ -10529,7 +10505,7 @@
                          "visible":true,
                          "width":4,
                          "x":1400,
-                         "y":1504
+                         "y":1516
                         }],
                  "opacity":1,
                  "type":"objectgroup",
@@ -11127,12 +11103,12 @@
          "name":"site",
          "opacity":1,
          "type":"group",
-         "visible":false,
+         "visible":true,
          "x":0,
          "y":0
         }],
  "nextlayerid":69,
- "nextobjectid":1269,
+ "nextobjectid":1270,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.12.2",
