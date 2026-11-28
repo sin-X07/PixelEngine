@@ -114,11 +114,12 @@ set(PIXEL_SIM_SOURCES
     CS2D/TacticalIntel.cpp
     CS2D/Navigation/PathFinder.cpp
     CS2D/Rounds/RoundManager.cpp
+    CS2D/CS2DSimulation.cpp
+    CS2D/CS2DClientView.cpp
     CS2D/CS2DGame.cpp
     CS2D/CS2DGameRound.cpp
     CS2D/CS2DGameCombat.cpp
     CS2D/CS2DGameBots.cpp
-    CS2D/CS2DGameSpectate.cpp
     CS2D/CS2DGameSound.cpp
     CS2D/CS2DGameBomb.cpp
     CS2D/CS2DGameSquad.cpp
@@ -258,6 +259,15 @@ if(BUILD_GAMEPLAY_TESTS)
         target_link_options(pixelsim_actor_test PRIVATE -mconsole -static -static-libgcc -static-libstdc++)
     endif()
     add_dependencies(pixelsim_actor_test SyncEngineAssets)
+
+    add_executable(pixelsim_event_test
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/pixelsim_event_test.cpp"
+    )
+    target_link_libraries(pixelsim_event_test PRIVATE PixelSim)
+    if(MINGW)
+        target_link_options(pixelsim_event_test PRIVATE -mconsole -static -static-libgcc -static-libstdc++)
+    endif()
+    add_dependencies(pixelsim_event_test SyncEngineAssets)
 
     set(TEST_SOURCES ${CLIENT_SOURCES})
     list(REMOVE_ITEM TEST_SOURCES main.cpp)

@@ -1,11 +1,11 @@
-#include "CS2DGame.hpp"
-#include <iostream>
-#include <cmath>
+#include "CS2DSimulation.hpp"
 #include <algorithm>
+#include <cmath>
+#include <iostream>
 #include <limits>
 
 // ============================================================================
-// 目标物：爆破（下包/拆包）
+// 目标物：爆破（下包/拆包）—— 纯权威仿真，通过 SimEventQueue 发射 BombEvent
 // ============================================================================
 
 namespace {
@@ -14,8 +14,7 @@ constexpr float PLANT_TIME  = 3.0f;    // T 在包点停留多久完成下包
 constexpr float DEFUSE_TIME = 10.0f;   // CT 拆包耗时
 } // namespace
 
-// 记分板数据（全部活跃单位，按阵营与击杀排序）
-std::vector<CS2DGame::ScoreRow> CS2DGame::BuildScoreboard() const {
+std::vector<CS2DSimulation::ScoreRow> CS2DSimulation::BuildScoreboard() const {
     std::vector<ScoreRow> rows;
     rows.reserve(actors_.size());
 
@@ -48,44 +47,67 @@ std::vector<CS2DGame::ScoreRow> CS2DGame::BuildScoreboard() const {
     return rows;
 }
 
-// 按模式初始化目标物
-void CS2DGame::SetupObjective() {
+void CS2DSimulation::SetupObjective() {
     c4EquipmentId_ = mode_ == MatchMode::BombDefusal ? nextEquipmentId_++ : 0;
     AssignBombCarrier();
     bombPlanted_   = false;
     bombTimer_     = 0.0f;
-    StopObjectiveAudio(nullptr);
     defuseProgress_ = 0.0f;
+    defuseRemaining_ = 0.0f;
+    activeDefuser_ = kInvalidActorId;
 
-    // 每回合必须清掉上一局遗留的 C4 掉落 / 情报 / 拾取冷却，
-    // 否则上一局的掉落点会「继承」到新回合
     bombDropped_    = false;
     bombDropDelay_  = 0.0f;
     bombDropX_ = bombDropY_ = 0.0f;
     bombIntel_      = false;
     bombIntelAge_   = 0.0f;
     bombIntelX_ = bombIntelY_ = 0.0f;
-    for (auto& actor : actors_) {
-        actor.holdingC4 = false;
-        actor.plantProgress = 0.0f;
-        actor.weapons[4] = WeaponId::None;
-        actor.equipment[4] = {};
-        if (actor.weaponSlot == 4) actor.weaponSlot = 1;
+    for (size_t i = 0; i < actors_.size(); ++i) {
+        actors_[i].holdingC4 = false;
+        actors_[i].plantProgress = 0.0f;
+        actors_[i].defuseProgress = 0.0f;
+        actors_[i].weapons[4] = WeaponId::None;
+        actors_[i].equipment[4] = {};
+        if (actors_[i].weaponSlot == 4) actors_[i].weaponSlot = 1;
+        if (i < actorAi_.size()) actorAi_[i].defusing = false;
     }
     bombX_ = bombY_ = 0.0f;
+
+    SimEvent ev;
+    ev.type = SimEventType::BombEvent;
+    ev.bombKind = BombEventKind::StopAllObjectiveAudio;
+    EmitSimEvent(std::move(ev));
 }
 
-// 每帧推进目标物（仅交战期）
-void CS2DGame::UpdateObjective(float dt, IAudioSink* audio) {
-    if (audio) audioSink_ = audio;
-    IAudioSink* sink = audio ? audio : (audioSink_ ? audioSink_ : IAudioSink::Active());
+void CS2DSimulation::UpdateObjective(float dt) {
     if (mode_ != MatchMode::BombDefusal || !round_.IsLive()) {
-        StopObjectiveAudio(audio);
+        for (size_t i = 0; i < actors_.size(); ++i) {
+            const bool hadPlant = actors_[i].plantProgress > 0.0f;
+            const bool hadDefuse = actors_[i].defuseProgress > 0.0f;
+            actors_[i].plantProgress = 0.0f;
+            actors_[i].defuseProgress = 0.0f;
+            if (i < actorAi_.size()) actorAi_[i].defusing = false;
+            if (hadPlant) {
+                SimEvent ev;
+                ev.type = SimEventType::BombEvent;
+                ev.bombKind = BombEventKind::PlantStopped;
+                ev.actorId = actors_[i].id;
+                EmitSimEvent(std::move(ev));
+            }
+            if (hadDefuse) {
+                SimEvent ev;
+                ev.type = SimEventType::BombEvent;
+                ev.bombKind = BombEventKind::DefuseStopped;
+                ev.actorId = actors_[i].id;
+                EmitSimEvent(std::move(ev));
+            }
+        }
+        activeDefuser_ = kInvalidActorId;
+        defuseProgress_ = defuseRemaining_ = 0.0f;
         return;
     }
 
     if (!bombPlanted_) {
-        // 未下包：清掉所有 BOT 的拆包状态
         for (size_t i = 0; i < actorAi_.size(); ++i) actorAi_[i].defusing = false;
 
         Player* carrier = (!bombDropped_ && world_) ? FindActor(bombCarrier_) : nullptr;
@@ -97,22 +119,28 @@ void CS2DGame::UpdateObjective(float dt, IAudioSink* audio) {
 
         for (auto& actor : actors_) {
             if (&actor != carrier || !wantPlant) {
+                const bool wasPlanting = actor.plantProgress > 0.0f;
                 actor.plantProgress = 0.0f;
-                if (actor.plantingChannel >= 0) {
-                    if (sink) sink->StopChannel(actor.plantingChannel);
-                    actor.plantingChannel = -1;
+                if (wasPlanting) {
+                    SimEvent ev;
+                    ev.type = SimEventType::BombEvent;
+                    ev.bombKind = BombEventKind::PlantStopped;
+                    ev.actorId = actor.id;
+                    EmitSimEvent(std::move(ev));
                 }
             }
         }
 
         if (wantPlant && carrier) {
             if (carrier->IsHuman()) {
-                if (carrier->plantProgress == 0.0f && audio) {
-                    if (carrier->id == localActorId_)
-                        carrier->plantingChannel = audio->PlaySoundTracked(SoundEffect::BOMB_PLANTING, 1);
-                    else
-                        carrier->plantingChannel = audio->PlaySoundTrackedAt(
-                            SoundEffect::BOMB_PLANTING, carrier->x, carrier->y, ListenerX(), ListenerY(), 1);
+                if (carrier->plantProgress == 0.0f) {
+                    SimEvent ev;
+                    ev.type = SimEventType::BombEvent;
+                    ev.bombKind = BombEventKind::PlantActive;
+                    ev.actorId = carrier->id;
+                    ev.x = carrier->x;
+                    ev.y = carrier->y;
+                    EmitSimEvent(std::move(ev));
                 }
             } else {
                 bombX_ = carrier->x;
@@ -124,7 +152,7 @@ void CS2DGame::UpdateObjective(float dt, IAudioSink* audio) {
                 const float px = carrier->x;
                 const float py = carrier->y;
                 carrier->plantProgress = 0.0f;
-                PlantBomb(px, py, audio);
+                PlantBomb(px, py);
                 if (wasBot) {
                     CoachOnEvent(Team::T,  CoachEventType::DefuseAborted);
                     CoachOnEvent(Team::CT, CoachEventType::DefuseAborted);
@@ -136,16 +164,19 @@ void CS2DGame::UpdateObjective(float dt, IAudioSink* audio) {
 
     // ---- 已下包：倒计时 + 拆包 ----
     for (auto& actor : actors_) {
+        const bool wasPlanting = actor.plantProgress > 0.0f;
         actor.plantProgress = 0.0f;
-        if (actor.plantingChannel >= 0) {
-            if (sink) sink->StopChannel(actor.plantingChannel);
-            actor.plantingChannel = -1;
+        if (wasPlanting) {
+            SimEvent ev;
+            ev.type = SimEventType::BombEvent;
+            ev.bombKind = BombEventKind::PlantStopped;
+            ev.actorId = actor.id;
+            EmitSimEvent(std::move(ev));
         }
     }
 
     const float stepTime = std::min(std::max(0.0f, dt), std::max(0.0f, bombTimer_));
 
-    // C4 滴答：越接近爆炸越急促（1s → 0.25s）
     {
         bombBeepTimer_ -= dt;
         const float interval = (bombTimer_ > 10.0f) ? 1.0f
@@ -154,10 +185,12 @@ void CS2DGame::UpdateObjective(float dt, IAudioSink* audio) {
         if (bombBeepTimer_ <= 0.0f) {
             bombBeepTimer_ = interval;
             EmitSound(SoundEventType::BombBeep, bombX_, bombY_, Team::T);
-            if (audio) {
-                audio->PlaySoundAt(SoundEffect::BOMB_BEEP, bombX_, bombY_,
-                                   ListenerX(), ListenerY());
-            }
+            SimEvent ev;
+            ev.type = SimEventType::BombEvent;
+            ev.bombKind = BombEventKind::Beep;
+            ev.x = bombX_;
+            ev.y = bombY_;
+            EmitSimEvent(std::move(ev));
         }
     }
 
@@ -170,9 +203,15 @@ void CS2DGame::UpdateObjective(float dt, IAudioSink* audio) {
 
     auto updateDefuser = [&](Player& actor, bool eligible) {
         if (!eligible) {
-            if (sink && actor.defuseChannel >= 0) sink->StopChannel(actor.defuseChannel);
-            actor.defuseChannel = -1;
+            const bool wasDefusing = actor.defuseProgress > 0.0f;
             actor.defuseProgress = 0.0f;
+            if (wasDefusing) {
+                SimEvent ev;
+                ev.type = SimEventType::BombEvent;
+                ev.bombKind = BombEventKind::DefuseStopped;
+                ev.actorId = actor.id;
+                EmitSimEvent(std::move(ev));
+            }
             return;
         }
         if (actor.hasDefuseKit && dt > 0.0f) actor.kitEquipment.used = true;
@@ -184,16 +223,16 @@ void CS2DGame::UpdateObjective(float dt, IAudioSink* audio) {
             CoachOnEvent(Team::T,  CoachEventType::DefuseStarted, area);
             CoachOnEvent(Team::CT, CoachEventType::DefuseStarted, area);
         }
-        const auto sound = actor.hasDefuseKit ? SoundEffect::BOMB_DEFUSING_KIT : SoundEffect::BOMB_DEFUSING;
-        const int reservedChan = std::min(2 + actor.id, kReservedChannels - 1);
-        const bool isLocal = (actor.id == localActorId_);
-        if (actor.defuseChannel < 0 && audio) {
-            actor.defuseChannel = isLocal
-                ? audio->PlaySoundTracked(sound, reservedChan)
-                : audio->PlaySoundTrackedAt(sound, actor.x, actor.y, ListenerX(), ListenerY(), reservedChan);
+        {
+            SimEvent ev;
+            ev.type = SimEventType::BombEvent;
+            ev.bombKind = BombEventKind::DefuseActive;
+            ev.actorId = actor.id;
+            ev.x = actor.x;
+            ev.y = actor.y;
+            ev.flagA = actor.hasDefuseKit;
+            EmitSimEvent(std::move(ev));
         }
-        if (audio && !isLocal)
-            audio->UpdateTrackedSoundAt(actor.defuseChannel, sound, actor.x, actor.y, ListenerX(), ListenerY());
         actor.defuseProgress = std::min(1.0f, actor.defuseProgress + stepTime / duration);
         if (finishIn <= stepTime && finishIn < firstFinish) {
             winner = actor.id;
@@ -227,11 +266,30 @@ void CS2DGame::UpdateObjective(float dt, IAudioSink* audio) {
     }
 
     if (winner != kInvalidActorId) {
-        StopObjectiveAudio(audio);
+        for (size_t i = 0; i < actors_.size(); ++i) {
+            actors_[i].defuseProgress = 0.0f;
+            actors_[i].plantProgress = 0.0f;
+            if (i < actorAi_.size()) actorAi_[i].defusing = false;
+        }
+        activeDefuser_ = kInvalidActorId;
+        defuseProgress_ = defuseRemaining_ = 0.0f;
         bombPlanted_ = false;
         bombTimer_ = 0.0f;
         EmitSound(SoundEventType::BombDefused, bombX_, bombY_, Team::CT);
-        if (audio) audio->PlaySound(SoundEffect::BOMB_DEFUSE);
+        {
+            SimEvent stopEv;
+            stopEv.type = SimEventType::BombEvent;
+            stopEv.bombKind = BombEventKind::StopAllObjectiveAudio;
+            EmitSimEvent(std::move(stopEv));
+
+            SimEvent defEv;
+            defEv.type = SimEventType::BombEvent;
+            defEv.bombKind = BombEventKind::Defused;
+            defEv.actorId = winner;
+            defEv.x = bombX_;
+            defEv.y = bombY_;
+            EmitSimEvent(std::move(defEv));
+        }
         if (Player* successful = FindActor(winner)) {
             successful->money += economy_.GrantDefuse();
             economy_.Clamp(successful->money);
@@ -239,17 +297,23 @@ void CS2DGame::UpdateObjective(float dt, IAudioSink* audio) {
             std::cout << "[Defuse] #" << winner << " success kit=" << (kitWin ? 1 : 0)
                       << " dur=" << (kitWin ? 4 : 10) << std::endl;
         }
-        ApplyRoundResult(Team::CT, audio);
+        ApplyRoundResult(Team::CT);
         round_.EndRound(Team::CT);
     } else {
         bombTimer_ -= dt;
-        if (bombTimer_ <= 0.0f) DetonateBomb(audio);
+        if (bombTimer_ <= 0.0f) DetonateBomb();
     }
 }
 
-void CS2DGame::PlantBomb(float x, float y, IAudioSink* audio) {
-    StopObjectiveAudio(audio);
-    // C4 已安装：从携带者手里/槽位里移除
+void CS2DSimulation::PlantBomb(float x, float y) {
+    for (size_t i = 0; i < actors_.size(); ++i) {
+        actors_[i].defuseProgress = 0.0f;
+        actors_[i].plantProgress = 0.0f;
+        if (i < actorAi_.size()) actorAi_[i].defusing = false;
+    }
+    activeDefuser_ = kInvalidActorId;
+    defuseProgress_ = defuseRemaining_ = 0.0f;
+
     bombPlanter_ = bombCarrier_;
     bombCarrier_ = kInvalidActorId;
     for (auto& actor : actors_) {
@@ -263,7 +327,6 @@ void CS2DGame::PlantBomb(float x, float y, IAudioSink* audio) {
     bombX_ = x;
     bombY_ = y;
 
-    // ---- 下包奖励：T 全员每人 +$300（照抄 CS2）----
     {
         const int bonus = economy_.GrantPlant();
         for (auto& actor : actors_) {
@@ -284,20 +347,36 @@ void CS2DGame::PlantBomb(float x, float y, IAudioSink* audio) {
     bombTimer_ = BOMB_FUSE;
     bombBeepTimer_ = 0.0f;
     defuseProgress_ = 0.0f;
-    // 下包完成是全图可闻的事件：所有单位收到「炸弹在这里」
     EmitSound(SoundEventType::BombPlanted, bombX_, bombY_, Team::T);
     std::cout << "[CS2D] C4 已安装! " << static_cast<int>(BOMB_FUSE) << " 秒后爆炸" << std::endl;
-    if (audio) audio->PlaySound(SoundEffect::BOMB_PLANT);
+
+    SimEvent stopEv;
+    stopEv.type = SimEventType::BombEvent;
+    stopEv.bombKind = BombEventKind::StopAllObjectiveAudio;
+    EmitSimEvent(std::move(stopEv));
+
+    SimEvent ev;
+    ev.type = SimEventType::BombEvent;
+    ev.bombKind = BombEventKind::Planted;
+    ev.actorId = bombPlanter_;
+    ev.x = bombX_;
+    ev.y = bombY_;
+    EmitSimEvent(std::move(ev));
 }
 
-void CS2DGame::DetonateBomb(IAudioSink* audio) {
-    StopObjectiveAudio(audio);
+void CS2DSimulation::DetonateBomb() {
+    for (size_t i = 0; i < actors_.size(); ++i) {
+        actors_[i].defuseProgress = 0.0f;
+        actors_[i].plantProgress = 0.0f;
+        if (i < actorAi_.size()) actorAi_[i].defusing = false;
+    }
+    activeDefuser_ = kInvalidActorId;
+    defuseProgress_ = defuseRemaining_ = 0.0f;
     bombPlanted_ = false;
     bombTimer_ = 0.0f;
     std::cout << "[CS2D] C4 爆炸! T 获胜本回合" << std::endl;
     EmitSound(SoundEventType::Explosion, bombX_, bombY_, Team::T, kEnvironmentActorId, 3200.0f);
 
-    // 爆炸范围伤害（不分阵营）
     constexpr float RADIUS = Tuning::BombBlastRadius;
     for (auto& p : actors_) {
         if (!p.IsActive() || !p.alive) continue;
@@ -306,21 +385,31 @@ void CS2DGame::DetonateBomb(IAudioSink* audio) {
         const float d = std::sqrt(dx * dx + dy * dy);
         if (d > RADIUS) continue;
         const float f = 1.0f - d / RADIUS;
-        if (ApplyDamage(p, static_cast<int>(200.0f * f), 1.0f)) {   // C4 爆炸无视护甲
-            OnCombatantKilled(p, audio, DamageOwner(bombPlanter_), WeaponId::C4, c4EquipmentId_, Vec2{bombX_, bombY_});
+        if (ApplyDamage(p, static_cast<int>(200.0f * f), 1.0f)) {
+            OnCombatantKilled(p, DamageOwner(bombPlanter_), WeaponId::C4, c4EquipmentId_, Vec2{bombX_, bombY_});
         }
     }
 
-    if (audio) audio->PlaySound(SoundEffect::BOMB_EXPLODE);
+    {
+        SimEvent stopEv;
+        stopEv.type = SimEventType::BombEvent;
+        stopEv.bombKind = BombEventKind::StopAllObjectiveAudio;
+        EmitSimEvent(std::move(stopEv));
 
-    ApplyRoundResult(Team::T, audio);
+        SimEvent ev;
+        ev.type = SimEventType::BombEvent;
+        ev.bombKind = BombEventKind::Exploded;
+        ev.actorId = bombPlanter_;
+        ev.x = bombX_;
+        ev.y = bombY_;
+        EmitSimEvent(std::move(ev));
+    }
+
+    ApplyRoundResult(Team::T);
     round_.EndRound(Team::T);
 }
 
-// C4 携带者：每回合重新分配
-//   T 侧若仅 1 名真人且有 T BOT：保持单机 60% 真人 / 40% T BOT；
-//   多个 T 真人或无 T 真人时在所有 T 侧候选者间随机抽取。
-void CS2DGame::AssignBombCarrier() {
+void CS2DSimulation::AssignBombCarrier() {
     bombCarrier_ = kInvalidActorId;
     if (mode_ != MatchMode::BombDefusal) return;
 
@@ -354,32 +443,4 @@ void CS2DGame::AssignBombCarrier() {
             carrier->equipment[4].epoch = purchaseEpoch_;
         }
     }
-}
-
-void CS2DGame::SetObjectiveAudioPaused(bool paused, IAudioSink* audio) {
-    if (audio) audioSink_ = audio;
-    IAudioSink* sink = audio ? audio : (audioSink_ ? audioSink_ : IAudioSink::Active());
-    if (!sink) return;
-    for (const auto& actor : actors_) {
-        if (actor.plantingChannel >= 0) sink->SetChannelPaused(actor.plantingChannel, paused);
-        if (actor.defuseChannel >= 0) sink->SetChannelPaused(actor.defuseChannel, paused);
-    }
-}
-
-void CS2DGame::StopObjectiveAudio(IAudioSink* audio) {
-    if (audio) audioSink_ = audio;
-    IAudioSink* sink = audio ? audio : (audioSink_ ? audioSink_ : IAudioSink::Active());
-    auto stop = [&](int& channel) {
-        if (sink && channel >= 0) sink->StopChannel(channel);
-        channel = -1;
-    };
-    for (size_t i = 0; i < actors_.size(); ++i) {
-        stop(actors_[i].plantingChannel);
-        stop(actors_[i].defuseChannel);
-        actors_[i].defuseProgress = 0.0f;
-        actors_[i].plantProgress = 0.0f;
-        if (i < actorAi_.size()) actorAi_[i].defusing = false;
-    }
-    activeDefuser_ = kInvalidActorId;
-    defuseProgress_ = defuseRemaining_ = 0.0f;
 }

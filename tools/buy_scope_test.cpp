@@ -2025,19 +2025,19 @@ struct CS2DGameTestAccess {
     // PIX-36 观战自由视角并集证据：阵亡后切自由视角，两名队友朝向相反，
     // 雾区应点亮两块（任一队友看得见即点亮）。相机镜头仍由 specFreeX/Y 控制。
     static void PlaceFreeUnionSpectator(CS2DGame& game) {
-        game.specMode_ = CS2DGame::SpectateMode::Free;
-        game.specTarget_ = 1;
+        game.view_.specMode_ = CS2DGame::SpectateMode::Free;
+        game.view_.specTarget_ = 1;
         for (size_t i = 1; i < game.actors_.size(); ++i) {
             game.actors_[i].alive = true;
             game.actors_[i].team = game.actors_[0].team;
             game.actors_[i].aimAngle = ((i - 1) % 2 == 0) ? 0.0f : Tuning::Pi;
         }
         if (game.actors_.size() > 1) {
-            game.specFreeX_ = game.actors_[1].x;
-            game.specFreeY_ = game.actors_[1].y;
+            game.view_.specFreeX_ = game.actors_[1].x;
+            game.view_.specFreeY_ = game.actors_[1].y;
         } else {
-            game.specFreeX_ = game.actors_[0].x;
-            game.specFreeY_ = game.actors_[0].y;
+            game.view_.specFreeX_ = game.actors_[0].x;
+            game.view_.specFreeY_ = game.actors_[0].y;
         }
     }
 
@@ -2074,22 +2074,22 @@ struct CS2DGameTestAccess {
         check(game.IsDeathFreeze() && !game.IsSpectating(),"experience death holds for the full 1.8 seconds");
         game.Update(.02f,false,game.actors_[0].x,game.actors_[0].y,false,false,false,false,false,false,false,nullptr);
         check(!game.IsDeathFreeze() && game.GetSpectatedPlayer(),"experience death hands off to a live teammate");
-        const int target=game.specTarget_;
+        const int target=game.view_.specTarget_;
         game.actors_[target].alive=false;
         game.UpdateSpectatorState();
-        check(game.GetSpectatedPlayer() && game.specTarget_!=target,"experience spectator automatically replaces a dead target");
+        check(game.GetSpectatedPlayer() && game.view_.specTarget_!=target,"experience spectator automatically replaces a dead target");
         for (size_t i = 1; i < game.actors_.size(); ++i) game.actors_[i].alive = false;
         game.bombPlanted_=true;
         game.bombX_=310; game.bombY_=420;
-        game.specMode_=CS2DGame::SpectateMode::Free;
+        game.view_.specMode_=CS2DGame::SpectateMode::Free;
         game.UpdateSpectatorState();
-        check(game.specMode_==CS2DGame::SpectateMode::Bomb && !game.GetSpectatedPlayer(),"experience planted bomb becomes the target after team elimination");
+        check(game.view_.specMode_==CS2DGame::SpectateMode::Bomb && !game.GetSpectatedPlayer(),"experience planted bomb becomes the target after team elimination");
         check(game.ListenerX()==310 && game.ListenerY()==420,"experience bomb camera also owns the audio listener");
         game.SpectatorToggle();game.SpectatorCycle(1);
-        check(game.specMode_==CS2DGame::SpectateMode::Bomb,"experience bomb spectator ignores actor cycling");
+        check(game.view_.specMode_==CS2DGame::SpectateMode::Bomb,"experience bomb spectator ignores actor cycling");
         game.bombPlanted_=false;
         game.UpdateSpectatorState();
-        check(game.specMode_==CS2DGame::SpectateMode::Bomb,"experience resolved objective retains the last bomb camera");
+        check(game.view_.specMode_==CS2DGame::SpectateMode::Bomb,"experience resolved objective retains the last bomb camera");
         game.RespawnAllForRound();
         check(!game.IsDeathFreeze() && !game.IsSpectating(),"experience round respawn clears death and spectator presentation");
         game.SetCameraDistanceTier(1);
@@ -2112,17 +2112,18 @@ struct CS2DGameTestAccess {
         check(Mix_Volume(channel,-1)>midVolume,"experience moving listener refreshes an active process sound");
         audio.UpdateTrackedSoundAt(channel,SoundEffect::BOMB_DEFUSING,600,0,0,0);
         check(Mix_Volume(channel,-1)==0,"experience defuse audio reaches zero at the configured hearing radius");
-        Bot(game, 0).defuseChannel=channel;
+        const ActorId bot0Id = game.ActorIdOf(Bot(game, 0));
+        game.view_.defuseChannels_[bot0Id]=channel;
         Bot(game, 0).defuseProgress=.3f;
         game.SetObjectiveAudioPaused(true);
         check(Mix_Paused(channel),"experience pause suspends the owned process sound");
         game.SetObjectiveAudioPaused(false);
         check(!Mix_Paused(channel) && Mix_Playing(channel),"experience resume continues the same process sound");
         game.actors_[0].alive=true;
-        game.actors_[0].defuseChannel=audio.PlaySoundTracked(SoundEffect::BOMB_DEFUSING,2);
+        game.view_.defuseChannels_[0]=audio.PlaySoundTracked(SoundEffect::BOMB_DEFUSING,2);
         game.OnCombatantKilled(game.actors_[0],&audio,&attacker,WeaponId::AK47);
         check(Mix_Playing(channel) && !Mix_Playing(2),"experience player death preserves the teammate defuse voice");
-        audio.StopChannel(Bot(game, 0).defuseChannel);
+        audio.StopChannel(game.view_.defuseChannels_[bot0Id]);
     }
 
     static void TestPerformanceInterpolation() {
@@ -2130,14 +2131,14 @@ struct CS2DGameTestAccess {
         game.actors_[0].alive=true;
         game.actors_[0].SetSlotWeapon(0,WeaponId::AWP);
         game.actors_[0].weaponSlot=0;
-        game.scope_.weapon=WeaponId::AWP;
-        game.scopeLevel_=1;
-        game.scopeZoom_=1.5f;
-        game.previousScopeZoom_=1;
-        game.scopeEngagement_=1;
-        game.previousScopeEngagement_=0;
-        game.viewHistoryValid_=true;
-        game.renderInterpolation_=.5f;
+        game.view_.scope_.weapon=WeaponId::AWP;
+        game.view_.scopeLevel_=1;
+        game.view_.scopeZoom_=1.5f;
+        game.view_.previousScopeZoom_=1;
+        game.view_.scopeEngagement_=1;
+        game.view_.previousScopeEngagement_=0;
+        game.view_.viewHistoryValid_=true;
+        game.view_.renderInterpolation_=.5f;
         const auto view=game.GetRenderScopeView();
         check(std::abs(view.zoomMultiplier-1.25f)<.0001f && std::abs(view.transition-.5f)<.0001f,
               "performance scope zoom and engagement interpolate between fixed ticks");
@@ -2503,7 +2504,7 @@ struct CS2DGameTestAccess {
         game.UpdatePlayerShooting(player, .01f, true, player.x + 100, player.y, nullptr);
         check(game.GetDryFireHintTimer() == 1 && player.dryFireCooldown == .3f && !player.reloading,
               "PIX35 0/0 trigger produces throttled dry-fire hint");
-        game.dryFireHintTimer_ = .8f;
+        game.view_.dryFireHintTimer_ = .8f;
         game.UpdatePlayerShooting(player, .01f, true, player.x + 100, player.y, nullptr);
         check(game.GetDryFireHintTimer() == .8f, "PIX35 held trigger respects dry-fire cooldown");
         player.reserve = 90;
@@ -2579,7 +2580,7 @@ struct CS2DGameTestAccess {
             bot.health = hp;
             bot.armor = armor;
             bot.helmet = false;
-            game.hitMarkerTimer_ = 0;
+            game.view_.hitMarkerTimer_ = 0;
             game.bullets_.clear();
             const auto& samples = BodyGeometry::Get(bot.spriteKey, game.ActorPoseSlot(bot)).samples;
             const auto point = BodyGeometry::Transform(samples[samples.size()/2], bot.x, bot.y, bot.size,
@@ -2604,7 +2605,7 @@ struct CS2DGameTestAccess {
         game.bullets_.clear();
         game.FireBullet(player.x, player.y, 0, WeaponDB::Get(WeaponId::Glock18), 1, Team::T);
         game.UpdateBullets(.001f, nullptr);
-        check(game.GetDamageFlashTimer() == .3f && std::any_of(game.damageDirections_.begin(),game.damageDirections_.end(),
+        check(game.GetDamageFlashTimer() == .3f && std::any_of(game.view_.damageDirections_.begin(),game.view_.damageDirections_.end(),
               [](const auto& d) { return d.remaining == .5f; }), "PIX35 damage vignette and existing direction arc trigger together");
 
         game.mode_ = MatchMode::TeamElimination;
@@ -3283,7 +3284,7 @@ struct CS2DGameTestAccess {
         check(effectChannel >= 12, "round2 ordinary sounds cannot reuse objective participant channels");
         game.actors_[0].alive = true;
         game.actors_[0].defuseProgress = .5f;
-        game.actors_[0].defuseChannel = audio.PlaySoundTracked(SoundEffect::BOMB_DEFUSING,2);
+        game.view_.defuseChannels_[0] = audio.PlaySoundTracked(SoundEffect::BOMB_DEFUSING,2);
         game.OnCombatantKilled(game.actors_[0],nullptr);
         check(!Mix_Playing(2) && Mix_Playing(3) && game.actors_[0].defuseProgress == 0,
               "round2 death without an audio argument stops only the victim defuse voice");
@@ -3586,10 +3587,10 @@ struct CS2DGameTestAccess {
             mate.aimAngle = (i == 0) ? 0.0f : Tuning::Pi;   // 两人朝向相反
             AddBot(game, mate);
         }
-        game.specMode_ = CS2DGame::SpectateMode::Free;
-        game.specTarget_ = 1;
-        game.specFreeX_ = 380.0f;
-        game.specFreeY_ = 400.0f;
+        game.view_.specMode_ = CS2DGame::SpectateMode::Free;
+        game.view_.specTarget_ = 1;
+        game.view_.specFreeX_ = 380.0f;
+        game.view_.specFreeY_ = 400.0f;
         VisibilityQuery::Observer observers[VisibilityQuery::kMaxObservers];
         const std::size_t count = game.CollectFreeSpectateObservers(observers,
                                                                    VisibilityQuery::kMaxObservers);
@@ -3609,7 +3610,7 @@ struct CS2DGameTestAccess {
             unionQuery.SetConeAngleDeg(Tuning::VisionConeDeg);
             return unionQuery.ComputeVisibilityUnion(observers, count, 700.0f, 400.0f);
         }();
-        game.specTarget_ = 2;
+        game.view_.specTarget_ = 2;
         Bot(game, 1).aimAngle = -Tuning::Pi * 0.5f;
         VisibilityQuery::Observer observers2[VisibilityQuery::kMaxObservers];
         const std::size_t count2 = game.CollectFreeSpectateObservers(observers2,
@@ -3628,7 +3629,7 @@ struct CS2DGameTestAccess {
               "PIX-36 free spectator reports no single spectated player");
         // 切回跟随：specTarget_ 保留并被恢复使用
         game.SpectatorToggle();
-        check(game.specMode_ == CS2DGame::SpectateMode::Follow, "PIX-36 toggle returns to follow mode");
+        check(game.view_.specMode_ == CS2DGame::SpectateMode::Follow, "PIX-36 toggle returns to follow mode");
         check(game.GetSpectatedPlayer() != nullptr, "PIX-36 follow mode still resolves a spectated player");
         // 世代检查：死亡代码已删除（编译期保证），这里确认跟随模式仍按单观察者工作
         check(game.GetSpectateMode() == CS2DGame::SpectateMode::Follow && game.GetSpectateTarget() >= 0,
@@ -3650,7 +3651,7 @@ struct CS2DGameTestAccess {
         player.stealth = false;
         player.SetSlotWeapon(0, WeaponId::None);
         player.weaponSlot = 2;              // 匕首：120 px/s，最快档
-        game.scopeLevel_ = 0;
+        game.view_.scopeLevel_ = 0;
 
         // ---- 步数：以已知速度直线行走已知距离，断言步数 ≈ 距离/28（±1 步） ----
         // 用固定长度的合成位移驱动累计器（与真实移动解耦，只验证「位移→步数」映射）
@@ -3710,14 +3711,14 @@ struct CS2DGameTestAccess {
             player.vx = player.vy = 0.0f;
             player.SetSlotWeapon(0, WeaponId::AWP);
             player.weaponSlot = 0;
-            game.scopeLevel_ = scoped ? 1 : 0;
+            game.view_.scopeLevel_ = scoped ? 1 : 0;
             float total = 0.0f;
             for (int frame = 0; frame < static_cast<int>(seconds * 60.0f); ++frame) {
                 const float bx = player.x, by = player.y;
                 game.UpdatePlayerMovement(player, 1.0f / 60.0f, false, false, false, true, false);
                 total += std::hypot(player.x - bx, player.y - by);
             }
-            game.scopeLevel_ = 0;
+            game.view_.scopeLevel_ = 0;
             return total;
         };
         const float runDistance = walkDistance(false, 0.6f);
@@ -4330,8 +4331,8 @@ struct CS2DGameTestAccess {
               "PIX-37 frozen round reports movement as not allowed");
 
         // 人为把移动模糊拉到高处（模拟上一回合跑动残留），再走若干帧。
-        game.aimMotionBlur_ = 5.0f;
-        game.crosshairBloom_ = 1.0f;
+        game.view_.aimMotionBlur_ = 5.0f;
+        game.view_.crosshairBloom_ = 1.0f;
         for (int frame = 0; frame < 40; ++frame) {
             game.Update(1.0f / 60.0f, false, game.actors_[0].x + 80, game.actors_[0].y,
                         false, false, false, false, false, false, false, nullptr);
@@ -4828,7 +4829,7 @@ struct CS2DGameTestAccess {
               "PIX-38 the recoil bloom decays back down after firing stops");
 
         // 移动扩散与后坐扩散是两条独立通道：能同时非零
-        game.crosshairBloom_ = 0.8f;
+        game.view_.crosshairBloom_ = 0.8f;
         player.ApplyWeaponRecoil(0.0f);
         check(game.GetCrosshairBloom() > 0.0f && game.GetRecoilBloom() > 0.0f,
               "PIX-38 move bloom and recoil bloom coexist without replacing each other");

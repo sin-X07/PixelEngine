@@ -1,4 +1,4 @@
-#include "CS2DGame.hpp"
+#include "CS2DSimulation.hpp"
 #include "Tuning.hpp"
 #include "../CS2D/MiniJSON.hpp"
 #include <algorithm>
@@ -539,7 +539,7 @@ std::string BuildSystemPrompt(const CS2DWorld* world,
 }
 
 // 会变化的短摘要
-std::string BuildStateDigest(const CS2DGame& game, Team team,
+std::string BuildStateDigest(const CS2DSimulation& game, Team team,
                              const CoachEvent& ev,
                              const std::deque<std::string>& notes,
                              const std::string& lastOrder,
@@ -579,7 +579,7 @@ std::string BuildStateDigest(const CS2DGame& game, Team team,
     const int oppAvg = game.GetRoundStartEconomy(TeamManager::Opponent(team));
     auto econLabel = [](int v) { return v < 1800 ? "穷" : (v < 3500 ? "中" : "富"); };
     o << " 经济" << econLabel(avg)
-      << " 购买=" << CS2DGame::BuyPlanLabel(game.GetBuyPlan(team));
+      << " 购买=" << CS2DSimulation::BuyPlanLabel(game.GetBuyPlan(team));
     // 教练本来就知道双方经济（规则层 DecideBuyPlan 已在用），同步给 LLM 才能做针对性决策
     o << " 敌经济" << econLabel(oppAvg) << "(差" << (avg - oppAvg) << ")";
 
@@ -836,7 +836,7 @@ bool ParseCoachPlan(const std::string& raw, TeamPlan& out, const CS2DWorld* worl
 // ---------------------------------------------------------------------------
 // 换图预热：加载战术库并按当前地图校验区域名
 // ---------------------------------------------------------------------------
-void CS2DGame::CoachWarmupPlaybook() {
+void CS2DSimulation::CoachWarmupPlaybook() {
     if (!world_) return;
     const std::string& book = LoadCoachPlaybook(playbookId_);
     ValidatePlaybookAreasOnce(mapId_, book, world_.get());
@@ -845,7 +845,7 @@ void CS2DGame::CoachWarmupPlaybook() {
 // ---------------------------------------------------------------------------
 // 发起计划请求
 // ---------------------------------------------------------------------------
-void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
+void CS2DSimulation::CoachTryLlm(Team t, const CoachEvent& ev) {
     if (!coachLlmEnabled_ || !coachLlm_) return;
     if (!world_) return;
 
@@ -932,7 +932,7 @@ void CS2DGame::CoachTryLlm(Team t, const CoachEvent& ev) {
 // ---------------------------------------------------------------------------
 // 回合复盘：请求一句话教训
 // ---------------------------------------------------------------------------
-void CS2DGame::CoachTryDebrief(Team t) {
+void CS2DSimulation::CoachTryDebrief(Team t) {
     if (!coachLlmEnabled_ || !coachLlm_ || !world_) return;
 
     CoachState& st = CoachFor(t);
@@ -966,7 +966,7 @@ void CS2DGame::CoachTryDebrief(Team t) {
 // ---------------------------------------------------------------------------
 // 主线程：消费回包
 // ---------------------------------------------------------------------------
-void CS2DGame::CoachDrainLlm() {
+void CS2DSimulation::CoachDrainLlm() {
     std::vector<CoachLlmResult> got;
     {
         std::lock_guard<std::mutex> lock(coachLlmMutex_);

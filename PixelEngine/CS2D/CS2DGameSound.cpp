@@ -1,4 +1,4 @@
-#include "CS2DGame.hpp"
+#include "CS2DSimulation.hpp"
 #include "SoundEvents.hpp"
 #include <algorithm>
 #include <cmath>
@@ -30,7 +30,7 @@ bool AlertsListener(SoundEventType t) {
 }
 } // namespace
 
-void CS2DGame::EmitSound(SoundEventType type, float x, float y, Team team, ActorId sourceId, float radius,
+void CS2DSimulation::EmitSound(SoundEventType type, float x, float y, Team team, ActorId sourceId, float radius,
                          WeaponId hazardWeapon, float dangerDelay) {
     if (radius <= 0.0f)
         radius = SoundRadius(type);
@@ -99,7 +99,7 @@ void CS2DGame::EmitSound(SoundEventType type, float x, float y, Team team, Actor
     }
 }
 
-const HeardSound* CS2DGame::NewestHeard(size_t botIdx, SoundEventType type,
+const HeardSound* CS2DSimulation::NewestHeard(size_t botIdx, SoundEventType type,
                                         float maxAge) const {
     if (botIdx >= actorAi_.size()) return nullptr;
     const auto& ai = AiAt(botIdx);
@@ -111,7 +111,7 @@ const HeardSound* CS2DGame::NewestHeard(size_t botIdx, SoundEventType type,
     return best;
 }
 
-void CS2DGame::AgeHeardSounds(BotRuntime& ai, float dt) {
+void CS2DSimulation::AgeHeardSounds(BotRuntime& ai, float dt) {
     if (ai.alertTimer > 0.0f) ai.alertTimer = std::max(0.0f, ai.alertTimer - dt);
     if (ai.reactionLogCooldown > 0.0f) {
         ai.reactionLogCooldown = std::max(0.0f, ai.reactionLogCooldown - dt);
@@ -125,7 +125,7 @@ void CS2DGame::AgeHeardSounds(BotRuntime& ai, float dt) {
 }
 
 // 脚步：静步完全不出声；其余交给统一的听觉分发
-void CS2DGame::OnFootstepSound(const Player& source, float x, float y) {
+void CS2DSimulation::OnFootstepSound(const Player& source, float x, float y) {
     if (source.stealth) return;
     EmitSound(SoundEventType::Footstep, x, y, source.team, ActorIdOf(source));
 }

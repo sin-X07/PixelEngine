@@ -1,4 +1,4 @@
-#include "CS2DGame.hpp"
+#include "CS2DSimulation.hpp"
 #include "Visibility/BodyGeometry.hpp"
 #include "Tuning.hpp"
 #include "Weapons/Ballistics.hpp"
@@ -12,27 +12,26 @@
 // 玩家移动 / 射击
 // ============================================================================
 
-float CS2DGame::ComputeFlashBlind(float dist) {
+float CS2DSimulation::ComputeFlashBlind(float dist) {
     if (dist >= Tuning::FlashRadius) return 0.0f;
     const float t01 = 1.0f - dist / Tuning::FlashRadius;
     const float k = t01 * t01;
     return Tuning::FlashMinBlind + (Tuning::FlashMaxBlind - Tuning::FlashMinBlind) * k;
 }
 
-float CS2DGame::ComputeFlashIntensity(float dist) {
+float CS2DSimulation::ComputeFlashIntensity(float dist) {
     if (dist >= Tuning::FlashRadius) return 0.0f;
     const float t01 = 1.0f - dist / Tuning::FlashRadius;
     return 0.35f + 0.65f * (t01 * t01);
 }
 
-void CS2DGame::UpdatePlayerMovement(Player& actor, float dt, bool w, bool a, bool s, bool d, bool stealth) {
+void CS2DSimulation::UpdatePlayerMovement(Player& actor, float dt, bool w, bool a, bool s, bool d, bool stealth) {
     constexpr float ACCEL    = Tuning::PlayerAcceleration;
     constexpr float FRICTION = 8.0f;
-    const bool isLocal = (ActorIdOf(actor) == localActorId_);
     // 持械移速惩罚：步枪最慢、手枪次之、近战最快（倍率来自武器表）
     const float weaponMul = actor.CurrentWeapon().moveSpeedMul;
     const float baseSpeed = stealth ? Tuning::PlayerStealthSpeed : Tuning::PlayerBaseSpeed;
-    const float maxSpeed  = baseSpeed * weaponMul * ((isLocal && scopeLevel_ > 0) ? Tuning::ScopeMoveMul : 1.0f);
+    const float maxSpeed  = baseSpeed * weaponMul * ((actor.scopeLevel > 0) ? Tuning::ScopeMoveMul : 1.0f);
 
     const int dx = (d ? 1 : 0) - (a ? 1 : 0);
     const int dy = (s ? 1 : 0) - (w ? 1 : 0);
@@ -55,39 +54,10 @@ void CS2DGame::UpdatePlayerMovement(Player& actor, float dt, bool w, bool a, boo
     }
 
     MoveWithCollision(actor, dt);
-
-    if (!isLocal) return;
-
-    // 移动扩散目标值 = 当前真实速度 / 该武器「跑动」满速。
-    const float runMaxSpeed = Tuning::PlayerBaseSpeed * actor.CurrentWeapon().moveSpeedMul;
-    const float finalSpeed = std::sqrt(actor.vx * actor.vx + actor.vy * actor.vy);
-    const float target = (runMaxSpeed > 0.001f)
-        ? std::clamp(finalSpeed / runMaxSpeed, 0.0f, 1.0f)
-        : 0.0f;
-    const float targetBloom = (target < 0.02f) ? 0.0f : target;
-    const float blurTarget = 5.0f * std::clamp(target,0.0f,1.0f);
-    const float blurSeconds = blurTarget > aimMotionBlur_ ? .08f : .15f;
-    aimMotionBlur_ += (blurTarget-aimMotionBlur_) * (1-std::exp(-3*dt/blurSeconds));
-
-    // 指数缓动追赶目标：按下静步平滑聚合，松开静步平滑散开。
-    const float rate = (targetBloom > crosshairBloom_)
-        ? Tuning::CrosshairBloomExpandRate
-        : (actor.CurrentWeapon().cls == WeaponClass::Sniper ? Tuning::BloomSniper : actor.CurrentWeapon().cls == WeaponClass::SMG ? Tuning::BloomSmg : Tuning::CrosshairBloomContractRate);
-    const float k = 1.0f - std::exp(-rate * dt);
-    crosshairBloom_ += (targetBloom - crosshairBloom_) * k;
-    if (std::abs(targetBloom - crosshairBloom_) < 0.002f) {
-        crosshairBloom_ = targetBloom;
-    }
-}
-
-// 平滑后的移动扩散：按下/松开静步不会瞬间跳变。
-// 0=静止，~0.42=静步，1=全速跑动。
-float CS2DGame::GetCrosshairBloom() const {
-    return LocalActor().alive ? crosshairBloom_ : 0.0f;
 }
 
 // 开火后坐力造成的准星扩散：把「本武器累积散布」映射到 0..1。
-float CS2DGame::GetRecoilBloom() const {
+float CS2DSimulation::GetRecoilBloom() const {
     const auto& local = LocalActor();
     if (!local.alive) return 0.0f;
     const float raw = local.BallisticInaccuracy();
@@ -95,7 +65,7 @@ float CS2DGame::GetRecoilBloom() const {
     return std::clamp(raw / 6.0f, 0.0f, 1.0f);
 }
 
-void CS2DGame::MoveWithCollision(Player& entity, float dt) {
+void CS2DSimulation::MoveWithCollision(Player& entity, float dt) {
     const float half = entity.size * 0.5f;
 
     const float nx = entity.x + entity.vx * dt;
@@ -116,11 +86,9 @@ void CS2DGame::MoveWithCollision(Player& entity, float dt) {
     entity.y = std::clamp(entity.y, 0.0f, world_->GetMapPixelH() - 1.0f);
 }
 
-void CS2DGame::UpdatePlayerShooting(Player& actor, float dt, bool mouseDown, float worldMX, float worldMY,
-                                    IAudioSink* audio) {
+void CS2DSimulation::UpdatePlayerShooting(Player& actor, float dt, bool mouseDown, float worldMX, float worldMY) {
     if (!actor.alive) return;
     const ActorId actorId = ActorIdOf(actor);
-    const bool isLocal = (actorId == localActorId_);
 
     actor.aimAngle = std::atan2(worldMY - actor.y, worldMX - actor.x);
     actor.aimDistance = std::max(std::hypot(worldMX - actor.x, worldMY - actor.y), 0.001f);
@@ -135,8 +103,6 @@ void CS2DGame::UpdatePlayerShooting(Player& actor, float dt, bool mouseDown, flo
 
     const WeaponDef& def = actor.CurrentWeapon();
 
-    // 投掷物：按下即投（音效在出手瞬间播放）
-    // C4 槽 / 手持 C4：不能开枪也不能投掷
     if (actor.weaponSlot == 4 || actor.holdingC4 ||
         def.cls == WeaponClass::Bomb) {
         return;
@@ -145,7 +111,7 @@ void CS2DGame::UpdatePlayerShooting(Player& actor, float dt, bool mouseDown, flo
     if (def.cls == WeaponClass::Grenade) {
         if (!mouseDown || actor.shootCooldown > 0.0f) return;
         if (actor.grenadeCount <= 0) return;
-        ThrowGrenade(actor, actor.aimAngle, audio);
+        ThrowGrenade(actor, actor.aimAngle);
         actor.shootCooldown = def.cooldown;
         actor.shootAnimTimer = 0.12f;
         return;
@@ -170,15 +136,21 @@ void CS2DGame::UpdatePlayerShooting(Player& actor, float dt, bool mouseDown, flo
                 std::cos(std::atan2(bdy, bdx) - actor.aimAngle) >=
                     std::cos(Tuning::MeleeConeHalfAngleDeg * 3.14159265f / 180.0f)) {
                 if (ApplyDamage(target, static_cast<int>(def.damage), WeaponDB::ArmorPen(def.id)))
-                    OnCombatantKilled(target, audio, &actor, def.id);
+                    OnCombatantKilled(target, &actor, def.id);
             }
         }
         actor.shootCooldown = def.cooldown;
         actor.shootAnimTimer = 0.12f;
         EmitSound(SoundEventType::KnifeSwing, actor.x, actor.y, actor.team, actorId);
-        if (audio) {
-            if (isLocal) audio->PlaySound(SoundEffect::KATANA_SWING);
-            else audio->PlaySoundAt(SoundEffect::KATANA_SWING, actor.x, actor.y, ListenerX(), ListenerY());
+        {
+            SimEvent ev;
+            ev.type = SimEventType::ShotFired;
+            ev.actorId = actorId;
+            ev.weapon = def.id;
+            ev.x = actor.x;
+            ev.y = actor.y;
+            ev.flagA = true; // isMelee
+            EmitSimEvent(std::move(ev));
         }
         return;
     }
@@ -187,27 +159,34 @@ void CS2DGame::UpdatePlayerShooting(Player& actor, float dt, bool mouseDown, flo
     if (actor.ammo <= 0) {
         if (actor.dryFireCooldown <= 0.0f) {
             actor.dryFireCooldown = 0.30f;
-            if (audio) {
-                if (isLocal) audio->PlaySound(SoundEffect::DRYFIRE);
-                else audio->PlaySoundAt(SoundEffect::DRYFIRE, actor.x, actor.y, ListenerX(), ListenerY());
-            }
-            if (isLocal && actor.reserve <= 0) dryFireHintTimer_ = 1.0f;
+            SimEvent ev;
+            ev.type = SimEventType::ShotFired;
+            ev.actorId = actorId;
+            ev.weapon = def.id;
+            ev.x = actor.x;
+            ev.y = actor.y;
+            ev.flagB = true; // isDryFire
+            ev.flagC = (actor.reserve <= 0);
+            EmitSimEvent(std::move(ev));
         }
-        StartReload(actor, audio);
+        StartReload(actor);
         return;
     }
 
     // 散布 + 多弹丸（霰弹）
     const float speedFraction = std::hypot(actor.vx, actor.vy) /
         std::max(1.0f, Tuning::PlayerBaseSpeed * def.moveSpeedMul);
-    const float scopeEngage = isLocal ? scopeEngagement_ : 0.0f;
+    const float scopeEngage = actor.scopeEngagement;
     const float shotSpread = Ballistics::Spread(def.id, speedFraction, scopeEngage, actor.BallisticInaccuracy(), actor.fireStates[actor.weaponSlot].shot);
     std::uniform_real_distribution<float> spreadDist(-shotSpread, shotSpread);
     const auto recoilStep = Ballistics::Recoil(def.id, actor.fireStates[actor.weaponSlot].shot, scopeEngage);
     actor.ApplyWeaponRecoil(scopeEngage);
-    if (isLocal) {
-        recoilShake_ = std::min(Tuning::RecoilShakeMax, recoilShake_ + std::hypot(recoilStep.x, recoilStep.y) / Tuning::DegreesToRadians * Tuning::RecoilShakePerDegree);
-        recoilShakeAge_ = 0.0f;
+    {
+        SimEvent rev;
+        rev.type = SimEventType::RecoilImpulse;
+        rev.actorId = actorId;
+        rev.amount = std::hypot(recoilStep.x, recoilStep.y) / Tuning::DegreesToRadians * Tuning::RecoilShakePerDegree;
+        EmitSimEvent(std::move(rev));
     }
     for (int p = 0; p < std::max(1, def.pellets); ++p) {
         const float angle = actor.EffectiveAim() + spreadDist(rng_);
@@ -218,25 +197,31 @@ void CS2DGame::UpdatePlayerShooting(Player& actor, float dt, bool mouseDown, flo
     actor.shootCooldown = def.cooldown;
     actor.shootAnimTimer = 0.12f;
 
-    if (isLocal && scopeLevel_ > 0 && !def.automatic) {
-        if (delayedScopeClose_ && mouseDown) {
-            scopeCloseOnRelease_ = true;
-        } else {
-            ResetScope(Presentation::ScopeResetReason::ShotFired);
-        }
+    if (actor.scopeLevel > 0 && !def.automatic) {
+        SimEvent sr;
+        sr.type = SimEventType::ScopeReset;
+        sr.actorId = actorId;
+        sr.scopeReason = Presentation::ScopeResetReason::ShotFired;
+        sr.flagA = true;      // allowDelayed
+        sr.flagB = mouseDown; // triggerHeld
+        EmitSimEvent(std::move(sr));
     }
 
-    // 枪声传播：附近敌人按武器类别/消音器得到不同半径
     EmitSound(SoundEventType::Gunshot, actor.x, actor.y, actor.team, actorId,
               GunshotRadius(def));
-    if (audio) {
-        if (isLocal) audio->PlayWeaponFire(def.id);
-        else audio->PlayWeaponFireAt(def.id, actor.x, actor.y, ListenerX(), ListenerY());
+    {
+        SimEvent ev;
+        ev.type = SimEventType::ShotFired;
+        ev.actorId = actorId;
+        ev.weapon = def.id;
+        ev.x = actor.x;
+        ev.y = actor.y;
+        EmitSimEvent(std::move(ev));
     }
 }
 
 // 由 WeaponDef 直接发射子弹
-void CS2DGame::FireBullet(float x, float y, float angle, const WeaponDef& def,
+void CS2DSimulation::FireBullet(float x, float y, float angle, const WeaponDef& def,
                           ActorId ownerId, Team ownerTeam) {
     Bullet b;
     b.sourcePosition={x,y};
@@ -261,7 +246,7 @@ void CS2DGame::FireBullet(float x, float y, float angle, const WeaponDef& def,
 // ============================================================================
 
 // 视觉段：只记录真实模拟位移（世界坐标），由表现层绘制；不改碰撞/伤害判定。
-void CS2DGame::AddBulletVisual(const Bullet& b, float fromX, float fromY,
+void CS2DSimulation::AddBulletVisual(const Bullet& b, float fromX, float fromY,
                                float toX, float toY, bool impact) {
     Presentation::BulletVisualSegment seg;
     seg.id               = nextBulletVisualId_++;
@@ -283,7 +268,7 @@ void CS2DGame::AddBulletVisual(const Bullet& b, float fromX, float fromY,
     }
 }
 
-void CS2DGame::UpdateBullets(float dt, IAudioSink *audio) {
+void CS2DSimulation::UpdateBullets(float dt) {
     // 先让旧段随时间淡出，再加入本帧新段（寿命只在模拟里推进，Render 不消费）
     for (auto &seg : bulletVisuals_)
         seg.remainingSeconds -= dt;
@@ -384,38 +369,35 @@ void CS2DGame::UpdateBullets(float dt, IAudioSink *audio) {
             }
 
             if (target.id == localActorId_) {
-                auto direction = std::min_element(damageDirections_.begin(), damageDirections_.end(),
-                                                  [](const DamageDirection& a, const DamageDirection& b) {
-                                                      return a.remaining < b.remaining;
-                                                  });
-                *direction = {std::atan2(-bullet.vy, -bullet.vx), 0.5f};
-                damageFlashTimer_ = 0.30f; // 玩家受伤反馈
+                SimEvent dmg{};
+                dmg.type = SimEventType::DamageTaken;
+                dmg.targetId = target.id;
+                dmg.actorId = bullet.ownerId;
+                dmg.dirX = -bullet.vx;
+                dmg.dirY = -bullet.vy;
+                dmg.amount = static_cast<float>(bullet.damage);
+                dmg.flagA = (target.armor > 0);
+                dmg.flagB = true;
+                EmitSimEvent(std::move(dmg));
             }
 
             const bool armored = target.armor > 0;
             const bool killed = ApplyDamage(target, bullet.damage, WeaponDB::ArmorPen(bullet.weapon));
-            if (bullet.ownerId == localActorId_) {
-                if (killed || hitMarkerKind_ != HitMarkerKind::Kill || hitMarkerTimer_ <= 0) {
-                    hitMarkerKind_ = killed ? HitMarkerKind::Kill : armored ? HitMarkerKind::Armor : HitMarkerKind::Normal;
-                    hitMarkerTimer_ = killed ? 0.30f : 0.18f;
-                }
-            }
-
             if (killed) {
-                OnCombatantKilled(target, audio, bulletOwner, bullet.weapon, bullet.equipmentId, bullet.sourcePosition);
-                if (audio) {
-                    if (target.id != localActorId_)
-                        audio->PlaySoundAt(SoundEffect::KILL, target.x, target.y, ListenerX(), ListenerY());
-                    if (bullet.ownerId == localActorId_)
-                        audio->PlaySound(SoundEffect::KILL, 0.65f);
-                }
-            } else if (audio) {
-                if (target.id == localActorId_) {
-                    audio->PlaySound(armored ? SoundEffect::ARMOR_HIT : SoundEffect::HIT);
-                } else {
-                    audio->PlaySoundAt(bullet.ownerId == localActorId_ && armored ? SoundEffect::ARMOR_HIT : SoundEffect::HIT,
-                                       target.x, target.y, ListenerX(), ListenerY());
-                }
+                OnCombatantKilled(target, bulletOwner, bullet.weapon, bullet.equipmentId, bullet.sourcePosition);
+            }
+            {
+                SimEvent hit{};
+                hit.type = SimEventType::HitConfirm;
+                hit.actorId = bullet.ownerId;
+                hit.targetId = target.id;
+                hit.weapon = bullet.weapon;
+                hit.x = target.x;
+                hit.y = target.y;
+                hit.flagA = armored;
+                hit.flagB = killed;
+                hit.flagC = false;
+                EmitSimEvent(std::move(hit));
             }
 
             if (target.IsBot()) {
@@ -447,7 +429,7 @@ void CS2DGame::UpdateBullets(float dt, IAudioSink *audio) {
 // 手雷
 // ============================================================================
 
-void CS2DGame::ThrowGrenade(Player &thrower, float aimAngle, IAudioSink *audio, float targetDistance) {
+void CS2DSimulation::ThrowGrenade(Player &thrower, float aimAngle, float targetDistance) {
     if (thrower.grenadeCount <= 0)
         return;
 
@@ -457,13 +439,15 @@ void CS2DGame::ThrowGrenade(Player &thrower, float aimAngle, IAudioSink *audio, 
         return;
 
     const ActorId throwerId = ActorIdOf(thrower);
-    const bool isLocal = (throwerId == localActorId_);
-
-    if (audio) {
-        if (isLocal)
-            audio->PlaySound(SoundEffect::PULL_PIN);
-        else
-            audio->PlaySoundAt(SoundEffect::PULL_PIN, thrower.x, thrower.y, ListenerX(), ListenerY());
+    {
+        SimEvent ev{};
+        ev.type = SimEventType::GrenadeEvent;
+        ev.grenadeKind = GrenadeEventKind::PullPin;
+        ev.actorId = throwerId;
+        ev.weapon = type;
+        ev.x = thrower.x;
+        ev.y = thrower.y;
+        EmitSimEvent(std::move(ev));
     }
     Grenade g;
     g.x = thrower.x;
@@ -511,23 +495,19 @@ void CS2DGame::ThrowGrenade(Player &thrower, float aimAngle, IAudioSink *audio, 
     EmitSound(SoundEventType::GrenadeThrow, thrower.x, thrower.y, thrower.team, throwerId);
 
     // 出手音效：按投掷物类型选择，且与投掷动作在同一帧
-    if (audio) {
-        SoundEffect se = SoundEffect::GRENADE_THROW;
-        if (type == WeaponId::GrenadeHE)
-            se = SoundEffect::THROW_HE;
-        else if (type == WeaponId::GrenadeFlash)
-            se = SoundEffect::THROW_FLASH;
-        else if (type == WeaponId::GrenadeSmoke)
-            se = SoundEffect::THROW_SMOKE;
-
-        if (isLocal)
-            audio->PlaySound(se);
-        else
-            audio->PlaySoundAt(se, thrower.x, thrower.y, ListenerX(), ListenerY());
+    {
+        SimEvent ev{};
+        ev.type = SimEventType::GrenadeEvent;
+        ev.grenadeKind = GrenadeEventKind::Throw;
+        ev.actorId = throwerId;
+        ev.weapon = type;
+        ev.x = thrower.x;
+        ev.y = thrower.y;
+        EmitSimEvent(std::move(ev));
     }
 }
 
-void CS2DGame::UpdateGrenades(float dt, IAudioSink *audio) {
+void CS2DSimulation::UpdateGrenades(float dt) {
     // 投掷物飞行 + 撞墙反弹 + 引信
     for (auto &g : grenades_) {
         if (!g.active)
@@ -626,7 +606,7 @@ void CS2DGame::UpdateGrenades(float dt, IAudioSink *audio) {
         if (g.type == WeaponId::GrenadeDecoy && g.fuse <= 0 && std::hypot(g.vx, g.vy) > 16)
             g.fuse = .05f;
         if (g.fuse <= 0.0f) {
-            ExplodeGrenade(g, audio);
+            ExplodeGrenade(g);
             g.active = false;
         }
     }
@@ -664,7 +644,7 @@ void CS2DGame::UpdateGrenades(float dt, IAudioSink *audio) {
                     counters_.fireDamage += std::min(p.health, Tuning::FireTickDamage);
                     ++counters_.fireTicks;
                     if (ApplyDamage(p, Tuning::FireTickDamage, 1.0f))
-                        OnCombatantKilled(p, audio, DamageOwner(f.ownerId), f.weapon, f.equipmentId, Vec2{f.x, f.y});
+                        OnCombatantKilled(p, DamageOwner(f.ownerId), f.weapon, f.equipmentId, Vec2{f.x, f.y});
                     break;
                 }
             }
@@ -675,12 +655,27 @@ void CS2DGame::UpdateGrenades(float dt, IAudioSink *audio) {
         decoy.life -= dt;
         decoy.nextShot -= dt;
         if (decoy.life <= 0) {
-            if (audio)
-                audio->PlaySoundAt(SoundEffect::GRENADE_EXPLODE, decoy.x, decoy.y, ListenerX(), ListenerY());
+            {
+                SimEvent ev{};
+                ev.type = SimEventType::GrenadeEvent;
+                ev.grenadeKind = GrenadeEventKind::ExplodeDecoy;
+                ev.actorId = decoy.ownerId;
+                ev.x = decoy.x;
+                ev.y = decoy.y;
+                EmitSimEvent(std::move(ev));
+            }
             EmitSound(SoundEventType::Explosion, decoy.x, decoy.y, decoy.team, decoy.ownerId);
         } else if (decoy.nextShot <= 0) {
-            if (audio)
-                audio->PlayWeaponFireAt(decoy.weapon, decoy.x, decoy.y, ListenerX(), ListenerY());
+            {
+                SimEvent ev{};
+                ev.type = SimEventType::ShotFired;
+                ev.actorId = decoy.ownerId;
+                ev.weapon = decoy.weapon;
+                ev.x = decoy.x;
+                ev.y = decoy.y;
+                ev.flagD = true;
+                EmitSimEvent(std::move(ev));
+            }
             EmitSound(SoundEventType::Gunshot, decoy.x, decoy.y, decoy.team, decoy.ownerId,
                       GunshotRadius(WeaponDB::Get(decoy.weapon)));
             ++decoy.shot;
@@ -704,7 +699,7 @@ void CS2DGame::UpdateGrenades(float dt, IAudioSink *audio) {
     }
 }
 
-float CS2DGame::ExpectedBlastDamage(float x, float y, const Player &target) const {
+float CS2DSimulation::ExpectedBlastDamage(float x, float y, const Player &target) const {
     const float distance = std::hypot(target.x - x, target.y - y);
     if (distance >= Tuning::NadeBlastRadius)
         return 0;
@@ -721,7 +716,7 @@ float CS2DGame::ExpectedBlastDamage(float x, float y, const Player &target) cons
     return total ? Tuning::NadeMaxDamage * falloff * falloff * exposed / total : 0;
 }
 
-void CS2DGame::RebuildFireCells(FireZone &fire) const {
+void CS2DSimulation::RebuildFireCells(FireZone &fire) const {
     if (!world_ || fire.terrainRevision == world_->Revision())
         return;
     fire.terrainRevision = world_->Revision();
@@ -771,7 +766,7 @@ void CS2DGame::RebuildFireCells(FireZone &fire) const {
     }
 }
 
-bool CS2DGame::FireContains(const FireZone &fire, float x, float y) const {
+bool CS2DSimulation::FireContains(const FireZone &fire, float x, float y) const {
     const float radius = Tuning::FireEffectiveRadius(fire.radius, fire.age, fire.life);
     if (!fire.cellCoverage.empty()) {
         const int gx = static_cast<int>(std::floor((x-fire.x)/4)), gy = static_cast<int>(std::floor((y-fire.y)/4));
@@ -793,7 +788,7 @@ bool CS2DGame::FireContains(const FireZone &fire, float x, float y) const {
     return false;
 }
 
-void CS2DGame::ExplodeGrenade(const Grenade& g, IAudioSink* audio) {
+void CS2DSimulation::ExplodeGrenade(const Grenade& g) {
     switch (g.type) {
         case WeaponId::GrenadeHE: {
             const float RADIUS  = Tuning::NadeBlastRadius;
@@ -805,7 +800,7 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, IAudioSink* audio) {
                 const float d = std::sqrt(dx * dx + dy * dy);
                 if (d > RADIUS) continue;
                 if (ApplyDamage(p, static_cast<int>(ExpectedBlastDamage(g.x, g.y, p)), 0.5f)) {   // 爆炸按 50% 穿透
-                    OnCombatantKilled(p, audio, DamageOwner(g.ownerId), g.type, g.equipmentId, Vec2{g.x, g.y});
+                    OnCombatantKilled(p, DamageOwner(g.ownerId), g.type, g.equipmentId, Vec2{g.x, g.y});
                 }
             }
 
@@ -813,12 +808,30 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, IAudioSink* audio) {
             blasts_.push_back(BlastFx{ g.x, g.y, Tuning::NadeBlastFxTime,
                                        Tuning::NadeBlastFxTime });
 
-            if (audio) audio->PlaySound(SoundEffect::GRENADE_EXPLODE);
+            {
+                SimEvent ev{};
+                ev.type = SimEventType::GrenadeEvent;
+                ev.grenadeKind = GrenadeEventKind::ExplodeHE;
+                ev.actorId = g.ownerId;
+                ev.weapon = g.type;
+                ev.x = g.x;
+                ev.y = g.y;
+                EmitSimEvent(std::move(ev));
+            }
             EmitSound(SoundEventType::Explosion, g.x, g.y, g.team);
             break;
         }
         case WeaponId::GrenadeFlash: {
-            if (audio) audio->PlaySound(SoundEffect::FLASH);
+            {
+                SimEvent ev{};
+                ev.type = SimEventType::GrenadeEvent;
+                ev.grenadeKind = GrenadeEventKind::ExplodeFlash;
+                ev.actorId = g.ownerId;
+                ev.weapon = g.type;
+                ev.x = g.x;
+                ev.y = g.y;
+                EmitSimEvent(std::move(ev));
+            }
             EmitSound(SoundEventType::Flashbang, g.x, g.y, g.team);
             // 致盲：距离越近越久（平方衰减）+ 墙体遮挡
             for (auto& t : actors_) {
@@ -835,7 +848,6 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, IAudioSink* audio) {
                     t.flashPeak  = std::max(t.flashPeak, inten);
                 }
             }
-            if (audio) audio->PlaySound(SoundEffect::HIT);
             break;
         }
         case WeaponId::GrenadeSmoke: {
@@ -849,7 +861,16 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, IAudioSink* audio) {
             s.seed = std::fmod(g.x * 0.013f + g.y * 0.017f, 1.0f);
             s.life = 12.0f;
             smokes_.push_back(s);
-            if (audio) audio->PlaySound(SoundEffect::SMOKE);
+            {
+                SimEvent ev{};
+                ev.type = SimEventType::GrenadeEvent;
+                ev.grenadeKind = GrenadeEventKind::ExplodeSmoke;
+                ev.actorId = g.ownerId;
+                ev.weapon = g.type;
+                ev.x = g.x;
+                ev.y = g.y;
+                EmitSimEvent(std::move(ev));
+            }
             EmitSound(SoundEventType::SmokePop, g.x, g.y, g.team);
             break;
         }
@@ -868,7 +889,16 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, IAudioSink* audio) {
             f.equipmentId = g.equipmentId;
             RebuildFireCells(f);
             fires_.push_back(f);
-            if (audio) audio->PlaySound(SoundEffect::FIRE_IGNITE);
+            {
+                SimEvent ev{};
+                ev.type = SimEventType::GrenadeEvent;
+                ev.grenadeKind = GrenadeEventKind::IgniteFire;
+                ev.actorId = g.ownerId;
+                ev.weapon = g.type;
+                ev.x = g.x;
+                ev.y = g.y;
+                EmitSimEvent(std::move(ev));
+            }
             EmitSound(SoundEventType::Explosion, g.x, g.y, g.team);
             break;
         }
@@ -890,7 +920,7 @@ void CS2DGame::ExplodeGrenade(const Grenade& g, IAudioSink* audio) {
 // 烟雾遮蔽程度 0..1：中心浓、边缘淡，并与「消散」同步变淡。
 // 与 SegmentBlockedBySmoke 用同一个有效半径（判定口径不变），
 // 但这里给出的是连续值，专供渲染做人物渐隐/渐显。
-float CS2DGame::SmokeOpacityAt(float x, float y) const {
+float CS2DSimulation::SmokeOpacityAt(float x, float y) const {
     if (smokes_.empty()) return 0.0f;
     float best = 0.0f;
     for (const auto& s : smokes_) {
@@ -911,7 +941,7 @@ float CS2DGame::SmokeOpacityAt(float x, float y) const {
 }
 
 // 线段是否被任一烟雾云遮挡（用于视野判定）
-bool CS2DGame::SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) const {
+bool CS2DSimulation::SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) const {
     if (smokes_.empty()) return false;
 
     const float dx = x2 - x1;
@@ -935,21 +965,26 @@ bool CS2DGame::SegmentBlockedBySmoke(float x1, float y1, float x2, float y2) con
 // 死亡处理
 // ============================================================================
 
-void CS2DGame::OnCombatantKilled(Player &victim, IAudioSink *audio, Player *killer, WeaponId weapon, std::uint64_t equipmentId, std::optional<Vec2> sourcePosition) {
-    if (audio) audioSink_ = audio;
-    IAudioSink* sink = audio ? audio : (audioSink_ ? audioSink_ : IAudioSink::Active());
+void CS2DSimulation::OnCombatantKilled(Player &victim, Player *killer, WeaponId weapon, std::uint64_t equipmentId, std::optional<Vec2> sourcePosition) {
     const ActorId victimId = ActorIdOf(victim);
     const ActorId killerId = killer ? ActorIdOf(*killer) : kInvalidActorId;
-    if (sink && victim.defuseChannel >= 0)
-        sink->StopChannel(victim.defuseChannel);
-    victim.defuseChannel = -1;
+    if (victimId != kInvalidActorId) {
+        SimEvent stopDefuse{};
+        stopDefuse.type = SimEventType::BombEvent;
+        stopDefuse.bombKind = BombEventKind::DefuseStopped;
+        stopDefuse.actorId = victimId;
+        EmitSimEvent(std::move(stopDefuse));
+
+        SimEvent stopPlant{};
+        stopPlant.type = SimEventType::BombEvent;
+        stopPlant.bombKind = BombEventKind::PlantStopped;
+        stopPlant.actorId = victimId;
+        EmitSimEvent(std::move(stopPlant));
+    }
     victim.defuseProgress = 0;
     if (victimId != kInvalidActorId && activeDefuser_ == victimId) {
         activeDefuser_ = kInvalidActorId;
     }
-    if (sink && victim.plantingChannel >= 0)
-        sink->StopChannel(victim.plantingChannel);
-    victim.plantingChannel = -1;
     victim.plantProgress = 0.0f;
     if (!victim.alive)
         return;
@@ -986,24 +1021,30 @@ void CS2DGame::OnCombatantKilled(Player &victim, IAudioSink *audio, Player *kill
     victim.reloading = false;
     victim.interactHeld = false;
     victim.fireHeld = false;
+    victim.scopeLevel = 0;
+    victim.scopeEngagement = 0.0f;
+    victim.scoped = false;
     ++victim.deaths;
 
     const bool isLocalVictim = (victimId == localActorId_);
 
-    // 本地玩家阵亡 → 冻结展示 / 开镜立即归零
-    if (isLocalVictim) {
-        deathPresentation_.event = event;
-        deathPresentation_.remaining = DeathFreezeSeconds;
-        hitMarkerTimer_ = 0.0f;
-        if (audio)
-            audio->PlaySound(SoundEffect::DEATH);
-        ResetScope(Presentation::ScopeResetReason::PlayerDied);
-        if (mode_ == MatchMode::DeathMatch) {
-            SpectatorEnd();
-            deathCam_ = true;
-        } else {
-            SpectatorEnd();
-        }
+    {
+        SimEvent kf{};
+        kf.type = SimEventType::KillFeed;
+        kf.killEventId = event.id;
+        kf.equipmentId = event.equipmentId;
+        kf.actorId = killerId;
+        kf.targetId = victimId;
+        kf.weapon = event.weapon;
+        kf.team = event.killerTeam;
+        kf.victimTeam = event.victimTeam;
+        kf.x = event.sourcePosition.x;
+        kf.y = event.sourcePosition.y;
+        kf.amount = event.timestamp;
+        kf.killerName = event.killer;
+        kf.victimName = event.victim;
+        kf.text = event.text;
+        EmitSimEvent(std::move(kf));
     }
 
     // 倒地也会出声：附近单位听到后转向警戒
@@ -1061,8 +1102,6 @@ void CS2DGame::OnCombatantKilled(Player &victim, IAudioSink *audio, Player *kill
     lastDeathTimer_ = 3.5f;
 
     if (isLocalVictim) {
-        if (audio)
-            audio->PlaySound(SoundEffect::KILL);
         if (mode_ == MatchMode::DeathMatch)
             botRespawnTimer_ = BOT_RESPAWN_DELAY;
         std::cout << "[CS2D] 玩家阵亡 (累计 " << victim.deaths << ")" << std::endl;
@@ -1080,7 +1119,7 @@ void CS2DGame::OnCombatantKilled(Player &victim, IAudioSink *audio, Player *kill
 // CS2 机制：护甲按武器的穿透率放行一部分伤害，剩余被护甲吸收，
 // 并按吸收量的一半消耗护甲点数；护甲不够时没吸掉的部分转成伤害。
 // ============================================================================
-CS2DGame::ArmorDamageResult CS2DGame::ResolveArmorDamage(int amount, float armorPen,
+CS2DSimulation::ArmorDamageResult CS2DSimulation::ResolveArmorDamage(int amount, float armorPen,
                                                          int armorPoints) {
     ArmorDamageResult r;
     if (amount <= 0) return r;
@@ -1107,7 +1146,7 @@ CS2DGame::ArmorDamageResult CS2DGame::ResolveArmorDamage(int amount, float armor
     return r;
 }
 
-bool CS2DGame::ApplyDamage(Player& victim, int amount, float armorPen) {
+bool CS2DSimulation::ApplyDamage(Player& victim, int amount, float armorPen) {
     if (!victim.alive || amount <= 0) return false;
 
     const ArmorDamageResult r = ResolveArmorDamage(amount, armorPen, victim.armor);
@@ -1127,7 +1166,7 @@ bool CS2DGame::ApplyDamage(Player& victim, int amount, float armorPen) {
 // 换弹 / 视野 / 安全距离
 // ============================================================================
 
-void CS2DGame::StartReload(Player& p, IAudioSink* audio) {
+void CS2DSimulation::StartReload(Player& p) {
     if (p.reloading) return;
 
     const WeaponDef& def = p.CurrentWeapon();
@@ -1137,62 +1176,25 @@ void CS2DGame::StartReload(Player& p, IAudioSink* audio) {
 
     p.reloading   = true;
     p.reloadTimer = def.reloadTime;         // 每把枪不同，取自素材时长
+    p.scopeLevel = 0;
+    p.scopeEngagement = 0.0f;
+    p.scoped = false;
     const ActorId pId = ActorIdOf(p);
-    const bool isLocal = (pId == localActorId_);
-    if (isLocal) ResetScope(Presentation::ScopeResetReason::ReloadStarted);
 
     // 换弹声会暴露位置：附近敌人能听见（约 220px），可趁机前压
     EmitSound(SoundEventType::Reload, p.x, p.y, p.team, pId);
-    if (audio) {
-        if (isLocal) {
-            audio->PlaySound(ReloadSoundFor(def.id));
-        } else {
-            audio->PlaySoundAt(ReloadSoundFor(def.id), p.x, p.y, ListenerX(), ListenerY());
-        }
+    {
+        SimEvent ev{};
+        ev.type = SimEventType::ReloadStarted;
+        ev.actorId = pId;
+        ev.weapon = def.id;
+        ev.x = p.x;
+        ev.y = p.y;
+        EmitSimEvent(std::move(ev));
     }
 }
 
-// 武器 → 独立换弹音效。
-SoundEffect CS2DGame::ReloadSoundFor(WeaponId id) {
-    switch (id) {
-        case WeaponId::Glock18: return SoundEffect::RELOAD_GLOCK;
-        case WeaponId::USP_S: return SoundEffect::RELOAD_USP;
-        case WeaponId::Deagle: return SoundEffect::RELOAD_DEAGLE;
-        case WeaponId::GalilAR: return SoundEffect::RELOAD_GALIL;
-        case WeaponId::AK47: return SoundEffect::RELOAD_AK47;
-        case WeaponId::M4A1S: return SoundEffect::RELOAD_M4A1;
-        case WeaponId::AWP: return SoundEffect::RELOAD_AWP;
-        case WeaponId::Nova: return SoundEffect::RELOAD_SHOTGUN;
-        case WeaponId::P2000: return SoundEffect::RELOAD_P2000;
-        case WeaponId::DualBerettas: return SoundEffect::RELOAD_DUALBERETTAS;
-        case WeaponId::P250: return SoundEffect::RELOAD_P250;
-        case WeaponId::FiveSeven: return SoundEffect::RELOAD_FN57;
-        case WeaponId::Tec9: return SoundEffect::RELOAD_TEC9;
-        case WeaponId::CZ75: return SoundEffect::RELOAD_CZ75;
-        case WeaponId::R8Revolver: return SoundEffect::RELOAD_R8;
-        case WeaponId::MAC10: return SoundEffect::RELOAD_MAC10;
-        case WeaponId::MP9: return SoundEffect::RELOAD_MP9;
-        case WeaponId::MP7: return SoundEffect::RELOAD_MP7;
-        case WeaponId::MP5SD: return SoundEffect::RELOAD_MP5SD;
-        case WeaponId::UMP45: return SoundEffect::RELOAD_UMP45;
-        case WeaponId::P90: return SoundEffect::RELOAD_P90;
-        case WeaponId::FAMAS: return SoundEffect::RELOAD_FAMAS;
-        case WeaponId::M4A4: return SoundEffect::RELOAD_M4A4;
-        case WeaponId::SG553: return SoundEffect::RELOAD_SG553;
-        case WeaponId::AUG: return SoundEffect::RELOAD_AUG;
-        case WeaponId::SSG08: return SoundEffect::RELOAD_SSG08;
-        case WeaponId::SCAR20: return SoundEffect::RELOAD_SCAR20;
-        case WeaponId::G3SG1: return SoundEffect::RELOAD_G3SG1;
-        case WeaponId::XM1014: return SoundEffect::RELOAD_XM1014;
-        case WeaponId::SawedOff: return SoundEffect::RELOAD_SAWEDOFF;
-        case WeaponId::MAG7: return SoundEffect::RELOAD_MAG7;
-        case WeaponId::M249: return SoundEffect::RELOAD_M249;
-        case WeaponId::Negev: return SoundEffect::RELOAD_NEGEV;
-        default: return SoundEffect::CLICK;
-    }
-}
-
-void CS2DGame::UpdateReload(Player& p, float dt) {
+void CS2DSimulation::UpdateReload(Player& p, float dt) {
     if (!p.reloading) return;
     p.reloadTimer -= dt;
     if (p.reloadTimer <= 0.0f) {
@@ -1207,7 +1209,7 @@ void CS2DGame::UpdateReload(Player& p, float dt) {
     }
 }
 
-bool CS2DGame::IsEnemyNearby(float x, float y, float safeRadius, Team myTeam) const {
+bool CS2DSimulation::IsEnemyNearby(float x, float y, float safeRadius, Team myTeam) const {
     for (const auto& u : actors_) {
         if (!u.IsActive() || !u.alive || u.team == myTeam) continue;
         const float dx = u.x - x;
@@ -1223,7 +1225,7 @@ bool CS2DGame::IsEnemyNearby(float x, float y, float safeRadius, Team myTeam) co
 // 掉落武器 / 拾取
 // ============================================================================
 
-void CS2DGame::DropEquipmentOnDeath(Player& victim) {
+void CS2DSimulation::DropEquipmentOnDeath(Player& victim) {
     if (victim.hasDefuseKit) {
         DroppedItem kit;
         kit.defuseKit = true;
@@ -1299,7 +1301,7 @@ void CS2DGame::DropEquipmentOnDeath(Player& victim) {
               << static_cast<int>(victim.y) << ")" << std::endl;
 }
 
-void CS2DGame::TryPickupDropsFor(ActorId actorId, bool manual, IAudioSink *audio) {
+void CS2DSimulation::TryPickupDropsFor(ActorId actorId, bool manual) {
     // CT participants can recover a dropped kit independently of weapon pickup.
     for (auto &drop : drops_) {
         if (!drop.defuseKit || drop.pickupDelay > 0)
@@ -1312,9 +1314,14 @@ void CS2DGame::TryPickupDropsFor(ActorId actorId, bool manual, IAudioSink *audio
             actor.hasDefuseKit = true;
             actor.kitEquipment = drop.equipment;
             drop.defuseKit = false;
-            if (audio) {
-                if (actor.id == localActorId_) audio->PlaySound(SoundEffect::PICKUP);
-                else audio->PlaySoundAt(SoundEffect::PICKUP, actor.x, actor.y, ListenerX(), ListenerY());
+            {
+                SimEvent ev{};
+                ev.type = SimEventType::ItemPickedUp;
+                ev.actorId = actor.id;
+                ev.x = actor.x;
+                ev.y = actor.y;
+                ev.flagA = true;
+                EmitSimEvent(std::move(ev));
             }
         }
     }
@@ -1322,7 +1329,6 @@ void CS2DGame::TryPickupDropsFor(ActorId actorId, bool manual, IAudioSink *audio
     auto tryPickupOne = [&](Player& actor, bool isManual) {
         if (!actor.IsActive() || !actor.alive) return;
         const ActorId id = actor.id;
-        const bool isLocal = (id == localActorId_);
         if (isManual) {
             int best = -1;
             float bestD2 = Tuning::ManualPickupRadius * Tuning::ManualPickupRadius;
@@ -1367,12 +1373,24 @@ void CS2DGame::TryPickupDropsFor(ActorId actorId, bool manual, IAudioSink *audio
                 if (oldWeapon != actor.CurrentWeapon().id) {
                     actor.previousEquipSlot = oldSlot;
                     actor.previousEquipWeapon = oldWeapon;
-                    if (isLocal) ResetScope(Presentation::ScopeResetReason::WeaponChanged);
+                    actor.scopeLevel = 0;
+                    actor.scopeEngagement = 0.0f;
+                    actor.scoped = false;
+                    SimEvent sr{};
+                    sr.type = SimEventType::ScopeReset;
+                    sr.actorId = id;
+                    sr.scopeReason = Presentation::ScopeResetReason::WeaponChanged;
+                    EmitSimEvent(std::move(sr));
                 }
                 drops_[static_cast<size_t>(best)].id = WeaponId::None;
-                if (audio) {
-                    if (isLocal) audio->PlaySound(SoundEffect::PICKUP);
-                    else audio->PlaySoundAt(SoundEffect::PICKUP, actor.x, actor.y, ListenerX(), ListenerY());
+                {
+                    SimEvent ev{};
+                    ev.type = SimEventType::ItemPickedUp;
+                    ev.actorId = id;
+                    ev.weapon = d.id;
+                    ev.x = actor.x;
+                    ev.y = actor.y;
+                    EmitSimEvent(std::move(ev));
                 }
             }
             return;
@@ -1421,10 +1439,16 @@ void CS2DGame::TryPickupDropsFor(ActorId actorId, bool manual, IAudioSink *audio
                 actor.reloading = false;
                 actor.reloadTimer = 0.0f;
             }
+            const WeaponId pickedWeapon = drop.id;
             drop.id = WeaponId::None;
-            if (audio && actor.IsHuman()) {
-                if (isLocal) audio->PlaySound(SoundEffect::PICKUP);
-                else audio->PlaySoundAt(SoundEffect::PICKUP, actor.x, actor.y, ListenerX(), ListenerY());
+            if (actor.IsHuman()) {
+                SimEvent ev{};
+                ev.type = SimEventType::ItemPickedUp;
+                ev.actorId = id;
+                ev.weapon = pickedWeapon;
+                ev.x = actor.x;
+                ev.y = actor.y;
+                EmitSimEvent(std::move(ev));
             }
         }
     };
@@ -1443,7 +1467,7 @@ void CS2DGame::TryPickupDropsFor(ActorId actorId, bool manual, IAudioSink *audio
 }
 
 // G：丢弃当前武器（近战不可丢弃）
-void CS2DGame::DropWeaponToGround(Player &actor, int slot, float x, float y) {
+void CS2DSimulation::DropWeaponToGround(Player &actor, int slot, float x, float y) {
     if (slot < 0 || slot > 4)
         return;
     const WeaponId id = actor.weapons[slot];
@@ -1480,11 +1504,10 @@ void CS2DGame::DropWeaponToGround(Player &actor, int slot, float x, float y) {
               << std::endl;
 }
 
-void CS2DGame::DropCurrentWeaponFor(ActorId actorId) {
+void CS2DSimulation::DropCurrentWeaponFor(ActorId actorId) {
     Player* actorPtr = FindActor(actorId);
     if (!actorPtr) return;
     Player& actor = *actorPtr;
-    const bool isLocal = (actorId == localActorId_);
 
     // 槽位 4 = C4：G 键丢的就是 C4 本身
     if (actor.weaponSlot == 4) {
@@ -1568,6 +1591,15 @@ void CS2DGame::DropCurrentWeaponFor(ActorId actorId) {
         std::cout << " 弹匣 " << dropMag << " 备弹 " << dropReserve;
     }
     std::cout << std::endl;
-    if (isLocal) ResetScope(Presentation::ScopeResetReason::WeaponChanged);
+    actor.scopeLevel = 0;
+    actor.scopeEngagement = 0.0f;
+    actor.scoped = false;
+    {
+        SimEvent sr{};
+        sr.type = SimEventType::ScopeReset;
+        sr.actorId = actorId;
+        sr.scopeReason = Presentation::ScopeResetReason::WeaponChanged;
+        EmitSimEvent(std::move(sr));
+    }
 }
 

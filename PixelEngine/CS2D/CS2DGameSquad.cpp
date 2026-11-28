@@ -1,4 +1,4 @@
-#include "CS2DGame.hpp"
+#include "CS2DSimulation.hpp"
 #include "Tuning.hpp"
 #include "Visibility/BodyGeometry.hpp"
 #include <iostream>
@@ -11,7 +11,7 @@
 // 回答「这支队伍该怎么打」
 // ============================================================================
 
-void CS2DGame::EnsureBotAi() {
+void CS2DSimulation::EnsureBotAi() {
     const size_t n = actors_.size();
     for (size_t i = 0; i < n; ++i) {
         actors_[i].id = static_cast<ActorId>(i);
@@ -22,25 +22,25 @@ void CS2DGame::EnsureBotAi() {
     if (roleFromMul_.size() != n) roleFromMul_.assign(n, Tuning::SpeedMulSupport);
 }
 
-CS2DGame::BotRuntime& CS2DGame::AiAt(size_t i) {
+CS2DSimulation::BotRuntime& CS2DSimulation::AiAt(size_t i) {
     EnsureBotAi();
     if (actorAi_.empty()) { static BotRuntime fallback; return fallback; }
     if (i >= actorAi_.size()) i = actorAi_.size() - 1;
     return actorAi_[i];
 }
 
-const CS2DGame::BotRuntime& CS2DGame::AiAt(size_t i) const {
+const CS2DSimulation::BotRuntime& CS2DSimulation::AiAt(size_t i) const {
     if (actorAi_.empty()) { static const BotRuntime fallback; return fallback; }
     if (i >= actorAi_.size()) i = actorAi_.size() - 1;
     return actorAi_[i];
 }
 
-size_t CS2DGame::AiIndexOf(const Player& p) const {
+size_t CS2DSimulation::AiIndexOf(const Player& p) const {
     const ActorId id = ActorIdOf(p);
     return id >= 0 ? static_cast<size_t>(id) : 0;
 }
 
-void CS2DGame::ResetBotAi(size_t i) {
+void CS2DSimulation::ResetBotAi(size_t i) {
     EnsureBotAi();
     if (i < actorAi_.size()) {
         const int difficulty = actorAi_[i].difficulty;
@@ -53,7 +53,7 @@ void CS2DGame::ResetBotAi(size_t i) {
 // BOT AI
 // ============================================================================
 
-bool CS2DGame::FindCoverPoint(const Player& bot, float threatX, float threatY,
+bool CS2DSimulation::FindCoverPoint(const Player& bot, float threatX, float threatY,
                               float& outX, float& outY) const {
     if (!pathFinder_.IsBuilt()) return false;
 
@@ -83,7 +83,7 @@ bool CS2DGame::FindCoverPoint(const Player& bot, float threatX, float threatY,
 
 // 敌方出生点质心：与地图朝向无关的推进参考点
 
-bool CS2DGame::EnemySpawnCentroid(Team myTeam, float& outX, float& outY) const {
+bool CS2DSimulation::EnemySpawnCentroid(Team myTeam, float& outX, float& outY) const {
     if (!world_) return false;
 
     const bool enemyIsCT = (myTeam == Team::T);
@@ -102,7 +102,7 @@ bool CS2DGame::EnemySpawnCentroid(Team myTeam, float& outX, float& outY) const {
 }
 
 // P3-savegun: own spawn centroid (mirror of EnemySpawnCentroid).
-bool CS2DGame::OwnSpawnCentroid(Team myTeam, float& outX, float& outY) const {
+bool CS2DSimulation::OwnSpawnCentroid(Team myTeam, float& outX, float& outY) const {
     if (!world_) return false;
 
     auto spawns = world_->SpawnsForTeam(myTeam == Team::CT);
@@ -121,7 +121,7 @@ bool CS2DGame::OwnSpawnCentroid(Team myTeam, float& outX, float& outY) const {
 
 // P3-savegun: retreat point near the CT spawn, spread per bot so savers do not
 // stack on one point (P1-5 lesson), and clear of the blast radius.
-bool CS2DGame::SaveGunRetreatPoint(size_t i, float& outX, float& outY) const {
+bool CS2DSimulation::SaveGunRetreatPoint(size_t i, float& outX, float& outY) const {
     if (!world_ || !pathFinder_.IsBuilt()) return false;
     float cx = 0.0f, cy = 0.0f;
     if (!OwnSpawnCentroid(Team::CT, cx, cy)) return false;
@@ -158,7 +158,7 @@ bool CS2DGame::SaveGunRetreatPoint(size_t i, float& outX, float& outY) const {
 // BOT 贴着墙/墙角时，寻路给出的方向可能一直把它顶在墙上。
 // 这里按「垂直于去路 → 斜后方 → 后方」的顺序找一个能站下的点，直接挪过去，
 // 并清空当前路径强制重算，避免在同一位置反复撞墙。
-bool CS2DGame::NudgeOutOfStuck(Player& bot, BotRuntime& ai) {
+bool CS2DSimulation::NudgeOutOfStuck(Player& bot, BotRuntime& ai) {
     if (!world_) return false;
 
     const float half = bot.size * 0.5f;
@@ -189,15 +189,15 @@ bool CS2DGame::NudgeOutOfStuck(Player& bot, BotRuntime& ai) {
 // 团队情报共享（探点）
 // ============================================================================
 
-std::vector<CS2DGame::EnemyContact>& CS2DGame::ContactsOf(Team t) {
+std::vector<CS2DSimulation::EnemyContact>& CS2DSimulation::ContactsOf(Team t) {
     return (t == Team::T) ? contactsT_ : contactsCT_;
 }
 
-const std::vector<CS2DGame::EnemyContact>& CS2DGame::ContactsOf(Team t) const {
+const std::vector<CS2DSimulation::EnemyContact>& CS2DSimulation::ContactsOf(Team t) const {
     return (t == Team::T) ? contactsT_ : contactsCT_;
 }
 
-void CS2DGame::ReportContact(Team team, ActorId id, float x, float y) {
+void CS2DSimulation::ReportContact(Team team, ActorId id, float x, float y) {
     if (team == Team::None || id == kInvalidActorId) return;
 
     auto& list = ContactsOf(team);
@@ -213,7 +213,7 @@ void CS2DGame::ReportContact(Team team, ActorId id, float x, float y) {
     intel_.OnEnemySeen(x, y, clockSec_);
 }
 
-const CS2DGame::EnemyContact* CS2DGame::FindNearestContact(Team team, float x, float y) const {
+const CS2DSimulation::EnemyContact* CS2DSimulation::FindNearestContact(Team team, float x, float y) const {
     const auto& list = ContactsOf(team);
     const EnemyContact* best = nullptr;
     float bestD2 = 1e18f;
@@ -231,7 +231,7 @@ const CS2DGame::EnemyContact* CS2DGame::FindNearestContact(Team team, float x, f
 }
 
 // 每帧：情报老化 + 全体存活单位上报视野内敌情
-void CS2DGame::UpdateTeamContacts(float dt) {
+void CS2DSimulation::UpdateTeamContacts(float dt) {
     for (int side = 0; side < 2; ++side) {
         auto& list = (side == 0) ? contactsT_ : contactsCT_;
         for (auto& c : list) c.age += dt;
@@ -257,7 +257,7 @@ void CS2DGame::UpdateTeamContacts(float dt) {
 
 // 真实可见敌人（交火距离 + 烟雾 + LOS）
 
-CS2DGame::BodyVisibility CS2DGame::QueryBodyVisibility(const Player &observer, const Player &target) const {
+CS2DSimulation::BodyVisibility CS2DSimulation::QueryBodyVisibility(const Player &observer, const Player &target) const {
     const auto revision = world_ ? world_->Revision() : 0;
     if (bodyVisibilityClock_ != clockSec_ || bodyVisibilityTerrain_ != revision) {
         bodyVisibilityCache_.clear();
@@ -399,11 +399,11 @@ CS2DGame::BodyVisibility CS2DGame::QueryBodyVisibility(const Player &observer, c
     return result;
 }
 
-bool CS2DGame::CanSeeActor(const Player& observer, const Player& target) const {
+bool CS2DSimulation::CanSeeActor(const Player& observer, const Player& target) const {
     return target.alive && QueryBodyVisibility(observer,target).fraction > 0;
 }
 
-bool CS2DGame::CanSeePoint(const Player& observer, float x, float y) const {
+bool CS2DSimulation::CanSeePoint(const Player& observer, float x, float y) const {
     if (!observer.alive || observer.flashTimer > 0.0f) return false;
     VisibilityQuery query = visibility_;
     if (observer.IsBot()) {
@@ -417,7 +417,7 @@ bool CS2DGame::CanSeePoint(const Player& observer, float x, float y) const {
     return query.ComputeVisibility(observer.x, observer.y, observer.EffectiveAim(), x, y) > 0.0f;
 }
 
-const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& outDist) const {
+const CS2DSimulation::Player* CS2DSimulation::FindVisibleEnemy(const Player& self, float& outDist) const {
     outDist = 0.0f;
     if (self.flashTimer > 0.0f) return nullptr;   // 被闪光致盲，看不到任何人
 
@@ -441,7 +441,7 @@ const CS2DGame::Player* CS2DGame::FindVisibleEnemy(const Player& self, float& ou
 // 小队协同：分工与集火
 // ============================================================================
 
-void CS2DGame::RefreshRolesForTeam(Team t) {
+void CS2DSimulation::RefreshRolesForTeam(Team t) {
     if (!world_ || actors_.empty()) return;
     EnsureBotAi();
 
@@ -505,7 +505,7 @@ void CS2DGame::RefreshRolesForTeam(Team t) {
     }
 }
 // 重置搜点白名单（每回合开始调用）：所有区域标记为"未搜"
-void CS2DGame::RefreshSearchAreas() {
+void CS2DSimulation::RefreshSearchAreas() {
     for (int t = 0; t < 2; ++t) areaSearchedAt_[t].clear();
     if (!world_) return;
     for (const auto& a : world_->GetAreas()) {
@@ -514,7 +514,7 @@ void CS2DGame::RefreshSearchAreas() {
     }
 }
 
-void CS2DGame::AssignSquadRoles(bool dynamic) {
+void CS2DSimulation::AssignSquadRoles(bool dynamic) {
     if (!dynamic) actorSquad_.assign(actors_.size(), SquadOrder{});
     else EnsureBotAi();
     if (actors_.empty() || !world_) return;
@@ -662,7 +662,7 @@ void CS2DGame::AssignSquadRoles(bool dynamic) {
     }
 }
 
-void CS2DGame::UpdateSquadFocus(float dt) {
+void CS2DSimulation::UpdateSquadFocus(float dt) {
     EnsureBotAi();
 
     squadFocusTimer_ -= dt;
@@ -718,7 +718,7 @@ void CS2DGame::UpdateSquadFocus(float dt) {
     }
 }
 
-const CS2DGame::Player* CS2DGame::ResolveFocus(const SquadOrder& order) const {
+const CS2DSimulation::Player* CS2DSimulation::ResolveFocus(const SquadOrder& order) const {
     const Player* p = FindActor(order.focus);
     return (p && p->IsActive() && p->alive) ? p : nullptr;
 }
@@ -732,7 +732,7 @@ constexpr float SEP_RADIUS    = Tuning::SepRadius;    // 排斥半径
 constexpr float SEP_MAX_SPEED = Tuning::SepMaxSpeed;  // 与 BOT 移动上限一致
 }
 
-void CS2DGame::AccumulateSeparation(const Player& self, float& outX, float& outY) const {
+void CS2DSimulation::AccumulateSeparation(const Player& self, float& outX, float& outY) const {
     outX = 0.0f;
     outY = 0.0f;
 
@@ -766,7 +766,7 @@ void CS2DGame::AccumulateSeparation(const Player& self, float& outX, float& outY
     }
 }
 
-void CS2DGame::ApplyAvoidance(float& vx, float& vy, float sepX, float sepY) const {
+void CS2DSimulation::ApplyAvoidance(float& vx, float& vy, float sepX, float sepY) const {
     // 分离力强度：与当前速度同量级，保证能推开但不至于完全抵消前进
     constexpr float SEP_STRENGTH = Tuning::SepStrength;
 

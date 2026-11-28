@@ -1,4 +1,4 @@
-#include "CS2DGame.hpp"
+#include "CS2DSimulation.hpp"
 #include "Tuning.hpp"
 #include <cmath>
 #include <iostream>
@@ -7,7 +7,7 @@
 // C4 物品逻辑（与「下包/拆包」分开，这里只负责：手持、丢弃、掉落、拾取、CT 情报）
 // ============================================================================
 
-void CS2DGame::ToggleHoldC4For(ActorId actorId) {
+void CS2DSimulation::ToggleHoldC4For(ActorId actorId) {
     Player* actor = FindActor(actorId);
     if (!actor) return;
     // 按 5 等价于切到 C4 槽；已经在 C4 槽则切回副武器
@@ -22,7 +22,7 @@ void CS2DGame::ToggleHoldC4For(ActorId actorId) {
     }
 }
 
-void CS2DGame::UpdateBombItem(float dt) {
+void CS2DSimulation::UpdateBombItem(float dt) {
     if (mode_ != MatchMode::BombDefusal || bombPlanted_) {
         bombIntel_ = false;
         return;
@@ -78,7 +78,7 @@ void CS2DGame::UpdateBombItem(float dt) {
     }
 }
 
-void CS2DGame::DropC4(float x, float y) {
+void CS2DSimulation::DropC4(float x, float y) {
     if (mode_ != MatchMode::BombDefusal || bombPlanted_) return;
     if (bombCarrier_ == kInvalidActorId) return;
 
@@ -107,7 +107,7 @@ void CS2DGame::DropC4(float x, float y) {
 }
 
 // 当前槽位不可用（C4 丢了 / 枪丢了）时，切到有武器的槽位并读它自己的弹药
-void CS2DGame::EquipFallbackWeaponFor(Player& actor) {
+void CS2DSimulation::EquipFallbackWeaponFor(Player& actor) {
     if (actor.weapons[actor.weaponSlot] != WeaponId::None &&
         actor.weaponSlot != 4) {
         actor.LoadAmmoFromSlot();

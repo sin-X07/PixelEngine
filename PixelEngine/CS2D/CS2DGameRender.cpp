@@ -32,18 +32,18 @@ void CS2DGame::RenderMapPreview(int viewW, int viewH,
 
 void CS2DGame::PrepareCamera(int viewW, int viewH, float interpolation) {
     if (!renderer_ || !world_) return;
-    renderInterpolation_ = std::clamp(interpolation, 0.0f, 1.0f);
+    view_.renderInterpolation_ = std::clamp(interpolation, 0.0f, 1.0f);
     if (IsDeathFreeze()) {
-        cameraPrepared_ = true;
+        view_.cameraPrepared_ = true;
         return;
     }
     const auto& local = LocalActor();
     const auto playerView = GetActorView(local);
     Presentation::ScopeView scope = GetRenderScopeView();
-    const float blend = viewHistoryValid_ ? renderInterpolation_ : 1.0f;
-    const float renderEdge = previousEdgeZoom_ + (edgeZoom_ - previousEdgeZoom_) * blend;
+    const float blend = view_.viewHistoryValid_ ? view_.renderInterpolation_ : 1.0f;
+    const float renderEdge = view_.previousEdgeZoom_ + (view_.edgeZoom_ - view_.previousEdgeZoom_) * blend;
     const float edgeFactor = renderEdge <= 1 ? 1.12f + (.70f-1.12f)*renderEdge : .70f + (.50f-.70f)*(renderEdge-1);
-    const bool bombView = IsSpectating() && specMode_ == SpectateMode::Bomb;
+    const bool bombView = IsSpectating() && view_.specMode_ == SpectateMode::Bomb;
     const float cone = bombView ? 360.0f : Tuning::VisionConeDeg *
         (1.0f + (Tuning::EdgeZoomFovAngleMul - 1.0f) * std::min(renderEdge,1.0f));
     renderer_->SetConeAngleDeg(cone);
@@ -51,29 +51,29 @@ void CS2DGame::PrepareCamera(int viewW, int viewH, float interpolation) {
     if (IsSpectating()) {
         const Player* target = GetSpectatedPlayer();
         const auto targetView = target ? GetActorView(*target) : playerView;
-        const float x = bombView ? bombX_ : specMode_ == SpectateMode::Free ? specFreeX_ : targetView.x;
-        const float y = bombView ? bombY_ : specMode_ == SpectateMode::Free ? specFreeY_ : targetView.y;
+        const float x = bombView ? bombX_ : view_.specMode_ == SpectateMode::Free ? view_.specFreeX_ : targetView.x;
+        const float y = bombView ? bombY_ : view_.specMode_ == SpectateMode::Free ? view_.specFreeY_ : targetView.y;
         renderer_->UpdateCamera(x,y,viewW,viewH,edgeFactor);
     } else {
         const float lensRadius = Presentation::kScopeCircleRadiusFrac * std::min(viewW,viewH) * scope.transition;
         renderer_->UpdatePlayerCamera(playerView.x,playerView.y,local.size,
             GetRenderAimX(),GetRenderAimY(),viewW,viewH,edgeFactor,std::max(8.0f,lensRadius),
-            {recoilShake_ * std::cos(recoilShakeAge_ * 2.0f * Tuning::Pi * 18.0f),
-             recoilShake_ * std::sin(recoilShakeAge_ * 2.0f * Tuning::Pi * 13.0f)});
+            {view_.recoilShake_ * std::cos(view_.recoilShakeAge_ * 2.0f * Tuning::Pi * 18.0f),
+             view_.recoilShake_ * std::sin(view_.recoilShakeAge_ * 2.0f * Tuning::Pi * 13.0f)});
     }
     visibility_.SetVisionRadius(renderer_->GetVisionRadius());
 
-    cameraPrepared_ = true;
-    cameraScopeSettled_ = !scope.active && std::abs(scope.zoomMultiplier - 1.0f) < 0.001f &&
+    view_.cameraPrepared_ = true;
+    view_.cameraScopeSettled_ = !scope.active && std::abs(scope.zoomMultiplier - 1.0f) < 0.001f &&
         renderer_->CameraSettled();
 }
 
 void CS2DGame::Render(int viewW, int viewH) {
     if (!renderer_ || !world_)
         return;
-    if (!cameraPrepared_)
+    if (!view_.cameraPrepared_)
         PrepareCamera(viewW, viewH);
-    cameraPrepared_ = false;
+    view_.cameraPrepared_ = false;
     const Presentation::ScopeView scope = GetRenderScopeView();
 
     // 镜内沿用扇形视野，镜外叠加雾遮罩。
@@ -89,12 +89,12 @@ void CS2DGame::Render(int viewW, int viewH) {
     if (scope.transition > .001f && local.alive) {
         Presentation::ScopeOverlayParams op;
         op.scope = scope;
-        op.motionBlur = aimMotionBlur_;
+        op.motionBlur = view_.aimMotionBlur_;
         op.centerX = (GetRenderAimX() - renderer_->GetCameraX()) * renderer_->GetZoom();
         op.centerY = (GetRenderAimY() - renderer_->GetCameraY()) * renderer_->GetZoom();
         op.radiusPx = scopeRadiusPx;
-        op.crossThickness = scopeCrossThickness_;
-        op.crossGap = Presentation::ComputeScopeCrossGap(GetCrosshairBloom(), scopeCrossDynamic_);
+        op.crossThickness = view_.scopeCrossThickness_;
+        op.crossGap = Presentation::ComputeScopeCrossGap(GetCrosshairBloom(), view_.scopeCrossDynamic_);
         if (renderer_->BeginScopeScene(GetRenderAimX(),GetRenderAimY(),op.centerX,op.centerY,scope.zoomMultiplier)) {
             DrawWorldPass(true);
             renderer_->EndScopeScene();
@@ -154,14 +154,14 @@ void CS2DGame::DrawWorldPass(bool lens) {
     renderer_->DrawWorld();
 
     const auto& local = LocalActor();
-    const bool freeView = IsSpectating() && specMode_ == SpectateMode::Free;
+    const bool freeView = IsSpectating() && view_.specMode_ == SpectateMode::Free;
     const Player *observer = GetSpectatedPlayer();
     if (!observer)
         observer = &local;
     const auto observerView = GetActorView(*observer);
-    const bool bombView = specMode_ == SpectateMode::Bomb && IsSpectating();
-    const float observerX = bombView ? bombX_ : freeView ? specFreeX_ : observerView.x;
-    const float observerY = bombView ? bombY_ : freeView ? specFreeY_ : observerView.y;
+    const bool bombView = view_.specMode_ == SpectateMode::Bomb && IsSpectating();
+    const float observerX = bombView ? bombX_ : freeView ? view_.specFreeX_ : observerView.x;
+    const float observerY = bombView ? bombY_ : freeView ? view_.specFreeY_ : observerView.y;
     const float observerAngle = (observer == &local) ? GetRenderAimAngle() : observerView.aimAngle;
 
     // 自由视角：视野来自「存活队友视锥的并集」，与最后跟随的那只 BOT 的朝向无关。

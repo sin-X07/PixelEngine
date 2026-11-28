@@ -1,4 +1,4 @@
-#include "CS2DGame.hpp"
+#include "CS2DSimulation.hpp"
 #include "Tuning.hpp"
 #include <algorithm>
 #include <cctype>
@@ -68,20 +68,20 @@ const char* IntentName(PlanIntent i) {
 
 } // namespace
 
-CS2DGame::CoachState& CS2DGame::CoachFor(Team t) {
+CS2DSimulation::CoachState& CS2DSimulation::CoachFor(Team t) {
     return (t == Team::T) ? coachT_ : coachCT_;
 }
-const CS2DGame::CoachState& CS2DGame::CoachFor(Team t) const {
+const CS2DSimulation::CoachState& CS2DSimulation::CoachFor(Team t) const {
     return (t == Team::T) ? coachT_ : coachCT_;
 }
 
-const TeamPlan& CS2DGame::GetCoachPlan(Team t) const { return CoachFor(t).plan; }
-const std::string& CS2DGame::GetCoachReason(Team t) const { return CoachFor(t).reason; }
+const TeamPlan& CS2DSimulation::GetCoachPlan(Team t) const { return CoachFor(t).plan; }
+const std::string& CS2DSimulation::GetCoachReason(Team t) const { return CoachFor(t).reason; }
 
 // ---------------------------------------------------------------------------
 // 区域名 → 中心点（按面积加权）
 // ---------------------------------------------------------------------------
-bool CS2DGame::AreaCenterByName(const std::string& name, float& ox, float& oy) const {
+bool CS2DSimulation::AreaCenterByName(const std::string& name, float& ox, float& oy) const {
     if (!world_ || name.empty()) return false;
     for (const auto& a : world_->GetAreas()) {
         if (!SameNoCase(a.name, name)) continue;
@@ -101,7 +101,7 @@ bool CS2DGame::AreaCenterByName(const std::string& name, float& ox, float& oy) c
 }
 
 // 在现有区域里找一个名字包含关键词的区域（不区分大小写）
-std::string CS2DGame::AreaHint(const std::string& key) const {
+std::string CS2DSimulation::AreaHint(const std::string& key) const {
     if (!world_ || key.empty()) return std::string();
     // 1) 战术表优先：每张图的实际区域命名不同（Dust2 的 Long/Short、Mirage 的 A_Site 等），
     //    由 assets/config/tactics/<map>.ini 描述，新图接入不用改代码。
@@ -136,7 +136,7 @@ std::string CS2DGame::AreaHint(const std::string& key) const {
 // ---------------------------------------------------------------------------
 // 事件入队（0.4s 合并窗口，取最高优先级）
 // ---------------------------------------------------------------------------
-void CS2DGame::CoachOnEvent(Team t, CoachEventType type, const std::string& area) {
+void CS2DSimulation::CoachOnEvent(Team t, CoachEventType type, const std::string& area) {
     CoachState& st = CoachFor(t);
 
     CoachEvent ev;
@@ -166,7 +166,7 @@ void CS2DGame::CoachOnEvent(Team t, CoachEventType type, const std::string& area
 // ---------------------------------------------------------------------------
 // 每帧推进
 // ---------------------------------------------------------------------------
-void CS2DGame::CoachUpdate(float dt) {
+void CS2DSimulation::CoachUpdate(float dt) {
     CoachDrainLlm();   // 先收 LLM 回包，再处理新事件
 
     // 转点评估：每 0.75 秒看一次（不依赖事件，事件可能被 KEEP 逻辑吃掉）
@@ -352,7 +352,7 @@ void CS2DGame::CoachUpdate(float dt) {
     }
 }
 
-void CS2DGame::CoachThink(Team t, const CoachEvent& ev) {
+void CS2DSimulation::CoachThink(Team t, const CoachEvent& ev) {
     CoachState& st = CoachFor(t);
 
     // P2-2: the last 20s of a round without a plant is as critical as TimeLow --
@@ -562,7 +562,7 @@ static const char* TacticsIntentKey(PlanIntent intent) {
 // 战术表覆盖：表里存在该 (队伍, 意图) 的槽位配置时，用它替换代码里的默认分兵。
 // 表里没有就保持代码默认 → 战术表是可选增强，不会让旧图行为突变。
 // T04：先找 target 专属 @ 模板（T.SplitA@A），再退回 plain（T.SplitA）——与 ApplySlotTemplate 对齐。
-void CS2DGame::ApplyTacticsSlots(Team t, TeamPlan& plan) {
+void CS2DSimulation::ApplyTacticsSlots(Team t, TeamPlan& plan) {
     if (!tactics_.loaded) return;
     const char* teamKey = (t == Team::T) ? "T" : "CT";
     const std::string intentKey = TacticsIntentKey(plan.intent);
@@ -605,14 +605,14 @@ void CS2DGame::ApplyTacticsSlots(Team t, TeamPlan& plan) {
     }
 }
 
-TeamPlan CS2DGame::RuleCoach(Team t, const CoachEvent& ev) {
+TeamPlan CS2DSimulation::RuleCoach(Team t, const CoachEvent& ev) {
     TeamPlan plan = RuleCoachCore(t, ev);
     plan.source = "rule";     // 评估用：区分规则计划与 LLM 计划
     ApplyTacticsSlots(t, plan);
     return plan;
 }
 
-TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
+TeamPlan CS2DSimulation::RuleCoachCore(Team t, const CoachEvent& ev) {
     CoachState& st = CoachFor(t);
     TeamPlan plan;
     plan.intent = PlanIntent::Default;
@@ -1330,7 +1330,7 @@ TeamPlan CS2DGame::RuleCoachCore(Team t, const CoachEvent& ev) {
 // 教练计划 trace：每下发一条计划写一行，用于 LLM vs 规则的 A/B 评估。
 // 只读数据，不参与任何玩法逻辑。
 // ---------------------------------------------------------------------------
-void CS2DGame::EnablePlanTrace(const std::string& path) {
+void CS2DSimulation::EnablePlanTrace(const std::string& path) {
     ClosePlanTrace();
     planTrace_ = std::fopen(path.c_str(), "wb");
     if (!planTrace_) {
@@ -1342,13 +1342,13 @@ void CS2DGame::EnablePlanTrace(const std::string& path) {
     std::cout << "[PlanTrace] 计划 trace 已开启: " << path << std::endl;
 }
 
-void CS2DGame::ClosePlanTrace() {
+void CS2DSimulation::ClosePlanTrace() {
     if (!planTrace_) return;
     std::fclose(planTrace_);
     planTrace_ = nullptr;
 }
 
-char CS2DGame::AreaSideOf(const std::string& area) const {
+char CS2DSimulation::AreaSideOf(const std::string& area) const {
     if (!world_ || area.empty()) return '?';
     std::string low = area;
     for (char& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -1365,7 +1365,7 @@ char CS2DGame::AreaSideOf(const std::string& area) const {
     return best ? best->name[0] : '?';
 }
 
-bool CS2DGame::PlanTargetConsistent(Team t, const TeamPlan& plan) const {
+bool CS2DSimulation::PlanTargetConsistent(Team t, const TeamPlan& plan) const {
     (void)t;
     if (!world_ || plan.target.empty()) return true;
     const char want = plan.target[0];
@@ -1379,7 +1379,7 @@ bool CS2DGame::PlanTargetConsistent(Team t, const TeamPlan& plan) const {
     return matched >= need;
 }
 
-bool CS2DGame::ApplySlotTemplate(Team t, TeamPlan& plan) {
+bool CS2DSimulation::ApplySlotTemplate(Team t, TeamPlan& plan) {
     const std::string teamKey = (t == Team::T) ? "T" : "CT";
     const std::string intentKey = TacticsIntentKey(plan.intent);
     // 先找 target 专属模板（T.Default@A），再退回通用模板（T.Default）
@@ -1392,7 +1392,7 @@ bool CS2DGame::ApplySlotTemplate(Team t, TeamPlan& plan) {
     return true;
 }
 
-void CS2DGame::TraceCoachAdvisory(Team t, const TeamPlan& plan) {
+void CS2DSimulation::TraceCoachAdvisory(Team t, const TeamPlan& plan) {
     if (!planTrace_) return;
     std::string slotSig;
     for (const auto& so : plan.slots) slotSig += so.area + ";";
@@ -1461,7 +1461,7 @@ static std::string SanitizeField(std::string v, size_t cap = 60) {
     return v;
 }
 
-void CS2DGame::EnableDecisionLog(const std::string& path) {
+void CS2DSimulation::EnableDecisionLog(const std::string& path) {
     CloseDecisionLog();
     decisionLog_ = std::fopen(path.c_str(), "wb");
     if (!decisionLog_) {
@@ -1476,13 +1476,13 @@ void CS2DGame::EnableDecisionLog(const std::string& path) {
     std::cout << "[DecisionLog] 决策对比日志已开启: " << path << std::endl;
 }
 
-void CS2DGame::CloseDecisionLog() {
+void CS2DSimulation::CloseDecisionLog() {
     if (!decisionLog_) return;
     std::fclose(decisionLog_);
     decisionLog_ = nullptr;
 }
 
-void CS2DGame::TraceCoachDecision(Team t, const char* status) {
+void CS2DSimulation::TraceCoachDecision(Team t, const char* status) {
     if (!decisionLog_) return;
     const CoachState& st = CoachFor(t);
     const TeamPlan& rule = st.hasRuleSnapshot ? st.ruleSnapshot : st.plan;
@@ -1509,7 +1509,7 @@ void CS2DGame::TraceCoachDecision(Team t, const char* status) {
                  IntentKey(app.intent), app.target.c_str(), app.source.c_str());
 }
 
-void CS2DGame::TraceCoachPlan(Team t) {
+void CS2DSimulation::TraceCoachPlan(Team t) {
     if (!planTrace_) return;
     const CoachState& st = CoachFor(t);
     if (!st.plan.valid) return;
@@ -1587,7 +1587,7 @@ static std::string JsonEscape(const std::string& s) {
     return out;
 }
 
-void CS2DGame::EnableWiringLog(const std::string& path) {
+void CS2DSimulation::EnableWiringLog(const std::string& path) {
     CloseWiringLog();
     wiringLog_ = std::fopen(path.c_str(), "wb");
     if (!wiringLog_) {
@@ -1597,13 +1597,13 @@ void CS2DGame::EnableWiringLog(const std::string& path) {
     std::cout << "[WiringLog] 结构化教练决策日志已开启: " << path << std::endl;
 }
 
-void CS2DGame::CloseWiringLog() {
+void CS2DSimulation::CloseWiringLog() {
     if (!wiringLog_) return;
     std::fclose(wiringLog_);
     wiringLog_ = nullptr;
 }
 
-void CS2DGame::TraceWiring(Team t, const char* guard, const char* sanitized, const char* templateKey) {
+void CS2DSimulation::TraceWiring(Team t, const char* guard, const char* sanitized, const char* templateKey) {
     if (!wiringLog_) return;
     const CoachState& st = CoachFor(t);
     const TeamPlan& p = st.plan;
@@ -1752,7 +1752,7 @@ static float RoleSpeedMulRaw(BotRole role) {
     }
 }
 
-float CS2DGame::RoleSpeedMul(size_t botIdx, BotRole role) {
+float CS2DSimulation::RoleSpeedMul(size_t botIdx, BotRole role) {
     const float target = RoleSpeedMulRaw(role);
     // T27：换角色后 3 秒内从旧倍率插值过渡到新倍率（RoleTransitionSec）。
     EnsureBotAi();
@@ -1766,7 +1766,7 @@ float CS2DGame::RoleSpeedMul(size_t botIdx, BotRole role) {
     return from + (target - from) * k;
 }
 
-void CS2DGame::SetRoleWithTransition(size_t botIdx, BotRole role) {
+void CS2DSimulation::SetRoleWithTransition(size_t botIdx, BotRole role) {
     EnsureBotAi();
     if (botIdx >= actors_.size()) return;
     if (actorSquad_[botIdx].role != role) {
@@ -1780,7 +1780,7 @@ void CS2DGame::SetRoleWithTransition(size_t botIdx, BotRole role) {
 // T36 coach_rounds.jsonl：一行一队一回合，写盘点不动，只加 gen/版本区分。
 // 与 T01 的 coach_wiring.jsonl 并存；未开启时零开销。
 // ---------------------------------------------------------------------------
-void CS2DGame::EnableCoachRoundsLog(const std::string& path) {
+void CS2DSimulation::EnableCoachRoundsLog(const std::string& path) {
     CloseCoachRoundsLog();
     coachRoundsLog_ = std::fopen(path.c_str(), "wb");
     if (!coachRoundsLog_) {
@@ -1790,13 +1790,13 @@ void CS2DGame::EnableCoachRoundsLog(const std::string& path) {
     std::cout << "[CoachRounds] 老师数据日志已开启: " << path << std::endl;
 }
 
-void CS2DGame::CloseCoachRoundsLog() {
+void CS2DSimulation::CloseCoachRoundsLog() {
     if (!coachRoundsLog_) return;
     std::fclose(coachRoundsLog_);
     coachRoundsLog_ = nullptr;
 }
 
-void CS2DGame::TraceCoachRound(Team t) {
+void CS2DSimulation::TraceCoachRound(Team t) {
     if (!coachRoundsLog_) return;
     const CoachState& st = CoachFor(t);
     const TeamPlan& p = st.plan;
@@ -1824,7 +1824,7 @@ void CS2DGame::TraceCoachRound(Team t) {
     std::fflush(coachRoundsLog_);
 }
 
-void CS2DGame::SanitizeCoachPlan(Team t, TeamPlan& plan) {
+void CS2DSimulation::SanitizeCoachPlan(Team t, TeamPlan& plan) {
     if (!world_ || bombPlanted_) return;
 
     auto lowerCopy = [](std::string s) {
@@ -1961,7 +1961,7 @@ void CS2DGame::SanitizeCoachPlan(Team t, TeamPlan& plan) {
 // ---------------------------------------------------------------------------
 // 计划下发
 // ---------------------------------------------------------------------------
-void CS2DGame::CoachApplyPlan(Team t) {
+void CS2DSimulation::CoachApplyPlan(Team t) {
     CoachState& st = CoachFor(t);
     if (!st.plan.valid) return;
 
@@ -2227,7 +2227,7 @@ void CS2DGame::CoachApplyPlan(Team t) {
 // ---------------------------------------------------------------------------
 // 回合记忆
 // ---------------------------------------------------------------------------
-void CS2DGame::CoachRecordRound(Team t, bool won) {
+void CS2DSimulation::CoachRecordRound(Team t, bool won) {
     CoachState& st = CoachFor(t);
 
     // T07：sameSideStreak 接线——按实际主攻侧更新（同侧 +1、换侧清零）。
@@ -2283,7 +2283,7 @@ void CS2DGame::CoachRecordRound(Team t, bool won) {
     st.matchPointFired = false;
 }
 
-void CS2DGame::CoachResetRound() {
+void CS2DSimulation::CoachResetRound() {
     for (Team t : {Team::T, Team::CT}) {
         CoachState& st = CoachFor(t);
         st.pending.clear();
@@ -2306,7 +2306,7 @@ void CS2DGame::CoachResetRound() {
 // 回合开始（买枪之前）：立刻用规则教练出计划，保证 save/eco 能拦住购买；
 // 同时把 RoundStart 事件排进队列，稍后由 LLM 覆盖。
 // ---------------------------------------------------------------------------
-void CS2DGame::CoachBeginRound() {
+void CS2DSimulation::CoachBeginRound() {
     for (Team t : {Team::T, Team::CT}) {
         ++CoachFor(t).gen;
         CoachEvent ev;
@@ -2345,7 +2345,7 @@ void CS2DGame::CoachBeginRound() {
 
 
 // 队伍平均余额（买枪前快照；没有快照时退回当前值）
-int CS2DGame::GetRoundStartEconomy(Team t) const {
+int CS2DSimulation::GetRoundStartEconomy(Team t) const {
     if (roundEconomySnapshotValid_ && mode_ != MatchMode::DeathMatch) {
         return (t == Team::T) ? roundStartAvgMoneyT_ : roundStartAvgMoneyCT_;
     }
@@ -2356,7 +2356,7 @@ int CS2DGame::GetRoundStartEconomy(Team t) const {
     return (n > 0) ? sum / n : 0;
 }
 
-void CS2DGame::SnapshotRoundEconomy() {
+void CS2DSimulation::SnapshotRoundEconomy() {
     auto avg = [&](Team t) {
         int sum = 0, n = 0;
         for (const auto& b : actors_) {
@@ -2370,7 +2370,7 @@ void CS2DGame::SnapshotRoundEconomy() {
 }
 
 // 队伍平均余额（含玩家）
-bool CS2DGame::LowEconomyAverage(Team t) const {
+bool CS2DSimulation::LowEconomyAverage(Team t) const {
     // 手枪局有自己的节奏，不按 eco 处理；阈值 1800 更接近 CS 的经济线
     if (round_.RoundNumber() <= 1) return false;
     if (mode_ == MatchMode::DeathMatch) return false;
@@ -2378,7 +2378,7 @@ bool CS2DGame::LowEconomyAverage(Team t) const {
 }
 
 // 购买档：按买枪前经济、是否该保枪、敌方经济决定。
-BuyPlan CS2DGame::DecideBuyPlan(Team t) const {
+BuyPlan CS2DSimulation::DecideBuyPlan(Team t) const {
     if (mode_ != MatchMode::BombDefusal) return BuyPlan::Full;
 
     const int avg    = GetRoundStartEconomy(t);
@@ -2420,11 +2420,11 @@ BuyPlan CS2DGame::DecideBuyPlan(Team t) const {
     return BuyPlan::Eco;
 }
 
-BuyPlan CS2DGame::GetBuyPlan(Team t) const {
+BuyPlan CS2DSimulation::GetBuyPlan(Team t) const {
     return CoachFor(t).buyPlan;
 }
 
-const char* CS2DGame::BuyPlanLabel(BuyPlan p) {
+const char* CS2DSimulation::BuyPlanLabel(BuyPlan p) {
     switch (p) {
         case BuyPlan::Eco:     return "Eco";
         case BuyPlan::Half:    return "Half";
@@ -2440,7 +2440,7 @@ const char* CS2DGame::BuyPlanLabel(BuyPlan p) {
 //   2) 回合前 20 秒（中后期再保枪只会送掉回合）
 //   3) 不是人数优势（多打少还保枪 = 主动让出主动权）
 //   4) 经济确实崩（已有阈值）
-bool CS2DGame::ShouldSaveNow(Team t) const {
+bool CS2DSimulation::ShouldSaveNow(Team t) const {
     if (bombPlanted_) return false;
     // 手枪局必须买：800 经济下"保枪"等于白送一回合，还会把买枪档位倒退成 Eco。
     if (round_.RoundNumber() <= 1) return false;
@@ -2457,7 +2457,7 @@ bool CS2DGame::ShouldSaveNow(Team t) const {
     return LowEconomyAverage(t);
 }
 
-bool CS2DGame::CanRotateNow(Team t) const {
+bool CS2DSimulation::CanRotateNow(Team t) const {
     if (mode_ != MatchMode::BombDefusal) return false;
     if (bombPlanted_) return false;
     if (bombDropped_) return false;
@@ -2489,7 +2489,7 @@ bool CS2DGame::CanRotateNow(Team t) const {
     return true;
 }
 
-void CS2DGame::CoachTryRotate(Team t) {
+void CS2DSimulation::CoachTryRotate(Team t) {
     if (!CanRotateNow(t)) return;
 
     CoachState& st = CoachFor(t);

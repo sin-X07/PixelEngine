@@ -1,4 +1,4 @@
-#include "CS2DGame.hpp"
+#include "CS2DSimulation.hpp"
 #include <iostream>
 #include <cmath>
 #include <algorithm>
@@ -8,12 +8,9 @@
 // 回合流程
 // ============================================================================
 
-void CS2DGame::UpdateRoundFlow(float dt, IAudioSink* audio) {
+void CS2DSimulation::UpdateRoundFlow(float dt) {
     if (mode_ == MatchMode::DeathMatch) return;   // 死斗无回合
 
-    // 比赛已结束：冻结回合状态机，停在最后一回合的结算画面上。
-    // 之前这里仍会 round_.Update()，导致 已决→Freeze→…→Live 无限循环，
-    // 而 BeginNewRound 因 MatchOver 提前返回，场上没人复活，比赛永远不结束。
     if (teams_.MatchOver()) {
         matchOverTimer_ += dt;
         return;
@@ -25,7 +22,7 @@ void CS2DGame::UpdateRoundFlow(float dt, IAudioSink* audio) {
 
     // 结算结束 → 开新回合
     if (before == RoundPhase::Live && after == RoundPhase::Freeze) {
-        BeginNewRound(audio);
+        BeginNewRound();
     }
     // 时间不足提醒（每回合只发一次）
     if (round_.IsLive()) {
@@ -52,8 +49,13 @@ void CS2DGame::UpdateRoundFlow(float dt, IAudioSink* audio) {
     prevPhase_ = after;
 }
 
-void CS2DGame::BeginNewRound(IAudioSink* audio) {
-    StopObjectiveAudio(audio);
+void CS2DSimulation::BeginNewRound() {
+    {
+        SimEvent stopObj;
+        stopObj.type = SimEventType::BombEvent;
+        stopObj.bombKind = BombEventKind::StopAllObjectiveAudio;
+        EmitSimEvent(std::move(stopObj));
+    }
     if (teams_.MatchOver()) return;
     CoachResetRound();
     SnapshotRoundEconomy();   // 必须在任何采购之前：save/eco 看的是买枪前经济
@@ -62,12 +64,10 @@ void CS2DGame::BeginNewRound(IAudioSink* audio) {
     SetupObjective();   // 每回合重置包点 / C4
     AssignSquadRoles(); // 每回合按新的相对位置重新分工
     RefreshSearchAreas();  // 搜点白名单每回合重置
-    // 购买延迟：等本轮教练（尤其 LLM save/eco）先给结论，再决定是否采购。
     botBuyPending_ = true;
     botBuyDoneT_   = false;
     botBuyDoneCT_  = false;
     botBuyTimer_   = (coachLlmEnabled_ && coachLlm_) ? 7.5f : 0.0f;
-    // 经济不足：按买枪前快照提示教练（eco 决策依据）
     for (Team t : {Team::T, Team::CT}) {
         if (LowEconomyAverage(t)) {
             CoachOnEvent(t, CoachEventType::EconomyLow);
@@ -76,29 +76,38 @@ void CS2DGame::BeginNewRound(IAudioSink* audio) {
     CoachOnEvent(Team::T,  CoachEventType::RoundStart);
     CoachOnEvent(Team::CT, CoachEventType::RoundStart);
     bombBeepTimer_ = 0.0f;
-    announcement_ = "第 " + std::to_string(round_.RoundNumber()) + " 回合";
-    announcementTimer_ = 2.2f;
+    {
+        SimEvent ev;
+        ev.type = SimEventType::RoundEvent;
+        ev.roundKind = RoundEventKind::RoundStart;
+        ev.intParam = round_.RoundNumber();
+        EmitSimEvent(std::move(ev));
+    }
     std::cout << "[CS2D] 第 " << round_.RoundNumber() << " 回合开始 ("
               << teams_.ScoreT() << ":" << teams_.ScoreCT() << ")" << std::endl;
 }
 
-void CS2DGame::RespawnAllForRound(bool carryWeapons) {
+void CS2DSimulation::RespawnAllForRound(bool carryWeapons) {
     ++purchaseEpoch_;
     grenades_.clear();
     smokes_.clear();
     fires_.clear();
     decoys_.clear();
-    for (auto& actor : actors_)
+    for (auto& actor : actors_) {
         actor.fireStates = {};
-    // 新回合：开镜归零 + 枪弹视觉段清空（契约 v1 第 5、6 节）
-    ResetScope(Presentation::ScopeResetReason::RoundRestart);
+        actor.scopeLevel = 0;
+        actor.scopeEngagement = 0.0f;
+        actor.scoped = false;
+    }
+    {
+        SimEvent sr;
+        sr.type = SimEventType::ScopeReset;
+        sr.actorId = localActorId_;
+        sr.scopeReason = Presentation::ScopeResetReason::RoundRestart;
+        EmitSimEvent(std::move(sr));
+    }
     bulletVisuals_.clear();
     nextBulletVisualId_ = 1;
-
-    // 新回合必须退出观战，否则会以观战状态继续下一局
-    SpectatorEnd();
-    deathPresentation_ = {};
-    deathCam_ = false;
 
     EnsureBotAi();
     for (size_t i = 0; i < actors_.size(); ++i) {
@@ -131,11 +140,9 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
             actor.vx = actor.vy = 0.0f;
             actor.holdingC4 = false;
             actor.plantProgress = 0.0f;
-            actor.plantingChannel = -1;
             actor.flashTimer = 0.0f;
             actor.flashPeak = 0.0f;
             actor.defuseProgress = 0.0f;
-            actor.defuseChannel = -1;
             PickSpawnForTeam(actor.team, actor.x, actor.y);
 
             if (survived) {
@@ -225,8 +232,8 @@ void CS2DGame::RespawnAllForRound(bool carryWeapons) {
 //   Force   — 强起：掏空；优先甲 + SMG 或廉价步枪；禁 AWP；剩钱 1~2 雷
 //   Full    — 满起：高到低步枪偏好（允许 AWP）
 //   AntiEco — 反 eco overlay：优先 SMG（MAC10/MP9/MP7/UMP）+ 甲 + 轻雷；禁 AWP；已有步枪则保留
-void CS2DGame::BotBuyLoadout(Player& bot) {
-    // 拆包钳单价：与玩家购买价一致（CS2DGame::PurchasePriceOf: DefuseKit -> 400）。
+void CS2DSimulation::BotBuyLoadout(Player& bot) {
+    // 拆包钳单价：与玩家购买价一致（CS2DSimulation::PurchasePriceOf: DefuseKit -> 400）。
     constexpr int kDefuseKitPrice = 400;
     BuyPlan plan = GetBuyPlan(bot.team);
     if (GetCoachPlan(bot.team).intent == PlanIntent::Save) plan = BuyPlan::Eco;
@@ -428,7 +435,7 @@ void CS2DGame::BotBuyLoadout(Player& bot) {
 
 // 回合初延迟购买：先让教练（尤其 LLM）给出 save/eco，再决定是否采购。
 // 旧实现是在 RespawnAllForRound 立刻买，LLM 的 save 回包到达时钱已经花完。
-void CS2DGame::UpdateBotBuy(float dt) {
+void CS2DSimulation::UpdateBotBuy(float dt) {
     if (!botBuyPending_) return;
 
     // 已经进入交战期还没买：强制补齐，避免 BOT 空枪出门。
@@ -477,7 +484,7 @@ void CS2DGame::UpdateBotBuy(float dt) {
     }
 }
 
-void CS2DGame::CheckWinConditions(IAudioSink* audio) {
+void CS2DSimulation::CheckWinConditions() {
     if (mode_ == MatchMode::DeathMatch) return;
     if (!round_.IsLive()) return;
     if (round_.IsDecided()) return;
@@ -516,12 +523,24 @@ void CS2DGame::CheckWinConditions(IAudioSink* audio) {
 
     if (!decided) return;
 
-    ApplyRoundResult(winner, audio);
+    ApplyRoundResult(winner);
     round_.EndRound(winner);
 }
 
-void CS2DGame::ApplyRoundResult(Team winner, IAudioSink* audio) {
-    StopObjectiveAudio(audio);
+void CS2DSimulation::ApplyRoundResult(Team winner) {
+    for (size_t i = 0; i < actors_.size(); ++i) {
+        actors_[i].defuseProgress = 0.0f;
+        actors_[i].plantProgress = 0.0f;
+        if (i < actorAi_.size()) actorAi_[i].defusing = false;
+    }
+    activeDefuser_ = kInvalidActorId;
+    defuseProgress_ = 0.0f;
+    defuseRemaining_ = 0.0f;
+    SimEvent stopObj{};
+    stopObj.type = SimEventType::BombEvent;
+    stopObj.bombKind = BombEventKind::StopAllObjectiveAudio;
+    EmitSimEvent(std::move(stopObj));
+
     if (round_.IsDecided()) return;   // 防重复结算（目标物与歼灭可能同帧触发）
 
     if (winner != Team::None) {
@@ -530,27 +549,30 @@ void CS2DGame::ApplyRoundResult(Team winner, IAudioSink* audio) {
     CoachRecordRound(Team::CT, winner == Team::CT);
     }
 
-    const Team viewerTeam = LocalActor().team;
-    // 回合胜负音效（以本地玩家阵营视角）
-    if (audio && winner != Team::None && winner == viewerTeam) {
-        audio->PlaySound(SoundEffect::ROUND_WIN);
-    }
     if (winner != Team::None) {
-        announcement_ = (winner == viewerTeam) ? "回合胜利" : "回合失败";
-        announcementTimer_ = 2.4f;
+        SimEvent ev{};
+        ev.type = SimEventType::RoundEvent;
+        ev.roundKind = RoundEventKind::RoundWin;
+        ev.team = winner;
+        EmitSimEvent(std::move(ev));
     }
 
     GrantRoundMoney(winner);
 
     if (teams_.MatchOver() && !matchOverAnnounced_) {
         matchOverAnnounced_ = true;
+        SimEvent ev{};
+        ev.type = SimEventType::RoundEvent;
+        ev.roundKind = RoundEventKind::MatchOver;
+        ev.team = teams_.MatchWinner();
+        EmitSimEvent(std::move(ev));
         std::cout << "[CS2D] 比赛结束! " << TeamName(teams_.MatchWinner())
                   << " 获胜 (" << teams_.ScoreT() << ":" << teams_.ScoreCT() << ")" << std::endl;
     }
 }
 
 // 回合结算：发放金钱，并重置为下一回合的初始装备
-void CS2DGame::GrantRoundMoney(Team winner) {
+void CS2DSimulation::GrantRoundMoney(Team winner) {
     for (auto& actor : actors_) {
         if (!actor.IsActive()) continue;
         actor.money += economy_.GrantRoundResult(winner, actor.team);
@@ -560,7 +582,7 @@ void CS2DGame::GrantRoundMoney(Team winner) {
     std::cout << "[Economy] 回合结算 → 玩家 $" << LocalActor().money << std::endl;
 }
 
-int CS2DGame::AliveCount(Team t) const {
+int CS2DSimulation::AliveCount(Team t) const {
     if (t == Team::None) return 0;
     int n = 0;
     for (const auto& a : actors_) {

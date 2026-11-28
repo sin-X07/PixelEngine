@@ -27,8 +27,9 @@ struct ActorInput {
     bool  fire        = false;
     bool  reload      = false;
     bool  interact    = false;
-    float aimWorldX   = 0.0f;
-    float aimWorldY   = 0.0f;
-    bool  hasAimWorld = true;
-    bool  rightClick  = false;
+    float aimWorldX     = 0.0f;
+    float aimWorldY     = 0.0f;
+    bool  hasAimWorld   = true;
+    bool  rightClick    = false;
+    bool  aimIsRelative = false;
 };

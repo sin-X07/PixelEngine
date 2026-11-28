@@ -1,4 +1,4 @@
-#include "CS2DGame.hpp"
+#include "CS2DSimulation.hpp"
 #include "Tuning.hpp"
 #include <iostream>
 #include <cmath>
@@ -24,7 +24,7 @@
 // 记录内容：目标 / 姿态 / 机动 / 驻守点（含来源）/ 拆包状态。
 // 关闭时（decisionTrace_ == nullptr）整个函数只有一次判空。
 // ---------------------------------------------------------------------------
-void CS2DGame::EnableDecisionTrace(const std::string& path) {
+void CS2DSimulation::EnableDecisionTrace(const std::string& path) {
     CloseDecisionTrace();
     decisionTrace_ = std::fopen(path.c_str(), "wb");
     if (!decisionTrace_) {
@@ -36,13 +36,13 @@ void CS2DGame::EnableDecisionTrace(const std::string& path) {
     std::cout << "[Trace] 决策 trace 已开启: " << path << std::endl;
 }
 
-void CS2DGame::CloseDecisionTrace() {
+void CS2DSimulation::CloseDecisionTrace() {
     if (!decisionTrace_) return;
     std::fclose(decisionTrace_);
     decisionTrace_ = nullptr;
 }
 
-void CS2DGame::TraceBotDecision(size_t i, const Player* target) {
+void CS2DSimulation::TraceBotDecision(size_t i, const Player* target) {
     if (!decisionTrace_ || i >= actors_.size()) return;
     auto& ai = AiAt(i);
     const Player& b = actors_[i];
@@ -103,7 +103,7 @@ static WeaponId UtilKindGrenade(int utilKind, Team team) {
     }
 }
 
-bool CS2DGame::PlanGrenadeThrow(const Player& bot, float tx, float ty, float& outAngle) const {
+bool CS2DSimulation::PlanGrenadeThrow(const Player& bot, float tx, float ty, float& outAngle) const {
     if (!world_) return false;
     const float kNominalDist = std::clamp(std::hypot(tx - bot.x, ty - bot.y), Tuning::NadeThrowSpeedMin / Tuning::NadeFriction, Tuning::NadeThrowSpeedMax / Tuning::NadeFriction);
     const float baseAng = std::atan2(ty - bot.y, tx - bot.x);
@@ -139,7 +139,7 @@ bool CS2DGame::PlanGrenadeThrow(const Player& bot, float tx, float ty, float& ou
 // 候选点必须可行走、且与 used 里所有点都 >=40px（>40px 验收线）。
 // 先试 r=HoldSpreadRadius 环（45° 一档），再试 2 倍半径环（错开 22.5°），
 // 都找不到才保留原点（不比原来差）。确定性：不耗随机数。
-void CS2DGame::SpreadHoldPoint(float cx, float cy, int index, float& ox, float& oy,
+void CS2DSimulation::SpreadHoldPoint(float cx, float cy, int index, float& ox, float& oy,
                                const std::vector<std::pair<float, float>>& used) const {
     ox = cx;
     oy = cy;
@@ -167,7 +167,7 @@ void CS2DGame::SpreadHoldPoint(float cx, float cy, int index, float& ox, float& 
     }
 }
 
-void CS2DGame::SetBotGoal(size_t i, float x, float y,
+void CS2DSimulation::SetBotGoal(size_t i, float x, float y,
                           BotRuntime::GoalSource src, bool force) {
     if (i >= actors_.size()) return;
     auto& ai = AiAt(i);
@@ -204,7 +204,7 @@ void CS2DGame::SetBotGoal(size_t i, float x, float y,
     }
 }
 
-void CS2DGame::ClearBotGoal(size_t i) {
+void CS2DSimulation::ClearBotGoal(size_t i) {
     if (i >= actors_.size()) return;
     auto& ai = AiAt(i);
     ai.hasPlanHold = false;
@@ -212,19 +212,19 @@ void CS2DGame::ClearBotGoal(size_t i) {
     ai.goalArea.clear();
     if (i < actorSquad_.size()) actorSquad_[i].hasHold = false;
 }
-bool CS2DGame::BotCanSeePlayer(const Player& bot) const {
+bool CS2DSimulation::BotCanSeePlayer(const Player& bot) const {
     const auto& local = LocalActor();
     if (!local.alive || !IsHostile(local, bot)) return false;
     return CanSeeActor(bot, local);
 }
 
-bool CS2DGame::PlayerCanSeeBot(const Player& bot) const {
+bool CS2DSimulation::PlayerCanSeeBot(const Player& bot) const {
     return CanSeeActor(LocalActor(), bot);
 }
 
 // 拆包安全判定：CT BOT 只有在「没有可见敌人、最近没挨打」时才拆包；
 // 炸弹最后 DefuseForceWindow 秒进入强制拆包窗口，必须顶着火力尝试。
-bool CS2DGame::BotCanDefuse(size_t i, const Player& bot) const {
+bool CS2DSimulation::BotCanDefuse(size_t i, const Player& bot) const {
     if (mode_ != MatchMode::BombDefusal || !bombPlanted_) return false;
     if (!bot.IsBot() || !bot.alive || bot.team != Team::CT) return false;
     if (AiAt(i).saveGun) return false;   // P3-savegun: saver never defuses
@@ -248,7 +248,7 @@ bool CS2DGame::BotCanDefuse(size_t i, const Player& bot) const {
 
 // 下包后指定拆包手：优先选「当前没挨打、没在冷却、没看见敌人」的最近 CT；
 // 最后 DefuseForceWindow 秒退化为最近的存活 CT（必须强拆）。
-ActorId CS2DGame::PickDefuseBot() const {
+ActorId CS2DSimulation::PickDefuseBot() const {
     if (mode_ != MatchMode::BombDefusal || !bombPlanted_) return kInvalidActorId;
 
     const bool mustDefuse = (bombTimer_ <= Tuning::DefuseForceWindow);
@@ -283,7 +283,7 @@ ActorId CS2DGame::PickDefuseBot() const {
 }
 
 // P0-3：下包后指定掩护手——离炸弹最近的存活 CT（拆包手除外）。
-ActorId CS2DGame::PickCoverBot(ActorId defuser) const {
+ActorId CS2DSimulation::PickCoverBot(ActorId defuser) const {
     if (mode_ != MatchMode::BombDefusal || !bombPlanted_) return kInvalidActorId;
 
     ActorId best = kInvalidActorId;
@@ -309,7 +309,7 @@ ActorId CS2DGame::PickCoverBot(ActorId defuser) const {
 // 受击撤退：找掩体
 // ============================================================================
 
-bool CS2DGame::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float destY,
+bool CS2DSimulation::FollowPathTo(Player& bot, BotRuntime& ai, float destX, float destY,
                             float dt, float speedMul) {
     if (!pathFinder_.IsBuilt()) return false;
 
@@ -554,7 +554,7 @@ static bool BombSafePoint(const PathFinder& pf, float bombX, float bombY,
     return false;
 }
 
-void CS2DGame::UpdateBOTs(float dt, IAudioSink* audio) {
+void CS2DSimulation::UpdateBOTs(float dt) {
     EnsureBotAi();
     // 小队协同：刷新集火目标（内部 0.5s 节流）
     UpdateSquadFocus(dt);
@@ -634,7 +634,7 @@ void CS2DGame::UpdateBOTs(float dt, IAudioSink* audio) {
                         const WeaponId want = UtilKindGrenade(ai.utilKind, bot.team);
                         const bool matched = (want != WeaponId::None) && bot.SelectGrenade(want);
                         if (want != WeaponId::None && !matched) ++counters_.utilKindMismatch;
-                        ThrowGrenade(bot, ang, audio, std::sqrt(d2));
+                        ThrowGrenade(bot, ang, std::sqrt(d2));
                         ai.utilDone = true;
                         ++counters_.nadeThrows;
                         if (matched) {
@@ -731,7 +731,7 @@ void CS2DGame::UpdateBOTs(float dt, IAudioSink* audio) {
         if (ai.retreatTimer > 0.0f && bot.health <= Tuning::RetreatKeepHealth) {
             float covX = 0.0f, covY = 0.0f;
             if (FindCoverPoint(bot, ai.threatX, ai.threatY, covX, covY)) {
-                if (bot.ammo <= 0 && !bot.reloading && bot.reserve > 0) StartReload(bot, audio);
+                if (bot.ammo <= 0 && !bot.reloading && bot.reserve > 0) StartReload(bot);
                 if (FollowPathTo(bot, ai, covX, covY, dt, 1.0f)) continue;
             }
         }
@@ -1110,9 +1110,14 @@ void CS2DGame::UpdateBOTs(float dt, IAudioSink* audio) {
                 bot.reloading   = false;
                 bot.reloadTimer = 0.0f;
                 EmitSound(SoundEventType::WeaponSwitch, bot.x, bot.y, bot.team, bot.id);
-                if (audio) {
-                    audio->PlayWeaponSwitchAt(bot.CurrentWeapon().id, bot.x, bot.y,
-                                              ListenerX(), ListenerY());
+                {
+                    SimEvent ev{};
+                    ev.type = SimEventType::WeaponSwitched;
+                    ev.actorId = bot.id;
+                    ev.weapon = bot.CurrentWeapon().id;
+                    ev.x = bot.x;
+                    ev.y = bot.y;
+                    EmitSimEvent(std::move(ev));
                 }
             }
         }
@@ -1122,7 +1127,7 @@ void CS2DGame::UpdateBOTs(float dt, IAudioSink* audio) {
         // 备弹为 0 时无法换弹，交给上面的换枪逻辑
         if (!bot.reloading && bot.ammo < bot.maxAmmo && bot.reserve > 0) {
             const int lowAmmo = static_cast<int>(static_cast<float>(bot.maxAmmo) * Tuning::LowAmmoFraction);
-            if (!canSee || bot.ammo <= lowAmmo) StartReload(bot, audio);
+            if (!canSee || bot.ammo <= lowAmmo) StartReload(bot);
         }
 
         // ---- 手雷：有情报但无直接视野时，向情报点投掷（先校验落点，避免隔着墙扔）----
@@ -1142,7 +1147,7 @@ void CS2DGame::UpdateBOTs(float dt, IAudioSink* audio) {
                 } else {
                     float throwAng = 0.0f;
                     if (PlanGrenadeThrow(bot, aimX, aimY, throwAng)) {
-                        ThrowGrenade(bot, throwAng, audio, std::hypot(aimX - bot.x, aimY - bot.y));
+                        ThrowGrenade(bot, throwAng, std::hypot(aimX - bot.x, aimY - bot.y));
                         ai.grenadeCooldown = Tuning::NadeCooldown;
                         ai.nadeFailAt = -1e9f;
                         ++counters_.nadeThrows;
@@ -1170,7 +1175,7 @@ void CS2DGame::UpdateBOTs(float dt, IAudioSink* audio) {
                                     if (fd < Tuning::ai::NadeFallbackMinDist) break;
                                     float fbAng = 0.0f;
                                     if (PlanGrenadeThrow(bot, fx, fy, fbAng)) {
-                                        ThrowGrenade(bot, fbAng, audio, fd);
+                                        ThrowGrenade(bot, fbAng, fd);
                                         ai.grenadeCooldown = Tuning::NadeCooldown;
                                         ++counters_.nadeThrows;
                                         fallbackThrown = true;
@@ -1795,7 +1800,7 @@ void CS2DGame::UpdateBOTs(float dt, IAudioSink* audio) {
                 if (engageDist < def.range + 400.0f) {
                     if (bot.ammo <= 0) {
                         // 还有备弹就换弹；弹匣+备弹都空则本帧不开火（换枪逻辑在上方处理）
-                        if (bot.reserve > 0) StartReload(bot, audio);
+                        if (bot.reserve > 0) StartReload(bot);
                         continue;
                     }
 
@@ -1820,9 +1825,14 @@ void CS2DGame::UpdateBOTs(float dt, IAudioSink* audio) {
                     // 枪声传播：附近敌人按武器类别/消音器得到不同半径
                     EmitSound(SoundEventType::Gunshot, bot.x, bot.y, bot.team,
                               bot.id, GunshotRadius(def));
-                    if (audio) {
-                        audio->PlayWeaponFireAt(def.id, bot.x, bot.y,
-                                                ListenerX(), ListenerY());
+                    {
+                        SimEvent ev{};
+                        ev.type = SimEventType::ShotFired;
+                        ev.actorId = bot.id;
+                        ev.weapon = def.id;
+                        ev.x = bot.x;
+                        ev.y = bot.y;
+                        EmitSimEvent(std::move(ev));
                     }
                 }
             }
@@ -1837,7 +1847,7 @@ void CS2DGame::UpdateBOTs(float dt, IAudioSink* audio) {
             if (bot.shootCooldown <= 0.0f) {
                 Player* struck = DamageOwner(targetId);
                 if (struck && ApplyDamage(*struck, static_cast<int>(def.damage * .33f), WeaponDB::ArmorPen(def.id)))
-                    OnCombatantKilled(*struck, audio, &bot, def.id);
+                    OnCombatantKilled(*struck, &bot, def.id);
                 bot.shootCooldown = def.cooldown * 1.5f * shootCooldownMul;
                 bot.shootAnimTimer = 0.12f;
                 EmitSound(SoundEventType::KnifeSwing, bot.x, bot.y, bot.team,

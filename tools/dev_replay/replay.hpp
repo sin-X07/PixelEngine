@@ -140,3 +140,58 @@ inline bool ReadJournal(const std::string& path, JournalHeader& out,
 }
 
 }  // namespace dev_replay
+
+#include "../../PixelEngine/Core/InputCmd.hpp"
+
+namespace dev_replay {
+
+inline InputCmd ToInputCmd(const InputFrame& f, ActorId actorId = 0) {
+    InputCmd cmd;
+    cmd.tick         = f.tick;
+    cmd.seq          = f.tick;
+    cmd.actorId      = actorId;
+    cmd.aimX         = f.aimX;
+    cmd.aimY         = f.aimY;
+    cmd.hasAimWorld  = true;
+    cmd.switchSlot   = (f.switchSlot >= 1 && f.switchSlot <= 4) ? (f.switchSlot - 1) : -1;
+    cmd.buyWeapon    = static_cast<std::uint8_t>(std::clamp(f.buyWeapon, 0, 255));
+    cmd.buyArmorTier = static_cast<std::uint8_t>(std::clamp(f.buyArmorTier, 0, 2));
+    cmd.buyKit       = f.buyKit;
+    cmd.Set(InputButton::MoveUp,      f.w);
+    cmd.Set(InputButton::MoveLeft,    f.a);
+    cmd.Set(InputButton::MoveDown,    f.s);
+    cmd.Set(InputButton::MoveRight,   f.d);
+    cmd.Set(InputButton::Stealth,     f.shift);
+    cmd.Set(InputButton::Fire,        f.mouseDown);
+    cmd.Set(InputButton::Reload,      f.reload);
+    cmd.Set(InputButton::Interact,    f.interact);
+    cmd.Set(InputButton::ScopeToggle, f.scopeToggle);
+    cmd.Set(InputButton::EdgeZoom,    f.edgeZoom);
+    cmd.Set(InputButton::RelativeAim, f.relativeAim);
+    return cmd;
+}
+
+inline InputFrame FromInputCmd(const InputCmd& cmd) {
+    InputFrame f;
+    f.tick         = cmd.tick;
+    f.aimX         = cmd.aimX;
+    f.aimY         = cmd.aimY;
+    f.w            = cmd.Has(InputButton::MoveUp);
+    f.a            = cmd.Has(InputButton::MoveLeft);
+    f.s            = cmd.Has(InputButton::MoveDown);
+    f.d            = cmd.Has(InputButton::MoveRight);
+    f.shift        = cmd.Has(InputButton::Stealth);
+    f.mouseDown    = cmd.Has(InputButton::Fire);
+    f.reload       = cmd.Has(InputButton::Reload);
+    f.interact     = cmd.Has(InputButton::Interact);
+    f.scopeToggle  = cmd.Has(InputButton::ScopeToggle);
+    f.edgeZoom     = cmd.Has(InputButton::EdgeZoom);
+    f.relativeAim  = cmd.Has(InputButton::RelativeAim);
+    f.switchSlot   = (cmd.switchSlot >= 0 && cmd.switchSlot <= 3) ? (cmd.switchSlot + 1) : 0;
+    f.buyWeapon    = static_cast<int>(cmd.buyWeapon);
+    f.buyArmorTier = static_cast<int>(cmd.buyArmorTier);
+    f.buyKit       = cmd.buyKit;
+    return f;
+}
+
+}  // namespace dev_replay
